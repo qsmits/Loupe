@@ -142,8 +142,6 @@ def align_dxf_route(body: AlignDxfBody):
         )
     detected = [(c.x, c.y, c.radius) for c in body.circles]
     result = align_circles(dxf_circles, detected, body.pixels_per_mm)
-    if result.get("error") == "insufficient_dxf_circles":
-        raise HTTPException(status_code=400, detail="At least 2 DXF circles required for alignment")
     return result
 
 

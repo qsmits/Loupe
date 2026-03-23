@@ -32,7 +32,10 @@ def test_align_dxf_returns_transform(client):
     body = r.json()
     assert "tx" in body
     assert "angle_deg" in body
-    assert body["confidence"] in ("high", "low", "failed")
+    assert body["confidence"] == "high"
+    assert abs(body["tx"] - 100.0) < 2
+    assert abs(body["ty"] - 80.0) < 2
+    assert abs(body["angle_deg"]) < 2
 
 
 def test_align_dxf_rejects_missing_pixels_per_mm(client):
