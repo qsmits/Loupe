@@ -3,7 +3,7 @@ import math
 import numpy as np
 
 
-def extract_dxf_circles(entities: list[dict]) -> list[tuple]:
+def extract_dxf_circles(entities):
     """Return list of (cx_mm, cy_mm, r_mm) from DXF entities (circles only)."""
     return [
         (float(e["cx"]), float(e["cy"]), float(e["radius"]))
@@ -33,7 +33,7 @@ def _compute_transform(p1, p2, q1, q2):
     return tx, ty, angle
 
 
-def _score_transform(dxf_px, detected_px, tx, ty, angle, inlier_dist_fn):
+def _score_transform(dxf_px, detected_px, tx, ty, angle):
     cos_a, sin_a = math.cos(angle), math.sin(angle)
     inliers = []
     for i, (dx, dy, dr) in enumerate(dxf_px):
@@ -71,11 +71,7 @@ def _refine_transform(dxf_px, detected_px, inliers):
     return float(t[0]), float(t[1]), angle
 
 
-def align_circles(
-    dxf_circles: list[tuple],
-    detected_circles: list[tuple],
-    pixels_per_mm: float,
-) -> dict:
+def align_circles(dxf_circles, detected_circles, pixels_per_mm):
     """
     Find the best-fit rigid transform mapping DXF circles onto detected circles.
 
@@ -126,10 +122,11 @@ def align_circles(
                             p2 = np.array([flipped[j][0], flipped[j][1]])
                             q1 = np.array([det_px[a][0], det_px[a][1]])
                             q2 = np.array([det_px[b][0], det_px[b][1]])
+                            if np.linalg.norm(p2 - p1) < 1e-6 or np.linalg.norm(q2 - q1) < 1e-6:
+                                continue
                             tx, ty, angle = _compute_transform(p1, p2, q1, q2)
                             inliers = _score_transform(
-                                flipped, det_px, tx, ty, angle,
-                                lambda r: max(10.0, 0.15 * r)
+                                flipped, det_px, tx, ty, angle
                             )
                             # Prefer more inliers; break ties by smallest |angle|
                             candidate_score = (len(inliers), -abs(angle))
@@ -147,8 +144,7 @@ def align_circles(
         refined = _refine_transform(flipped, det_px, inliers)
         if refined:
             tx, ty, angle_rad = refined
-            inliers = _score_transform(flipped, det_px, tx, ty, angle_rad,
-                                       lambda r: max(10.0, 0.15 * r))
+            inliers = _score_transform(flipped, det_px, tx, ty, angle_rad)
         inlier_count = len(inliers)
         total = len(dxf_circles)
         if inlier_count >= max(2, total * 0.5):
