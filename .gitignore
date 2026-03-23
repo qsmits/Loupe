@@ -5,9 +5,8 @@ config.json
 snapshots/*.jpg
 snapshots/*.png
 tests/output/
-.superpowers
+.superpowers/
 .vexp
 .server.log
 .DS_Store
-docs/superpowers
 .worktrees/
