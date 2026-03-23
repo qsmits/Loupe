@@ -1405,16 +1405,29 @@ function drawDxfOverlay(ann) {
 }
 
 function dxfToCanvas(x, y, ann) {
-  const { offsetX, offsetY, scale, flipH = false, flipV = false } = ann;
-  const angle = state.origin?.angle ?? 0;
-  const xf = flipH ? -x : x;
-  const yf = flipV ? -y : y;
+  const { offsetX, offsetY, scale, flipH = false, flipV = false, angle: annAngle = 0 } = ann;
+  const originAngle = state.origin?.angle ?? 0;
+
+  // 1. Apply DXF overlay rotation in DXF space (Y-up), before flip
+  const cosA = Math.cos(annAngle * Math.PI / 180);
+  const sinA = Math.sin(annAngle * Math.PI / 180);
+  const xr = x * cosA - y * sinA;
+  const yr = x * sinA + y * cosA;
+
+  // 2. Flip
+  const xf = flipH ? -xr : xr;
+  const yf = flipV ? -yr : yr;
+
+  // 3. Scale + Y-flip (DXF Y-up → canvas Y-down)
   let cx = xf * scale;
-  let cy = -yf * scale;           // Y-flip
-  if (angle) {
-    const cos = Math.cos(angle), sin = Math.sin(angle);
-    [cx, cy] = [cx * cos - cy * sin, cx * sin + cy * cos];
+  let cy = -yf * scale;
+
+  // 4. Apply canvas/origin rotation (existing behaviour)
+  if (originAngle) {
+    const cos2 = Math.cos(originAngle), sin2 = Math.sin(originAngle);
+    [cx, cy] = [cx * cos2 - cy * sin2, cx * sin2 + cy * cos2];
   }
+
   return { x: offsetX + cx, y: offsetY + cy };
 }
 
@@ -2427,6 +2440,7 @@ document.getElementById("dxf-input").addEventListener("change", async e => {
       offsetX: canvas.width / 2,
       offsetY: canvas.height / 2,
       scale,
+      angle: 0,
       scaleManual: false,
       flipH: false,
       flipV: false,
@@ -2434,6 +2448,7 @@ document.getElementById("dxf-input").addEventListener("change", async e => {
     const dxfPanelEl = document.getElementById("dxf-panel");
     if (dxfPanelEl) dxfPanelEl.style.display = "";
     enterDxfAlignMode();
+    updateDxfControlsVisibility();
     redraw();
     e.target.value = "";
   } catch (err) {
@@ -2465,6 +2480,7 @@ document.getElementById("btn-dxf-clear")?.addEventListener("click", () => {
   state.annotations = state.annotations.filter(a => a.type !== "dxf-overlay");
   const dxfPanelEl2 = document.getElementById("dxf-panel");
   if (dxfPanelEl2) dxfPanelEl2.style.display = "none";
+  updateDxfControlsVisibility();
   redraw();
 });
 
@@ -2476,8 +2492,47 @@ document.getElementById("btn-dxf-clear")?.addEventListener("click", () => {
     const key = id === "flip-h" ? "flipH" : "flipV";
     ann[key] = !ann[key];
     document.getElementById(`btn-dxf-${id}`)?.classList.toggle("active", ann[key]);
+    updateDxfControlsVisibility();
     redraw();
   });
+});
+
+function updateDxfControlsVisibility() {
+  const ann = state.annotations.find(a => a.type === "dxf-overlay");
+  const group = document.getElementById("dxf-controls-group");
+  if (group) group.hidden = !ann;
+  if (ann) {
+    const display = document.getElementById("dxf-angle-display");
+    if (display) display.textContent = `${(ann.angle ?? 0).toFixed(1)}°`;
+    const scaleInput = document.getElementById("dxf-scale");
+    if (scaleInput) scaleInput.value = (ann.scale ?? 1).toFixed(3);
+    const fH = document.getElementById("btn-dxf-flip-h");
+    if (fH) fH.classList.toggle("active", ann.flipH ?? false);
+    const fV = document.getElementById("btn-dxf-flip-v");
+    if (fV) fV.classList.toggle("active", ann.flipV ?? false);
+  }
+}
+
+[-5, -1, 1, 5].forEach(delta => {
+  const id = `btn-dxf-rot-${delta < 0 ? "m" : "p"}${Math.abs(delta)}`;
+  document.getElementById(id)?.addEventListener("click", () => {
+    const ann = state.annotations.find(a => a.type === "dxf-overlay");
+    if (!ann) return;
+    pushUndo();
+    ann.angle = ((ann.angle ?? 0) + delta + 360) % 360;
+    updateDxfControlsVisibility();
+    redraw();
+  });
+});
+
+document.getElementById("dxf-scale")?.addEventListener("change", () => {
+  const ann = state.annotations.find(a => a.type === "dxf-overlay");
+  if (!ann) return;
+  const val = parseFloat(document.getElementById("dxf-scale").value);
+  if (!isFinite(val) || val <= 0) return;
+  pushUndo();
+  ann.scale = val;
+  redraw();
 });
 
 // ── Annotated export ───────────────────────────────────────────────────────
