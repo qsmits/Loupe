@@ -129,11 +129,7 @@ img.addEventListener("load", resizeCanvas);
 window.addEventListener("resize", resizeCanvas);
 
 // ── Tool selection ─────────────────────────────────────────────────────────
-document.querySelectorAll(".tool-btn[data-tool]").forEach(btn => {
-  btn.addEventListener("click", () => {
-    setTool(btn.dataset.tool);
-  });
-});
+// Tool buttons are now .strip-btn elements in #tool-strip (see Init section below)
 
 // ── Canvas mouse events ────────────────────────────────────────────────────
 canvas.addEventListener("mousedown", onMouseDown);
@@ -181,7 +177,7 @@ function onMouseDown(e) {
     const ann = state.annotations.find(a => a.type === "dxf-overlay");
     if (ann) { ann.offsetX = pt.x; ann.offsetY = pt.y; redraw(); }
     _dxfOriginMode = false;
-    document.getElementById("btn-dxf-set-origin").classList.remove("active");
+    document.getElementById("btn-dxf-set-origin")?.classList.remove("active");
     statusEl.textContent = state.frozen ? "Frozen" : "Live";
     return;
   }
@@ -240,7 +236,7 @@ document.addEventListener("keydown", e => {
     state.pendingCenterCircle = null;
     if (_dxfOriginMode) {
       _dxfOriginMode = false;
-      document.getElementById("btn-dxf-set-origin").classList.remove("active");
+      document.getElementById("btn-dxf-set-origin")?.classList.remove("active");
       statusEl.textContent = state.frozen ? "Frozen" : "Live";
     }
     setTool("select");
@@ -737,7 +733,7 @@ function deleteAnnotation(id) {
   const ann = state.annotations.find(a => a.id === id);
   if (!ann) return;
   if (ann.type === "calibration") { state.calibration = null; updateCalibrationButton(); }
-  if (ann.type === "dxf-overlay") document.getElementById("dxf-panel").style.display = "none";
+  if (ann.type === "dxf-overlay") { const p = document.getElementById("dxf-panel"); if (p) p.style.display = "none"; }
   if (ann.type === "origin") {
     state.origin = null;
     const coordEl = document.getElementById("coord-display");
@@ -767,7 +763,8 @@ function applyCalibration(ann) {
   const dxfAnn = state.annotations.find(a => a.type === "dxf-overlay");
   if (dxfAnn && !dxfAnn.scaleManual) {
     dxfAnn.scale = state.calibration.pixelsPerMm;
-    document.getElementById("dxf-scale").value = dxfAnn.scale.toFixed(3);
+    const dxfScaleEl = document.getElementById("dxf-scale");
+    if (dxfScaleEl) dxfScaleEl.value = dxfAnn.scale.toFixed(3);
   }
   addAnnotation(ann);
   updateCameraInfo(); // refresh the scale display in the sidebar
@@ -1444,7 +1441,7 @@ function enterDxfAlignMode() {
   state.dxfAlignHover = null;
   if (_dxfOriginMode) {
     _dxfOriginMode = false;
-    document.getElementById("btn-dxf-set-origin").classList.remove("active");
+    document.getElementById("btn-dxf-set-origin")?.classList.remove("active");
   }
   statusEl.textContent = "Click a DXF feature to anchor…";
 }
@@ -2343,8 +2340,7 @@ document.getElementById("file-input").addEventListener("change", async e => {
     state.frozenBackground = loadedImg;
     img.style.opacity = "0";
     state.frozen = true;
-    updateDropOverlay();
-    document.getElementById("btn-freeze").classList.add("active");
+    updateFreezeUI();
     statusEl.textContent = "Loaded image";
     redraw();
   };
@@ -2388,9 +2384,8 @@ viewerEl.addEventListener("drop", async e => {
     state.frozenBackground = loadedImg;
     img.style.opacity = "0";
     state.frozen = true;
-    document.getElementById("btn-freeze").classList.add("active");
+    updateFreezeUI();
     statusEl.textContent = "Loaded image";
-    updateDropOverlay();
     redraw();
   };
   loadedImg.src = url;
@@ -2425,7 +2420,8 @@ document.getElementById("dxf-input").addEventListener("change", async e => {
     const cal = state.calibration;
     const autoScale = cal?.pixelsPerMm;
     const scale = autoScale ?? 1;
-    document.getElementById("dxf-scale").value = scale.toFixed(3);
+    const dxfScaleInput = document.getElementById("dxf-scale");
+    if (dxfScaleInput) dxfScaleInput.value = scale.toFixed(3);
     state.annotations = state.annotations.filter(a => a.type !== "dxf-overlay");
     addAnnotation({
       type: "dxf-overlay",
@@ -2437,7 +2433,8 @@ document.getElementById("dxf-input").addEventListener("change", async e => {
       flipH: false,
       flipV: false,
     });
-    document.getElementById("dxf-panel").style.display = "";
+    const dxfPanelEl = document.getElementById("dxf-panel");
+    if (dxfPanelEl) dxfPanelEl.style.display = "";
     enterDxfAlignMode();
     redraw();
     e.target.value = "";
@@ -2447,7 +2444,7 @@ document.getElementById("dxf-input").addEventListener("change", async e => {
   }
 });
 
-document.getElementById("dxf-scale").addEventListener("input", e => {
+document.getElementById("dxf-scale")?.addEventListener("input", e => {
   const ann = state.annotations.find(a => a.type === "dxf-overlay");
   if (!ann) return;
   const v = parseFloat(e.target.value);
@@ -2458,28 +2455,29 @@ document.getElementById("dxf-scale").addEventListener("input", e => {
   }
 });
 
-document.getElementById("btn-dxf-set-origin").addEventListener("click", () => {
+document.getElementById("btn-dxf-set-origin")?.addEventListener("click", () => {
   _dxfOriginMode = true;
-  document.getElementById("btn-dxf-set-origin").classList.add("active");
+  document.getElementById("btn-dxf-set-origin")?.classList.add("active");
   statusEl.textContent = "Click canvas to place DXF origin";
 });
 
-document.getElementById("btn-dxf-realign").addEventListener("click", enterDxfAlignMode);
+document.getElementById("btn-dxf-realign")?.addEventListener("click", enterDxfAlignMode);
 
-document.getElementById("btn-dxf-clear").addEventListener("click", () => {
+document.getElementById("btn-dxf-clear")?.addEventListener("click", () => {
   state.annotations = state.annotations.filter(a => a.type !== "dxf-overlay");
-  document.getElementById("dxf-panel").style.display = "none";
+  const dxfPanelEl2 = document.getElementById("dxf-panel");
+  if (dxfPanelEl2) dxfPanelEl2.style.display = "none";
   redraw();
 });
 
 ["flip-h", "flip-v"].forEach(id => {
-  document.getElementById(`btn-dxf-${id}`).addEventListener("click", () => {
+  document.getElementById(`btn-dxf-${id}`)?.addEventListener("click", () => {
     const ann = state.annotations.find(a => a.type === "dxf-overlay");
     if (!ann) return;
     pushUndo();
     const key = id === "flip-h" ? "flipH" : "flipV";
     ann[key] = !ann[key];
-    document.getElementById(`btn-dxf-${id}`).classList.toggle("active", ann[key]);
+    document.getElementById(`btn-dxf-${id}`)?.classList.toggle("active", ann[key]);
     redraw();
   });
 });
@@ -2729,7 +2727,7 @@ document.getElementById("btn-clear")?.addEventListener("click", () => {
     // DXF panel: keep visible (DXF overlay is preserved). Do NOT hide it.
     if (_dxfOriginMode) {
       _dxfOriginMode = false;
-      document.getElementById("btn-dxf-set-origin").classList.remove("active");
+      document.getElementById("btn-dxf-set-origin")?.classList.remove("active");
       statusEl.textContent = state.frozen ? "Frozen" : "Live";
     }
     if (_originMode) {
@@ -2744,17 +2742,11 @@ document.getElementById("btn-clear")?.addEventListener("click", () => {
 });
 
 // ── Detect tool ────────────────────────────────────────────────────────────
-document.querySelector('[data-tool="detect"]').addEventListener("click", () => {
-  document.getElementById("detect-panel").style.display = "block";
+document.querySelector('[data-tool="detect"]')?.addEventListener("click", () => {
+  document.getElementById("dropdown-detect").style.display = "block";
 });
 
-document.querySelectorAll(".tool-btn[data-tool]").forEach(btn => {
-  if (btn.dataset.tool !== "detect") {
-    btn.addEventListener("click", () => {
-      document.getElementById("detect-panel").style.display = "none";
-    });
-  }
-});
+// No .tool-btn elements in the new UI; dropdown-detect is closed by closeAllDropdowns()
 
 ["canny-low","canny-high","hough-p2","circle-min-r","circle-max-r","line-sensitivity","line-min-length"].forEach(id => {
   const el = document.getElementById(id);
