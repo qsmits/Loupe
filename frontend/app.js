@@ -18,6 +18,8 @@ const state = {
   dxfAlignStep: 0,
   dxfAlignPick: null,
   dxfAlignHover: null,
+  showDeviations: false,
+  tolerances: { warn: 0.10, fail: 0.25 },
   nextId: 1,
   settings: {
     crosshairColor: "#ffffff",
@@ -1282,7 +1284,7 @@ function drawAnnotations() {
     else if (ann.type === "circle")     drawCircle(ann, pendingHighlight || sel);
     else if (ann.type === "edges-overlay")    drawEdgesOverlay(ann);
     else if (ann.type === "preprocessed-overlay") drawPreprocessedOverlay(ann);
-    else if (ann.type === "dxf-overlay")      drawDxfOverlay(ann);
+    else if (ann.type === "dxf-overlay")      { drawDxfOverlay(ann); if (state.showDeviations) drawDeviations(ann); }
     else if (ann.type === "detected-circle") drawDetectedCircle(ann, pendingHighlight || sel);
     else if (ann.type === "detected-line")   drawDetectedLine(ann, sel);
     else if (ann.type === "calibration") drawCalibration(ann, sel);
@@ -2529,6 +2531,109 @@ function getDetectedCirclesForAlignment() {
     }));
 }
 
+function deviationColor(delta_mm) {
+  const { warn, fail } = state.tolerances;
+  if (delta_mm <= warn) return "#30d158";   // --success
+  if (delta_mm <= fail) return "#ff9f0a";   // --warning
+  return "#ff453a";                          // --danger
+}
+
+function matchDxfToDetected(ann) {
+  const cal = state.calibration;
+  if (!cal?.pixelsPerMm) return [];
+  const ppm = cal.pixelsPerMm;
+
+  const detected = state.annotations
+    .filter(a => a.type === "detected-circle")
+    .map(a => ({
+      cx: a.x * (canvas.width / a.frameWidth),
+      cy: a.y * (canvas.height / a.frameHeight),
+      r:  a.radius * (canvas.width / a.frameWidth),
+    }));
+
+  return ann.entities
+    .filter(e => e.type === "circle")
+    .map(e => {
+      const nominal = dxfToCanvas(e.cx, e.cy, ann);
+      const r_px = e.radius * ann.scale;
+      const threshold = Math.max(10, 0.5 * r_px);
+      let best = null, bestDist = Infinity;
+      for (const d of detected) {
+        const dist = Math.hypot(d.cx - nominal.x, d.cy - nominal.y);
+        if (dist < threshold && dist < bestDist) {
+          bestDist = dist;
+          best = d;
+        }
+      }
+      if (!best) return { nominal, r_px, matched: false };
+      const delta_xy_mm = bestDist / ppm;
+      const delta_r_mm  = Math.abs(best.r - r_px) / ppm;
+      return {
+        nominal, r_px,
+        detected: best,
+        matched: true,
+        delta_xy_mm,
+        delta_r_mm,
+        color: deviationColor(Math.max(delta_xy_mm, delta_r_mm)),
+      };
+    });
+}
+
+function drawDeviations(ann) {
+  const matches = matchDxfToDetected(ann);
+  for (const m of matches) {
+    if (!m.matched) {
+      // Unmatched: muted dashed circle + crosshair at nominal
+      ctx.save();
+      ctx.strokeStyle = "#636366";
+      ctx.setLineDash([4, 3]);
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.arc(m.nominal.x, m.nominal.y, m.r_px, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.beginPath();
+      ctx.moveTo(m.nominal.x - 5, m.nominal.y); ctx.lineTo(m.nominal.x + 5, m.nominal.y);
+      ctx.moveTo(m.nominal.x, m.nominal.y - 5); ctx.lineTo(m.nominal.x, m.nominal.y + 5);
+      ctx.stroke();
+      ctx.fillStyle = "#636366";
+      ctx.font = "9px ui-monospace, monospace";
+      ctx.fillText("not detected", m.nominal.x + m.r_px + 4, m.nominal.y);
+      ctx.restore();
+    } else {
+      const { nominal, r_px, detected: det, delta_xy_mm, delta_r_mm, color } = m;
+      ctx.save();
+      // Nominal circle (dashed blue)
+      ctx.strokeStyle = "#0a84ff";
+      ctx.setLineDash([4, 3]);
+      ctx.lineWidth = 1;
+      ctx.globalAlpha = 0.55;
+      ctx.beginPath(); ctx.arc(nominal.x, nominal.y, r_px, 0, Math.PI * 2); ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(nominal.x - 5, nominal.y); ctx.lineTo(nominal.x + 5, nominal.y);
+      ctx.moveTo(nominal.x, nominal.y - 5); ctx.lineTo(nominal.x, nominal.y + 5);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.globalAlpha = 1;
+      // Detected circle (solid, colour-coded)
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.arc(det.cx, det.cy, det.r, 0, Math.PI * 2); ctx.stroke();
+      ctx.fillStyle = color;
+      ctx.beginPath(); ctx.arc(det.cx, det.cy, 2.5, 0, Math.PI * 2); ctx.fill();
+      // Labels
+      ctx.font = "10px ui-monospace, monospace";
+      ctx.fillStyle = color;
+      const labelX = det.cx + det.r + 4;
+      ctx.fillText(`Δ ${delta_xy_mm.toFixed(3)} mm`, labelX, det.cy);
+      if (delta_r_mm > state.tolerances.warn) {
+        ctx.fillText(`Δr ${delta_r_mm.toFixed(3)} mm`, labelX, det.cy + 13);
+      }
+      ctx.restore();
+    }
+  }
+}
+
 document.getElementById("btn-auto-align")?.addEventListener("click", async () => {
   const ann = state.annotations.find(a => a.type === "dxf-overlay");
   if (!ann) return;
@@ -2637,6 +2742,13 @@ document.getElementById("dxf-scale")?.addEventListener("change", () => {
   if (!isFinite(val) || val <= 0) return;
   pushUndo();
   ann.scale = val;
+  redraw();
+});
+
+document.getElementById("btn-show-deviations")?.addEventListener("click", () => {
+  state.showDeviations = !state.showDeviations;
+  document.getElementById("btn-show-deviations").textContent =
+    state.showDeviations ? "Hide deviations" : "Show deviations";
   redraw();
 });
 
