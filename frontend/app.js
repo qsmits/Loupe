@@ -1018,7 +1018,7 @@ function updateCalibrationButton() {
   const btn = document.getElementById("btn-calibration");
   if (!btn) return;
   if (state.calibration) {
-    const scale = (1 / state.calibration.pixelsPerMm).toFixed(3);
+    const scale = (1000 / state.calibration.pixelsPerMm).toFixed(3);
     btn.textContent = `${scale} µm/px`;
     btn.classList.remove("uncalibrated");
     btn.classList.add("calibrated");
@@ -1096,12 +1096,10 @@ async function checkStartupWarning() {
     const r = await fetch("/camera/startup-warning");
     const d = await r.json();
     if (d.warning) {
-      const prev = { text: statusEl.textContent, className: statusEl.className };
+      const prev = { text: statusEl.textContent };
       statusEl.textContent = d.warning;
-      statusEl.className = "status-line warning";
       setTimeout(() => {
         statusEl.textContent = prev.text;
-        statusEl.className = prev.className;
       }, 8000);
     }
   } catch (_) {
@@ -1905,7 +1903,6 @@ async function loadSnapshotList() {
           updateDropOverlay();
           document.getElementById("btn-freeze").classList.add("active");
           statusEl.textContent = `Snapshot: ${filename}`;
-          statusEl.className = "status-line frozen";
           redraw();
         };
         loadedImg.src = frameUrl;
@@ -2265,7 +2262,6 @@ async function doFreeze() {
   updateDropOverlay();
   document.getElementById("btn-freeze").classList.add("active");
   statusEl.textContent = "Frozen";
-  statusEl.className = "status-line frozen";
   resizeCanvas();  // re-read img rect after opacity change to guarantee pixel-perfect alignment
 }
 
@@ -2278,7 +2274,6 @@ document.getElementById("btn-freeze").addEventListener("click", async () => {
     state.frozenBackground = null;
     document.getElementById("btn-freeze").classList.remove("active");
     statusEl.textContent = "Live";
-    statusEl.className = "status-line";
     redraw();
   } else {
     await doFreeze();
@@ -2310,7 +2305,6 @@ document.getElementById("file-input").addEventListener("change", async e => {
     updateDropOverlay();
     document.getElementById("btn-freeze").classList.add("active");
     statusEl.textContent = "Loaded image";
-    statusEl.className = "status-line frozen";
     redraw();
   };
   loadedImg.src = url;
@@ -2355,7 +2349,6 @@ viewerEl.addEventListener("drop", async e => {
     state.frozen = true;
     document.getElementById("btn-freeze").classList.add("active");
     statusEl.textContent = "Loaded image";
-    statusEl.className = "status-line frozen";
     updateDropOverlay();
     redraw();
   };
