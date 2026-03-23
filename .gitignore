@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+.venv/
+config.json
+snapshots/*.jpg
+snapshots/*.png
+tests/output/
+.superpowers
+.vexp
+.server.log
+.DS_Store
+docs/superpowers

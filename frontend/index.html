@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Video Microscope</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div id="toolbar">
+  <button class="tool-btn active" data-tool="select" title="Select [V]">Select</button>
+  <button class="tool-btn" data-tool="calibrate" title="Calibrate [C]">Calibrate</button>
+  <button class="tool-btn" data-tool="distance" title="Distance [D]">Distance</button>
+  <button class="tool-btn" data-tool="angle" title="Angle [A]">Angle</button>
+  <button class="tool-btn" data-tool="circle" title="Circle [O]">Circle</button>
+  <button class="tool-btn" data-tool="arc-fit" title="Fit Arc [F]">Fit Arc</button>
+  <button class="tool-btn" data-tool="center-dist" title="Center distance [M]">Cdist</button>
+  <button class="tool-btn" data-tool="para-dist" title="Para distance [L]">Para</button>
+  <button class="tool-btn" data-tool="perp-dist" title="Perp distance [P]">Perp</button>
+  <button class="tool-btn" data-tool="area" title="Area [R]">Area</button>
+  <button class="tool-btn" data-tool="pt-circle-dist" title="Pt-Circle distance [G]">PtCirc</button>
+  <button class="tool-btn" data-tool="intersect" title="Line intersection [I]">Isect</button>
+  <button class="tool-btn" data-tool="slot-dist" title="Slot width [W]">Slot</button>
+  <button class="tool-btn" data-tool="detect" title="Detect [E]">Detect</button>
+  <div class="toolbar-sep"></div>
+  <button class="tool-btn icon" id="btn-crosshair" title="Toggle crosshair">⊹</button>
+  <button class="tool-btn icon" id="btn-set-origin" title="Set coordinate origin">⊙</button>
+  <button class="tool-btn icon" id="btn-freeze" title="Freeze / Live">❄</button>
+  <button class="tool-btn icon" id="btn-load" title="Load image">📁</button>
+  <input type="file" id="file-input" accept="image/*">
+  <button class="tool-btn icon" id="btn-snapshot" title="Save raw snapshot">📷</button>
+  <input type="file" id="dxf-input" accept=".dxf" style="display:none">
+  <button class="tool-btn icon" id="btn-load-dxf" title="Load DXF overlay">DXF</button>
+  <button class="tool-btn icon" id="btn-export" title="Export annotated image">🖼</button>
+  <button class="tool-btn icon" id="btn-export-csv" title="Export measurements as CSV">⬇CSV</button>
+  <button class="tool-btn icon" id="btn-save-session" title="Save session [S]">💾</button>
+  <button class="tool-btn icon" id="btn-load-session" title="Load session">📂</button>
+  <input type="file" id="session-file-input" accept=".json" style="display:none">
+  <button class="tool-btn icon" id="btn-clear" title="Clear all annotations">✕</button>
+  <div class="toolbar-sep"></div>
+  <button class="tool-btn icon" id="btn-help" title="Help [?]">?</button>
+  <button class="tool-btn icon" id="btn-settings" title="Settings">⚙</button>
+</div>
+
+<div id="main">
+  <div id="viewer">
+    <img id="stream-img" src="/stream" alt="camera stream">
+    <canvas id="overlay-canvas"></canvas>
+    <div id="coord-display"></div>
+    <div id="drop-overlay">
+      <div class="drop-message">
+        Drop an image here<br>
+        <span>or click 📁 to load</span>
+      </div>
+    </div>
+  </div>
+
+  <div id="sidebar">
+    <div class="sidebar-section">
+      <div class="sidebar-label">Measurements</div>
+      <div id="measurement-list"></div>
+    </div>
+    <div class="sidebar-section">
+      <div class="sidebar-label">Camera</div>
+      <div class="camera-row">
+        <label for="exp-slider">Exp</label>
+        <input type="range" id="exp-slider" min="100" max="100000" step="100" value="5000">
+        <span id="exp-value">5000 µs</span>
+      </div>
+      <div class="camera-row">
+        <label for="gain-slider">Gain</label>
+        <input type="range" id="gain-slider" min="0" max="24" step="0.5" value="0">
+        <span id="gain-value">0 dB</span>
+      </div>
+      <div id="camera-info"></div>
+    </div>
+    <div class="sidebar-section" id="snapshot-panel">
+      <div class="sidebar-label">Snapshots <button id="btn-refresh-snapshots" class="tool-btn icon" style="font-size:10px;padding:1px 5px;margin-left:4px">↻</button></div>
+      <div id="snapshot-list"></div>
+    </div>
+    <div class="sidebar-section" id="detect-panel">
+      <div class="sidebar-label">Edge Detection</div>
+      <div class="camera-row">
+        <label for="canny-low">Low</label>
+        <input type="range" id="canny-low" min="10" max="255" value="50">
+        <span id="canny-low-val">50</span>
+      </div>
+      <div class="camera-row">
+        <label for="canny-high">High</label>
+        <input type="range" id="canny-high" min="10" max="255" value="150">
+        <span id="canny-high-val">150</span>
+      </div>
+      <button class="tool-btn detect-action-btn" id="btn-run-edges">Run edge detect</button>
+      <button class="tool-btn detect-action-btn" id="btn-show-preprocessed">Show preprocessed</button>
+
+      <div class="sidebar-label detect-sub-label">Circle Detection</div>
+      <div class="camera-row">
+        <label for="hough-p2">Sensitivity</label>
+        <input type="range" id="hough-p2" min="10" max="80" value="50">
+        <span id="hough-p2-val">50</span>
+      </div>
+      <div class="camera-row">
+        <label for="circle-min-r">Min r</label>
+        <input type="range" id="circle-min-r" min="5" max="300" value="10">
+        <span id="circle-min-r-val">10</span>
+      </div>
+      <div class="camera-row">
+        <label for="circle-max-r">Max r</label>
+        <input type="range" id="circle-max-r" min="20" max="1000" value="500">
+        <span id="circle-max-r-val">500</span>
+      </div>
+      <button class="tool-btn detect-action-btn" id="btn-run-circles">Run circle detect</button>
+
+      <div class="sidebar-label detect-sub-label">Line Detection</div>
+      <div class="camera-row">
+        <label for="line-sensitivity">Sensitivity</label>
+        <input type="range" id="line-sensitivity" min="10" max="100" value="30">
+        <span id="line-sensitivity-val">30</span>
+      </div>
+      <div class="camera-row">
+        <label for="line-min-length">Min len</label>
+        <input type="range" id="line-min-length" min="5" max="200" value="20">
+        <span id="line-min-length-val">20</span>
+      </div>
+      <button class="tool-btn detect-action-btn" id="btn-run-lines">Run line detect</button>
+    </div>
+    <div class="sidebar-section" id="dxf-panel" style="display:none">
+      <div class="sidebar-label">DXF Overlay</div>
+      <div class="camera-row">
+        <label for="dxf-scale">Scale</label>
+        <input type="number" id="dxf-scale" value="1" step="0.1" min="0.01"
+               style="width:70px;background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:2px 4px;font-size:11px">
+        <span style="font-size:10px;color:var(--muted)">px/unit</span>
+      </div>
+      <div class="camera-row" style="gap:4px">
+        <button class="tool-btn" id="btn-dxf-flip-h">Flip H</button>
+        <button class="tool-btn" id="btn-dxf-flip-v">Flip V</button>
+        <button class="tool-btn" id="btn-dxf-realign">Re-align</button>
+      </div>
+      <button class="tool-btn detect-action-btn" id="btn-dxf-set-origin">Set origin (click canvas)</button>
+      <button class="tool-btn detect-action-btn" id="btn-dxf-clear">Clear DXF</button>
+    </div>
+    <div class="status-line" id="status-line">Live</div>
+  </div>
+</div>
+
+<dialog id="settings-dialog">
+  <div id="settings-header">
+    <div id="settings-tabs">
+      <button class="settings-tab active" data-tab="camera">Camera</button>
+      <button class="settings-tab" data-tab="display">Display</button>
+    </div>
+    <button id="settings-close">✕</button>
+  </div>
+
+  <div id="settings-camera-panel" class="settings-panel">
+    <div class="settings-row">
+      <label for="camera-select">Camera</label>
+      <select id="camera-select">
+        <option value="">Loading…</option>
+      </select>
+    </div>
+    <div class="settings-row">
+      <label for="pixel-format-select">Pixel format</label>
+      <select id="pixel-format-select">
+        <option value="BayerRG8">BayerRG8</option>
+        <option value="Mono8">Mono8</option>
+        <option value="BGR8Packed">BGR8Packed</option>
+        <option value="RGB8Packed">RGB8Packed</option>
+      </select>
+    </div>
+    <div class="settings-row">
+      <label>White balance</label>
+      <button id="btn-wb-auto" class="tool-btn" style="font-size:11px;padding:3px 8px">Auto WB</button>
+    </div>
+    <div class="settings-row">
+      <label for="wb-red-slider">R</label>
+      <input type="range" id="wb-red-slider" min="0.5" max="2.5" step="0.01" value="1.0">
+      <span id="wb-red-value">1.00</span>
+    </div>
+    <div class="settings-row">
+      <label for="wb-green-slider">G</label>
+      <input type="range" id="wb-green-slider" min="0.5" max="2.5" step="0.01" value="1.0">
+      <span id="wb-green-value">1.00</span>
+    </div>
+    <div class="settings-row">
+      <label for="wb-blue-slider">B</label>
+      <input type="range" id="wb-blue-slider" min="0.5" max="2.5" step="0.01" value="1.0">
+      <span id="wb-blue-value">1.00</span>
+    </div>
+    <div class="settings-row settings-info">
+      <span class="settings-label">Model</span>
+      <span id="settings-model">—</span>
+    </div>
+    <div class="settings-row settings-info">
+      <span class="settings-label">Serial</span>
+      <span id="settings-serial">—</span>
+    </div>
+  </div>
+
+  <div id="settings-display-panel" class="settings-panel" style="display:none">
+    <div class="settings-row">
+      <label>Crosshair color</label>
+      <div id="crosshair-swatches">
+        <button class="swatch active" data-color="#ffffff" style="background:#ffffff" title="White"></button>
+        <button class="swatch" data-color="#ef4444" style="background:#ef4444" title="Red"></button>
+        <button class="swatch" data-color="#22c55e" style="background:#22c55e" title="Green"></button>
+        <button class="swatch" data-color="#facc15" style="background:#facc15" title="Yellow"></button>
+        <button class="swatch" data-color="#22d3ee" style="background:#22d3ee" title="Cyan"></button>
+        <button class="swatch" data-color="#000000" style="background:#000000" title="Black"></button>
+      </div>
+    </div>
+    <div class="settings-row">
+      <label for="crosshair-opacity">Opacity</label>
+      <input type="range" id="crosshair-opacity" min="0" max="100" value="40">
+      <span id="crosshair-opacity-value">40%</span>
+    </div>
+  </div>
+
+  <div id="settings-status"></div>
+</dialog>
+
+<dialog id="help-dialog">
+  <div id="help-header">
+    <span id="help-title">Help</span>
+    <button id="help-close">✕</button>
+  </div>
+  <div id="help-body">
+    <div class="help-section-label">Tools</div>
+    <table class="help-table">
+      <thead><tr><th>Tool</th><th>Key</th><th>How to use</th></tr></thead>
+      <tbody>
+        <tr><td>Select</td><td>V</td><td>Click annotation to select; drag to move</td></tr>
+        <tr><td>Calibrate</td><td>C</td><td>Click two points of known distance and enter value; or click a circle of known diameter</td></tr>
+        <tr><td>Distance</td><td>D</td><td>Click two points</td></tr>
+        <tr><td>Angle</td><td>A</td><td>Click three points (middle point is the vertex)</td></tr>
+        <tr><td>Circle</td><td>O</td><td>Click three points on the circumference</td></tr>
+        <tr><td>Fit Arc</td><td>F</td><td>Click ≥3 points on an arc or circle edge, double-click to confirm</td></tr>
+        <tr><td>Center Dist</td><td>M</td><td>Click two circles to measure center-to-center distance</td></tr>
+        <tr><td>Detect</td><td>E</td><td>Opens detection panel</td></tr>
+        <tr><td>Para</td><td>L</td><td>Click a reference line, then two points (parallel constraint) or a second line (shows parallelism angle)</td></tr>
+        <tr><td>Perp</td><td>P</td><td>Click a reference line, then two points; line is constrained perpendicular to it</td></tr>
+        <tr><td>Area</td><td>R</td><td>Click ≥3 points to define a polygon, double-click to confirm</td></tr>
+        <tr><td>Pt-Circle</td><td>G</td><td>Click a circle, then click a free point — measures shortest gap to the circle edge</td></tr>
+        <tr><td>Intersect</td><td>I</td><td>Click two line annotations — marks their mathematical intersection (even off-screen)</td></tr>
+        <tr><td>Slot</td><td>W</td><td>Click two line annotations — measures perpendicular distance between the lines</td></tr>
+      </tbody>
+    </table>
+    <div class="help-section-label" style="margin-top:12px">Other Shortcuts</div>
+    <table class="help-table">
+      <thead><tr><th>Key</th><th>Action</th></tr></thead>
+      <tbody>
+        <tr><td>Escape</td><td>Back to Select / cancel</td></tr>
+        <tr><td>Delete / Backspace</td><td>Delete selected annotation</td></tr>
+        <tr><td>?</td><td>This help dialog</td></tr>
+        <tr><td>Alt + click</td><td>Bypass snap (precision placement)</td></tr>
+        <tr><td>⊙ (toolbar)</td><td>Click toolbar ⊙ then click canvas to set coordinate origin; hovering shows X/Y relative to origin</td></tr>
+      </tbody>
+    </table>
+  </div>
+</dialog>
+
+<script src="app.js"></script>
+</body>
+</html>
