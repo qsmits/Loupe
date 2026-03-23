@@ -74,3 +74,27 @@ def test_preprocessed_view_returns_jpeg_bytes():
     result = preprocessed_view(frame)
     assert isinstance(result, bytes)
     assert result[:2] == b"\xff\xd8"  # JPEG magic bytes
+
+
+def test_merge_line_segments_returns_list_of_dicts():
+    from backend.vision.detection import merge_line_segments
+    frame = np.zeros((480, 640, 3), dtype=np.uint8)
+    cv2.line(frame, (50, 240), (590, 240), (255, 255, 255), 2)
+    lines = merge_line_segments(frame)
+    assert isinstance(lines, list) and len(lines) >= 1
+    for seg in lines:
+        assert {"x1", "y1", "x2", "y2", "length"} <= seg.keys()
+
+
+def test_merge_line_segments_gapped_line_single_output():
+    from backend.vision.detection import merge_line_segments
+    frame = np.zeros((480, 640, 3), dtype=np.uint8)
+    for x1, x2 in [(80,200),(210,350),(360,560)]:
+        cv2.line(frame, (x1,240), (x2,240), (255,255,255), 2)
+    lines = merge_line_segments(frame)
+    assert len(lines) == 1
+
+
+def test_merge_line_segments_empty_frame():
+    from backend.vision.detection import merge_line_segments
+    assert merge_line_segments(np.zeros((480,640,3),dtype=np.uint8)) == []

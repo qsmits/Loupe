@@ -12,6 +12,14 @@ _LARGE_R_THRESHOLD      = 60     # px — selective large-kernel closing above t
 _CLOSE_KERNEL_SMALL     = 3      # morphological close kernel for all contours
 _CLOSE_KERNEL_LARGE     = 7      # extra close kernel, only used when enc. radius is large
 
+# ── Line merging constants ────────────────────────────────────────────────────
+_MERGE_ANGLE_TOL_DEG   = 5.0
+_MERGE_GAP_TOL_PX      = 15
+_MERGE_PERP_TOL_PX     = 10
+_MERGE_HOUGH_THRESHOLD = 30
+_MERGE_MIN_LENGTH      = 20
+_MERGE_MAX_GAP         = 8
+
 
 def _preprocess(frame: np.ndarray) -> np.ndarray:
     """
@@ -206,6 +214,96 @@ def detect_lines(
             "length": round(length, 1),
         })
     return result
+
+
+def merge_line_segments(
+    frame: np.ndarray,
+    threshold1: int = 50,
+    threshold2: int = 130,
+    hough_threshold: int = _MERGE_HOUGH_THRESHOLD,
+    min_length: int = _MERGE_MIN_LENGTH,
+    max_gap: int = _MERGE_MAX_GAP,
+    angle_tol_deg: float = _MERGE_ANGLE_TOL_DEG,
+    gap_tol_px: float = _MERGE_GAP_TOL_PX,
+    perp_tol_px: float = _MERGE_PERP_TOL_PX,
+) -> list[dict]:
+    """
+    Detect line segments via Hough, then merge collinear fragments.
+    A single straight edge always produces at most one output segment.
+    T-junctions/corners producing two segments from genuinely separate edges are correct.
+    Returns list of {"x1", "y1", "x2", "y2", "length"} dicts.
+    """
+    gray = _preprocess(frame)
+    edges = cv2.Canny(gray, threshold1, threshold2)
+    raw = cv2.HoughLinesP(edges, 1, np.pi/180, hough_threshold,
+                          minLineLength=min_length, maxLineGap=max_gap)
+    if raw is None:
+        return []
+
+    segs = []
+    for x1, y1, x2, y2 in raw[:, 0]:
+        angle = float(np.degrees(np.arctan2(y2-y1, x2-x1)) % 180)
+        segs.append((x1, y1, x2, y2, angle))
+    segs.sort(key=lambda s: s[4])
+
+    def _perp(x1, y1, x2, y2):
+        dx, dy = x2-x1, y2-y1
+        return abs(dy*x1 - dx*y1) / (np.hypot(dx, dy) + 1e-6)
+
+    clusters = []
+    cur = [segs[0]]
+    for s in segs[1:]:
+        if abs(s[4] - cur[0][4]) <= angle_tol_deg:
+            cur.append(s)
+        else:
+            clusters.append(cur); cur = [s]
+    clusters.append(cur)
+
+    results = []
+    for cluster in clusters:
+        cluster.sort(key=lambda s: _perp(*s[:4]))
+        sub_clusters = [[cluster[0]]]
+        for s in cluster[1:]:
+            if abs(_perp(*s[:4]) - _perp(*sub_clusters[-1][0][:4])) <= perp_tol_px:
+                sub_clusters[-1].append(s)
+            else:
+                sub_clusters.append([s])
+
+        for sub in sub_clusters:
+            rx1, ry1, rx2, ry2 = sub[0][:4]
+            rlen = np.hypot(rx2-rx1, ry2-ry1) + 1e-6
+            ux, uy = (rx2-rx1)/rlen, (ry2-ry1)/rlen
+            # Build spans: each raw segment contributes one [t_min, t_max] span
+            # (projecting both endpoints onto the reference direction).
+            spans = []
+            for x1, y1, x2, y2, _ in sub:
+                t1 = x1*ux + y1*uy
+                t2 = x2*ux + y2*uy
+                lo, hi = (t1, t2) if t1 <= t2 else (t2, t1)
+                # keep track of which actual point is at each extreme
+                if t1 <= t2:
+                    spans.append((lo, hi, x1, y1, x2, y2))
+                else:
+                    spans.append((lo, hi, x2, y2, x1, y1))
+            spans.sort()
+            # Merge overlapping / close spans
+            cur_lo, cur_hi, cx1, cy1, cx2, cy2 = spans[0]
+            for lo, hi, sx1, sy1, sx2, sy2 in spans[1:]:
+                if lo - cur_hi <= gap_tol_px:
+                    # extend current span
+                    if hi > cur_hi:
+                        cur_hi = hi
+                        cx2, cy2 = sx2, sy2
+                else:
+                    length = float(np.hypot(cx2-cx1, cy2-cy1))
+                    if length >= min_length:
+                        results.append({"x1":int(cx1),"y1":int(cy1),"x2":int(cx2),"y2":int(cy2),"length":round(length,1)})
+                    cur_lo, cur_hi, cx1, cy1, cx2, cy2 = lo, hi, sx1, sy1, sx2, sy2
+            length = float(np.hypot(cx2-cx1, cy2-cy1))
+            if length >= min_length:
+                results.append({"x1":int(cx1),"y1":int(cy1),"x2":int(cx2),"y2":int(cy2),"length":round(length,1)})
+
+    return results
 
 
 def preprocessed_view(frame: np.ndarray) -> bytes:
