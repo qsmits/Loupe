@@ -20,6 +20,7 @@ const state = {
   dxfAlignHover: null,
   showDeviations: false,
   tolerances: { warn: 0.10, fail: 0.25 },
+  featureTolerances: {},   // { [dxfHandle]: { warn, fail } } — per-feature overrides
   nextId: 1,
   settings: {
     crosshairColor: "#ffffff",
@@ -2550,11 +2551,11 @@ function getDetectedCirclesForAlignment() {
     }));
 }
 
-function deviationColor(delta_mm) {
-  const { warn, fail } = state.tolerances;
-  if (delta_mm <= warn) return "#30d158";   // --success
-  if (delta_mm <= fail) return "#ff9f0a";   // --warning
-  return "#ff453a";                          // --danger
+function deviationColor(delta_mm, handle = null) {
+  const tol = (handle && state.featureTolerances[handle]) || state.tolerances;
+  if (delta_mm <= tol.warn) return "#30d158";   // green
+  if (delta_mm <= tol.fail) return "#ff9f0a";   // amber
+  return "#ff453a";                              // red
 }
 
 function matchDxfToDetected(ann) {
@@ -2646,7 +2647,8 @@ function drawDeviations(ann) {
       ctx.fillStyle = color;
       const labelX = det.cx + det.r + 4;
       ctx.fillText(`Δ ${delta_xy_mm.toFixed(3)} mm`, labelX, det.cy);
-      if (delta_r_mm > state.tolerances.warn) {
+      const tol = (m.handle && state.featureTolerances[m.handle]) || state.tolerances;
+      if (delta_r_mm > tol.warn) {
         ctx.fillText(`Δr ${delta_r_mm.toFixed(3)} mm`, labelX, det.cy + 13);
       }
       ctx.restore();
@@ -2892,6 +2894,7 @@ function saveSession() {
     nextId: state.nextId,
     calibration: state.calibration ? { ...state.calibration } : null,
     origin: state.origin ? { ...state.origin } : null,
+    featureTolerances: { ...state.featureTolerances },
     annotations: state.annotations
       .filter(a => !TRANSIENT_TYPES.has(a.type))
       .map(a => ({ ...a })),
@@ -2962,6 +2965,9 @@ function loadSession(raw) {
 
   state.calibration = data.calibration ?? null;
   state.origin = data.origin ?? null;
+  state.featureTolerances = (data.featureTolerances && typeof data.featureTolerances === "object")
+    ? { ...data.featureTolerances }
+    : {};
 
   // Sync origin annotation's angle from state.origin (state.origin is authoritative)
   if (state.origin) {
@@ -3007,6 +3013,7 @@ document.getElementById("session-file-input").addEventListener("change", e => {
 document.getElementById("btn-clear")?.addEventListener("click", () => {
   if (confirm("Clear all annotations?")) {
     state.annotations = state.annotations.filter(a => a.type === "dxf-overlay");
+    state.featureTolerances = {};
     state.selected = null;
     state.calibration = null; // calibration annotation was filtered out above
     updateCalibrationButton();
