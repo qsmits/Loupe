@@ -1020,6 +1020,21 @@ function renderSidebar() {
   });
 }
 
+// ── Tolerances config ──────────────────────────────────────────────────────
+async function loadTolerances() {
+  try {
+    const r = await fetch("/config/tolerances");
+    if (!r.ok) return;
+    const cfg = await r.json();
+    state.tolerances.warn = cfg.tolerance_warn;
+    state.tolerances.fail = cfg.tolerance_fail;
+    const warnInput = document.getElementById("tol-warn-input");
+    const failInput = document.getElementById("tol-fail-input");
+    if (warnInput) warnInput.value = cfg.tolerance_warn;
+    if (failInput) failInput.value = cfg.tolerance_fail;
+  } catch (_) {}
+}
+
 // ── UI config & calibration button ────────────────────────────────────────
 async function loadUiConfig() {
   try {
@@ -1894,6 +1909,7 @@ function drawCrosshair() {
 // ── Init ───────────────────────────────────────────────────────────────────
 loadCameraInfo();
 loadUiConfig();            // ← added
+loadTolerances();          // ← added
 updateCalibrationButton(); // ← added
 document.querySelectorAll("#tool-strip .strip-btn[data-tool]").forEach(btn => {
   btn.addEventListener("click", () => setTool(btn.dataset.tool));
@@ -3175,6 +3191,34 @@ document.getElementById("btn-save-general").addEventListener("click", async () =
     setTimeout(() => { document.getElementById("settings-status").textContent = ""; }, 2000);
   } catch (_) {
     document.getElementById("settings-status").textContent = "Save failed.";
+  }
+});
+
+// Tolerances tab Save button
+document.getElementById("btn-save-tolerances")?.addEventListener("click", async () => {
+  const warn = parseFloat(document.getElementById("tol-warn-input")?.value);
+  const fail = parseFloat(document.getElementById("tol-fail-input")?.value);
+  const statusEl3 = document.getElementById("tolerances-status");
+  if (!isFinite(warn) || !isFinite(fail) || warn <= 0 || fail <= 0 || warn >= fail) {
+    if (statusEl3) { statusEl3.textContent = "Warn must be > 0 and < Fail"; statusEl3.style.color = "var(--danger)"; }
+    return;
+  }
+  try {
+    const r = await fetch("/config/tolerances", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ tolerance_warn: warn, tolerance_fail: fail }),
+    });
+    if (r.ok) {
+      state.tolerances.warn = warn;
+      state.tolerances.fail = fail;
+      if (statusEl3) { statusEl3.textContent = "Saved"; statusEl3.style.color = "var(--success)"; }
+      if (state.showDeviations) redraw();
+    } else {
+      if (statusEl3) { statusEl3.textContent = "Save failed"; statusEl3.style.color = "var(--danger)"; }
+    }
+  } catch (err) {
+    if (statusEl3) { statusEl3.textContent = "Error: " + err.message; statusEl3.style.color = "var(--danger)"; }
   }
 });
 
