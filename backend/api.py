@@ -71,8 +71,8 @@ class LineParams(BaseModel):
 
 
 class UiConfig(BaseModel):
-    app_name: str
-    theme: str
+    app_name: str = Field(min_length=1, max_length=100)
+    theme: str = Field(max_length=50, pattern=r"^[a-z0-9-]+$")
 
 
 router = APIRouter()

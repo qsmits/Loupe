@@ -31,7 +31,13 @@ def test_post_config_ui_accepts_valid_payload(client):
     assert resp.status_code == 200
 
 
-def test_post_config_ui_rejects_unknown_keys(client):
+def test_post_config_ui_rejects_missing_required_fields(client):
     # Pydantic should reject payloads missing required fields
     resp = client.post("/config/ui", json={"evil": "payload"})
     assert resp.status_code == 422
+
+
+def test_post_then_get_round_trip(client):
+    client.post("/config/ui", json={"app_name": "NewName", "theme": "macos-dark"})
+    resp = client.get("/config/ui")
+    assert resp.json()["app_name"] == "NewName"
