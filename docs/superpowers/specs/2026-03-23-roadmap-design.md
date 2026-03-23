@@ -39,7 +39,7 @@ The current deviation display (`drawDeviations()`) already renders per-circle la
 
 **Development method:** Use existing snapshots as a test bed to tune algorithms iteratively before integrating into the app.
 
-**Detection pipeline architecture:** Contour-based edge tracing (deliverable 3) is the primary approach for straight feature detection. Hough fragment merging (deliverable 2) is the fallback for images where contour tracing is insufficient. Only one pipeline feeds DXF line matching at a time, selected per-image based on which produces fewer spurious segments. The 90% edge detection success criterion applies to whichever pipeline is selected for each image — not to the primary path alone.
+**Detection pipeline architecture:** Contour-based edge tracing (deliverable 3) is the primary approach for straight feature detection. Hough fragment merging (deliverable 2) is the fallback for images where contour tracing is insufficient. The best-performing approach is chosen during development on the reference set and configured as the default; it is not runtime-dynamic per image. Real-world test images may be imperfect (non-ideal lighting, contrast variation) so the success criteria reflect achievable targets on realistic images, not ideal conditions.
 
 ### Deliverables
 
@@ -51,7 +51,7 @@ The current deviation display (`drawDeviations()`) already renders per-circle la
 
 4. **Partial arc detection** — detect arcs subtending less than a full circle. The current `detect_circles` path rejects arcs below 160° (`_ARC_MIN_COVERAGE`) to avoid false positives on circle detection. Partial arc detection must be an entirely independent code path from circle detection, with no shared filtering, and a configurable lower threshold. The 160° guard in the circle detection path remains untouched. Detector output format: `{"cx": float, "cy": float, "r": float, "start_deg": float, "end_deg": float}` per arc, in image pixel coordinates.
 
-5. **DXF line matching** — match detected line segments (endpoint pairs) to DXF line segments. Deviation is measured as the perpendicular distance from the DXF segment's midpoint to the detected segment's line. Angular error is reported separately as degrees. Both values are shown as callouts on the overlay with pass/fail coloring.
+5. **DXF line matching** — match detected line segments (endpoint pairs) to DXF line segments. Deviation is measured as the perpendicular distance from the DXF segment's midpoint to the detected segment's line. This is valid because longitudinal shifts would manifest as deviations on adjacent intersecting features. Angular error is reported separately as degrees. Both values are shown as callouts on the overlay with pass/fail coloring.
 
 6. **DXF arc matching** — match detected partial arcs to DXF arc entities; show center deviation (mm) and radius deviation (mm) per arc as callouts on the overlay.
 
@@ -77,9 +77,9 @@ The design sub-task must conclude with one of:
 - **Slot matching** — a slot is two parallel lines connected by two semicircular arcs; detect and match as a single compound feature with width, length, and positional deviation
 - **Pocket/profile matching** — closed boundaries composed of arbitrary arc+line sequences (rounded rectangles, D-cutouts, prismatic profiles) matched against DXF outlines. In scope regardless of which alignment option is chosen, for parts that can be aligned.
 
-**Success criteria (default, if option a):** A part with no circles can be loaded, auto-aligned using heterogeneous RANSAC, and inspected with all of: line features showing perpendicular deviation, arc features showing center and radius deviation, slot features showing width/length/position deviation, and pocket/profile features showing boundary deviation.
+**Success criteria (default, if option a):** A part with no circles can be loaded, auto-aligned using heterogeneous RANSAC, and inspected with all of: line features showing perpendicular deviation, arc features showing center and radius deviation, slot features showing width/length/position deviation, and pocket/profile features showing per-feature boundary deviation using the same tolerance model as circles (per-feature or global).
 
-**Success criteria (if option b):** All of the above for parts that have circles and can be auto-aligned. The DXF overlay can be manually drag-translated for parts without circles, and a drag-aligned part can then be inspected with all feature types showing deviations.
+**Success criteria (if option b):** All of the above for parts that have circles and can be auto-aligned. The DXF overlay can be manually drag-translated for parts without circles. Manual alignment accuracy is the user's responsibility; alignment is considered done when the user proceeds with inspection.
 
 ---
 
@@ -109,7 +109,7 @@ The design sub-task must conclude with one of:
 
 **Success criteria:**
 - After a complete inspection, a user can export a CSV with correct per-feature data for all matched geometry types, with part name sourced from the DXF filename.
-- CSV re-export from a reloaded session is identical to the original CSV.
+- CSV re-export from a reloaded session produces correct per-feature data; a new file with a new export timestamp is acceptable.
 - PDF re-export from a reloaded session contains the same result table, per-feature data, and camera frame image as the original export, regardless of whether a camera is active.
 
 ---
