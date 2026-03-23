@@ -1960,58 +1960,6 @@ if (overflowBtn && overflowPopup) {
 // ── Close dropdowns on click-outside ───────────────────────────────────────
 document.addEventListener("click", closeAllDropdowns);
 
-// ── Snapshot browser ────────────────────────────────────────────────────────
-async function loadSnapshotList() {
-  const snapshotListEl = document.getElementById("snapshot-list");
-  try {
-    const resp = await fetch("/snapshots");
-    const snapshots = await resp.json();
-    if (snapshots.length === 0) {
-      snapshotListEl.innerHTML = '<div style="color:var(--muted);font-size:11px;padding:2px 0">No snapshots yet</div>';
-      return;
-    }
-    snapshotListEl.innerHTML = snapshots.map(s =>
-      `<div class="snapshot-item" data-filename="${s.filename}">
-        <span class="snapshot-name">${s.timestamp}</span>
-        <span class="snapshot-size">${s.size_kb}k</span>
-      </div>`
-    ).join("");
-    snapshotListEl.querySelectorAll(".snapshot-item").forEach(el => {
-      el.addEventListener("click", async () => {
-        const filename = el.dataset.filename;
-        const r = await fetch("/load-snapshot", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ filename }),
-        });
-        if (!r.ok) { alert(await r.text()); return; }
-        const { width, height } = await r.json();
-        state.frozenSize = { w: width, h: height };
-        const frameResp = await fetch("/frame");
-        if (!frameResp.ok) { alert("Failed to load frame from server"); return; }
-        const frameBlob = await frameResp.blob();
-        const frameUrl = URL.createObjectURL(frameBlob);
-        const loadedImg = new Image();
-        loadedImg.onload = () => {
-          URL.revokeObjectURL(frameUrl);
-          state.frozenBackground = loadedImg;
-          img.style.opacity = "0";
-          state.frozen = true;
-          updateDropOverlay();
-          document.getElementById("btn-freeze").classList.add("active");
-          statusEl.textContent = `Snapshot: ${filename}`;
-          redraw();
-        };
-        loadedImg.src = frameUrl;
-      });
-    });
-  } catch {
-    snapshotListEl.innerHTML = '<div style="color:var(--muted);font-size:11px">Unavailable</div>';
-  }
-}
-
-loadSnapshotList();
-document.getElementById("btn-refresh-snapshots").addEventListener("click", loadSnapshotList);
 
 function handleSelectDown(pt, e) {
   // First check drag handles of selected annotation
@@ -2448,17 +2396,6 @@ viewerEl.addEventListener("drop", async e => {
   loadedImg.src = url;
 });
 
-// ── Raw snapshot ───────────────────────────────────────────────────────────
-document.getElementById("btn-snapshot").addEventListener("click", async () => {
-  const r = await fetch("/snapshot", { method: "POST" });
-  if (!r.ok) { alert("Snapshot failed"); return; }
-  const { filename } = await r.json();
-  // Briefly flash a status message
-  const prev = statusEl.textContent;
-  statusEl.textContent = `Saved: ${filename}`;
-  setTimeout(() => { statusEl.textContent = prev; }, 2000);
-  loadSnapshotList();
-});
 
 // ── Coordinate origin ────────────────────────────────────────────────────────
 let _originMode = false;
@@ -2763,7 +2700,7 @@ function loadSession(raw) {
   redraw();
 }
 
-document.getElementById("btn-load-session").addEventListener("click", () => {
+document.getElementById("btn-load-session")?.addEventListener("click", () => {
   document.getElementById("session-file-input").click();
 });
 
@@ -2779,7 +2716,7 @@ document.getElementById("session-file-input").addEventListener("change", e => {
 });
 
 // ── Clear all annotations ──────────────────────────────────────────────────
-document.getElementById("btn-clear").addEventListener("click", () => {
+document.getElementById("btn-clear")?.addEventListener("click", () => {
   if (confirm("Clear all annotations?")) {
     state.annotations = state.annotations.filter(a => a.type === "dxf-overlay");
     state.selected = null;
@@ -2923,7 +2860,7 @@ document.getElementById("btn-crosshair").addEventListener("click", () => {
 document.getElementById("btn-calibration").addEventListener("click", () => setTool("calibrate"));
 
 // ── Help dialog ─────────────────────────────────────────────────────────────
-document.getElementById("btn-help").addEventListener("click", () => {
+document.getElementById("btn-help")?.addEventListener("click", () => {
   document.getElementById("help-dialog").showModal();
 });
 document.getElementById("help-close").addEventListener("click", () => {
@@ -2957,6 +2894,26 @@ document.querySelectorAll(".settings-tab").forEach(tab => {
     tab.classList.add("active");
     document.getElementById(`settings-${tab.dataset.tab}-panel`).style.display = "block";
   });
+});
+
+// General tab Save button
+document.getElementById("btn-save-general").addEventListener("click", async () => {
+  const appName = document.getElementById("app-name-input").value.trim() || "Microscope";
+  const theme   = document.getElementById("theme-select").value;
+  try {
+    await fetch("/config/ui", {
+      method:  "POST",
+      headers: { "Content-Type": "application/json" },
+      body:    JSON.stringify({ app_name: appName, theme }),
+    });
+    document.getElementById("app-title").textContent = appName;
+    document.title = appName;
+    document.documentElement.className = `theme-${theme}`;
+    document.getElementById("settings-status").textContent = "Saved.";
+    setTimeout(() => { document.getElementById("settings-status").textContent = ""; }, 2000);
+  } catch (_) {
+    document.getElementById("settings-status").textContent = "Save failed.";
+  }
 });
 
 // Crosshair swatches
