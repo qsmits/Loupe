@@ -1377,19 +1377,22 @@ function drawPreprocessedOverlay(ann) {
 }
 
 function drawDxfOverlay(ann) {
-  const { entities, offsetX, offsetY, scale, flipH = false, flipV = false } = ann;
-  const angle = state.origin?.angle ?? 0;
+  const { entities, offsetX, offsetY, scale, flipH = false, flipV = false, angle: annAngle = 0 } = ann;
+  const originAngle = state.origin?.angle ?? 0;
 
   ctx.save();
   ctx.strokeStyle = "#00d4ff";
   ctx.setLineDash([6, 3]);
 
-  // Build transform: translate to anchor → rotate → flip → scale+Y-flip
+  // Build transform — ctx calls are applied to coordinates in REVERSE call order.
+  // Desired coordinate pipeline: rotate(annAngle in DXF Y-up) → flip → scale+Y-invert → rotate(originAngle) → translate
+  // Since scale(s,-s) inverts Y, ctx.rotate(-annAngle) in that space equals rotate(+annAngle) in Y-up space.
   ctx.translate(offsetX, offsetY);
-  if (angle) ctx.rotate(angle);
+  if (originAngle) ctx.rotate(originAngle);
+  ctx.scale(scale, -scale);   // DXF Y-up → canvas Y-down
   if (flipH) ctx.scale(-1, 1);
   if (flipV) ctx.scale(1, -1);
-  ctx.scale(scale, -scale);   // DXF Y-up → canvas Y-down
+  if (annAngle) ctx.rotate(-annAngle * Math.PI / 180);  // rotate in DXF Y-up space
   ctx.lineWidth = 1 / scale;  // compensate so strokes stay 1px on screen
 
   for (const en of entities) {
@@ -1425,19 +1428,19 @@ function dxfToCanvas(x, y, ann) {
   const { offsetX, offsetY, scale, flipH = false, flipV = false, angle: annAngle = 0 } = ann;
   const originAngle = state.origin?.angle ?? 0;
 
-  // 1. Apply DXF overlay rotation in DXF space (Y-up), before flip
+  // 1. Flip in DXF space (before rotation)
+  const xf = flipH ? -x : x;
+  const yf = flipV ? -y : y;
+
+  // 2. Apply DXF overlay rotation in DXF space (Y-up)
   const cosA = Math.cos(annAngle * Math.PI / 180);
   const sinA = Math.sin(annAngle * Math.PI / 180);
-  const xr = x * cosA - y * sinA;
-  const yr = x * sinA + y * cosA;
-
-  // 2. Flip
-  const xf = flipH ? -xr : xr;
-  const yf = flipV ? -yr : yr;
+  const xr = xf * cosA - yf * sinA;
+  const yr = xf * sinA + yf * cosA;
 
   // 3. Scale + Y-flip (DXF Y-up → canvas Y-down)
-  let cx = xf * scale;
-  let cy = -yf * scale;
+  let cx = xr * scale;
+  let cy = -yr * scale;
 
   // 4. Apply canvas/origin rotation (existing behaviour)
   if (originAngle) {

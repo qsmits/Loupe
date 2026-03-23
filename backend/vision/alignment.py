@@ -22,23 +22,41 @@ def _apply_flip(pts: np.ndarray, flip_h: bool, flip_v: bool) -> np.ndarray:
 
 
 def _compute_transform(p1, p2, q1, q2):
-    """Compute (tx, ty, angle_rad) mapping p1->q1, p2->q2 (all 2D numpy arrays)."""
+    """Compute (tx, ty, angle_rad) mapping p1->q1, p2->q2.
+    p1, p2: DXF pixel coordinates (Y-up, after flipping)
+    q1, q2: canvas pixel coordinates (Y-down)
+    The transform applies as: mx = dx*cos - dy*sin + tx,  my = -(dx*sin + dy*cos) + ty
+
+    Derivation: treating dp = (dpx, dpy) and dq = (dqx, dqy),
+    the transform gives dqx = dpx*cos - dpy*sin, dqy = -(dpx*sin + dpy*cos).
+    Using complex arithmetic: e^{ia} = (dqx - i*dqy) / (dpx + i*dpy)
+    So: angle = atan2(-dqy, dqx) - atan2(dpy, dpx)
+              = atan2(-dq[1], dq[0]) - atan2(dp[1], dp[0])
+    """
     dp = p2 - p1
     dq = q2 - q1
-    angle = math.atan2(float(dq[1]), float(dq[0])) - math.atan2(float(dp[1]), float(dp[0]))
+    angle = math.atan2(-float(dq[1]), float(dq[0])) - math.atan2(float(dp[1]), float(dp[0]))
     cos_a, sin_a = math.cos(angle), math.sin(angle)
-    rp1 = np.array([p1[0]*cos_a - p1[1]*sin_a, p1[0]*sin_a + p1[1]*cos_a])
-    tx = float(q1[0] - rp1[0])
-    ty = float(q1[1] - rp1[1])
+    # Rotate p1 in DXF Y-up space
+    rp1_x = float(p1[0]) * cos_a - float(p1[1]) * sin_a
+    rp1_y = float(p1[0]) * sin_a + float(p1[1]) * cos_a
+    # Canvas position of p1: (rp1_x + tx, -rp1_y + ty) = q1
+    tx = float(q1[0]) - rp1_x
+    ty = float(q1[1]) + rp1_y  # ty = q1[1] + rp1_y because canvas_y = -rp1_y + ty
     return tx, ty, angle
 
 
 def _score_transform(dxf_px, detected_px, tx, ty, angle):
+    """Score a (tx, ty, angle) transform against detected circles.
+    dxf_px: DXF pixel coords (Y-up, after flipping)
+    detected_px: canvas pixel coords (Y-down)
+    Transform: mx = dx*cos - dy*sin + tx,  my = -(dx*sin + dy*cos) + ty
+    """
     cos_a, sin_a = math.cos(angle), math.sin(angle)
     inliers = []
     for i, (dx, dy, dr) in enumerate(dxf_px):
         mx = dx * cos_a - dy * sin_a + tx
-        my = dx * sin_a + dy * cos_a + ty
+        my = -(dx * sin_a + dy * cos_a) + ty  # Y-flip: DXF Y-up → canvas Y-down
         for j, (ex, ey, er) in enumerate(detected_px):
             if abs(dr - er) / (max(dr, er) + 1e-6) > 0.3:
                 continue
@@ -50,10 +68,14 @@ def _score_transform(dxf_px, detected_px, tx, ty, angle):
 
 
 def _refine_transform(dxf_px, detected_px, inliers):
-    """Closed-form least-squares (Procrustes) over inlier pairs."""
+    """Closed-form least-squares (Procrustes) over inlier pairs.
+    Maps DXF Y-up pixel positions → canvas Y-down pixel positions.
+    Negates src Y to match canvas Y-down convention before SVD.
+    """
     if len(inliers) < 2:
         return None
-    src = np.array([[dxf_px[i][0], dxf_px[i][1]] for i, _ in inliers], dtype=float)
+    # Negate DXF Y to convert to canvas Y-down before Procrustes
+    src = np.array([[dxf_px[i][0], -dxf_px[i][1]] for i, _ in inliers], dtype=float)
     dst = np.array([[detected_px[j][0], detected_px[j][1]] for _, j in inliers], dtype=float)
     src_c = src.mean(axis=0)
     dst_c = dst.mean(axis=0)
@@ -66,7 +88,9 @@ def _refine_transform(dxf_px, detected_px, inliers):
     if np.linalg.det(R) < 0:
         Vt[-1, :] *= -1
         R = Vt.T @ U.T
-    angle = math.atan2(float(R[1, 0]), float(R[0, 0]))
+    # R maps Y-flipped DXF → canvas Y-down. The Procrustes angle is in Y-down space.
+    # _score_transform uses DXF Y-up angle, which is the negation.
+    angle = -math.atan2(float(R[1, 0]), float(R[0, 0]))
     t = dst_c - R @ src_c
     return float(t[0]), float(t[1]), angle
 
@@ -153,10 +177,9 @@ def align_circles(dxf_circles, detected_circles, pixels_per_mm):
             confidence = "low"
         else:
             confidence = "failed"
-        # When the Y-axis is flipped (flip_v XOR flip_h), the rotation direction
-        # in the flipped coordinate system is the opposite of the physical angle.
-        if flip_v ^ flip_h:
-            angle_rad = -angle_rad
+        # Note: _compute_transform already accounts for the DXF Y-up → canvas Y-down
+        # coordinate change, so the angle is always in DXF Y-up convention regardless
+        # of flip state. No sign correction needed here.
 
     return {
         "tx": tx,

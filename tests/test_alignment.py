@@ -36,8 +36,10 @@ def test_align_circles_pure_translation():
         (10*ppm + 50, -(15*ppm) + 30, 5*ppm),
     ]
     result = align_circles(dxf, detected, pixels_per_mm=ppm)
-    assert result["confidence"] in ("high", "low")
-    assert result["inlier_count"] >= 2
+    assert result["confidence"] == "high"
+    assert result["inlier_count"] == 3  # all 3 should match with correct Y-flip handling
+    assert result["flip_h"] is False
+    assert result["flip_v"] is False
     assert abs(result["tx"] - 50) < 5
     assert abs(result["ty"] - 30) < 5
     assert abs(result["angle_deg"]) < 2
