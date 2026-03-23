@@ -18,6 +18,8 @@ const state = {
   dxfAlignStep: 0,
   dxfAlignPick: null,
   dxfAlignHover: null,
+  showDeviations: false,
+  tolerances: { warn: 0.10, fail: 0.25 },
   nextId: 1,
   settings: {
     crosshairColor: "#ffffff",
@@ -1018,6 +1020,21 @@ function renderSidebar() {
   });
 }
 
+// ── Tolerances config ──────────────────────────────────────────────────────
+async function loadTolerances() {
+  try {
+    const r = await fetch("/config/tolerances");
+    if (!r.ok) return;
+    const cfg = await r.json();
+    state.tolerances.warn = cfg.tolerance_warn;
+    state.tolerances.fail = cfg.tolerance_fail;
+    const warnInput = document.getElementById("tol-warn-input");
+    const failInput = document.getElementById("tol-fail-input");
+    if (warnInput) warnInput.value = cfg.tolerance_warn;
+    if (failInput) failInput.value = cfg.tolerance_fail;
+  } catch (_) {}
+}
+
 // ── UI config & calibration button ────────────────────────────────────────
 async function loadUiConfig() {
   try {
@@ -1282,7 +1299,7 @@ function drawAnnotations() {
     else if (ann.type === "circle")     drawCircle(ann, pendingHighlight || sel);
     else if (ann.type === "edges-overlay")    drawEdgesOverlay(ann);
     else if (ann.type === "preprocessed-overlay") drawPreprocessedOverlay(ann);
-    else if (ann.type === "dxf-overlay")      drawDxfOverlay(ann);
+    else if (ann.type === "dxf-overlay")      { drawDxfOverlay(ann); if (state.showDeviations) drawDeviations(ann); }
     else if (ann.type === "detected-circle") drawDetectedCircle(ann, pendingHighlight || sel);
     else if (ann.type === "detected-line")   drawDetectedLine(ann, sel);
     else if (ann.type === "calibration") drawCalibration(ann, sel);
@@ -1360,19 +1377,22 @@ function drawPreprocessedOverlay(ann) {
 }
 
 function drawDxfOverlay(ann) {
-  const { entities, offsetX, offsetY, scale, flipH = false, flipV = false } = ann;
-  const angle = state.origin?.angle ?? 0;
+  const { entities, offsetX, offsetY, scale, flipH = false, flipV = false, angle: annAngle = 0 } = ann;
+  const originAngle = state.origin?.angle ?? 0;
 
   ctx.save();
   ctx.strokeStyle = "#00d4ff";
   ctx.setLineDash([6, 3]);
 
-  // Build transform: translate to anchor → rotate → flip → scale+Y-flip
+  // Build transform — ctx calls are applied to coordinates in REVERSE call order.
+  // Desired coordinate pipeline: rotate(annAngle in DXF Y-up) → flip → scale+Y-invert → rotate(originAngle) → translate
+  // Since scale(s,-s) inverts Y, ctx.rotate(-annAngle) in that space equals rotate(+annAngle) in Y-up space.
   ctx.translate(offsetX, offsetY);
-  if (angle) ctx.rotate(angle);
+  if (originAngle) ctx.rotate(originAngle);
+  ctx.scale(scale, -scale);   // DXF Y-up → canvas Y-down
   if (flipH) ctx.scale(-1, 1);
   if (flipV) ctx.scale(1, -1);
-  ctx.scale(scale, -scale);   // DXF Y-up → canvas Y-down
+  if (annAngle) ctx.rotate(-annAngle * Math.PI / 180);  // rotate in DXF Y-up space
   ctx.lineWidth = 1 / scale;  // compensate so strokes stay 1px on screen
 
   for (const en of entities) {
@@ -1405,16 +1425,29 @@ function drawDxfOverlay(ann) {
 }
 
 function dxfToCanvas(x, y, ann) {
-  const { offsetX, offsetY, scale, flipH = false, flipV = false } = ann;
-  const angle = state.origin?.angle ?? 0;
+  const { offsetX, offsetY, scale, flipH = false, flipV = false, angle: annAngle = 0 } = ann;
+  const originAngle = state.origin?.angle ?? 0;
+
+  // 1. Flip in DXF space (before rotation)
   const xf = flipH ? -x : x;
   const yf = flipV ? -y : y;
-  let cx = xf * scale;
-  let cy = -yf * scale;           // Y-flip
-  if (angle) {
-    const cos = Math.cos(angle), sin = Math.sin(angle);
-    [cx, cy] = [cx * cos - cy * sin, cx * sin + cy * cos];
+
+  // 2. Apply DXF overlay rotation in DXF space (Y-up)
+  const cosA = Math.cos(annAngle * Math.PI / 180);
+  const sinA = Math.sin(annAngle * Math.PI / 180);
+  const xr = xf * cosA - yf * sinA;
+  const yr = xf * sinA + yf * cosA;
+
+  // 3. Scale + Y-flip (DXF Y-up → canvas Y-down)
+  let cx = xr * scale;
+  let cy = -yr * scale;
+
+  // 4. Apply canvas/origin rotation (existing behaviour)
+  if (originAngle) {
+    const cos2 = Math.cos(originAngle), sin2 = Math.sin(originAngle);
+    [cx, cy] = [cx * cos2 - cy * sin2, cx * sin2 + cy * cos2];
   }
+
   return { x: offsetX + cx, y: offsetY + cy };
 }
 
@@ -1879,6 +1912,7 @@ function drawCrosshair() {
 // ── Init ───────────────────────────────────────────────────────────────────
 loadCameraInfo();
 loadUiConfig();            // ← added
+loadTolerances();          // ← added
 updateCalibrationButton(); // ← added
 document.querySelectorAll("#tool-strip .strip-btn[data-tool]").forEach(btn => {
   btn.addEventListener("click", () => setTool(btn.dataset.tool));
@@ -2427,6 +2461,7 @@ document.getElementById("dxf-input").addEventListener("change", async e => {
       offsetX: canvas.width / 2,
       offsetY: canvas.height / 2,
       scale,
+      angle: 0,
       scaleManual: false,
       flipH: false,
       flipV: false,
@@ -2434,6 +2469,7 @@ document.getElementById("dxf-input").addEventListener("change", async e => {
     const dxfPanelEl = document.getElementById("dxf-panel");
     if (dxfPanelEl) dxfPanelEl.style.display = "";
     enterDxfAlignMode();
+    updateDxfControlsVisibility();
     redraw();
     e.target.value = "";
   } catch (err) {
@@ -2465,6 +2501,7 @@ document.getElementById("btn-dxf-clear")?.addEventListener("click", () => {
   state.annotations = state.annotations.filter(a => a.type !== "dxf-overlay");
   const dxfPanelEl2 = document.getElementById("dxf-panel");
   if (dxfPanelEl2) dxfPanelEl2.style.display = "none";
+  updateDxfControlsVisibility();
   redraw();
 });
 
@@ -2476,8 +2513,262 @@ document.getElementById("btn-dxf-clear")?.addEventListener("click", () => {
     const key = id === "flip-h" ? "flipH" : "flipV";
     ann[key] = !ann[key];
     document.getElementById(`btn-dxf-${id}`)?.classList.toggle("active", ann[key]);
+    updateDxfControlsVisibility();
     redraw();
   });
+});
+
+function updateDxfControlsVisibility() {
+  const ann = state.annotations.find(a => a.type === "dxf-overlay");
+  const group = document.getElementById("dxf-controls-group");
+  if (group) group.hidden = !ann;
+  if (ann) {
+    const display = document.getElementById("dxf-angle-display");
+    if (display) display.textContent = `${(ann.angle ?? 0).toFixed(1)}°`;
+    const scaleInput = document.getElementById("dxf-scale");
+    if (scaleInput) scaleInput.value = (ann.scale ?? 1).toFixed(3);
+    const fH = document.getElementById("btn-dxf-flip-h");
+    if (fH) fH.classList.toggle("active", ann.flipH ?? false);
+    const fV = document.getElementById("btn-dxf-flip-v");
+    if (fV) fV.classList.toggle("active", ann.flipV ?? false);
+  }
+  const dxfCircleCount = ann?.entities?.filter(e => e.type === "circle").length ?? 0;
+  const autoAlignBtn = document.getElementById("btn-auto-align");
+  if (autoAlignBtn) {
+    autoAlignBtn.disabled = dxfCircleCount < 2;
+    autoAlignBtn.title = dxfCircleCount < 2 ? "At least 2 DXF circles required" : "";
+  }
+}
+
+function getDetectedCirclesForAlignment() {
+  return state.annotations
+    .filter(a => a.type === "detected-circle")
+    .map(a => ({
+      x: a.x * (canvas.width / a.frameWidth),
+      y: a.y * (canvas.height / a.frameHeight),
+      radius: a.radius * (canvas.width / a.frameWidth),
+    }));
+}
+
+function deviationColor(delta_mm) {
+  const { warn, fail } = state.tolerances;
+  if (delta_mm <= warn) return "#30d158";   // --success
+  if (delta_mm <= fail) return "#ff9f0a";   // --warning
+  return "#ff453a";                          // --danger
+}
+
+function matchDxfToDetected(ann) {
+  const cal = state.calibration;
+  if (!cal?.pixelsPerMm) return [];
+  const ppm = cal.pixelsPerMm;
+
+  const detected = state.annotations
+    .filter(a => a.type === "detected-circle")
+    .map(a => ({
+      cx: a.x * (canvas.width / a.frameWidth),
+      cy: a.y * (canvas.height / a.frameHeight),
+      r:  a.radius * (canvas.width / a.frameWidth),
+    }));
+
+  return ann.entities
+    .filter(e => e.type === "circle")
+    .map(e => {
+      const nominal = dxfToCanvas(e.cx, e.cy, ann);
+      const r_px = e.radius * ann.scale;
+      const threshold = Math.max(10, 0.5 * r_px);
+      let best = null, bestDist = Infinity;
+      for (const d of detected) {
+        const dist = Math.hypot(d.cx - nominal.x, d.cy - nominal.y);
+        if (dist < threshold && dist < bestDist) {
+          bestDist = dist;
+          best = d;
+        }
+      }
+      if (!best) return { nominal, r_px, matched: false };
+      const delta_xy_mm = bestDist / ppm;
+      const delta_r_mm  = Math.abs(best.r - r_px) / ppm;
+      return {
+        nominal, r_px,
+        detected: best,
+        matched: true,
+        delta_xy_mm,
+        delta_r_mm,
+        color: deviationColor(Math.max(delta_xy_mm, delta_r_mm)),
+      };
+    });
+}
+
+function drawDeviations(ann) {
+  const matches = matchDxfToDetected(ann);
+  for (const m of matches) {
+    if (!m.matched) {
+      // Unmatched: muted dashed circle + crosshair at nominal
+      ctx.save();
+      ctx.strokeStyle = "#636366";
+      ctx.setLineDash([4, 3]);
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.arc(m.nominal.x, m.nominal.y, m.r_px, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.beginPath();
+      ctx.moveTo(m.nominal.x - 5, m.nominal.y); ctx.lineTo(m.nominal.x + 5, m.nominal.y);
+      ctx.moveTo(m.nominal.x, m.nominal.y - 5); ctx.lineTo(m.nominal.x, m.nominal.y + 5);
+      ctx.stroke();
+      ctx.fillStyle = "#636366";
+      ctx.font = "9px ui-monospace, monospace";
+      ctx.fillText("not detected", m.nominal.x + m.r_px + 4, m.nominal.y);
+      ctx.restore();
+    } else {
+      const { nominal, r_px, detected: det, delta_xy_mm, delta_r_mm, color } = m;
+      ctx.save();
+      // Nominal circle (dashed blue)
+      ctx.strokeStyle = "#0a84ff";
+      ctx.setLineDash([4, 3]);
+      ctx.lineWidth = 1;
+      ctx.globalAlpha = 0.55;
+      ctx.beginPath(); ctx.arc(nominal.x, nominal.y, r_px, 0, Math.PI * 2); ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(nominal.x - 5, nominal.y); ctx.lineTo(nominal.x + 5, nominal.y);
+      ctx.moveTo(nominal.x, nominal.y - 5); ctx.lineTo(nominal.x, nominal.y + 5);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.globalAlpha = 1;
+      // Detected circle (solid, colour-coded)
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.arc(det.cx, det.cy, det.r, 0, Math.PI * 2); ctx.stroke();
+      ctx.fillStyle = color;
+      ctx.beginPath(); ctx.arc(det.cx, det.cy, 2.5, 0, Math.PI * 2); ctx.fill();
+      // Labels
+      ctx.font = "10px ui-monospace, monospace";
+      ctx.fillStyle = color;
+      const labelX = det.cx + det.r + 4;
+      ctx.fillText(`Δ ${delta_xy_mm.toFixed(3)} mm`, labelX, det.cy);
+      if (delta_r_mm > state.tolerances.warn) {
+        ctx.fillText(`Δr ${delta_r_mm.toFixed(3)} mm`, labelX, det.cy + 13);
+      }
+      ctx.restore();
+    }
+  }
+}
+
+document.getElementById("btn-auto-align")?.addEventListener("click", async () => {
+  const ann = state.annotations.find(a => a.type === "dxf-overlay");
+  if (!ann) return;
+
+  const statusEl2 = document.getElementById("align-status");
+  function setStatus(msg, isError = false) {
+    if (!statusEl2) return;
+    statusEl2.textContent = msg;
+    statusEl2.style.color = isError ? "var(--danger)" : "var(--text-secondary)";
+    statusEl2.hidden = !msg;
+  }
+
+  // Ensure we have detected circles
+  let circles = getDetectedCirclesForAlignment();
+  if (circles.length === 0) {
+    // Auto-freeze and detect
+    if (!state.frozen) {
+      await fetch("/freeze", { method: "POST" });
+      state.frozen = true;
+      updateFreezeUI();
+    }
+    setStatus("Running circle detection…");
+    const r = await fetch("/detect-circles", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ min_radius: 8, max_radius: 500 }),
+    });
+    if (!r.ok) { setStatus("Detection failed", true); return; }
+    const detected = await r.json();
+    if (detected.length === 0) {
+      setStatus("No circles detected — run detection manually first", true);
+      return;
+    }
+    // Store detected circles as annotations
+    const info = await fetch("/camera/info").then(r => r.json());
+    pushUndo();
+    state.annotations = state.annotations.filter(a => a.type !== "detected-circle");
+    detected.forEach(c => addAnnotation({
+      type: "detected-circle", x: c.x, y: c.y, radius: c.radius,
+      frameWidth: info.width, frameHeight: info.height,
+    }));
+    circles = getDetectedCirclesForAlignment();
+    redraw();
+  }
+
+  const cal = state.calibration;
+  if (!cal?.pixelsPerMm) { setStatus("Calibration required for alignment", true); return; }
+
+  setStatus("Aligning…");
+  try {
+    const r = await fetch("/align-dxf", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        entities: ann.entities,
+        circles,
+        pixels_per_mm: cal.pixelsPerMm,
+      }),
+    });
+    if (!r.ok) {
+      const err = await r.json();
+      setStatus(err.detail ?? "Alignment failed", true);
+      return;
+    }
+    const result = await r.json();
+    pushUndo();
+    ann.offsetX = result.tx;
+    ann.offsetY = result.ty;
+    ann.angle = result.angle_deg;
+    ann.flipH = result.flip_h;
+    ann.flipV = result.flip_v;
+    updateDxfControlsVisibility();
+
+    // Enable Show deviations now that we have an alignment
+    document.getElementById("btn-show-deviations")?.removeAttribute("disabled");
+
+    if (result.confidence === "high") {
+      setStatus(`Aligned — ${result.inlier_count}/${result.total_dxf_circles} features matched`);
+    } else if (result.confidence === "low") {
+      setStatus(`⚠ Low confidence — only ${result.inlier_count}/${result.total_dxf_circles} matched`, true);
+    } else {
+      setStatus("⚠ Alignment failed — result unreliable", true);
+    }
+    redraw();
+  } catch (err) {
+    setStatus("Network error: " + err.message, true);
+  }
+});
+
+[-5, -1, 1, 5].forEach(delta => {
+  const id = `btn-dxf-rot-${delta < 0 ? "m" : "p"}${Math.abs(delta)}`;
+  document.getElementById(id)?.addEventListener("click", () => {
+    const ann = state.annotations.find(a => a.type === "dxf-overlay");
+    if (!ann) return;
+    pushUndo();
+    ann.angle = ((ann.angle ?? 0) + delta + 360) % 360;
+    updateDxfControlsVisibility();
+    redraw();
+  });
+});
+
+document.getElementById("dxf-scale")?.addEventListener("change", () => {
+  const ann = state.annotations.find(a => a.type === "dxf-overlay");
+  if (!ann) return;
+  const val = parseFloat(document.getElementById("dxf-scale").value);
+  if (!isFinite(val) || val <= 0) return;
+  pushUndo();
+  ann.scale = val;
+  redraw();
+});
+
+document.getElementById("btn-show-deviations")?.addEventListener("click", () => {
+  state.showDeviations = !state.showDeviations;
+  document.getElementById("btn-show-deviations").textContent =
+    state.showDeviations ? "Hide deviations" : "Show deviations";
+  redraw();
 });
 
 // ── Annotated export ───────────────────────────────────────────────────────
@@ -2903,6 +3194,34 @@ document.getElementById("btn-save-general").addEventListener("click", async () =
     setTimeout(() => { document.getElementById("settings-status").textContent = ""; }, 2000);
   } catch (_) {
     document.getElementById("settings-status").textContent = "Save failed.";
+  }
+});
+
+// Tolerances tab Save button
+document.getElementById("btn-save-tolerances")?.addEventListener("click", async () => {
+  const warn = parseFloat(document.getElementById("tol-warn-input")?.value);
+  const fail = parseFloat(document.getElementById("tol-fail-input")?.value);
+  const statusEl3 = document.getElementById("tolerances-status");
+  if (!isFinite(warn) || !isFinite(fail) || warn <= 0 || fail <= 0 || warn >= fail) {
+    if (statusEl3) { statusEl3.textContent = "Warn must be > 0 and < Fail"; statusEl3.style.color = "var(--danger)"; }
+    return;
+  }
+  try {
+    const r = await fetch("/config/tolerances", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ tolerance_warn: warn, tolerance_fail: fail }),
+    });
+    if (r.ok) {
+      state.tolerances.warn = warn;
+      state.tolerances.fail = fail;
+      if (statusEl3) { statusEl3.textContent = "Saved"; statusEl3.style.color = "var(--success)"; }
+      if (state.showDeviations) redraw();
+    } else {
+      if (statusEl3) { statusEl3.textContent = "Save failed"; statusEl3.style.color = "var(--danger)"; }
+    }
+  } catch (err) {
+    if (statusEl3) { statusEl3.textContent = "Error: " + err.message; statusEl3.style.color = "var(--danger)"; }
   }
 });
 

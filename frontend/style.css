@@ -666,3 +666,29 @@ body.no-camera .camera-section { display: none; }
   font-family: ui-monospace, monospace;
   font-size: 10px;
 }
+
+/* ─── DXF overlay controls ──────────────────────────────────── */
+.dropdown-section-label {
+  padding: 4px 12px 2px;
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+.dropdown-divider { height: 1px; background: var(--border); margin: 4px 0; }
+.dxf-row {
+  display: flex; align-items: center; gap: 4px;
+  padding: 3px 10px;
+}
+.dxf-label { font-size: 10px; color: var(--text-secondary); width: 52px; flex-shrink: 0; }
+.dxf-value { font-size: 10px; color: var(--text); width: 40px; text-align: right; }
+.dxf-input { width: 72px; font-size: 10px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 4px; color: var(--text); padding: 2px 4px; }
+.dxf-unit  { font-size: 9px; color: var(--muted); }
+.dxf-nudge { font-size: 9px; padding: 2px 5px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 4px; color: var(--text); cursor: pointer; }
+.dxf-nudge:hover { background: var(--border); }
+.dxf-btn   { font-size: 10px; padding: 3px 8px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 4px; color: var(--text); cursor: pointer; }
+.dxf-btn:hover { background: var(--border); }
+.dxf-btn.danger { color: var(--danger); }
+.dxf-btn.danger:hover { background: var(--danger); color: #fff; }
+.dxf-btn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+.dxf-status { font-size: 10px; padding: 4px 12px; color: var(--text-secondary); }

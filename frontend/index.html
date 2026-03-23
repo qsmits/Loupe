@@ -98,6 +98,36 @@
         <button class="dropdown-item" id="btn-export-csv">Export CSV</button>
         <button class="dropdown-item" id="btn-crosshair">Toggle crosshair</button>
         <button class="dropdown-item" id="btn-set-origin">Set origin</button>
+        <div class="dropdown-divider"></div>
+        <div id="dxf-controls-group" hidden>
+          <div class="dropdown-section-label">DXF overlay</div>
+          <div class="dxf-row">
+            <label class="dxf-label">Scale</label>
+            <input type="number" id="dxf-scale" class="dxf-input" step="0.001" min="0.001" value="1.000" />
+            <span class="dxf-unit">px/mm</span>
+          </div>
+          <div class="dxf-row">
+            <label class="dxf-label">Rotation</label>
+            <span id="dxf-angle-display" class="dxf-value">0.0°</span>
+            <button class="dxf-nudge" id="btn-dxf-rot-m5">−5°</button>
+            <button class="dxf-nudge" id="btn-dxf-rot-m1">−1°</button>
+            <button class="dxf-nudge" id="btn-dxf-rot-p1">+1°</button>
+            <button class="dxf-nudge" id="btn-dxf-rot-p5">+5°</button>
+          </div>
+          <div class="dxf-row">
+            <button class="dxf-btn" id="btn-dxf-flip-h">Flip H</button>
+            <button class="dxf-btn" id="btn-dxf-flip-v">Flip V</button>
+          </div>
+          <div class="dxf-row">
+            <button class="dxf-btn" id="btn-dxf-set-origin">Set origin</button>
+            <button class="dxf-btn" id="btn-dxf-realign">Realign</button>
+            <button class="dxf-btn danger" id="btn-dxf-clear">Clear</button>
+          </div>
+          <div class="dropdown-divider"></div>
+          <button class="dropdown-item" id="btn-auto-align" disabled title="At least 2 DXF circles required">Auto-align</button>
+          <button class="dropdown-item" id="btn-show-deviations" disabled>Show deviations</button>
+          <div id="align-status" class="dxf-status" hidden></div>
+        </div>
       </div>
     </div>
 
@@ -191,6 +221,7 @@
         <button class="settings-tab active" data-tab="general">General</button>
         <button class="settings-tab" data-tab="camera">Camera</button>
         <button class="settings-tab" data-tab="display">Display</button>
+        <button class="settings-tab" data-tab="tolerances">Tolerances</button>
       </div>
 
       <div class="settings-panel active" id="settings-general-panel">
@@ -262,6 +293,19 @@
           <label class="settings-label">Crosshair opacity</label>
           <input type="range" id="crosshair-opacity" min="0.1" max="1" step="0.05" value="0.4" />
         </div>
+      </div>
+
+      <div class="settings-panel" id="settings-tolerances-panel">
+        <div class="settings-row">
+          <label class="settings-label" for="tol-warn-input">Warn above (mm)</label>
+          <input type="number" id="tol-warn-input" class="settings-input" step="0.01" min="0.001" value="0.10" />
+        </div>
+        <div class="settings-row">
+          <label class="settings-label" for="tol-fail-input">Fail above (mm)</label>
+          <input type="number" id="tol-fail-input" class="settings-input" step="0.01" min="0.001" value="0.25" />
+        </div>
+        <button class="settings-save-btn" id="btn-save-tolerances">Save</button>
+        <div id="tolerances-status" class="settings-status"></div>
       </div>
 
       <div id="settings-status" class="settings-status"></div>

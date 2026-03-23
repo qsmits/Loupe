@@ -6,13 +6,14 @@ import cv2
 import numpy as np
 from fastapi import APIRouter, HTTPException, UploadFile, File
 from fastapi.responses import Response, StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from .cameras.base import BaseCamera
 from .config import load_config, save_config
 from .frame_store import FrameStore
 from .stream import mjpeg_generator, BOUNDARY
 from .vision import detection
+from .vision.alignment import extract_dxf_circles, align_circles
 
 SNAPSHOTS_DIR = pathlib.Path(__file__).parent.parent / "snapshots"
 
@@ -75,6 +76,29 @@ class UiConfig(BaseModel):
     theme: str = Field(max_length=50, pattern=r"^[a-z0-9-]+$")
 
 
+class TolerancesConfig(BaseModel):
+    tolerance_warn: float = Field(gt=0)
+    tolerance_fail: float = Field(gt=0)
+
+    @model_validator(mode="after")
+    def warn_lt_fail(self):
+        if self.tolerance_warn >= self.tolerance_fail:
+            raise ValueError("tolerance_warn must be less than tolerance_fail")
+        return self
+
+
+class DetectedCircle(BaseModel):
+    x: float
+    y: float
+    radius: float
+
+
+class AlignDxfBody(BaseModel):
+    entities: list[dict]
+    circles: list[DetectedCircle]
+    pixels_per_mm: float = Field(gt=0)
+
+
 router = APIRouter()
 
 
@@ -91,6 +115,34 @@ def get_ui_config():
 def post_ui_config(body: UiConfig):
     save_config({"app_name": body.app_name, "theme": body.theme})
     return {"app_name": body.app_name, "theme": body.theme}
+
+
+@router.get("/config/tolerances")
+def get_tolerances():
+    cfg = load_config()
+    return {
+        "tolerance_warn": cfg.get("tolerance_warn", 0.10),
+        "tolerance_fail": cfg.get("tolerance_fail", 0.25),
+    }
+
+
+@router.post("/config/tolerances")
+def post_tolerances(body: TolerancesConfig):
+    save_config({"tolerance_warn": body.tolerance_warn, "tolerance_fail": body.tolerance_fail})
+    return {"tolerance_warn": body.tolerance_warn, "tolerance_fail": body.tolerance_fail}
+
+
+@router.post("/align-dxf")
+def align_dxf_route(body: AlignDxfBody):
+    dxf_circles = extract_dxf_circles(body.entities)
+    if len(dxf_circles) < 2:
+        raise HTTPException(
+            status_code=400,
+            detail="At least 2 DXF circles required for alignment",
+        )
+    detected = [(c.x, c.y, c.radius) for c in body.circles]
+    result = align_circles(dxf_circles, detected, body.pixels_per_mm)
+    return result
 
 
 def make_router(camera: BaseCamera, frame_store: FrameStore, startup_warning: str | None = None) -> APIRouter:
