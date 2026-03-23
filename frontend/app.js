@@ -1944,8 +1944,9 @@ const overflowPopup = document.getElementById("overflow-popup");
 if (overflowBtn && overflowPopup) {
   overflowBtn.addEventListener("click", e => {
     e.stopPropagation();
+    const wasOpen = !overflowPopup.hidden;
     closeAllDropdowns(); // close any open dropdown first
-    overflowPopup.hidden = !overflowPopup.hidden;
+    if (!wasOpen) overflowPopup.hidden = false;
   });
 
   document.querySelectorAll("#overflow-popup .strip-btn[data-tool]").forEach(btn => {
@@ -2355,9 +2356,7 @@ async function doFreeze() {
 
   img.style.opacity = "0";   // hide stream
   state.frozen = true;
-  updateDropOverlay();
-  document.getElementById("btn-freeze").classList.add("active");
-  statusEl.textContent = "Frozen";
+  updateFreezeUI();
   resizeCanvas();  // re-read img rect after opacity change to guarantee pixel-perfect alignment
 }
 
@@ -2367,7 +2366,6 @@ document.getElementById("btn-freeze").addEventListener("click", async () => {
     img.style.opacity = "1";
     state.frozen = false;
     state.frozenBackground = null;
-    document.getElementById("btn-freeze").classList.remove("active");
     updateFreezeUI();
     redraw();
   } else {
