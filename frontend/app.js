@@ -194,6 +194,30 @@ function onMouseUp() {
   state.dragState = null;
 }
 
+// ─── Dropdown helpers ────────────────────────────────────────
+function closeAllDropdowns() {
+  ["dropdown-measure","dropdown-detect","dropdown-overlay"].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.hidden = true;
+  });
+  ["btn-menu-measure","btn-menu-detect","btn-menu-overlay"].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.classList.remove("open");
+  });
+  const popup = document.getElementById("overflow-popup");
+  if (popup) popup.hidden = true;
+}
+
+function toggleDropdown(btnId, dropId) {
+  const drop = document.getElementById(dropId);
+  const wasOpen = !drop.hidden;
+  closeAllDropdowns();
+  if (!wasOpen) {
+    drop.hidden = false;
+    document.getElementById(btnId).classList.add("open");
+  }
+}
+
 // ── Keyboard ───────────────────────────────────────────────────────────────
 document.addEventListener("keydown", e => {
   // Help dialog shortcut — works even when an input is focused
@@ -210,6 +234,7 @@ document.addEventListener("keydown", e => {
     return;
   }
   if (e.key === "Escape") {
+    closeAllDropdowns();
     if (state.dxfAlignMode) { exitDxfAlignMode(); redraw(); return; }
     state.pendingPoints = [];
     state.pendingCenterCircle = null;
@@ -1090,6 +1115,21 @@ function updateDropOverlay() {
   overlay.classList.toggle("visible", _noCamera && !state.frozen);
 }
 
+function updateFreezeUI() {
+  const btn        = document.getElementById("btn-freeze");
+  const statusText = document.getElementById("status-text");
+  if (state.frozen) {
+    btn.textContent = "❄ Frozen";
+    btn.classList.replace("freeze-live", "freeze-frozen");
+    if (statusText) statusText.textContent = "● Frozen";
+  } else {
+    btn.textContent = "❄ Live";
+    btn.classList.replace("freeze-frozen", "freeze-live");
+    if (statusText) statusText.textContent = "● Live";
+  }
+  if (typeof updateDropOverlay === "function") updateDropOverlay();
+}
+
 // ── Startup warning ────────────────────────────────────────────────────────
 async function checkStartupWarning() {
   try {
@@ -1862,6 +1902,62 @@ if (cameraSectionHeader && cameraSectionBody) {
 }
 checkStartupWarning();
 resizeCanvas();
+updateFreezeUI(); // ← set initial freeze button state
+
+// ── Dropdown menu wiring ────────────────────────────────────────────────────
+document.getElementById("btn-menu-measure").addEventListener("click", e => {
+  e.stopPropagation();
+  toggleDropdown("btn-menu-measure", "dropdown-measure");
+});
+document.getElementById("btn-menu-detect").addEventListener("click", e => {
+  e.stopPropagation();
+  toggleDropdown("btn-menu-detect", "dropdown-detect");
+});
+document.getElementById("btn-menu-overlay").addEventListener("click", e => {
+  e.stopPropagation();
+  toggleDropdown("btn-menu-overlay", "dropdown-overlay");
+});
+
+document.querySelectorAll("#dropdown-measure .dropdown-item[data-tool]").forEach(item => {
+  item.addEventListener("click", () => {
+    setTool(item.dataset.tool);
+    closeAllDropdowns();
+  });
+});
+
+["btn-load-dxf","btn-export","btn-export-csv","btn-crosshair","btn-set-origin"]
+  .forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener("click", closeAllDropdowns, true);
+  });
+
+["btn-run-edges","btn-show-preprocessed","btn-run-circles","btn-run-lines"]
+  .forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener("click", closeAllDropdowns, true);
+  });
+
+// ── Overflow popup ──────────────────────────────────────────────────────────
+const overflowBtn   = document.getElementById("btn-overflow");
+const overflowPopup = document.getElementById("overflow-popup");
+
+if (overflowBtn && overflowPopup) {
+  overflowBtn.addEventListener("click", e => {
+    e.stopPropagation();
+    closeAllDropdowns(); // close any open dropdown first
+    overflowPopup.hidden = !overflowPopup.hidden;
+  });
+
+  document.querySelectorAll("#overflow-popup .strip-btn[data-tool]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      setTool(btn.dataset.tool);
+      overflowPopup.hidden = true;
+    });
+  });
+}
+
+// ── Close dropdowns on click-outside ───────────────────────────────────────
+document.addEventListener("click", closeAllDropdowns);
 
 // ── Snapshot browser ────────────────────────────────────────────────────────
 async function loadSnapshotList() {
@@ -2270,10 +2366,9 @@ document.getElementById("btn-freeze").addEventListener("click", async () => {
     // Unfreeze
     img.style.opacity = "1";
     state.frozen = false;
-    updateDropOverlay();
     state.frozenBackground = null;
     document.getElementById("btn-freeze").classList.remove("active");
-    statusEl.textContent = "Live";
+    updateFreezeUI();
     redraw();
   } else {
     await doFreeze();
