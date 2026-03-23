@@ -95,6 +95,9 @@ function setTool(name) {
   state.snapTarget = null;
   document.querySelectorAll(".tool-btn[data-tool]").forEach(b =>
     b.classList.toggle("active", b.dataset.tool === name));
+  document.querySelectorAll("#tool-strip .strip-btn[data-tool]").forEach(btn => {
+    btn.classList.toggle("active", btn.dataset.tool === name);
+  });
   statusEl.textContent = TOOL_STATUS[name] ?? name;
   canvas.style.cursor = name === "select" ? "default" : "crosshair";
   redraw();
@@ -104,7 +107,7 @@ function setTool(name) {
 const img       = document.getElementById("stream-img");
 const canvas    = document.getElementById("overlay-canvas");
 const ctx       = canvas.getContext("2d");
-const statusEl  = document.getElementById("status-line");
+const statusEl  = document.getElementById("status-text");
 const listEl    = document.getElementById("measurement-list");
 const cameraInfoEl = document.getElementById("camera-info");
 
@@ -708,7 +711,7 @@ function deleteAnnotation(id) {
   pushUndo();
   const ann = state.annotations.find(a => a.id === id);
   if (!ann) return;
-  if (ann.type === "calibration") state.calibration = null;
+  if (ann.type === "calibration") { state.calibration = null; updateCalibrationButton(); }
   if (ann.type === "dxf-overlay") document.getElementById("dxf-panel").style.display = "none";
   if (ann.type === "origin") {
     state.origin = null;
@@ -743,6 +746,7 @@ function applyCalibration(ann) {
   }
   addAnnotation(ann);
   updateCameraInfo(); // refresh the scale display in the sidebar
+  updateCalibrationButton();
 }
 
 function measurementLabel(ann) {
@@ -992,6 +996,37 @@ function renderSidebar() {
     });
     listEl.appendChild(row);
   });
+}
+
+// ── UI config & calibration button ────────────────────────────────────────
+async function loadUiConfig() {
+  try {
+    const data = await fetch("/config/ui").then(r => r.json());
+    document.getElementById("app-title").textContent = data.app_name || "Microscope";
+    document.title = data.app_name || "Microscope";
+    document.documentElement.className = `theme-${data.theme || "macos-dark"}`;
+    const nameInput = document.getElementById("app-name-input");
+    if (nameInput) nameInput.value = data.app_name || "Microscope";
+    const themeSelect = document.getElementById("theme-select");
+    if (themeSelect) themeSelect.value = data.theme || "macos-dark";
+  } catch (_) {
+    // non-fatal: default theme class is already on <html>
+  }
+}
+
+function updateCalibrationButton() {
+  const btn = document.getElementById("btn-calibration");
+  if (!btn) return;
+  if (state.calibration) {
+    const scale = (1 / state.calibration.pixelsPerMm).toFixed(3);
+    btn.textContent = `${scale} µm/px`;
+    btn.classList.remove("uncalibrated");
+    btn.classList.add("calibrated");
+  } else {
+    btn.textContent = "NOT CALIBRATED";
+    btn.classList.remove("calibrated");
+    btn.classList.add("uncalibrated");
+  }
 }
 
 // ── Camera info ────────────────────────────────────────────────────────────
@@ -1810,6 +1845,23 @@ function drawCrosshair() {
 
 // ── Init ───────────────────────────────────────────────────────────────────
 loadCameraInfo();
+loadUiConfig();            // ← added
+updateCalibrationButton(); // ← added
+document.querySelectorAll("#tool-strip .strip-btn[data-tool]").forEach(btn => {
+  btn.addEventListener("click", () => setTool(btn.dataset.tool));
+});
+// Set initial active state
+document.querySelectorAll("#tool-strip .strip-btn[data-tool]").forEach(btn => {
+  btn.classList.toggle("active", btn.dataset.tool === state.tool);
+});
+const cameraSectionHeader = document.getElementById("camera-section-header");
+const cameraSectionBody   = document.getElementById("camera-section-body");
+if (cameraSectionHeader && cameraSectionBody) {
+  cameraSectionHeader.addEventListener("click", () => {
+    const isOpen = cameraSectionHeader.classList.toggle("open");
+    cameraSectionBody.style.display = isOpen ? "" : "none";
+  });
+}
 checkStartupWarning();
 resizeCanvas();
 
@@ -2646,6 +2698,7 @@ document.getElementById("btn-clear").addEventListener("click", () => {
     state.annotations = state.annotations.filter(a => a.type === "dxf-overlay");
     state.selected = null;
     state.calibration = null; // calibration annotation was filtered out above
+    updateCalibrationButton();
     state.pendingPoints = [];
     state.pendingCenterCircle = null;
     state.pendingRefLine = null;
@@ -2779,6 +2832,9 @@ document.getElementById("btn-crosshair").addEventListener("click", () => {
   document.getElementById("btn-crosshair").classList.toggle("active", state.crosshair);
   redraw();
 });
+
+// ── Calibration button ──────────────────────────────────────────────────────
+document.getElementById("btn-calibration").addEventListener("click", () => setTool("calibrate"));
 
 // ── Help dialog ─────────────────────────────────────────────────────────────
 document.getElementById("btn-help").addEventListener("click", () => {
