@@ -2749,8 +2749,13 @@ document.getElementById("btn-auto-align")?.addEventListener("click", async () =>
     ann.flipV = result.flip_v;
     updateDxfControlsVisibility();
 
-    // Enable Show deviations now that we have an alignment
-    document.getElementById("btn-show-deviations")?.removeAttribute("disabled");
+    // Auto-show deviation callouts now that alignment is complete
+    state.showDeviations = true;
+    const devBtn = document.getElementById("btn-show-deviations");
+    if (devBtn) {
+      devBtn.removeAttribute("disabled");
+      devBtn.textContent = "Deviations: on";
+    }
 
     if (result.confidence === "high") {
       setStatus(`Aligned — ${result.inlier_count}/${result.total_dxf_circles} features matched`);
@@ -2790,7 +2795,7 @@ document.getElementById("dxf-scale")?.addEventListener("change", () => {
 document.getElementById("btn-show-deviations")?.addEventListener("click", () => {
   state.showDeviations = !state.showDeviations;
   document.getElementById("btn-show-deviations").textContent =
-    state.showDeviations ? "Hide deviations" : "Show deviations";
+    state.showDeviations ? "Deviations: on" : "Deviations: off";
   redraw();
 });
 
