@@ -34,6 +34,7 @@ const redoStack = [];
 const UNDO_LIMIT = 50;
 
 let _noCamera = false;
+let _deviationHitBoxes = [];   // populated each drawDeviations call; used for click hit-testing
 
 function takeSnapshot() {
   return JSON.stringify({
@@ -181,6 +182,21 @@ function onMouseDown(e) {
     document.getElementById("btn-dxf-set-origin")?.classList.remove("active");
     statusEl.textContent = state.frozen ? "Frozen" : "Live";
     return;
+  }
+  // Hit-test deviation labels — open per-feature tolerance popover if clicked
+  if (state.showDeviations && _deviationHitBoxes.length) {
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+    const cx = (e.clientX - rect.left) * scaleX;
+    const cy = (e.clientY - rect.top)  * scaleY;
+    for (const box of _deviationHitBoxes) {
+      if (box.handle && cx >= box.x && cx <= box.x + box.w && cy >= box.y && cy <= box.y + box.h) {
+        openFeatureTolPopover(box.handle, e.clientX, e.clientY);
+        e.stopPropagation();
+        return;
+      }
+    }
   }
   if (state.tool === "select") { handleSelectDown(pt, e); return; }
   handleToolClick(pt, e);
@@ -2601,6 +2617,7 @@ function matchDxfToDetected(ann) {
 }
 
 function drawDeviations(ann) {
+  _deviationHitBoxes = [];
   const matches = matchDxfToDetected(ann);
   for (const m of matches) {
     if (!m.matched) {
@@ -2646,7 +2663,10 @@ function drawDeviations(ann) {
       ctx.font = "10px ui-monospace, monospace";
       ctx.fillStyle = color;
       const labelX = det.cx + det.r + 4;
-      ctx.fillText(`Δ ${delta_xy_mm.toFixed(3)} mm`, labelX, det.cy);
+      const labelText = `\u0394 ${delta_xy_mm.toFixed(3)} mm`;
+      ctx.fillText(labelText, labelX, det.cy);
+      const textW = ctx.measureText(labelText).width;
+      _deviationHitBoxes.push({ handle: m.handle, x: labelX, y: det.cy - 10, w: textW, h: 14 });
       const tol = (m.handle && state.featureTolerances[m.handle]) || state.tolerances;
       if (delta_r_mm > tol.warn) {
         ctx.fillText(`Δr ${delta_r_mm.toFixed(3)} mm`, labelX, det.cy + 13);
@@ -2773,6 +2793,47 @@ document.getElementById("btn-show-deviations")?.addEventListener("click", () => 
     state.showDeviations ? "Hide deviations" : "Show deviations";
   redraw();
 });
+
+// ── Per-feature tolerance popover ──────────────────────────────────────────
+let _ftolActiveHandle = null;
+
+function openFeatureTolPopover(handle, screenX, screenY) {
+  _ftolActiveHandle = handle;
+  const tol = state.featureTolerances[handle] || state.tolerances;
+  document.getElementById("ftol-warn").value = tol.warn;
+  document.getElementById("ftol-fail").value = tol.fail;
+  const pop = document.getElementById("feature-tol-popover");
+  pop.style.display = "block";
+  pop.style.left = `${screenX + 8}px`;
+  pop.style.top  = `${screenY - 20}px`;
+}
+
+function closeFeatureTolPopover() {
+  document.getElementById("feature-tol-popover").style.display = "none";
+  _ftolActiveHandle = null;
+}
+
+document.getElementById("ftol-set")?.addEventListener("click", () => {
+  if (!_ftolActiveHandle) return;
+  const warn = parseFloat(document.getElementById("ftol-warn").value);
+  const fail = parseFloat(document.getElementById("ftol-fail").value);
+  if (!isFinite(warn) || !isFinite(fail) || warn <= 0 || fail <= 0 || warn >= fail) {
+    alert("warn must be a positive number less than fail");
+    return;
+  }
+  state.featureTolerances[_ftolActiveHandle] = { warn, fail };
+  closeFeatureTolPopover();
+  redraw();
+});
+
+document.getElementById("ftol-reset")?.addEventListener("click", () => {
+  if (!_ftolActiveHandle) return;
+  delete state.featureTolerances[_ftolActiveHandle];
+  closeFeatureTolPopover();
+  redraw();
+});
+
+document.getElementById("ftol-close")?.addEventListener("click", closeFeatureTolPopover);
 
 // ── Annotated export ───────────────────────────────────────────────────────
 document.getElementById("btn-export").addEventListener("click", () => {
