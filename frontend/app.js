@@ -93,8 +93,6 @@ function setTool(name) {
   state.pendingRefLine = null;
   state.pendingCircleRef = null;
   state.snapTarget = null;
-  document.querySelectorAll(".tool-btn[data-tool]").forEach(b =>
-    b.classList.toggle("active", b.dataset.tool === name));
   document.querySelectorAll("#tool-strip .strip-btn[data-tool]").forEach(btn => {
     btn.classList.toggle("active", btn.dataset.tool === name);
   });
