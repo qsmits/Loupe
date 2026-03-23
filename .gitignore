@@ -10,3 +10,4 @@ tests/output/
 .server.log
 .DS_Store
 docs/superpowers
+.worktrees/
