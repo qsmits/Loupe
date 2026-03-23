@@ -222,12 +222,12 @@ function toggleDropdown(btnId, dropId) {
 document.addEventListener("keydown", e => {
   // Help dialog shortcut — works even when an input is focused
   if (e.key === "?") {
-    const anyDialogOpen = document.activeElement.closest("dialog") !== null;
-    if (!anyDialogOpen) document.getElementById("help-dialog").showModal();
+    const anyDialogOpen = document.querySelector(".dialog-overlay:not([hidden])") !== null;
+    if (!anyDialogOpen) document.getElementById("help-dialog").hidden = false;
     return;
   }
   // All other shortcuts are blocked when an input/select/textarea/dialog is focused
-  if (document.activeElement.closest("input, select, textarea, dialog") !== null) return;
+  if (document.activeElement.closest("input, select, textarea") !== null || document.querySelector(".dialog-overlay:not([hidden])") !== null) return;
 
   if ((e.key === "Delete" || e.key === "Backspace") && state.selected !== null) {
     deleteAnnotation(state.selected);
@@ -2861,10 +2861,10 @@ document.getElementById("btn-calibration").addEventListener("click", () => setTo
 
 // ── Help dialog ─────────────────────────────────────────────────────────────
 document.getElementById("btn-help")?.addEventListener("click", () => {
-  document.getElementById("help-dialog").showModal();
+  document.getElementById("help-dialog").hidden = false;
 });
-document.getElementById("help-close").addEventListener("click", () => {
-  document.getElementById("help-dialog").close();
+document.getElementById("btn-help-close").addEventListener("click", () => {
+  document.getElementById("help-dialog").hidden = true;
 });
 
 // ── Settings dialog ────────────────────────────────────────────────────────
@@ -2872,18 +2872,18 @@ const settingsDialog = document.getElementById("settings-dialog");
 const fmtStatusEl = document.getElementById("settings-status");
 
 document.getElementById("btn-settings").addEventListener("click", () => {
-  settingsDialog.showModal();
+  settingsDialog.hidden = false;
   loadCameraInfo();
   loadCameraList();
 });
 
-document.getElementById("settings-close").addEventListener("click", () => {
-  settingsDialog.close();
+document.getElementById("btn-settings-close").addEventListener("click", () => {
+  settingsDialog.hidden = true;
 });
 
 // Backdrop click: close only when clicking outside dialog content
 settingsDialog.addEventListener("click", e => {
-  if (e.target === settingsDialog) settingsDialog.close();
+  if (e.target === settingsDialog) settingsDialog.hidden = true;
 });
 
 // Tab switching
