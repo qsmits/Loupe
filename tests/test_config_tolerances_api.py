@@ -40,10 +40,14 @@ def test_post_tolerances_rejects_nonpositive(client):
     assert r.status_code == 422
 
 
-def test_tolerances_round_trip(client, tmp_path, monkeypatch):
-    import backend.config as cfg
-    monkeypatch.setattr(cfg, "CONFIG_PATH", tmp_path / "config.json")
+def test_tolerances_round_trip(client):
     client.post("/config/tolerances",
                 json={"tolerance_warn": 0.08, "tolerance_fail": 0.30})
     r = client.get("/config/tolerances")
     assert r.json()["tolerance_warn"] == pytest.approx(0.08)
+
+
+def test_post_tolerances_rejects_warn_equal_fail(client):
+    r = client.post("/config/tolerances",
+                    json={"tolerance_warn": 0.20, "tolerance_fail": 0.20})
+    assert r.status_code == 422
