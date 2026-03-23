@@ -20,6 +20,12 @@ _MERGE_HOUGH_THRESHOLD = 30
 _MERGE_MIN_LENGTH      = 20
 _MERGE_MAX_GAP         = 8
 
+# ── Contour-based line detection ──────────────────────────────────────────────
+_CONTOUR_DP_EPSILON = 0.02
+_CONTOUR_MIN_LENGTH = 20
+_CONTOUR_NMS_DIST   = 8
+_CONTOUR_NMS_ANGLE  = 5.0
+
 
 def _preprocess(frame: np.ndarray) -> np.ndarray:
     """
@@ -310,6 +316,59 @@ def merge_line_segments(
                 results.append({"x1":int(cx1),"y1":int(cy1),"x2":int(cx2),"y2":int(cy2),"length":round(length,1)})
 
     return results
+
+
+def detect_lines_contour(
+    frame: np.ndarray,
+    threshold1: int = 50,
+    threshold2: int = 130,
+    dp_epsilon: float = _CONTOUR_DP_EPSILON,
+    min_length_px: int = _CONTOUR_MIN_LENGTH,
+    nms_dist_px: float = _CONTOUR_NMS_DIST,
+    nms_angle_deg: float = _CONTOUR_NMS_ANGLE,
+) -> list[dict]:
+    """
+    Detect straight segments via Douglas-Peucker contour approximation.
+    Primary path. Does not use Hough. Each visible edge produces at most one segment.
+    Returns list of {"x1", "y1", "x2", "y2", "length"} dicts.
+    """
+    gray = _preprocess(frame)
+    edges = cv2.Canny(gray, threshold1, threshold2)
+    contours, _ = cv2.findContours(edges, cv2.RETR_LIST, cv2.CHAIN_APPROX_NONE)
+
+    candidates = []
+    for cnt in contours:
+        arc_len = cv2.arcLength(cnt, closed=False)
+        if arc_len < min_length_px:
+            continue
+        approx = cv2.approxPolyDP(cnt, epsilon=dp_epsilon * arc_len, closed=False)
+        pts = approx[:, 0, :]
+        for i in range(len(pts) - 1):
+            x1, y1 = int(pts[i][0]), int(pts[i][1])
+            x2, y2 = int(pts[i+1][0]), int(pts[i+1][1])
+            length = float(np.hypot(x2-x1, y2-y1))
+            if length < min_length_px:
+                continue
+            angle = float(np.degrees(np.arctan2(y2-y1, x2-x1)) % 180)
+            candidates.append((length, x1, y1, x2, y2, angle))
+
+    candidates.sort(key=lambda c: c[0], reverse=True)
+    kept = []
+    for length, x1, y1, x2, y2, angle in candidates:
+        mx, my = (x1+x2)/2.0, (y1+y2)/2.0
+        suppressed = False
+        for _, kx1, ky1, kx2, ky2, kangle in kept:
+            kmx, kmy = (kx1+kx2)/2.0, (ky1+ky2)/2.0
+            dist = np.hypot(mx-kmx, my-kmy)
+            adiff = abs(angle - kangle)
+            if adiff > 90: adiff = 180 - adiff
+            if dist < nms_dist_px and adiff < nms_angle_deg:
+                suppressed = True; break
+        if not suppressed:
+            kept.append((length, x1, y1, x2, y2, angle))
+
+    return [{"x1":x1,"y1":y1,"x2":x2,"y2":y2,"length":round(length,1)}
+            for length, x1, y1, x2, y2, _ in kept]
 
 
 def preprocessed_view(frame: np.ndarray) -> bytes:

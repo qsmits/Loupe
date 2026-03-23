@@ -107,3 +107,25 @@ def test_merge_line_segments_two_parallel_lines_stay_separate():
     cv2.line(frame, (50, 300), (590, 300), (255, 255, 255), 2)
     lines = merge_line_segments(frame)
     assert len(lines) == 2
+
+
+def test_detect_lines_contour_returns_list():
+    from backend.vision.detection import detect_lines_contour
+    frame = np.zeros((480, 640, 3), dtype=np.uint8)
+    cv2.line(frame, (50, 240), (590, 240), (255, 255, 255), 2)
+    lines = detect_lines_contour(frame)
+    assert isinstance(lines, list) and len(lines) >= 1
+    for seg in lines:
+        assert {"x1", "y1", "x2", "y2", "length"} <= seg.keys()
+
+
+def test_detect_lines_contour_finds_rectangle_edges():
+    from backend.vision.detection import detect_lines_contour
+    frame = np.zeros((480, 640, 3), dtype=np.uint8)
+    cv2.rectangle(frame, (200, 150), (440, 330), (255, 255, 255), 2)
+    assert len(detect_lines_contour(frame)) >= 4
+
+
+def test_detect_lines_contour_empty_frame():
+    from backend.vision.detection import detect_lines_contour
+    assert detect_lines_contour(np.zeros((480,640,3),dtype=np.uint8)) == []
