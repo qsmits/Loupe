@@ -12,15 +12,6 @@ def extract_dxf_circles(entities):
     ]
 
 
-def _apply_flip(pts: np.ndarray, flip_h: bool, flip_v: bool) -> np.ndarray:
-    result = pts.copy()
-    if flip_h:
-        result[:, 0] *= -1
-    if flip_v:
-        result[:, 1] *= -1
-    return result
-
-
 def _compute_transform(p1, p2, q1, q2):
     """Compute (tx, ty, angle_rad) mapping p1->q1, p2->q2.
     p1, p2: DXF pixel coordinates (Y-up, after flipping)

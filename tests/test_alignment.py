@@ -68,3 +68,24 @@ def test_align_circles_with_rotation():
     assert result["confidence"] in ("high", "low")
     assert result["inlier_count"] >= 2
     assert abs(result["angle_deg"] - 30) < 3
+
+
+def test_align_circles_with_flip_h():
+    """flip_h: DXF X axis is mirrored. Backend must detect this."""
+    ppm = 10.0
+    # Use asymmetric radii so the flip is unambiguous
+    dxf = [(10.0, 0.0, 3.0), (-10.0, 0.0, 5.0), (0.0, 15.0, 6.0)]
+    tx, ty = 200.0, 150.0
+    # Apply flipH to DXF coords, then no rotation, then canvas Y-flip
+    detected = []
+    for cx_mm, cy_mm, r_mm in dxf:
+        # flipH: negate x
+        x_f = -cx_mm
+        y_f = cy_mm
+        # canvas: (x_f * ppm + tx, -(y_f * ppm) + ty)
+        detected.append((x_f * ppm + tx, -(y_f * ppm) + ty, r_mm * ppm))
+    result = align_circles(dxf, detected, pixels_per_mm=ppm)
+    assert result["confidence"] in ("high", "low")
+    assert result["inlier_count"] >= 2
+    assert result["flip_h"] is True
+    assert result["flip_v"] is False
