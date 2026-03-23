@@ -9,6 +9,7 @@ from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
 
 from .cameras.base import BaseCamera
+from .config import load_config, save_config
 from .frame_store import FrameStore
 from .stream import mjpeg_generator, BOUNDARY
 from .vision import detection
@@ -67,6 +68,29 @@ class LineParams(BaseModel):
     hough_threshold: int = 30
     min_length: int = 20
     max_gap: int = 8
+
+
+class UiConfig(BaseModel):
+    app_name: str
+    theme: str
+
+
+router = APIRouter()
+
+
+@router.get("/config/ui")
+def get_ui_config():
+    cfg = load_config()
+    return {
+        "app_name": cfg.get("app_name", "Microscope"),
+        "theme":    cfg.get("theme",    "macos-dark"),
+    }
+
+
+@router.post("/config/ui")
+def post_ui_config(body: UiConfig):
+    save_config({"app_name": body.app_name, "theme": body.theme})
+    return {"app_name": body.app_name, "theme": body.theme}
 
 
 def make_router(camera: BaseCamera, frame_store: FrameStore, startup_warning: str | None = None) -> APIRouter:
@@ -277,7 +301,6 @@ def make_router(camera: BaseCamera, frame_store: FrameStore, startup_warning: st
             raise HTTPException(status_code=400,
                 detail="Camera selection is not supported on the OpenCV fallback.")
         from .cameras.aravis import AravisCamera
-        from .config import save_config
         try:
             new_cam = AravisCamera(device_id=body.camera_id)
             await asyncio.to_thread(camera.switch_camera, new_cam)

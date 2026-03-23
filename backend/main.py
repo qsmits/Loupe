@@ -15,7 +15,7 @@ from .cameras.null import NullCamera
 from .cameras.opencv import OpenCVCamera
 from .frame_store import FrameStore
 from .stream import CameraReader
-from .api import make_router
+from .api import make_router, router as ui_router
 
 FRONTEND_DIR = pathlib.Path(__file__).parent.parent / "frontend"
 
@@ -96,6 +96,7 @@ def create_app(camera: BaseCamera | None = None, no_camera: bool = False) -> Fas
     )
 
     app.include_router(make_router(reader, frame_store, startup_warning=startup_warning))
+    app.include_router(ui_router)
 
     if FRONTEND_DIR.exists():
         app.mount("/", StaticFiles(directory=str(FRONTEND_DIR), html=True), name="frontend")

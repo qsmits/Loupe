@@ -5,7 +5,7 @@ import pathlib
 log = logging.getLogger(__name__)
 
 CONFIG_PATH = pathlib.Path(__file__).parent.parent / "config.json"
-_DEFAULTS = {"camera_id": None, "version": 1, "no_camera": False}
+_DEFAULTS = {"camera_id": None, "version": 1, "no_camera": False, "app_name": "Microscope", "theme": "macos-dark"}
 
 
 def load_config() -> dict:
