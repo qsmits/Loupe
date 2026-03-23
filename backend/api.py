@@ -13,6 +13,7 @@ from .config import load_config, save_config
 from .frame_store import FrameStore
 from .stream import mjpeg_generator, BOUNDARY
 from .vision import detection
+from .vision.alignment import extract_dxf_circles, align_circles
 
 SNAPSHOTS_DIR = pathlib.Path(__file__).parent.parent / "snapshots"
 
@@ -86,6 +87,18 @@ class TolerancesConfig(BaseModel):
         return self
 
 
+class DetectedCircle(BaseModel):
+    x: float
+    y: float
+    radius: float
+
+
+class AlignDxfBody(BaseModel):
+    entities: list[dict]
+    circles: list[DetectedCircle]
+    pixels_per_mm: float = Field(gt=0)
+
+
 router = APIRouter()
 
 
@@ -117,6 +130,21 @@ def get_tolerances():
 def post_tolerances(body: TolerancesConfig):
     save_config({"tolerance_warn": body.tolerance_warn, "tolerance_fail": body.tolerance_fail})
     return {"tolerance_warn": body.tolerance_warn, "tolerance_fail": body.tolerance_fail}
+
+
+@router.post("/align-dxf")
+def align_dxf_route(body: AlignDxfBody):
+    dxf_circles = extract_dxf_circles(body.entities)
+    if len(dxf_circles) < 2:
+        raise HTTPException(
+            status_code=400,
+            detail="At least 2 DXF circles required for alignment",
+        )
+    detected = [(c.x, c.y, c.radius) for c in body.circles]
+    result = align_circles(dxf_circles, detected, body.pixels_per_mm)
+    if result.get("error") == "insufficient_dxf_circles":
+        raise HTTPException(status_code=400, detail="At least 2 DXF circles required for alignment")
+    return result
 
 
 def make_router(camera: BaseCamera, frame_store: FrameStore, startup_warning: str | None = None) -> APIRouter:
