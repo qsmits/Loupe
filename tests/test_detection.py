@@ -98,3 +98,12 @@ def test_merge_line_segments_gapped_line_single_output():
 def test_merge_line_segments_empty_frame():
     from backend.vision.detection import merge_line_segments
     assert merge_line_segments(np.zeros((480,640,3),dtype=np.uint8)) == []
+
+
+def test_merge_line_segments_two_parallel_lines_stay_separate():
+    from backend.vision.detection import merge_line_segments
+    frame = np.zeros((480, 640, 3), dtype=np.uint8)
+    cv2.line(frame, (50, 100), (590, 100), (255, 255, 255), 2)
+    cv2.line(frame, (50, 300), (590, 300), (255, 255, 255), 2)
+    lines = merge_line_segments(frame)
+    assert len(lines) == 2

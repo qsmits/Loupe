@@ -247,13 +247,19 @@ def merge_line_segments(
     segs.sort(key=lambda s: s[4])
 
     def _perp(x1, y1, x2, y2):
-        dx, dy = x2-x1, y2-y1
-        return abs(dy*x1 - dx*y1) / (np.hypot(dx, dy) + 1e-6)
+        """Perpendicular distance from origin to the infinite line through (x1,y1)-(x2,y2), signed."""
+        dx, dy = x2 - x1, y2 - y1
+        length = np.hypot(dx, dy)
+        if length < 1e-6:
+            return float(np.hypot(x1, y1))
+        # Line equation: dy*(x-x1) - dx*(y-y1) = 0 → dy*x - dx*y = dy*x1 - dx*y1
+        return float((dy * x1 - dx * y1) / length)  # signed
 
     clusters = []
     cur = [segs[0]]
     for s in segs[1:]:
-        if abs(s[4] - cur[0][4]) <= angle_tol_deg:
+        angle_diff = abs(s[4] - cur[-1][4])
+        if min(angle_diff, 180.0 - angle_diff) <= angle_tol_deg:
             cur.append(s)
         else:
             clusters.append(cur); cur = [s]
