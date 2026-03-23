@@ -16,6 +16,7 @@
 
 /* ─── Reset / base ──────────────────────────────────────────── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+[hidden] { display: none !important; }
 
 html, body {
   height: 100%;
@@ -215,7 +216,6 @@ body.no-camera #stream-img {
 #overlay-canvas {
   position: absolute;
   top: 0; left: 0;
-  pointer-events: none;
 }
 
 /* ─── Coordinate HUD ────────────────────────────────────────── */

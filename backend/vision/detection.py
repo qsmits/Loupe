@@ -1,6 +1,17 @@
 import cv2
 import numpy as np
 
+# ── Circle detection constants ────────────────────────────────────────────────
+_CIRCULARITY_THRESHOLD  = 0.65   # min 4π·area/perimeter² for closed contours
+_RADIUS_STD_MAX         = 0.06   # max std(point distances from centre) / radius
+_ARC_MIN_COVERAGE       = 160    # degrees of arc for open-contour fit
+_ARC_MAX_RESIDUAL       = 0.06   # max mean residual / radius for arc fit
+_NMS_OVERLAP            = 0.5    # IoU threshold for non-maximum suppression
+_NMS_CONCENTRIC_R_RATIO = 0.7    # radii ratio below which circles are kept despite overlap
+_LARGE_R_THRESHOLD      = 60     # px — selective large-kernel closing above this radius
+_CLOSE_KERNEL_SMALL     = 3      # morphological close kernel for all contours
+_CLOSE_KERNEL_LARGE     = 7      # extra close kernel, only used when enc. radius is large
+
 
 def _preprocess(frame: np.ndarray) -> np.ndarray:
     """
@@ -33,37 +44,132 @@ def detect_edges(frame: np.ndarray, threshold1: int, threshold2: int) -> bytes:
     return buf.tobytes()
 
 
+def _circle_overlap_ratio(c1: tuple, c2: tuple) -> float:
+    d = np.hypot(c1[0] - c2[0], c1[1] - c2[1])
+    if d >= c1[2] + c2[2]:
+        return 0.0
+    r_ratio = min(c1[2], c2[2]) / (max(c1[2], c2[2]) + 1e-6)
+    if r_ratio < _NMS_CONCENTRIC_R_RATIO:
+        return 0.0
+    return 1.0 - d / (c1[2] + c2[2] + 1e-6)
+
+
+def _nms_circles(circles: list) -> list:
+    circles = sorted(circles, key=lambda c: c[3], reverse=True)
+    kept = []
+    for c in circles:
+        if all(_circle_overlap_ratio(c[:3], k[:3]) < _NMS_OVERLAP for k in kept):
+            kept.append(c)
+    return kept
+
+
+def _fit_circle_algebraic(pts: np.ndarray):
+    x, y = pts[:, 0], pts[:, 1]
+    A = np.column_stack([2 * x, 2 * y, np.ones(len(x))])
+    b = x ** 2 + y ** 2
+    result, _, _, _ = np.linalg.lstsq(A, b, rcond=None)
+    cx, cy = result[0], result[1]
+    r = np.sqrt(result[2] + cx ** 2 + cy ** 2)
+    return cx, cy, r
+
+
+def _arc_angular_coverage(pts: np.ndarray, cx: float, cy: float) -> float:
+    angles = np.degrees(np.arctan2(pts[:, 1] - cy, pts[:, 0] - cx))
+    angles = np.sort(angles % 360)
+    if len(angles) < 2:
+        return 0.0
+    gaps = np.diff(angles, append=angles[0] + 360)
+    return 360.0 - float(np.max(gaps))
+
+
 def detect_circles(
     frame: np.ndarray,
-    dp: float,
-    min_dist: int,
-    param1: int,
-    param2: int,
-    min_radius: int,
-    max_radius: int,
+    dp: float = 1.2,
+    min_dist: int = 50,
+    param1: int = 100,
+    param2: int = 50,
+    min_radius: int = 8,
+    max_radius: int = 500,
 ) -> list[dict]:
     """
-    Run Hough circle detection on frame.
+    Contour-based circle detection.
+    Closed contours are accepted by circularity score + radius consistency.
+    Open contours are fitted with algebraic least-squares and accepted by arc coverage.
+    Two Canny passes (tight + loose) improve recall in poorly lit images.
     Returns list of {"x": int, "y": int, "radius": int}.
+    The legacy Hough parameters (dp, min_dist, param1, param2) are accepted for API
+    compatibility but are not used.
     """
     gray = _preprocess(frame)
-    gray = cv2.GaussianBlur(gray, (5, 5), 1)
-    result = cv2.HoughCircles(
-        gray,
-        cv2.HOUGH_GRADIENT,
-        dp=dp,
-        minDist=min_dist,
-        param1=param1,
-        param2=param2,
-        minRadius=min_radius,
-        maxRadius=max_radius,
-    )
-    if result is None:
-        return []
-    return [
-        {"x": int(x), "y": int(y), "radius": int(r)}
-        for x, y, r in np.round(result[0]).astype(int)
-    ]
+    k_small = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (_CLOSE_KERNEL_SMALL,) * 2)
+    k_large = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (_CLOSE_KERNEL_LARGE,) * 2)
+
+    closed: list[tuple] = []
+    arcs:   list[tuple] = []
+
+    def _try_contour(cnt: np.ndarray) -> None:
+        pts = cnt[:, 0, :].astype(np.float32)
+        if len(pts) < 12:
+            return
+        area = cv2.contourArea(cnt)
+        perimeter = cv2.arcLength(cnt, closed=True)
+        if perimeter < 1:
+            return
+        (cx, cy), enc_r = cv2.minEnclosingCircle(cnt)
+
+        circularity = 4 * np.pi * area / (perimeter ** 2)
+        if circularity >= _CIRCULARITY_THRESHOLD:
+            r = int(round(enc_r))
+            if not (min_radius <= r <= max_radius):
+                return
+            dists = np.hypot(pts[:, 0] - cx, pts[:, 1] - cy)
+            if np.std(dists) / (r + 1e-6) > _RADIUS_STD_MAX:
+                return
+            closed.append((int(cx), int(cy), r, round(circularity, 3)))
+            return
+
+        if not (min_radius <= enc_r <= max_radius):
+            return
+        try:
+            fcx, fcy, fr = _fit_circle_algebraic(pts)
+        except (np.linalg.LinAlgError, ValueError):
+            return
+        if not (min_radius <= fr <= max_radius):
+            return
+        residuals = np.abs(np.hypot(pts[:, 0] - fcx, pts[:, 1] - fcy) - fr)
+        if np.mean(residuals) / (fr + 1e-6) > _ARC_MAX_RESIDUAL:
+            return
+        coverage = _arc_angular_coverage(pts, fcx, fcy)
+        if coverage < _ARC_MIN_COVERAGE:
+            return
+        arcs.append((int(fcx), int(fcy), int(round(fr)), round(coverage, 1)))
+
+    def _run_on_edges(base_edges: np.ndarray) -> None:
+        edges_s = cv2.morphologyEx(base_edges, cv2.MORPH_CLOSE, k_small)
+        edges_l = cv2.morphologyEx(base_edges, cv2.MORPH_CLOSE, k_large)
+        for cnt in cv2.findContours(edges_s, cv2.RETR_LIST, cv2.CHAIN_APPROX_NONE)[0]:
+            _try_contour(cnt)
+        for cnt in cv2.findContours(edges_l, cv2.RETR_LIST, cv2.CHAIN_APPROX_NONE)[0]:
+            _, enc_r = cv2.minEnclosingCircle(cnt)
+            if enc_r >= _LARGE_R_THRESHOLD:
+                _try_contour(cnt)
+
+    _run_on_edges(cv2.Canny(gray, 50, 150))
+
+    # Loose pass for faint edges; limited to small circles to avoid large false positives.
+    loose_edges = cv2.Canny(gray, 20, 80)
+    edges_s = cv2.morphologyEx(loose_edges, cv2.MORPH_CLOSE, k_small)
+    for cnt in cv2.findContours(edges_s, cv2.RETR_LIST, cv2.CHAIN_APPROX_NONE)[0]:
+        _, enc_r = cv2.minEnclosingCircle(cnt)
+        if enc_r < _LARGE_R_THRESHOLD:
+            _try_contour(cnt)
+
+    closed = _nms_circles(closed)
+    arcs = _nms_circles(arcs)
+    arcs = [a for a in arcs
+            if all(_circle_overlap_ratio(a[:3], c[:3]) < _NMS_OVERLAP for c in closed)]
+
+    return [{"x": cx, "y": cy, "radius": r} for cx, cy, r, _ in closed + arcs]
 
 
 def detect_lines(
