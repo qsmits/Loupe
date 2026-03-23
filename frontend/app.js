@@ -2511,7 +2511,112 @@ function updateDxfControlsVisibility() {
     const fV = document.getElementById("btn-dxf-flip-v");
     if (fV) fV.classList.toggle("active", ann.flipV ?? false);
   }
+  const dxfCircleCount = ann?.entities?.filter(e => e.type === "circle").length ?? 0;
+  const autoAlignBtn = document.getElementById("btn-auto-align");
+  if (autoAlignBtn) {
+    autoAlignBtn.disabled = dxfCircleCount < 2;
+    autoAlignBtn.title = dxfCircleCount < 2 ? "At least 2 DXF circles required" : "";
+  }
 }
+
+function getDetectedCirclesForAlignment() {
+  return state.annotations
+    .filter(a => a.type === "detected-circle")
+    .map(a => ({
+      x: a.x * (canvas.width / a.frameWidth),
+      y: a.y * (canvas.height / a.frameHeight),
+      radius: a.radius * (canvas.width / a.frameWidth),
+    }));
+}
+
+document.getElementById("btn-auto-align")?.addEventListener("click", async () => {
+  const ann = state.annotations.find(a => a.type === "dxf-overlay");
+  if (!ann) return;
+
+  const statusEl2 = document.getElementById("align-status");
+  function setStatus(msg, isError = false) {
+    if (!statusEl2) return;
+    statusEl2.textContent = msg;
+    statusEl2.style.color = isError ? "var(--danger)" : "var(--text-secondary)";
+    statusEl2.hidden = !msg;
+  }
+
+  // Ensure we have detected circles
+  let circles = getDetectedCirclesForAlignment();
+  if (circles.length === 0) {
+    // Auto-freeze and detect
+    if (!state.frozen) {
+      await fetch("/freeze", { method: "POST" });
+      state.frozen = true;
+      updateFreezeUI();
+    }
+    setStatus("Running circle detection…");
+    const r = await fetch("/detect-circles", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ min_radius: 8, max_radius: 500 }),
+    });
+    if (!r.ok) { setStatus("Detection failed", true); return; }
+    const detected = await r.json();
+    if (detected.length === 0) {
+      setStatus("No circles detected — run detection manually first", true);
+      return;
+    }
+    // Store detected circles as annotations
+    const info = await fetch("/camera/info").then(r => r.json());
+    pushUndo();
+    state.annotations = state.annotations.filter(a => a.type !== "detected-circle");
+    detected.forEach(c => addAnnotation({
+      type: "detected-circle", x: c.x, y: c.y, radius: c.radius,
+      frameWidth: info.width, frameHeight: info.height,
+    }));
+    circles = getDetectedCirclesForAlignment();
+    redraw();
+  }
+
+  const cal = state.calibration;
+  if (!cal?.pixelsPerMm) { setStatus("Calibration required for alignment", true); return; }
+
+  setStatus("Aligning…");
+  try {
+    const r = await fetch("/align-dxf", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        entities: ann.entities,
+        circles,
+        pixels_per_mm: cal.pixelsPerMm,
+      }),
+    });
+    if (!r.ok) {
+      const err = await r.json();
+      setStatus(err.detail ?? "Alignment failed", true);
+      return;
+    }
+    const result = await r.json();
+    pushUndo();
+    ann.offsetX = result.tx;
+    ann.offsetY = result.ty;
+    ann.angle = result.angle_deg;
+    ann.flipH = result.flip_h;
+    ann.flipV = result.flip_v;
+    updateDxfControlsVisibility();
+
+    // Enable Show deviations now that we have an alignment
+    document.getElementById("btn-show-deviations")?.removeAttribute("disabled");
+
+    if (result.confidence === "high") {
+      setStatus(`Aligned — ${result.inlier_count}/${result.total_dxf_circles} features matched`);
+    } else if (result.confidence === "low") {
+      setStatus(`⚠ Low confidence — only ${result.inlier_count}/${result.total_dxf_circles} matched`, true);
+    } else {
+      setStatus("⚠ Alignment failed — result unreliable", true);
+    }
+    redraw();
+  } catch (err) {
+    setStatus("Network error: " + err.message, true);
+  }
+});
 
 [-5, -1, 1, 5].forEach(delta => {
   const id = `btn-dxf-rot-${delta < 0 ? "m" : "p"}${Math.abs(delta)}`;
