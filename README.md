@@ -1,6 +1,6 @@
 # Microscope
 
-Industrial video microscope application for precision measurement and inspection. Streams live video from USB3/GigE industrial cameras and provides measurement tools, edge/circle/line detection, DXF overlay, and calibrated pixel-to-mm conversion.
+Video microscope application for measurement and inspection. Streams live video from USB3/GigE industrial cameras and provides measurement tools, edge/circle/line detection, DXF overlay, and calibrated pixel-to-mm conversion.
 
 ## Features
 
