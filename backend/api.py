@@ -6,7 +6,7 @@ import cv2
 import numpy as np
 from fastapi import APIRouter, HTTPException, UploadFile, File
 from fastapi.responses import Response, StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from .cameras.base import BaseCamera
 from .config import load_config, save_config
@@ -75,6 +75,17 @@ class UiConfig(BaseModel):
     theme: str = Field(max_length=50, pattern=r"^[a-z0-9-]+$")
 
 
+class TolerancesConfig(BaseModel):
+    tolerance_warn: float = Field(gt=0)
+    tolerance_fail: float = Field(gt=0)
+
+    @model_validator(mode="after")
+    def warn_lt_fail(self):
+        if self.tolerance_warn >= self.tolerance_fail:
+            raise ValueError("tolerance_warn must be less than tolerance_fail")
+        return self
+
+
 router = APIRouter()
 
 
@@ -91,6 +102,21 @@ def get_ui_config():
 def post_ui_config(body: UiConfig):
     save_config({"app_name": body.app_name, "theme": body.theme})
     return {"app_name": body.app_name, "theme": body.theme}
+
+
+@router.get("/config/tolerances")
+def get_tolerances():
+    cfg = load_config()
+    return {
+        "tolerance_warn": cfg.get("tolerance_warn", 0.10),
+        "tolerance_fail": cfg.get("tolerance_fail", 0.25),
+    }
+
+
+@router.post("/config/tolerances")
+def post_tolerances(body: TolerancesConfig):
+    save_config({"tolerance_warn": body.tolerance_warn, "tolerance_fail": body.tolerance_fail})
+    return {"tolerance_warn": body.tolerance_warn, "tolerance_fail": body.tolerance_fail}
 
 
 def make_router(camera: BaseCamera, frame_store: FrameStore, startup_warning: str | None = None) -> APIRouter:
