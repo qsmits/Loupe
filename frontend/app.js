@@ -2584,7 +2584,7 @@ function matchDxfToDetected(ann) {
           best = d;
         }
       }
-      if (!best) return { nominal, r_px, matched: false };
+      if (!best) return { nominal, r_px, matched: false, handle: e.handle ?? null };
       const delta_xy_mm = bestDist / ppm;
       const delta_r_mm  = Math.abs(best.r - r_px) / ppm;
       return {
@@ -2593,7 +2593,8 @@ function matchDxfToDetected(ann) {
         matched: true,
         delta_xy_mm,
         delta_r_mm,
-        color: deviationColor(Math.max(delta_xy_mm, delta_r_mm)),
+        color: deviationColor(Math.max(delta_xy_mm, delta_r_mm), e.handle ?? null),
+        handle: e.handle ?? null,
       };
     });
 }
