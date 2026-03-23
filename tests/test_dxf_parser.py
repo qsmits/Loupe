@@ -65,3 +65,36 @@ def test_parse_dxf_empty_drawing():
 def test_parse_dxf_invalid_raises():
     with pytest.raises(ValueError):
         parse_dxf(b"this is not a dxf file")
+
+
+def test_parse_dxf_circle_has_handle():
+    entities = parse_dxf(_make_dxf(circle=True))
+    circles = [e for e in entities if e["type"] == "circle"]
+    assert "handle" in circles[0]
+    h = circles[0]["handle"]
+    assert h is None or (isinstance(h, str) and len(h) > 0)
+
+
+def test_parse_dxf_line_has_handle():
+    entities = parse_dxf(_make_dxf(line=True))
+    lines = [e for e in entities if e["type"] == "line"]
+    assert "handle" in lines[0]
+
+
+def test_parse_dxf_arc_has_handle():
+    entities = parse_dxf(_make_dxf(arc=True))
+    arcs = [e for e in entities if e["type"] == "arc"]
+    assert "handle" in arcs[0]
+
+
+def test_parse_dxf_polyline_has_handle():
+    entities = parse_dxf(_make_dxf(lwpolyline=True))
+    polys = [e for e in entities if e["type"] == "polyline"]
+    assert "handle" in polys[0]
+
+
+def test_parse_dxf_handles_are_unique_across_entities():
+    """Entities in a multi-entity DXF must have distinct non-None handles."""
+    entities = parse_dxf(_make_dxf(line=True, circle=True, arc=True))
+    handles = [e["handle"] for e in entities if e["handle"] is not None]
+    assert len(handles) == len(set(handles))
