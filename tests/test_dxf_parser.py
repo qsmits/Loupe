@@ -1,4 +1,6 @@
 import io
+import math
+import os
 import pytest
 import ezdxf
 from backend.vision.dxf_parser import parse_dxf
@@ -49,13 +51,6 @@ def test_parse_dxf_arc():
     assert arcs[0]["end_angle"] == pytest.approx(90.0)
 
 
-def test_parse_dxf_lwpolyline():
-    entities = parse_dxf(_make_dxf(lwpolyline=True))
-    polys = [e for e in entities if e["type"] == "polyline"]
-    assert len(polys) == 1
-    assert polys[0]["closed"] is True
-    assert len(polys[0]["points"]) == 3
-
 
 def test_parse_dxf_empty_drawing():
     entities = parse_dxf(_make_dxf())
@@ -91,13 +86,6 @@ def test_parse_dxf_arc_has_handle():
     assert h is None or (isinstance(h, str) and len(h) > 0)
 
 
-def test_parse_dxf_polyline_has_handle():
-    entities = parse_dxf(_make_dxf(lwpolyline=True))
-    polys = [e for e in entities if e["type"] == "polyline"]
-    assert "handle" in polys[0]
-    h = polys[0]["handle"]
-    assert h is None or (isinstance(h, str) and len(h) > 0)
-
 
 def test_parse_dxf_handles_are_unique_across_entities():
     """Entities in a multi-entity DXF must have distinct non-None handles."""
@@ -105,3 +93,81 @@ def test_parse_dxf_handles_are_unique_across_entities():
     handles = [e["handle"] for e in entities if e["handle"] is not None]
     assert len(handles) > 0
     assert len(handles) == len(set(handles))
+
+
+def _make_dxf_bulge_polyline() -> bytes:
+    """LWPOLYLINE with one 90° arc segment (bulge=tan(22.5°)≈0.4142) and one straight segment."""
+    doc = ezdxf.new()
+    msp = doc.modelspace()
+    pts = [(0, 0, 0.0), (10, 0, 0.4142), (0, 10, 0.0)]
+    msp.add_lwpolyline(pts, format="xyb", close=False)
+    buf = io.StringIO()
+    doc.write(buf)
+    return buf.getvalue().encode()
+
+
+def test_lwpolyline_straight_segment_emits_polyline_line():
+    entities = parse_dxf(_make_dxf_bulge_polyline())
+    lines = [e for e in entities if e["type"] == "polyline_line"]
+    assert any(
+        e["x1"] == pytest.approx(0.0) and e["y1"] == pytest.approx(0.0) and
+        e["x2"] == pytest.approx(10.0) and e["y2"] == pytest.approx(0.0)
+        for e in lines
+    )
+
+
+def test_lwpolyline_bulge_segment_emits_polyline_arc():
+    entities = parse_dxf(_make_dxf_bulge_polyline())
+    arcs = [e for e in entities if e["type"] == "polyline_arc"]
+    assert len(arcs) == 1
+    a = arcs[0]
+    assert a["cx"] == pytest.approx(0.0, abs=0.1)
+    assert a["cy"] == pytest.approx(0.0, abs=0.1)
+    assert a["radius"] == pytest.approx(10.0, abs=0.1)
+
+
+def test_lwpolyline_arc_has_parent_handle():
+    entities = parse_dxf(_make_dxf_bulge_polyline())
+    arcs = [e for e in entities if e["type"] == "polyline_arc"]
+    assert len(arcs) == 1
+    assert arcs[0]["parent_handle"] is not None
+    assert arcs[0]["segment_index"] == 1
+
+
+def test_lwpolyline_line_has_parent_handle():
+    entities = parse_dxf(_make_dxf_bulge_polyline())
+    lines = [e for e in entities if e["type"] == "polyline_line"]
+    assert len(lines) >= 1
+    assert lines[0]["parent_handle"] is not None
+    assert "segment_index" in lines[0]
+
+
+def test_lwpolyline_closed_emits_n_segments():
+    """Closed LWPOLYLINE with N vertices emits exactly N segments."""
+    doc = ezdxf.new()
+    msp = doc.modelspace()
+    msp.add_lwpolyline([(0,0), (10,0), (5,8)], close=True)
+    buf = io.StringIO()
+    doc.write(buf)
+    entities = parse_dxf(buf.getvalue().encode())
+    segs = [e for e in entities if e["type"] in ("polyline_line", "polyline_arc")]
+    assert len(segs) == 3
+
+
+def test_lwpolyline_no_longer_emits_polyline_type():
+    """After M3, parse_dxf should not emit the old 'polyline' type."""
+    entities = parse_dxf(_make_dxf(lwpolyline=True))
+    old_type = [e for e in entities if e["type"] == "polyline"]
+    assert old_type == []
+
+
+def test_vblock_dxf_has_polyline_arcs():
+    """The demuth vblock.dxf file must produce polyline_arc entities for the 90° bulge segments."""
+    dxf_path = os.path.join(os.path.dirname(__file__), "..", "demuth vblock.dxf")
+    with open(dxf_path, "rb") as f:
+        content = f.read()
+    entities = parse_dxf(content)
+    arcs = [e for e in entities if e["type"] == "polyline_arc"]
+    assert len(arcs) >= 2
+    ninety_deg = [a for a in arcs if abs(a["radius"] - 10.0) < 1.0]
+    assert len(ninety_deg) >= 2
