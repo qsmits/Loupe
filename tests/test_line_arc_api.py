@@ -33,6 +33,11 @@ def test_detect_lines_merged_400_without_freeze(client):
     assert r.status_code == 400
 
 
+def test_detect_arcs_partial_400_without_freeze(client):
+    r = client.post("/detect-arcs-partial", json={})
+    assert r.status_code == 400
+
+
 def test_match_dxf_lines_returns_results(client):
     _load_frame_with_line(client)
     detected = [{"x1": 50, "y1": 240, "x2": 590, "y2": 240, "length": 540.0}]

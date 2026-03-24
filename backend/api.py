@@ -130,6 +130,12 @@ class MatchDxfLinesBody(BaseModel):
     tolerance_warn: float = Field(default=0.10, gt=0)
     tolerance_fail: float = Field(default=0.25, gt=0)
 
+    @model_validator(mode="after")
+    def warn_lt_fail(self) -> "MatchDxfLinesBody":
+        if self.tolerance_warn >= self.tolerance_fail:
+            raise ValueError("tolerance_warn must be less than tolerance_fail")
+        return self
+
 
 class MatchDxfArcsBody(BaseModel):
     entities: list[dict]
@@ -142,6 +148,12 @@ class MatchDxfArcsBody(BaseModel):
     flip_v: bool = False
     tolerance_warn: float = Field(default=0.10, gt=0)
     tolerance_fail: float = Field(default=0.25, gt=0)
+
+    @model_validator(mode="after")
+    def warn_lt_fail(self) -> "MatchDxfArcsBody":
+        if self.tolerance_warn >= self.tolerance_fail:
+            raise ValueError("tolerance_warn must be less than tolerance_fail")
+        return self
 
 
 router = APIRouter()
