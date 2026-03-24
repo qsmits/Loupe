@@ -88,6 +88,7 @@ const TOOL_STATUS = {
   "pt-circle-dist": "Click — select a circle to measure from",
   "intersect":      "Click — select a reference line",
   "slot-dist":      "Click — select a reference line",
+  "arc-measure":    "Click — place 3 points on arc (double-click or 3rd click to confirm)",
 };
 
 function setTool(name) {
@@ -499,6 +500,35 @@ function handleToolClick(rawPt, e = {}) {
 
   if (tool === "arc-fit") {
     state.pendingPoints.push(pt);
+    redraw();
+    return;
+  }
+
+  if (tool === "arc-measure") {
+    state.pendingPoints.push(pt);
+    if (state.pendingPoints.length === 3) {
+      const [p1, p2, p3] = state.pendingPoints;
+      const ax = p2.x - p1.x, ay = p2.y - p1.y;
+      const bx = p3.x - p1.x, by = p3.y - p1.y;
+      const D = 2 * (ax * by - ay * bx);
+      if (Math.abs(D) < 1e-6) {
+        alert("Points are collinear — cannot fit arc");
+        state.pendingPoints = [];
+        redraw();
+        return;
+      }
+      const ux = (by * (ax*ax + ay*ay) - ay * (bx*bx + by*by)) / D;
+      const uy = (ax * (bx*bx + by*by) - bx * (ax*ax + ay*ay)) / D;
+      const cx = p1.x + ux, cy = p1.y + uy;
+      const r  = Math.hypot(ux, uy);
+      const a1 = Math.atan2(p1.y - cy, p1.x - cx) * 180 / Math.PI;
+      const a3 = Math.atan2(p3.y - cy, p3.x - cx) * 180 / Math.PI;
+      let span = Math.abs(a3 - a1) % 360;
+      if (span > 180) span = 360 - span;
+      const chord = Math.hypot(p3.x - p1.x, p3.y - p1.y);
+      addAnnotation({ type: "arc-measure", cx, cy, r, p1, p2, p3, span_deg: span, chord_px: chord });
+      state.pendingPoints = [];
+    }
     redraw();
     return;
   }
@@ -1324,7 +1354,26 @@ function drawAnnotations() {
     else if (ann.type === "pt-circle-dist") drawPtCircleDist(ann, sel);
     else if (ann.type === "intersect")      drawIntersect(ann, sel);
     else if (ann.type === "slot-dist")      drawSlotDist(ann, sel);
+    else if (ann.type === "arc-measure")    drawArcMeasure(ann, sel);
   });
+}
+
+function drawArcMeasure(ann, sel) {
+  const a1 = Math.atan2(ann.p1.y - ann.cy, ann.p1.x - ann.cx);
+  const a3 = Math.atan2(ann.p3.y - ann.cy, ann.p3.x - ann.cx);
+  ctx.save();
+  ctx.strokeStyle = sel ? "#e879f9" : "#bf5af2";  // lighter purple when selected
+  ctx.lineWidth = sel ? 2 : 1.5;
+  ctx.beginPath();
+  ctx.arc(ann.cx, ann.cy, ann.r, a1, a3);
+  ctx.stroke();
+  // Draw center marker
+  ctx.fillStyle = sel ? "#e879f9" : "#bf5af2";
+  ctx.beginPath();
+  ctx.arc(ann.cx, ann.cy, 3, 0, 2 * Math.PI);
+  ctx.fill();
+  ctx.restore();
+  drawLabel(measurementLabel(ann), ann.cx + 5, ann.cy - ann.r - 5);
 }
 
 function drawLine(a, b, color, width) {
@@ -1845,6 +1894,29 @@ canvas.addEventListener("mousemove", e => {
         ctx.restore();
       } catch {
         // collinear — no preview
+      }
+    } else if (state.tool === "arc-measure" && state.pendingPoints.length === 2) {
+      const [p1, p2] = state.pendingPoints;
+      const p3 = snappedPt;
+      const ax = p2.x - p1.x, ay = p2.y - p1.y;
+      const bx = p3.x - p1.x, by = p3.y - p1.y;
+      const D = 2 * (ax * by - ay * bx);
+      if (Math.abs(D) >= 1e-6) {
+        const ux = (by * (ax*ax + ay*ay) - ay * (bx*bx + by*by)) / D;
+        const uy = (ax * (bx*bx + by*by) - bx * (ax*ax + ay*ay)) / D;
+        const pcx = p1.x + ux, pcy = p1.y + uy;
+        const pr  = Math.hypot(ux, uy);
+        const pa1 = Math.atan2(p1.y - pcy, p1.x - pcx);
+        const pa3 = Math.atan2(p3.y - pcy, p3.x - pcx);
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(pcx, pcy, pr, pa1, pa3);
+        ctx.strokeStyle = "rgba(191,90,242,0.6)";
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([5, 4]);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.restore();
       }
     } else {
       drawLine(last, snappedPt, "rgba(251,146,60,0.5)", 1);
@@ -2903,6 +2975,18 @@ function formatCsvValue(ann) {
   }
   if (ann.type === "arc-fit") {
     return distResult(ann.r * 2);
+  }
+  if (ann.type === "arc-measure") {
+    const ppm = cal ? cal.pixelsPerMm : 1;
+    const r_mm = ann.r / ppm;
+    const chord_mm = ann.chord_px / ppm;
+    const rStr = cal
+      ? (cal.displayUnit === "µm" ? `${(r_mm * 1000).toFixed(2)} µm` : `${r_mm.toFixed(3)} mm`)
+      : `${ann.r.toFixed(1)} px`;
+    const chordStr = cal
+      ? (cal.displayUnit === "µm" ? `${(chord_mm * 1000).toFixed(2)} µm` : `${chord_mm.toFixed(3)} mm`)
+      : `${ann.chord_px.toFixed(1)} px`;
+    return `span ${ann.span_deg.toFixed(1)}°  r=${rStr}  chord=${chordStr}`;
   }
   if (ann.type === "detected-circle") {
     const sx = canvas.width / ann.frameWidth;
