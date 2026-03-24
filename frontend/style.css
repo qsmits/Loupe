@@ -692,3 +692,50 @@ body.no-camera .camera-section { display: none; }
 .dxf-btn.danger:hover { background: var(--danger); color: #fff; }
 .dxf-btn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
 .dxf-status { font-size: 10px; padding: 4px 12px; color: var(--text-secondary); }
+
+/* ─── Inspection result table ──────────────────────────────── */
+.inspection-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  cursor: pointer;
+  user-select: none;
+  border-bottom: 1px solid var(--border);
+}
+.inspection-title {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: .05em;
+}
+.inspection-count {
+  font-size: 10px;
+  color: var(--text-secondary);
+  margin-left: auto;
+}
+.inspection-chevron {
+  color: var(--border);
+  font-size: 9px;
+}
+.inspection-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 10px;
+}
+.inspection-table th {
+  text-align: left;
+  padding: 3px 6px;
+  color: var(--muted);
+  font-weight: 600;
+  border-bottom: 1px solid var(--border);
+}
+.inspection-table td {
+  padding: 3px 6px;
+  border-bottom: 1px solid var(--surface-2);
+}
+.badge-pass  { color: var(--success); font-weight: 600; }
+.badge-warn  { color: var(--warning); font-weight: 600; }
+.badge-fail  { color: var(--danger);  font-weight: 600; }
+.badge-unmatched { color: var(--muted); }

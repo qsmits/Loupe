@@ -262,3 +262,74 @@ export function updateDxfControlsVisibility() {
   const moveBtn = document.getElementById("btn-dxf-move");
   if (moveBtn) moveBtn.disabled = !ann;
 }
+
+// ── Inspection result table ────────────────────────────────────────────────────
+export function renderInspectionTable() {
+  const panel = document.getElementById("inspection-panel");
+  if (!panel) return;
+
+  if (!state.inspectionResults || state.inspectionResults.length === 0) {
+    panel.hidden = true;
+    return;
+  }
+
+  panel.hidden = false;
+
+  const countEl = document.getElementById("inspection-count");
+  const tbody = document.getElementById("inspection-tbody");
+  if (!tbody) return;
+
+  const total = state.inspectionResults.length;
+  const failed = state.inspectionResults.filter(r => r.pass_fail === "fail").length;
+  const warned = state.inspectionResults.filter(r => r.pass_fail === "warn").length;
+  if (countEl) {
+    countEl.textContent = failed > 0
+      ? `${total} features — ${failed} FAIL`
+      : warned > 0
+        ? `${total} features — ${warned} WARN`
+        : `${total} features — all PASS`;
+  }
+
+  tbody.innerHTML = "";
+  state.inspectionResults.forEach(r => {
+    const tr = document.createElement("tr");
+
+    const deviationText = r.matched && r.deviation_mm != null
+      ? r.deviation_mm.toFixed(4) + " mm"
+      : "—";
+
+    const toleranceText = `±${r.tolerance_warn}/${r.tolerance_fail}`;
+
+    let badgeClass, badgeText;
+    if (!r.matched) {
+      badgeClass = "badge-unmatched"; badgeText = "—";
+    } else if (r.pass_fail === "pass") {
+      badgeClass = "badge-pass"; badgeText = "PASS";
+    } else if (r.pass_fail === "warn") {
+      badgeClass = "badge-warn"; badgeText = "WARN";
+    } else {
+      badgeClass = "badge-fail"; badgeText = "FAIL";
+    }
+
+    tr.innerHTML = `
+      <td class="insp-handle">${r.handle}</td>
+      <td class="insp-type">${r.type}</td>
+      <td class="insp-dev">${deviationText}</td>
+      <td class="insp-tol">${toleranceText}</td>
+      <td><span class="insp-badge ${badgeClass}">${badgeText}</span></td>`;
+    tbody.appendChild(tr);
+  });
+
+  // Wire collapse toggle (idempotent)
+  const toggle = document.getElementById("inspection-toggle");
+  const wrap = document.getElementById("inspection-table-wrap");
+  const chevron = document.getElementById("inspection-chevron");
+  if (toggle && !toggle._m4wired) {
+    toggle._m4wired = true;
+    toggle.addEventListener("click", () => {
+      const collapsed = wrap.hidden;
+      wrap.hidden = !collapsed;
+      if (chevron) chevron.textContent = collapsed ? "▾" : "▸";
+    });
+  }
+}

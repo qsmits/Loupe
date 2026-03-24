@@ -190,6 +190,28 @@
       <!-- Measurements (fills available space) -->
       <div class="sidebar-section measurements-section">
         <div class="section-label">Measurements</div>
+        <!-- Inspection results panel -->
+        <div id="inspection-panel" hidden>
+          <div class="inspection-header" id="inspection-toggle">
+            <span class="inspection-title">Inspection Results</span>
+            <span class="inspection-count" id="inspection-count"></span>
+            <span class="inspection-chevron" id="inspection-chevron">▾</span>
+          </div>
+          <div id="inspection-table-wrap">
+            <table class="inspection-table">
+              <thead>
+                <tr>
+                  <th>Feature ID</th>
+                  <th>Type</th>
+                  <th>Deviation</th>
+                  <th>Tolerance</th>
+                  <th>Result</th>
+                </tr>
+              </thead>
+              <tbody id="inspection-tbody"></tbody>
+            </table>
+          </div>
+        </div>
         <div id="measurement-list"></div>
       </div>
 

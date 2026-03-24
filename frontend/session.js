@@ -1,6 +1,6 @@
 import { state, TRANSIENT_TYPES } from './state.js';
 import { redraw, canvas, img, showStatus, measurementLabel } from './render.js';
-import { renderSidebar } from './sidebar.js';
+import { renderSidebar, renderInspectionTable } from './sidebar.js';
 import { addAnnotation } from './annotations.js';
 import { polygonArea } from './math.js';
 
@@ -237,5 +237,6 @@ export function loadSession(raw) {
   if (data.version <= 2) showStatus("Session loaded");
 
   renderSidebar();
+  renderInspectionTable();
   redraw();
 }
