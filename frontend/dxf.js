@@ -1,7 +1,7 @@
 import { state, pushUndo } from './state.js';
-import { redraw, canvas, showStatus } from './render.js';
+import { redraw, canvas, img, showStatus } from './render.js';
 import { addAnnotation } from './annotations.js';
-import { renderSidebar, updateDxfControlsVisibility, updateFreezeUI } from './sidebar.js';
+import { renderSidebar, updateDxfControlsVisibility, updateFreezeUI, renderInspectionTable } from './sidebar.js';
 import { exportInspectionCsv, exportInspectionPdf } from './session.js';
 
 // ── Per-feature tolerance popover ──────────────────────────────────────────
@@ -53,6 +53,14 @@ function closeFeatureTolPopover() {
   _ftolActiveHandle = null;
 }
 
+function updateExportButtons() {
+  const hasResults = state.inspectionResults.length > 0;
+  const csvBtn = document.getElementById("btn-export-inspection-csv");
+  const pdfBtn = document.getElementById("btn-export-inspection-pdf");
+  if (csvBtn) csvBtn.disabled = !hasResults;
+  if (pdfBtn) pdfBtn.disabled = !hasResults;
+}
+
 export function initDxfHandlers() {
   // btn-load-dxf click (app.js ~2549)
   document.getElementById("btn-load-dxf").addEventListener("click", () => {
@@ -79,6 +87,8 @@ export function initDxfHandlers() {
       state.inspectionResults = [];
       state.inspectionFrame = null;
       state.dxfFilename = file.name.replace(/\.dxf$/i, "");
+      renderInspectionTable();
+      updateExportButtons();
       addAnnotation({
         type: "dxf-overlay",
         entities,
@@ -128,6 +138,8 @@ export function initDxfHandlers() {
     state.inspectionResults = [];
     state.inspectionFrame = null;
     state.dxfFilename = null;
+    renderInspectionTable();
+    updateExportButtons();
     const dxfPanelEl2 = document.getElementById("dxf-panel");
     if (dxfPanelEl2) dxfPanelEl2.style.display = "none";
     updateDxfControlsVisibility();
@@ -338,6 +350,54 @@ export function initDxfHandlers() {
       ann.lineMatchResults = await lineRes.json();
       ann.arcMatchResults  = await arcRes.json();
 
+      // Populate state.inspectionResults for session persistence and export
+      const lineResults = ann.lineMatchResults.map(r => {
+        const en = lineEntities.find(e => e.handle === r.handle) || {};
+        return {
+          handle: r.handle,
+          type: en.type || "line",
+          parent_handle: en.parent_handle || null,
+          matched: r.matched,
+          deviation_mm: r.perp_dev_mm ?? null,
+          angle_error_deg: r.angle_error_deg ?? null,
+          tolerance_warn: r.tolerance_warn ?? tol.warn,
+          tolerance_fail: r.tolerance_fail ?? tol.fail,
+          pass_fail: r.pass_fail,
+        };
+      });
+
+      const arcResults = ann.arcMatchResults.map(r => {
+        const en = arcEntities.find(e => e.handle === r.handle) || {};
+        return {
+          handle: r.handle,
+          type: en.type || "arc",
+          parent_handle: en.parent_handle || null,
+          matched: r.matched,
+          deviation_mm: r.center_dev_mm ?? null,
+          angle_error_deg: null,
+          tolerance_warn: r.tolerance_warn ?? tol.warn,
+          tolerance_fail: r.tolerance_fail ?? tol.fail,
+          pass_fail: r.pass_fail,
+        };
+      });
+
+      state.inspectionResults = [...lineResults, ...arcResults];
+
+      // Capture composited camera+overlay as inspection frame
+      try {
+        const offscreen = document.createElement("canvas");
+        offscreen.width = canvas.width;
+        offscreen.height = canvas.height;
+        const octx = offscreen.getContext("2d");
+        octx.drawImage(img, 0, 0, offscreen.width, offscreen.height);
+        octx.drawImage(canvas, 0, 0);
+        state.inspectionFrame = offscreen.toDataURL("image/jpeg", 0.85);
+      } catch (_) {
+        state.inspectionFrame = null;
+      }
+
+      renderInspectionTable();
+      updateExportButtons();
       redraw();
       showStatus(`Inspection complete — ${ann.lineMatchResults.length} lines, ${ann.arcMatchResults.length} arcs`);
     } catch (err) {
