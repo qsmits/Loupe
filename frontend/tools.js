@@ -1,5 +1,5 @@
 import { state, TOOL_STATUS, pushUndo } from './state.js';
-import { redraw, canvas, ctx, showStatus, getLineEndpoints, lineAngleDeg, dxfToCanvas } from './render.js';
+import { redraw, canvas, ctx, showStatus, getLineEndpoints, lineAngleDeg, dxfToCanvas, listEl } from './render.js';
 import { addAnnotation, applyCalibration } from './annotations.js';
 import { fitCircle, fitCircleAlgebraic, parseDistanceInput, polygonArea, distPointToSegment } from './math.js';
 import { renderSidebar } from './sidebar.js';
@@ -371,7 +371,6 @@ export function handleSelectDown(pt, e) {
       state.selected = ann.id;
       state.dragState = { annotationId: ann.id, handleKey: "body", startX: pt.x, startY: pt.y };
       renderSidebar();
-      const listEl = document.getElementById("measurement-list");
       const selRow = listEl.querySelector(".measurement-item.selected");
       if (selRow) selRow.scrollIntoView({ block: "nearest" });
       redraw();
