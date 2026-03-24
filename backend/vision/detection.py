@@ -26,6 +26,13 @@ _CONTOUR_MIN_LENGTH = 20
 _CONTOUR_NMS_DIST   = 8
 _CONTOUR_NMS_ANGLE  = 5.0
 
+# ── Partial arc detection constants ───────────────────────────────────────────
+_ARC_PARTIAL_MIN_SPAN_DEG  = 45.0
+_ARC_PARTIAL_MAX_SPAN_DEG  = 340.0   # suppress near-full circles
+_ARC_PARTIAL_RESIDUAL_TOL  = 0.08    # looser than _ARC_MAX_RESIDUAL=0.06
+_ARC_PARTIAL_NMS_CENTER_PX = 10
+_ARC_PARTIAL_NMS_R_RATIO   = 0.10
+
 
 def _preprocess(frame: np.ndarray) -> np.ndarray:
     """
@@ -369,6 +376,75 @@ def detect_lines_contour(
 
     return [{"x1":x1,"y1":y1,"x2":x2,"y2":y2,"length":round(length,1)}
             for length, x1, y1, x2, y2, _ in kept]
+
+
+def detect_partial_arcs(
+    frame: np.ndarray,
+    threshold1: int = 50,
+    threshold2: int = 130,
+    min_radius: int = 8,
+    max_radius: int = 500,
+    min_span_deg: float = _ARC_PARTIAL_MIN_SPAN_DEG,
+    residual_tol: float = _ARC_PARTIAL_RESIDUAL_TOL,
+) -> list[dict]:
+    """
+    Detect partial arcs (arc segments subtending >= min_span_deg degrees).
+
+    Entirely independent of detect_circles. _ARC_MIN_COVERAGE=160 is not used here.
+    Returns list of {"cx", "cy", "r", "start_deg", "end_deg"} dicts (image pixels / degrees).
+    """
+    gray = _preprocess(frame)
+    edges = cv2.Canny(gray, threshold1, threshold2)
+    k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (_CLOSE_KERNEL_SMALL,) * 2)
+    edges = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, k)
+    contours, _ = cv2.findContours(edges, cv2.RETR_LIST, cv2.CHAIN_APPROX_NONE)
+
+    candidates = []  # (coverage, cx, cy, r, start_deg, end_deg)
+    for cnt in contours:
+        pts = cnt[:, 0, :].astype(np.float32)
+        if len(pts) < 8:
+            continue
+        try:
+            fcx, fcy, fr = _fit_circle_algebraic(pts)
+        except (np.linalg.LinAlgError, ValueError):
+            continue
+        if not (min_radius <= fr <= max_radius):
+            continue
+        residuals = np.abs(np.hypot(pts[:, 0] - fcx, pts[:, 1] - fcy) - fr)
+        if np.mean(residuals) / (fr + 1e-6) > residual_tol:
+            continue
+        coverage = _arc_angular_coverage(pts, fcx, fcy)
+        if coverage < min_span_deg or coverage >= _ARC_PARTIAL_MAX_SPAN_DEG:
+            continue
+        # Compute start/end angles by finding the largest angular gap (same logic
+        # as _arc_angular_coverage) and using the gap boundaries as arc endpoints.
+        angles = np.degrees(np.arctan2(pts[:, 1] - fcy, pts[:, 0] - fcx)) % 360
+        angles_sorted = np.sort(angles)
+        gaps = np.diff(angles_sorted, append=angles_sorted[0] + 360)
+        gap_idx = int(np.argmax(gaps))
+        # Arc starts just after the largest gap and ends just before it
+        start_deg = float(angles_sorted[(gap_idx + 1) % len(angles_sorted)])
+        end_deg   = float(angles_sorted[gap_idx])
+        # Normalize: if the arc spans the 0°/360° boundary, shift start into [0°, 360°)
+        # so that start < end (e.g. start=358° end=92° → start=-2° end=92°, closer to 0°).
+        if start_deg > end_deg:
+            start_deg -= 360.0
+        candidates.append((coverage, float(fcx), float(fcy), float(fr), start_deg, end_deg))
+
+    # NMS: suppress lower-coverage arcs near higher-coverage ones
+    candidates.sort(key=lambda c: c[0], reverse=True)
+    kept = []
+    for cov, cx, cy, r, s, e in candidates:
+        suppressed = False
+        for _, kcx, kcy, kr, _, _ in kept:
+            if (np.hypot(cx-kcx, cy-kcy) < _ARC_PARTIAL_NMS_CENTER_PX and
+                    abs(r-kr)/(max(r,kr)+1e-6) < _ARC_PARTIAL_NMS_R_RATIO):
+                suppressed = True; break
+        if not suppressed:
+            kept.append((cov, cx, cy, r, s, e))
+
+    return [{"cx": cx, "cy": cy, "r": r, "start_deg": s, "end_deg": e}
+            for _, cx, cy, r, s, e in kept]
 
 
 def preprocessed_view(frame: np.ndarray) -> bytes:

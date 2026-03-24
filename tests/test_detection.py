@@ -129,3 +129,40 @@ def test_detect_lines_contour_finds_rectangle_edges():
 def test_detect_lines_contour_empty_frame():
     from backend.vision.detection import detect_lines_contour
     assert detect_lines_contour(np.zeros((480,640,3),dtype=np.uint8)) == []
+
+
+def test_detect_partial_arcs_returns_list():
+    from backend.vision.detection import detect_partial_arcs
+    frame = np.zeros((480, 640, 3), dtype=np.uint8)
+    cv2.ellipse(frame, (320, 240), (100, 100), 0, 0, 90, (255, 255, 255), 2)
+    arcs = detect_partial_arcs(frame)
+    assert isinstance(arcs, list)
+
+
+def test_detect_partial_arcs_finds_90deg_arc():
+    from backend.vision.detection import detect_partial_arcs
+    frame = np.zeros((480, 640, 3), dtype=np.uint8)
+    cv2.ellipse(frame, (320, 240), (100, 100), 0, 0, 90, (255, 255, 255), 2)
+    arcs = detect_partial_arcs(frame)
+    assert len(arcs) >= 1
+    a = arcs[0]
+    assert {"cx", "cy", "r", "start_deg", "end_deg"} <= a.keys()
+    assert abs(a["cx"] - 320) < 10
+    assert abs(a["cy"] - 240) < 10
+    assert abs(a["r"] - 100) < 10
+
+
+def test_detect_partial_arcs_empty_frame():
+    from backend.vision.detection import detect_partial_arcs
+    assert detect_partial_arcs(np.zeros((480,640,3),dtype=np.uint8)) == []
+
+
+def test_detect_partial_arcs_does_not_modify_circle_detection():
+    """detect_circles on a full circle frame must return the same result before and after M2."""
+    from backend.vision.detection import detect_circles, detect_partial_arcs
+    frame = np.zeros((480, 640, 3), dtype=np.uint8)
+    cv2.circle(frame, (320, 240), 100, (255, 255, 255), 2)
+    circles_before = detect_circles(frame)
+    detect_partial_arcs(frame)   # must not modify any shared state
+    circles_after = detect_circles(frame)
+    assert circles_before == circles_after
