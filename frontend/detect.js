@@ -38,7 +38,8 @@ export function initDetectHandlers() {
     const el = document.getElementById(id);
     if (!el) return;
     el.addEventListener("input", () => {
-      document.getElementById(id + "-val").textContent = el.value;
+      const valEl = document.getElementById(id + "-val");
+      if (valEl) valEl.textContent = el.value;
     });
   });
 
@@ -109,7 +110,7 @@ export function initDetectHandlers() {
   });
 
   // btn-run-lines: detect and display lines using Hough
-  document.getElementById("btn-run-lines").addEventListener("click", async () => {
+  document.getElementById("btn-run-lines")?.addEventListener("click", async () => {
     await ensureFrozen();
     const sensitivity = parseInt(document.getElementById("line-sensitivity").value);
     const minLength   = parseInt(document.getElementById("line-min-length").value);
