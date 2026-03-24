@@ -9,7 +9,7 @@ import { setTool, handleToolClick, handleSelectDown, handleDrag,
          canvasPoint, snapPoint, collectDxfSnapPoints,
          projectConstrained } from './tools.js';
 import { fitCircle } from './math.js';
-import { enterDxfAlignMode, exitDxfAlignMode, initDxfHandlers,
+import { exitDxfAlignMode, initDxfHandlers,
          openFeatureTolPopover } from './dxf.js';
 import { doFreeze, initDetectHandlers } from './detect.js';
 import { saveSession, loadSession, exportAnnotatedImage, exportCsv } from './session.js';
