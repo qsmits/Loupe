@@ -14,10 +14,10 @@ M1 delivered per-feature tolerance configuration (using DXF `handle` as stable e
 ### In scope
 
 1. **Inspection result table** — collapsible panel in the sidebar showing each matched DXF feature with its deviation, tolerance, and pass/fail status.
-2. **State persistence of inspection results** — `state.inspectionResults`, `state.dxfFilename`, `state.inspectionFrame` (base64 JPEG of frozen frame at inspection time). Populated after each match run.
+2. **State persistence of inspection results** — `state.inspectionResults`, `state.dxfFilename`, `state.inspectionFrame` (composited JPEG of camera + overlay at inspection time). Populated after each match run.
 3. **Session JSON v2** — extends the session format to include inspection results and camera frame. Version 1 sessions still load (missing fields default to empty).
-4. **CSV export (inspection)** — new export function, separate from the existing annotation CSV. One row per matched DXF feature.
-5. **PDF export** — client-side via jsPDF (CDN `<script>` tag). Annotated canvas image + result table. Re-exportable from a reloaded session.
+4. **CSV export (inspection)** — new export function. Rows for DXF feature deviations plus arc-measure annotation results (roadmap requires arc-measure be included; it is a shipped M1 feature).
+5. **PDF export** — client-side via jsPDF (CDN `<script>` tag, base bundle only). Annotated camera image + result table. Re-exportable from a reloaded session.
 6. **Re-export from reloaded session** — opening a v2 session restores `inspectionResults` and `inspectionFrame`; CSV and PDF buttons are enabled without re-running detection.
 
 ### Out of scope
@@ -25,7 +25,7 @@ M1 delivered per-feature tolerance configuration (using DXF `handle` as stable e
 - Server-side PDF rendering
 - Email or cloud export
 - Multi-part inspection (one session = one part)
-- Measurement annotation results in the inspection CSV (this CSV is DXF-feature-deviation only; the existing annotation CSV in `exportCsv()` is unchanged)
+- Other measurement annotation types (distance, angle, circle, etc.) in the inspection CSV — only DXF deviations and arc-measure are included, as the roadmap specifies
 
 ---
 
@@ -37,20 +37,20 @@ Three new fields added to `state` in `frontend/state.js`:
 inspectionResults: [],   // [{handle, type, parent_handle?, matched, deviation_mm,
                          //   angle_error_deg?, tolerance_warn, tolerance_fail, pass_fail}]
 dxfFilename: null,       // string — set when DXF is loaded, e.g. "demuth vblock"
-inspectionFrame: null,   // base64 JPEG string — captured at inspection time
+inspectionFrame: null,   // base64 data-URL — composited camera+overlay JPEG
 ```
 
-`inspectionResults` is populated (or replaced) each time `/match-dxf-lines` or `/match-dxf-arcs` returns results. It is merged by handle — a new match run for lines replaces line results, arc results are preserved, and vice versa.
+**`inspectionResults` population:** populated (or merged) each time the "Run inspection" button completes. Merge strategy: a new lines match run replaces all line/polyline_line entries; arc/polyline_arc entries are preserved, and vice versa. On first run (empty array), the merge initialises correctly from an empty base. When a new DXF is loaded or the DXF overlay is cleared, `inspectionResults` and `inspectionFrame` are both reset to `[]` / `null` so stale results from a previous part are never shown.
 
-`inspectionFrame` is captured when the "Run inspection" button is clicked and match results arrive — not at `doFreeze`. This ensures the stored frame corresponds to the exact inspection run, not an earlier freeze. Capture uses the same compositing approach as `exportAnnotatedImage()` in `session.js`: draw the camera `img` element first, then the annotation `canvas` on top, into an offscreen canvas, then call `toDataURL("image/jpeg", 0.85)`. This produces the full annotated image (camera + overlays), not just the annotation layer. It is not recaptured on re-export.
+**`inspectionFrame` capture:** captured when the "Run inspection" button click completes and results have been stored — not at `doFreeze`. This ensures the stored image includes the deviation callouts painted on the canvas. Capture uses the same compositing approach as `exportAnnotatedImage()` in `session.js`: draw the camera `img` element first, then the annotation `canvas` on top, into an offscreen canvas sized to `canvas.width × canvas.height`, then call `toDataURL("image/jpeg", 0.85)`. The offscreen canvas is sized to the current canvas display size (not full camera resolution), capping the output at a reasonable file size (~100–300 KB base64 for typical display resolutions). It is not recaptured on re-export.
 
-`dxfFilename` is set from the uploaded DXF filename (without extension) when `/load-dxf` is called. It is the "part name" in CSV and PDF.
+**`dxfFilename`:** set from the uploaded DXF filename (without extension) when `/load-dxf` is called. It is the "part name" in CSV and PDF. Cleared when DXF is cleared.
 
 ---
 
 ## Session Format (v2)
 
-`saveSession()` bumps `version` to `2` and adds:
+`saveSession()` bumps `version` to `2` and adds the three new fields:
 
 ```json
 {
@@ -79,7 +79,7 @@ inspectionFrame: null,   // base64 JPEG string — captured at inspection time
 }
 ```
 
-`loadSession()` handles both v1 (ignores new fields, leaves inspectionResults/inspectionFrame empty) and v2.
+`loadSession()` handles both v1 and v2. The existing version ceiling guard (`version === 1` → else reject) must be raised to `version <= 2`. v1 sessions load normally; `inspectionResults`, `dxfFilename`, and `inspectionFrame` default to `[]`, `null`, `null` when absent.
 
 `TRANSIENT_TYPES` in `state.js` does **not** include inspection results — they are persisted.
 
@@ -107,6 +107,8 @@ The panel has a header row with a collapse/expand toggle (consistent with other 
 
 New function `exportInspectionCsv()` in `session.js`.
 
+**Section 1 — DXF feature deviations** (from `state.inspectionResults`):
+
 Columns:
 ```
 part_name, timestamp, feature_id, feature_type, deviation_mm, angle_error_deg,
@@ -122,9 +124,13 @@ tolerance_warn, tolerance_fail, result
 - `tolerance_warn`, `tolerance_fail`: from the result record
 - `result`: `PASS` / `WARN` / `FAIL` / `UNMATCHED`
 
-Re-export from a reloaded session uses the stored `inspectionResults` directly; the timestamp is the new export time (not the original inspection time), which is acceptable per the roadmap spec.
+**Section 2 — Arc-measure annotations** (from `state.annotations` where `type === "arc-measure"`):
 
-The existing `exportCsv()` (measurement annotations) is unchanged and remains accessible from its existing button.
+The roadmap requires arc-measure results be included in M4 exports (M1 stretch goal that shipped). These are appended as additional rows in the same CSV, using the same `part_name` and `timestamp` but with `feature_type = "arc-measure"` and `feature_id = ann.name || ann.id`. Columns `deviation_mm`, `angle_error_deg`, `tolerance_warn`, `tolerance_fail`, `result` are left empty (arc-measure has no DXF deviation); instead a `notes` column is appended containing `r={r_mm} mm  span={span_deg}°  chord={chord_mm} mm  center=({cx},{cy}) mm`.
+
+Re-export from a reloaded session uses the stored `inspectionResults` directly and re-reads `state.annotations` for arc-measure rows; the timestamp is the new export time.
+
+The existing `exportCsv()` (all measurement annotations) is unchanged and remains accessible from its existing button.
 
 A new "Export Inspection CSV" button is added to the DXF/inspection panel. It is disabled when `inspectionResults` is empty.
 
@@ -142,12 +148,12 @@ New function `exportInspectionPdf()` in `session.js`.
 
 **Content:**
 1. Header: part name, export timestamp, calibration scale (px/mm)
-2. Annotated image: `state.inspectionFrame` (base64 JPEG from state)
-3. Result table: same columns as CSV, rendered with manual jsPDF cell positioning (`doc.text()` and `doc.line()` calls). No autoTable plugin dependency.
+2. Annotated image: `state.inspectionFrame` (the composited camera+overlay base64 JPEG)
+3. Result table: same columns as the DXF feature deviation section of the CSV, rendered with manual jsPDF cell positioning (`doc.text()` and `doc.line()` calls). No autoTable plugin dependency. Arc-measure results appended below the DXF deviation table as a secondary block.
 
 **Page layout:** A4 landscape. Image scaled to fill top ~60% of page. Result table below, one row per result, column widths fixed.
 
-**Re-export:** if `state.inspectionFrame` is set (from session load), that image is used. The resulting PDF is identical to the original export regardless of camera state.
+**Re-export:** `state.inspectionFrame` is used directly (captured at inspection time). The resulting PDF is identical to the original export regardless of camera state.
 
 A new "Export Inspection PDF" button is added next to the CSV button. Disabled when `inspectionResults` is empty.
 
@@ -158,9 +164,9 @@ A new "Export Inspection PDF" button is added next to the CSV button. Disabled w
 | Module | Changes |
 |--------|---------|
 | `state.js` | Add `inspectionResults`, `dxfFilename`, `inspectionFrame` to `state` |
-| `session.js` | Add `exportInspectionCsv()`, `exportInspectionPdf()`. Extend `saveSession()`/`loadSession()` for v2. |
+| `session.js` | Add `exportInspectionCsv()`, `exportInspectionPdf()`. Extend `saveSession()`/`loadSession()` for v2 (raise version ceiling to 2). |
 | `sidebar.js` | Add `renderInspectionTable()`. Call after match runs and on session load. |
-| `dxf.js` | Set `state.dxfFilename` on DXF load. Capture `state.inspectionFrame` after match results arrive. Wire new export buttons. |
+| `dxf.js` | Set `state.dxfFilename` on DXF load. Reset `inspectionResults`/`inspectionFrame` on DXF load and clear. Capture `state.inspectionFrame` after "Run inspection" completes. Wire new export buttons. |
 | `index.html` | Add jsPDF CDN `<script>` tag. Add inspection panel HTML skeleton. Add export buttons. |
 
 No backend changes required for M4. All inspection persistence and export is client-side.
@@ -172,8 +178,10 @@ No backend changes required for M4. All inspection persistence and export is cli
 - Unit test: `saveSession()` with non-empty `inspectionResults` produces a v2 JSON with correct fields.
 - Unit test: `loadSession()` on a v1 JSON leaves `inspectionResults` empty and does not error.
 - Unit test: `loadSession()` on a v2 JSON restores `inspectionResults` and `dxfFilename`.
-- Unit test: `exportInspectionCsv()` produces correct column headers and one row per result.
+- Unit test: `loadSession()` on a hypothetical v3 JSON rejects with the version-too-new message.
+- Unit test: `exportInspectionCsv()` produces correct column headers and one row per DXF result plus arc-measure rows.
 - Integration test: after a `/match-dxf-lines` call, `renderInspectionTable()` renders the correct rows.
+- Integration test: loading a new DXF resets `inspectionResults` and `inspectionFrame`.
 - The existing session save/load tests must pass (v1 round-trip unchanged).
 
 ---
@@ -181,7 +189,8 @@ No backend changes required for M4. All inspection persistence and export is cli
 ## Success Criteria
 
 - After a complete inspection, the sidebar shows a result table with per-feature deviation, tolerance, and pass/fail for all matched geometry types.
-- "Export Inspection CSV" produces a file with correct per-feature data and part name from DXF filename.
-- "Export Inspection PDF" produces a PDF containing the annotated camera frame and result table.
-- Reloading a saved v2 session restores the inspection results and enables re-export of both CSV and PDF without re-running detection.
+- "Export Inspection CSV" produces a file with correct per-feature data, part name from DXF filename, and arc-measure annotation results appended.
+- "Export Inspection PDF" produces a PDF containing the composited annotated camera frame and result table.
+- Reloading a saved v2 session restores inspection results and enables re-export of both CSV and PDF without re-running detection.
 - v1 sessions still load without errors.
+- Loading a new DXF clears any stale inspection results from the previous part.
