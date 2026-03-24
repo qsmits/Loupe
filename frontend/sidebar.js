@@ -1,5 +1,5 @@
 import { state } from './state.js';
-import { redraw, showStatus, getStatus, measurementLabel, canvas, listEl, cameraInfoEl } from './render.js';
+import { redraw, showStatus, getStatus, measurementLabel, listEl, cameraInfoEl } from './render.js';
 
 // ── Sidebar rendering ──────────────────────────────────────────────────────────
 export function renderSidebar() {
@@ -173,18 +173,17 @@ function updateDropOverlay() {
 }
 
 export function updateFreezeUI() {
-  const btn        = document.getElementById("btn-freeze");
-  const statusText = document.getElementById("status-text");
+  const btn = document.getElementById("btn-freeze");
   if (state.frozen) {
     btn.textContent = "❄ Frozen";
     btn.classList.replace("freeze-live", "freeze-frozen");
-    if (statusText) statusText.textContent = "● Frozen";
+    showStatus("● Frozen");
   } else {
     btn.textContent = "❄ Live";
     btn.classList.replace("freeze-frozen", "freeze-live");
-    if (statusText) statusText.textContent = "● Live";
+    showStatus("● Live");
   }
-  if (typeof updateDropOverlay === "function") updateDropOverlay();
+  updateDropOverlay();
 }
 
 // ── Startup warning ────────────────────────────────────────────────────────────
