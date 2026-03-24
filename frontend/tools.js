@@ -1,7 +1,7 @@
-import { state, TOOL_STATUS, pushUndo } from './state.js';
-import { redraw, canvas, ctx, showStatus, getLineEndpoints, lineAngleDeg, dxfToCanvas, listEl } from './render.js';
+import { state, TOOL_STATUS } from './state.js';
+import { redraw, canvas, showStatus, getLineEndpoints, lineAngleDeg, dxfToCanvas, listEl } from './render.js';
 import { addAnnotation, applyCalibration } from './annotations.js';
-import { fitCircle, fitCircleAlgebraic, parseDistanceInput, polygonArea, distPointToSegment } from './math.js';
+import { fitCircle, parseDistanceInput, distPointToSegment } from './math.js';
 import { renderSidebar } from './sidebar.js';
 
 export function setTool(name) {
