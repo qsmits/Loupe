@@ -2,7 +2,7 @@ import { state, pushUndo } from './state.js';
 import { redraw, canvas, showStatus } from './render.js';
 import { addAnnotation } from './annotations.js';
 import { renderSidebar, updateDxfControlsVisibility, updateFreezeUI } from './sidebar.js';
-import { exportInspectionCsv } from './session.js';
+import { exportInspectionCsv, exportInspectionPdf } from './session.js';
 
 // ── Per-feature tolerance popover ──────────────────────────────────────────
 let _ftolActiveHandle = null;
@@ -359,6 +359,13 @@ export function initDxfHandlers() {
   if (btnExportCsv) {
     btnExportCsv.addEventListener("click", () => {
       exportInspectionCsv();
+    });
+  }
+
+  const btnExportPdf = document.getElementById("btn-export-inspection-pdf");
+  if (btnExportPdf) {
+    btnExportPdf.addEventListener("click", () => {
+      exportInspectionPdf();
     });
   }
 

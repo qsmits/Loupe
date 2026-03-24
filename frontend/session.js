@@ -191,6 +191,111 @@ export function exportInspectionCsv() {
   URL.revokeObjectURL(url);
 }
 
+// ── Inspection PDF export ────────────────────────────────────────────────────
+export function exportInspectionPdf() {
+  const { jsPDF } = window.jspdf;
+  if (!jsPDF) { showStatus("PDF library not loaded"); return; }
+
+  const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
+  const pageW = 297;
+  const pageH = 210;
+  const margin = 10;
+
+  // ── Header ──
+  const partName = state.dxfFilename || "(no part)";
+  const exportTs = new Date().toLocaleString();
+  const scaleText = state.calibration
+    ? `${state.calibration.pixelsPerMm.toFixed(3)} px/mm`
+    : "uncalibrated";
+
+  doc.setFontSize(14);
+  doc.text(`Inspection Report — ${partName}`, margin, margin + 7);
+  doc.setFontSize(9);
+  doc.setTextColor(100);
+  doc.text(`Exported: ${exportTs}   Scale: ${scaleText}`, margin, margin + 13);
+  doc.setTextColor(0);
+
+  let yPos = margin + 18;
+
+  // ── Annotated image ──
+  if (state.inspectionFrame) {
+    const imgAreaH = pageH * 0.55;
+    const imgAreaW = pageW - margin * 2;
+    doc.addImage(state.inspectionFrame, "JPEG", margin, yPos, imgAreaW, imgAreaH);
+    yPos += imgAreaH + 5;
+  }
+
+  // ── Result table (manual cell rendering) ──
+  const colWidths = [30, 28, 28, 28, 20];
+  const colHeaders = ["Feature ID", "Type", "Deviation", "Tolerance", "Result"];
+  const rowH = 7;
+  const fontSize = 8;
+
+  doc.setFontSize(fontSize);
+  doc.setFont(undefined, "bold");
+  let xPos = margin;
+  colHeaders.forEach((h, i) => {
+    doc.text(h, xPos + 1, yPos + rowH - 2);
+    doc.rect(xPos, yPos, colWidths[i], rowH);
+    xPos += colWidths[i];
+  });
+  yPos += rowH;
+  doc.setFont(undefined, "normal");
+
+  state.inspectionResults.forEach(r => {
+    if (yPos + rowH > pageH - margin) {
+      doc.addPage();
+      yPos = margin;
+    }
+    const deviationText = r.matched && r.deviation_mm != null
+      ? r.deviation_mm.toFixed(4) + " mm" : "—";
+    const toleranceText = `±${r.tolerance_warn}/${r.tolerance_fail}`;
+    const resultText = r.matched ? r.pass_fail.toUpperCase() : "—";
+
+    const cells = [r.handle, r.type, deviationText, toleranceText, resultText];
+    xPos = margin;
+    cells.forEach((cell, i) => {
+      if (i === 4) {
+        if (r.pass_fail === "pass") doc.setTextColor(0, 150, 0);
+        else if (r.pass_fail === "warn") doc.setTextColor(200, 120, 0);
+        else if (r.pass_fail === "fail") doc.setTextColor(200, 0, 0);
+        else doc.setTextColor(100);
+      }
+      doc.text(String(cell), xPos + 1, yPos + rowH - 2);
+      doc.setTextColor(0);
+      doc.rect(xPos, yPos, colWidths[i], rowH);
+      xPos += colWidths[i];
+    });
+    yPos += rowH;
+  });
+
+  // ── Arc-measure section ──
+  const arcMeasures = state.annotations.filter(a => a.type === "arc-measure");
+  if (arcMeasures.length > 0) {
+    yPos += 4;
+    if (yPos + rowH > pageH - margin) { doc.addPage(); yPos = margin; }
+    doc.setFontSize(fontSize);
+    doc.setFont(undefined, "bold");
+    doc.text("Arc Measurements", margin, yPos + rowH - 2);
+    yPos += rowH;
+    doc.setFont(undefined, "normal");
+
+    const ppm = state.calibration ? state.calibration.pixelsPerMm : 1;
+    arcMeasures.forEach(ann => {
+      if (yPos + rowH > pageH - margin) { doc.addPage(); yPos = margin; }
+      const r_mm = (ann.r / ppm).toFixed(3);
+      const chord_mm = (ann.chord_px / ppm).toFixed(3);
+      const label = ann.name || String(ann.id);
+      const line = `${label}:  r=${r_mm} mm  span=${ann.span_deg.toFixed(1)}°  chord=${chord_mm} mm`;
+      doc.text(line, margin, yPos + rowH - 2);
+      yPos += rowH;
+    });
+  }
+
+  const ts = new Date().toISOString().slice(0, 19).replace(/[T:]/g, "-");
+  doc.save(`inspection_${ts}.pdf`);
+}
+
 // ── Session save ────────────────────────────────────────────────────────────
 export function saveSession() {
   const session = {
