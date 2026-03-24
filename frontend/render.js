@@ -14,6 +14,10 @@ export function showStatus(msg) {
   statusEl.textContent = msg;
 }
 
+export function getStatus() {
+  return statusEl.textContent;
+}
+
 // ── Canvas sizing ──────────────────────────────────────────────────────────────
 export function resizeCanvas() {
   const r = img.getBoundingClientRect();

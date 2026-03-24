@@ -1,5 +1,5 @@
 import { state } from './state.js';
-import { redraw, showStatus, measurementLabel, canvas, listEl, cameraInfoEl, statusEl } from './render.js';
+import { redraw, showStatus, getStatus, measurementLabel, canvas, listEl, cameraInfoEl } from './render.js';
 
 // ── Sidebar rendering ──────────────────────────────────────────────────────────
 export function renderSidebar() {
@@ -193,7 +193,7 @@ export async function checkStartupWarning() {
     const r = await fetch("/camera/startup-warning");
     const d = await r.json();
     if (d.warning) {
-      const prev = { text: statusEl.textContent };
+      const prev = { text: getStatus() };
       showStatus(d.warning);
       setTimeout(() => {
         showStatus(prev.text);
