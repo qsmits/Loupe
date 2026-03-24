@@ -444,7 +444,7 @@ git commit -m "refactor: extract annotations.js module"
 
 ```js
 import { state, TOOL_STATUS, pushUndo } from './state.js';
-import { redraw, canvas, ctx, showStatus, getLineEndpoints, lineAngleDeg } from './render.js';
+import { redraw, canvas, ctx, showStatus, getLineEndpoints, lineAngleDeg, dxfToCanvas } from './render.js';
 import { addAnnotation, applyCalibration } from './annotations.js';
 import { fitCircle, fitCircleAlgebraic, parseDistanceInput, polygonArea, distPointToSegment } from './math.js';
 import { renderSidebar } from './sidebar.js';
