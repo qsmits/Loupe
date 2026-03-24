@@ -40,3 +40,33 @@ def test_match_arcs_no_match():
                  "start_angle": 0.0, "end_angle": 90.0, "handle": "B1"}]
     results = match_arcs(dxf_arcs, [], ppm=10.0, tx=0, ty=0, angle_deg=0)
     assert results[0]["matched"] is False
+
+
+def test_match_lines_accepts_polyline_line_type():
+    """match_lines must match entities with type 'polyline_line'."""
+    entities = [{"type": "polyline_line", "x1": 0.0, "y1": 0.0, "x2": 10.0, "y2": 0.0,
+                 "handle": "142_s0", "parent_handle": "142", "segment_index": 0}]
+    detected = [{"x1": 100, "y1": 0, "x2": 200, "y2": 0, "length": 100.0}]
+    results = match_lines(entities, detected, ppm=10.0, tx=100, ty=0, angle_deg=0)
+    assert len(results) == 1
+    assert results[0]["matched"] is True
+    assert results[0]["handle"] == "142_s0"
+
+
+def test_match_arcs_accepts_polyline_arc_type():
+    """match_arcs must match entities with type 'polyline_arc'."""
+    entities = [{"type": "polyline_arc", "cx": 0.0, "cy": 0.0, "radius": 10.0,
+                 "start_angle": 0.0, "end_angle": 90.0,
+                 "handle": "142_s1", "parent_handle": "142", "segment_index": 1}]
+    detected = [{"cx": 0.0, "cy": 0.0, "r": 100.0, "start_deg": 0.0, "end_deg": 90.0}]
+    results = match_arcs(entities, detected, ppm=10.0, tx=0, ty=0, angle_deg=0)
+    assert len(results) == 1
+    assert results[0]["matched"] is True
+    assert results[0]["handle"] == "142_s1"
+
+
+def test_match_lines_skips_non_line_types():
+    """match_lines must ignore arc/circle entities (unchanged behaviour)."""
+    entities = [{"type": "circle", "cx": 0, "cy": 0, "radius": 5, "handle": "X"}]
+    results = match_lines(entities, [], ppm=10.0, tx=0, ty=0, angle_deg=0)
+    assert results == []

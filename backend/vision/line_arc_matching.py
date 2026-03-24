@@ -49,7 +49,7 @@ def match_lines(dxf_lines, detected_lines, ppm, tx=0.0, ty=0.0, angle_deg=0.0,
     results = []
 
     for entity in dxf_lines:
-        if entity.get("type") != "line":
+        if entity.get("type") not in ("line", "polyline_line"):
             continue
         # Transform DXF midpoint to canvas pixels
         mx_mm = (entity["x1"] + entity["x2"]) / 2.0
@@ -104,7 +104,7 @@ def match_arcs(dxf_arcs, detected_arcs, ppm, tx=0.0, ty=0.0, angle_deg=0.0,
     results = []
 
     for entity in dxf_arcs:
-        if entity.get("type") != "arc":
+        if entity.get("type") not in ("arc", "polyline_arc"):
             continue
         ecx_px, ecy_px = _dxf_to_canvas_px(entity["cx"], entity["cy"], ppm, tx, ty, angle_rad, flip_h, flip_v)
         er_px = entity["radius"] * ppm
