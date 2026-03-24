@@ -1350,6 +1350,27 @@ function drawAnnotations() {
     else if (ann.type === "dxf-overlay")      { drawDxfOverlay(ann); if (state.showDeviations) drawDeviations(ann); }
     else if (ann.type === "detected-circle") drawDetectedCircle(ann, pendingHighlight || sel);
     else if (ann.type === "detected-line")   drawDetectedLine(ann, sel);
+    else if (ann.type === "detected-line-merged") {
+      ctx.save();
+      ctx.strokeStyle = "#00e5ff";
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(ann.x1, ann.y1);
+      ctx.lineTo(ann.x2, ann.y2);
+      ctx.stroke();
+      ctx.restore();
+    }
+    else if (ann.type === "detected-arc-partial") {
+      ctx.save();
+      ctx.strokeStyle = "#ffd60a";
+      ctx.lineWidth = 1.5;
+      const a1 = ann.start_deg * Math.PI / 180;
+      const a2 = ann.end_deg   * Math.PI / 180;
+      ctx.beginPath();
+      ctx.arc(ann.cx, ann.cy, ann.r, a1, a2);
+      ctx.stroke();
+      ctx.restore();
+    }
     else if (ann.type === "calibration") drawCalibration(ann, sel);
     else if (ann.type === "pt-circle-dist") drawPtCircleDist(ann, sel);
     else if (ann.type === "intersect")      drawIntersect(ann, sel);
@@ -3041,6 +3062,7 @@ document.getElementById("btn-export-csv").addEventListener("click", () => {
 const TRANSIENT_TYPES = new Set([
   "edges-overlay", "preprocessed-overlay", "dxf-overlay",
   "detected-circle", "detected-line",
+  "detected-line-merged", "detected-arc-partial",
 ]);
 
 function saveSession() {
@@ -3291,6 +3313,30 @@ document.getElementById("btn-run-lines").addEventListener("click", async () => {
     x1: seg.x1, y1: seg.y1, x2: seg.x2, y2: seg.y2, length: seg.length,
     frameWidth: fw, frameHeight: fh,
   }));
+  redraw();
+});
+
+// ── Detect lines (merged/contour) ──────────────────────────────────────────
+document.getElementById("btn-detect-lines-merged")?.addEventListener("click", async () => {
+  const r = await fetch("/detect-lines-merged", { method: "POST",
+    headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) });
+  if (!r.ok) { showStatus("Freeze a frame first"); return; }
+  const lines = await r.json();
+  state.annotations = state.annotations.filter(a => a.type !== "detected-line-merged");
+  lines.forEach(l => addAnnotation({ type: "detected-line-merged",
+    x1: l.x1, y1: l.y1, x2: l.x2, y2: l.y2 }));
+  redraw();
+});
+
+// ── Detect partial arcs ─────────────────────────────────────────────────────
+document.getElementById("btn-detect-arcs-partial")?.addEventListener("click", async () => {
+  const r = await fetch("/detect-arcs-partial", { method: "POST",
+    headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) });
+  if (!r.ok) { showStatus("Freeze a frame first"); return; }
+  const arcs = await r.json();
+  state.annotations = state.annotations.filter(a => a.type !== "detected-arc-partial");
+  arcs.forEach(a => addAnnotation({ type: "detected-arc-partial",
+    cx: a.cx, cy: a.cy, r: a.r, start_deg: a.start_deg, end_deg: a.end_deg }));
   redraw();
 });
 
