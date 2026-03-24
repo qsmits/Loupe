@@ -2,6 +2,7 @@ import { state, pushUndo } from './state.js';
 import { redraw, canvas, showStatus } from './render.js';
 import { addAnnotation } from './annotations.js';
 import { renderSidebar, updateDxfControlsVisibility, updateFreezeUI } from './sidebar.js';
+import { exportInspectionCsv } from './session.js';
 
 // ── Per-feature tolerance popover ──────────────────────────────────────────
 let _ftolActiveHandle = null;
@@ -353,6 +354,13 @@ export function initDxfHandlers() {
     document.getElementById("btn-dxf-move")?.classList.toggle("active", state.dxfDragMode);
     showStatus(state.dxfDragMode ? "Drag to reposition DXF overlay" : (state.frozen ? "Frozen" : "Live"));
   });
+
+  const btnExportCsv = document.getElementById("btn-export-inspection-csv");
+  if (btnExportCsv) {
+    btnExportCsv.addEventListener("click", () => {
+      exportInspectionCsv();
+    });
+  }
 
   // btn-deviations click
   document.getElementById("btn-show-deviations")?.addEventListener("click", () => {

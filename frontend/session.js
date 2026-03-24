@@ -128,6 +128,69 @@ export function exportCsv() {
   URL.revokeObjectURL(url);
 }
 
+// ── Inspection CSV export ────────────────────────────────────────────────────
+export function exportInspectionCsv() {
+  const partName = state.dxfFilename || "";
+  const timestamp = new Date().toISOString();
+  const headers = [
+    "part_name", "timestamp", "feature_id", "feature_type",
+    "deviation_mm", "angle_error_deg", "tolerance_warn", "tolerance_fail", "result", "notes"
+  ];
+
+  const rows = [headers];
+
+  // Section 1 — DXF feature deviations
+  state.inspectionResults.forEach(r => {
+    rows.push([
+      partName,
+      timestamp,
+      r.handle,
+      r.type,
+      r.matched && r.deviation_mm != null ? r.deviation_mm.toFixed(4) : "",
+      r.angle_error_deg != null ? r.angle_error_deg.toFixed(2) : "",
+      r.tolerance_warn,
+      r.tolerance_fail,
+      r.matched ? r.pass_fail.toUpperCase() : "UNMATCHED",
+      "",
+    ]);
+  });
+
+  // Section 2 — Arc-measure annotations
+  const ppm = state.calibration ? state.calibration.pixelsPerMm : 1;
+  state.annotations
+    .filter(ann => ann.type === "arc-measure")
+    .forEach(ann => {
+      const r_mm = ann.r / ppm;
+      const chord_mm = ann.chord_px / ppm;
+      const cx_mm = ann.cx / ppm;
+      const cy_mm = ann.cy / ppm;
+      const notes = `r=${r_mm.toFixed(3)} mm  span=${ann.span_deg.toFixed(1)}°  chord=${chord_mm.toFixed(3)} mm  center=(${cx_mm.toFixed(3)},${cy_mm.toFixed(3)}) mm`;
+      rows.push([
+        partName,
+        timestamp,
+        ann.name || String(ann.id),
+        "arc-measure",
+        "",
+        "",
+        "",
+        "",
+        "",
+        notes,
+      ]);
+    });
+
+  const csv = rows
+    .map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(","))
+    .join("\n");
+  const blob = new Blob([csv], { type: "text/csv" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `inspection_${new Date().toISOString().slice(0, 19).replace(/[T:]/g, "-")}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 // ── Session save ────────────────────────────────────────────────────────────
 export function saveSession() {
   const session = {
