@@ -756,9 +756,7 @@ window.addEventListener("resize", resizeCanvas);
 document.querySelectorAll("#tool-strip .strip-btn[data-tool]").forEach(btn => {
   btn.addEventListener("click", () => setTool(btn.dataset.tool));
 });
-document.querySelectorAll("#tool-strip .strip-btn[data-tool]").forEach(btn => {
-  btn.classList.toggle("active", btn.dataset.tool === state.tool);
-});
+setTool(state.tool);  // sync initial active state via setTool
 
 loadCameraInfo();
 loadUiConfig();
