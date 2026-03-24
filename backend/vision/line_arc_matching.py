@@ -6,7 +6,6 @@ The alignment transform (tx, ty, angle_deg) maps DXF pixel coordinates
 to canvas pixel coordinates (same convention as alignment.py).
 """
 import math
-import numpy as np
 
 
 def _dxf_to_canvas_px(x_mm, y_mm, ppm, tx, ty, angle_rad, flip_h=False, flip_v=False):
