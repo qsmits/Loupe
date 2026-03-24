@@ -75,19 +75,19 @@ function pushUndo() {
 // ── TOOL_STATUS map and setTool helper ─────────────────────────────────────
 const TOOL_STATUS = {
   "select":      "Select",
-  "calibrate":   "Calibrate — click two points or a circle",
-  "distance":    "Distance — click point 1",
-  "angle":       "Angle — click point 1",
-  "circle":      "Circle — click point 1",
-  "arc-fit":     "Fit Arc — click points, double-click to confirm",
-  "center-dist": "Center distance — click a circle to select it",
-  "detect":      "Detect",
-  "perp-dist":   "Perp — click a reference line",
-  "para-dist":   "Para — click a reference line",
-  "area":        "Area — click points, double-click to confirm",
-  "pt-circle-dist": "Pt-Circle — click a circle to measure from",
-  "intersect":      "Intersect — click a reference line",
-  "slot-dist":      "Slot — click a reference line",
+  "calibrate":   "Click — place two points or select a circle",
+  "distance":    "Click — place point 1",
+  "angle":       "Click — place point 1",
+  "circle":      "Click — place point 1",
+  "arc-fit":     "Click — place points (double-click to confirm)",
+  "center-dist": "Click — select a circle",
+  "detect":      "Click — detect features",
+  "perp-dist":   "Click — select a reference line",
+  "para-dist":   "Click — select a reference line",
+  "area":        "Click — place points (double-click to confirm)",
+  "pt-circle-dist": "Click — select a circle to measure from",
+  "intersect":      "Click — select a reference line",
+  "slot-dist":      "Click — select a reference line",
 };
 
 function setTool(name) {
@@ -971,7 +971,8 @@ function renderSidebar() {
   listEl.innerHTML = "";
   let i = 0;
   state.annotations.forEach(ann => {
-    if (ann.type === "edges-overlay" || ann.type === "preprocessed-overlay" || ann.type === "dxf-overlay") return;
+    if (ann.type === "edges-overlay" || ann.type === "preprocessed-overlay") return;
+    if (ann.type === "dxf-overlay") return;  // DXF overlay is drawn on canvas, not in sidebar
     // Origin annotation: rendered without a measurement number
     if (ann.type === "origin") {
       const row = document.createElement("div");
