@@ -929,4 +929,103 @@ export function drawDeviations(ann) {
       ctx.restore();
     }
   }
+
+  // ── Line deviation callouts ────────────────────────────────────────────────
+  for (const r of (ann.lineMatchResults ?? [])) {
+    const en = ann.entities?.find(e => e.handle === r.handle);
+    if (!en) continue;
+    const mx_mm = (en.x1 + en.x2) / 2;
+    const my_mm = (en.y1 + en.y2) / 2;
+    const nominal = dxfToCanvas(mx_mm, my_mm, ann);
+
+    const tol = (r.handle && state.featureTolerances[r.handle]) || state.tolerances;
+    const color = r.pass_fail === "fail" ? "#ff453a"
+      : r.pass_fail === "warn" ? "#ff9f0a"
+      : r.pass_fail === "pass" ? "#32d74b"
+      : "#636366";
+
+    ctx.save();
+    ctx.fillStyle = color;
+    ctx.font = "10px ui-monospace, monospace";
+
+    if (!r.matched) {
+      ctx.fillStyle = "#636366";
+      ctx.fillText("not detected", nominal.x + 4, nominal.y);
+    } else {
+      const label = en.parent_handle
+        ? `P${en.parent_handle}-s${en.segment_index ?? ""}`
+        : (r.handle ?? "");
+      const devText = `⊥ ${r.perp_dev_mm?.toFixed(3)} mm`;
+      const angText = r.angle_error_deg != null ? `  ∠ ${r.angle_error_deg.toFixed(1)}°` : "";
+      const text = `${devText}${angText}`;
+      ctx.fillText(text, nominal.x + 4, nominal.y - 4);
+      const textW = ctx.measureText(text).width;
+      _deviationHitBoxes.push({ handle: r.handle, x: nominal.x + 4, y: nominal.y - 14, w: textW, h: 14 });
+
+      // Small crosshair at nominal midpoint
+      ctx.strokeStyle = "#0a84ff";
+      ctx.setLineDash([3, 2]);
+      ctx.lineWidth = 1;
+      ctx.globalAlpha = 0.6;
+      ctx.beginPath();
+      ctx.moveTo(nominal.x - 5, nominal.y); ctx.lineTo(nominal.x + 5, nominal.y);
+      ctx.moveTo(nominal.x, nominal.y - 5); ctx.lineTo(nominal.x, nominal.y + 5);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.globalAlpha = 1;
+    }
+    ctx.restore();
+  }
+
+  // ── Arc deviation callouts ─────────────────────────────────────────────────
+  for (const r of (ann.arcMatchResults ?? [])) {
+    const en = ann.entities?.find(e => e.handle === r.handle);
+    if (!en) continue;
+    const nominal = dxfToCanvas(en.cx, en.cy, ann);
+    const r_px = (en.radius ?? 0) * (ann.scale ?? 1);
+
+    const tol = (r.handle && state.featureTolerances[r.handle]) || state.tolerances;
+    const dev = Math.max(r.center_dev_mm ?? 0, r.radius_dev_mm ?? 0);
+    const color = r.pass_fail === "fail" ? "#ff453a"
+      : r.pass_fail === "warn" ? "#ff9f0a"
+      : r.pass_fail === "pass" ? "#32d74b"
+      : "#636366";
+
+    ctx.save();
+    if (!r.matched) {
+      ctx.strokeStyle = "#636366";
+      ctx.setLineDash([4, 3]);
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.arc(nominal.x, nominal.y, r_px, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = "#636366";
+      ctx.font = "10px ui-monospace, monospace";
+      ctx.fillText("not detected", nominal.x + r_px + 4, nominal.y);
+    } else {
+      // Nominal arc dashed
+      ctx.strokeStyle = "#0a84ff";
+      ctx.setLineDash([4, 3]);
+      ctx.lineWidth = 1;
+      ctx.globalAlpha = 0.55;
+      ctx.beginPath();
+      ctx.arc(nominal.x, nominal.y, r_px, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.globalAlpha = 1;
+
+      ctx.fillStyle = color;
+      ctx.font = "10px ui-monospace, monospace";
+      const labelX = nominal.x + r_px + 4;
+      const label = en.parent_handle
+        ? `P${en.parent_handle}-s${en.segment_index ?? ""}`
+        : (r.handle ?? "");
+      const devText = `Δ ${r.center_dev_mm?.toFixed(3)} mm  Δr ${r.radius_dev_mm?.toFixed(3)} mm`;
+      ctx.fillText(devText, labelX, nominal.y);
+      const textW = ctx.measureText(devText).width;
+      _deviationHitBoxes.push({ handle: r.handle, x: labelX, y: nominal.y - 10, w: textW, h: 14 });
+    }
+    ctx.restore();
+  }
 }
