@@ -320,6 +320,9 @@ def make_router(camera: BaseCamera, frame_store: FrameStore, startup_warning: st
 
     @router.post("/detect-lines-merged")
     async def detect_lines_merged_route(params: DetectLinesParams):
+        # "merged" = deduplicated/whole edges (user-facing concept).
+        # Uses the contour-based primary path; merge_line_segments (Hough fallback) is
+        # available in detection.py for parts where contour tracing underperforms.
         frame = frame_store.get()
         if frame is None:
             raise HTTPException(status_code=400, detail="No frame stored. Call /freeze first.")
