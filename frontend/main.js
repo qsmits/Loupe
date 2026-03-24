@@ -63,6 +63,17 @@ function toggleDropdown(btnId, dropId) {
 
 // ── Canvas mouse events ──────────────────────────────────────────────────────
 function onMouseDown(e) {
+  if (state.dxfDragMode) {
+    const ann = state.annotations.find(a => a.type === "dxf-overlay");
+    if (ann) {
+      const pt = canvasPoint(e);
+      state.dxfDragOrigin = {
+        mouseX: pt.x, mouseY: pt.y,
+        annOffsetX: ann.offsetX, annOffsetY: ann.offsetY,
+      };
+    }
+    return;
+  }
   const pt = canvasPoint(e);
   if (state.dxfAlignMode) {
     const ann = state.annotations.find(a => a.type === "dxf-overlay");
@@ -123,6 +134,10 @@ function onMouseDown(e) {
 }
 
 function onMouseUp() {
+  if (state.dxfDragMode) {
+    state.dxfDragOrigin = null;
+    return;
+  }
   if (state.dragState !== null) pushUndo();
   state.dragState = null;
 }
@@ -135,6 +150,15 @@ canvas.addEventListener("mousemove", e => {
   const pt = canvasPoint(e);
   const rawPt = pt;
   state.mousePos = pt;
+  if (state.dxfDragMode && state.dxfDragOrigin) {
+    const ann = state.annotations.find(a => a.type === "dxf-overlay");
+    if (ann) {
+      ann.offsetX = state.dxfDragOrigin.annOffsetX + (pt.x - state.dxfDragOrigin.mouseX);
+      ann.offsetY = state.dxfDragOrigin.annOffsetY + (pt.y - state.dxfDragOrigin.mouseY);
+      redraw();
+    }
+    return;
+  }
   if (state.dxfAlignMode) {
     const ann = state.annotations.find(a => a.type === "dxf-overlay");
     if (ann) {
@@ -290,6 +314,12 @@ document.addEventListener("keydown", e => {
   }
   if (e.key === "Escape") {
     closeAllDropdowns();
+    if (state.dxfDragMode) {
+      state.dxfDragMode = false;
+      state.dxfDragOrigin = null;
+      document.getElementById("btn-dxf-move")?.classList.remove("active");
+      showStatus(state.frozen ? "Frozen" : "Live");
+    }
     if (state.dxfAlignMode) { exitDxfAlignMode(); redraw(); return; }
     state.pendingPoints = [];
     state.pendingCenterCircle = null;

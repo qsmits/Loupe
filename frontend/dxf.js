@@ -344,6 +344,16 @@ export function initDxfHandlers() {
     }
   });
 
+  // btn-dxf-move: toggle drag-to-translate mode
+  document.getElementById("btn-dxf-move")?.addEventListener("click", () => {
+    const ann = state.annotations.find(a => a.type === "dxf-overlay");
+    if (!ann) return;
+    state.dxfDragMode = !state.dxfDragMode;
+    state.dxfDragOrigin = null;
+    document.getElementById("btn-dxf-move")?.classList.toggle("active", state.dxfDragMode);
+    showStatus(state.dxfDragMode ? "Drag to reposition DXF overlay" : (state.frozen ? "Frozen" : "Live"));
+  });
+
   // btn-deviations click
   document.getElementById("btn-show-deviations")?.addEventListener("click", () => {
     state.showDeviations = !state.showDeviations;
