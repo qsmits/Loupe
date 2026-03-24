@@ -2980,13 +2980,18 @@ function formatCsvValue(ann) {
     const ppm = cal ? cal.pixelsPerMm : 1;
     const r_mm = ann.r / ppm;
     const chord_mm = ann.chord_px / ppm;
+    const cx_mm = ann.cx / ppm;
+    const cy_mm = ann.cy / ppm;
     const rStr = cal
       ? (cal.displayUnit === "µm" ? `${(r_mm * 1000).toFixed(2)} µm` : `${r_mm.toFixed(3)} mm`)
       : `${ann.r.toFixed(1)} px`;
     const chordStr = cal
       ? (cal.displayUnit === "µm" ? `${(chord_mm * 1000).toFixed(2)} µm` : `${chord_mm.toFixed(3)} mm`)
       : `${ann.chord_px.toFixed(1)} px`;
-    return `span ${ann.span_deg.toFixed(1)}°  r=${rStr}  chord=${chordStr}`;
+    const centerStr = cal
+      ? `(${cx_mm.toFixed(3)}, ${cy_mm.toFixed(3)}) mm`
+      : `(${ann.cx.toFixed(1)}, ${ann.cy.toFixed(1)}) px`;
+    return `center=${centerStr}  r=${rStr}  span ${ann.span_deg.toFixed(1)}°  chord=${chordStr}`;
   }
   if (ann.type === "detected-circle") {
     const sx = canvas.width / ann.frameWidth;
