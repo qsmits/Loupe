@@ -406,5 +406,6 @@ export function loadSession(raw) {
 
   renderSidebar();
   renderInspectionTable();
+  document.dispatchEvent(new CustomEvent('inspection-state-changed'));
   redraw();
 }

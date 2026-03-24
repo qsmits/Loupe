@@ -62,6 +62,9 @@ function updateExportButtons() {
 }
 
 export function initDxfHandlers() {
+  // Update export buttons when inspection state changes (e.g. session load)
+  document.addEventListener('inspection-state-changed', () => updateExportButtons());
+
   // btn-load-dxf click (app.js ~2549)
   document.getElementById("btn-load-dxf").addEventListener("click", () => {
     document.getElementById("dxf-input").click();
