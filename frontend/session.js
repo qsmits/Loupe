@@ -131,12 +131,15 @@ export function exportCsv() {
 // ── Session save ────────────────────────────────────────────────────────────
 export function saveSession() {
   const session = {
-    version: 1,
+    version: 2,
     savedAt: new Date().toISOString(),
     nextId: state.nextId,
     calibration: state.calibration ? { ...state.calibration } : null,
     origin: state.origin ? { ...state.origin } : null,
     featureTolerances: { ...state.featureTolerances },
+    dxfFilename: state.dxfFilename ?? null,
+    inspectionResults: state.inspectionResults.slice(),
+    inspectionFrame: state.inspectionFrame ?? null,
     annotations: state.annotations
       .filter(a => !TRANSIENT_TYPES.has(a.type))
       .map(a => ({ ...a })),
@@ -166,7 +169,7 @@ export function loadSession(raw) {
   if (!data.version) {
     showStatus("Loaded legacy session (no version field)");
     // fall through and attempt to treat as v1
-  } else if (data.version === 1) {
+  } else if (data.version <= 2) {
     // proceed
   } else {
     showStatus(`Cannot load: session format version ${data.version} is newer than this app supports`);
@@ -223,12 +226,15 @@ export function loadSession(raw) {
   }
 
   state.selected = null;
+  state.dxfFilename = data.dxfFilename ?? null;
+  state.inspectionResults = Array.isArray(data.inspectionResults) ? data.inspectionResults.slice() : [];
+  state.inspectionFrame = data.inspectionFrame ?? null;
 
   const coordEl = document.getElementById("coord-display");
   if (coordEl) coordEl.textContent = "";
 
   // Show status only when no legacy warning was already set
-  if (data.version === 1) showStatus("Session loaded");
+  if (data.version <= 2) showStatus("Session loaded");
 
   renderSidebar();
   redraw();
