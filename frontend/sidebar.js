@@ -257,4 +257,8 @@ export function updateDxfControlsVisibility() {
     autoAlignBtn.disabled = dxfCircleCount < 2;
     autoAlignBtn.title = dxfCircleCount < 2 ? "At least 2 DXF circles required" : "";
   }
+  const inspBtn = document.getElementById("btn-run-inspection");
+  if (inspBtn) inspBtn.disabled = !ann;
+  const moveBtn = document.getElementById("btn-dxf-move");
+  if (moveBtn) moveBtn.disabled = !ann;
 }

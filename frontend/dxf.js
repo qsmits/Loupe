@@ -75,6 +75,9 @@ export function initDxfHandlers() {
       const dxfScaleInput = document.getElementById("dxf-scale");
       if (dxfScaleInput) dxfScaleInput.value = scale.toFixed(3);
       state.annotations = state.annotations.filter(a => a.type !== "dxf-overlay");
+      state.inspectionResults = [];
+      state.inspectionFrame = null;
+      state.dxfFilename = file.name.replace(/\.dxf$/i, "");
       addAnnotation({
         type: "dxf-overlay",
         entities,
@@ -121,6 +124,9 @@ export function initDxfHandlers() {
 
   document.getElementById("btn-dxf-clear")?.addEventListener("click", () => {
     state.annotations = state.annotations.filter(a => a.type !== "dxf-overlay");
+    state.inspectionResults = [];
+    state.inspectionFrame = null;
+    state.dxfFilename = null;
     const dxfPanelEl2 = document.getElementById("dxf-panel");
     if (dxfPanelEl2) dxfPanelEl2.style.display = "none";
     updateDxfControlsVisibility();
@@ -257,6 +263,84 @@ export function initDxfHandlers() {
       redraw();
     } catch (err) {
       setStatus("Network error: " + err.message, true);
+    }
+  });
+
+  // btn-run-inspection: call /match-dxf-lines and /match-dxf-arcs, store on ann
+  document.getElementById("btn-run-inspection")?.addEventListener("click", async () => {
+    const ann = state.annotations.find(a => a.type === "dxf-overlay");
+    if (!ann) return;
+    const cal = state.calibration;
+    if (!cal?.pixelsPerMm) { showStatus("Calibrate first"); return; }
+
+    const ppm    = cal.pixelsPerMm;
+    const tx     = ann.offsetX;
+    const ty     = ann.offsetY;
+    const angle  = ann.angle ?? 0;
+    const flip_h = ann.flipH ?? false;
+    const flip_v = ann.flipV ?? false;
+
+    const detectedLines = state.annotations
+      .filter(a => a.type === "detected-line-merged")
+      .map(a => ({
+        x1: a.x1, y1: a.y1, x2: a.x2, y2: a.y2,
+        length: Math.hypot(a.x2 - a.x1, a.y2 - a.y1),
+      }));
+
+    const detectedArcs = state.annotations
+      .filter(a => a.type === "detected-arc-partial")
+      .map(a => ({
+        cx: a.cx, cy: a.cy, r: a.r,
+        start_deg: a.start_deg, end_deg: a.end_deg,
+      }));
+
+    const lineEntities = ann.entities.filter(e =>
+      e.type === "line" || e.type === "polyline_line");
+    const arcEntities  = ann.entities.filter(e =>
+      e.type === "arc"  || e.type === "polyline_arc");
+
+    const tol = state.tolerances;
+
+    try {
+      const [lineRes, arcRes] = await Promise.all([
+        fetch("/match-dxf-lines", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            entities: lineEntities,
+            lines: detectedLines,
+            pixels_per_mm: ppm,
+            tx, ty, angle_deg: angle, flip_h, flip_v,
+            tolerance_warn: tol.warn,
+            tolerance_fail: tol.fail,
+          }),
+        }),
+        fetch("/match-dxf-arcs", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            entities: arcEntities,
+            arcs: detectedArcs,
+            pixels_per_mm: ppm,
+            tx, ty, angle_deg: angle, flip_h, flip_v,
+            tolerance_warn: tol.warn,
+            tolerance_fail: tol.fail,
+          }),
+        }),
+      ]);
+
+      if (!lineRes.ok || !arcRes.ok) {
+        showStatus("Inspection failed — check console");
+        return;
+      }
+
+      ann.lineMatchResults = await lineRes.json();
+      ann.arcMatchResults  = await arcRes.json();
+
+      redraw();
+      showStatus(`Inspection complete — ${ann.lineMatchResults.length} lines, ${ann.arcMatchResults.length} arcs`);
+    } catch (err) {
+      showStatus("Inspection error: " + err.message);
     }
   });
 

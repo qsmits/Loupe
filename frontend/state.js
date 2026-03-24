@@ -20,9 +20,14 @@ export const state = {
   dxfAlignStep: 0,
   dxfAlignPick: null,
   dxfAlignHover: null,
+  dxfDragMode: false,
+  dxfDragOrigin: null,  // { mouseX, mouseY, annOffsetX, annOffsetY }
   showDeviations: false,
   tolerances: { warn: 0.10, fail: 0.25 },
   featureTolerances: {},
+  inspectionResults: [],   // populated by "Run inspection"; persisted in session v2
+  inspectionFrame: null,   // base64 JPEG of composited camera+overlay at inspection time
+  dxfFilename: null,       // set from DXF filename on load; cleared on DXF clear
   nextId: 1,
   settings: {
     crosshairColor: "#ffffff",
