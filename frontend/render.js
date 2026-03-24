@@ -452,6 +452,13 @@ export function drawDxfOverlay(ann) {
         ctx.lineTo(en.points[i].x, en.points[i].y);
       }
       if (en.closed) ctx.closePath();
+    } else if (en.type === "polyline_line") {
+      ctx.moveTo(en.x1, en.y1);
+      ctx.lineTo(en.x2, en.y2);
+    } else if (en.type === "polyline_arc") {
+      const sr = en.start_angle * Math.PI / 180;
+      const er = en.end_angle * Math.PI / 180;
+      ctx.arc(en.cx, en.cy, en.radius, sr, er, flipH !== flipV);
     }
     ctx.stroke();
   }
