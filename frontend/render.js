@@ -323,21 +323,23 @@ export function redraw() {
       ctx.arc(p.x, p.y, pw(4), 0, Math.PI * 2);
       ctx.fill();
     }
-    // Live fit preview (dashed green)
-    if (state.inspectionPickFit) {
+    // Live fit preview (dashed green) — supports multiple fits for compound features
+    if (state.inspectionPickFit && state.inspectionPickFit.fits) {
       ctx.strokeStyle = "rgba(50, 215, 75, 0.7)";
       ctx.lineWidth = pw(1.5);
       ctx.setLineDash([pw(4), pw(4)]);
-      const f = state.inspectionPickFit;
-      if (f.x1 != null) {
-        ctx.beginPath();
-        ctx.moveTo(f.x1, f.y1);
-        ctx.lineTo(f.x2, f.y2);
-        ctx.stroke();
-      } else if (f.cx != null) {
-        ctx.beginPath();
-        ctx.arc(f.cx, f.cy, f.r, 0, Math.PI * 2);
-        ctx.stroke();
+      for (const f of state.inspectionPickFit.fits) {
+        if (!f) continue;
+        if (f.x1 != null) {
+          ctx.beginPath();
+          ctx.moveTo(f.x1, f.y1);
+          ctx.lineTo(f.x2, f.y2);
+          ctx.stroke();
+        } else if (f.cx != null) {
+          ctx.beginPath();
+          ctx.arc(f.cx, f.cy, f.r, 0, Math.PI * 2);
+          ctx.stroke();
+        }
       }
       ctx.setLineDash([]);
     }

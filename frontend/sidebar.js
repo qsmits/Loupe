@@ -356,10 +356,18 @@ export function renderInspectionTable() {
         if (!ann) return;
         const entity = ann.entities.find(e => e.handle === r.handle);
         if (!entity) return;
-        state.inspectionPickTarget = entity;
+        const ph = entity.parent_handle;
+        if (ph) {
+          state.inspectionPickTarget = ann.entities.filter(e => e.parent_handle === ph);
+        } else {
+          state.inspectionPickTarget = [entity];
+        }
         state.inspectionPickPoints = [];
         state.inspectionPickFit = null;
-        showStatus("Click points along the edge. Double-click or Enter to finish. Escape to cancel.");
+        const n = state.inspectionPickTarget.length;
+        showStatus(n > 1
+          ? `Compound feature (${n} segments). Click points along the edge. Double-click or Enter to finish.`
+          : "Click points along the edge. Double-click or Enter to finish. Escape to cancel.");
         redraw();
       });
     }

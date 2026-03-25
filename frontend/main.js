@@ -1,6 +1,6 @@
 import { state, undoStack, redoStack, takeSnapshot, _deviationHitBoxes, pushUndo, TRANSIENT_TYPES } from './state.js';
 import { canvas, ctx, img, showStatus, redraw, resizeCanvas,
-         drawLine, drawOrigin, drawAreaPreview } from './render.js';
+         drawLine, drawOrigin, drawAreaPreview, dxfToCanvas } from './render.js';
 import { renderSidebar, loadCameraInfo, loadUiConfig, loadTolerances,
          updateCalibrationButton, checkStartupWarning, updateFreezeUI,
          loadCameraList, renderInspectionTable } from './sidebar.js';
@@ -189,10 +189,21 @@ function onMouseDown(e) {
     if (dxfAnn && dxfAnn.guidedResults) {
       const entity = hitTestDxfEntity(pt, dxfAnn);
       if (entity) {
-        state.inspectionPickTarget = entity;
+        // If entity has a parent_handle, select the whole compound group
+        const parentHandle = entity.parent_handle;
+        if (parentHandle) {
+          const group = dxfAnn.entities.filter(e => e.parent_handle === parentHandle);
+          state.inspectionPickTarget = group;  // array of entities
+        } else {
+          state.inspectionPickTarget = [entity];  // single entity as array
+        }
         state.inspectionPickPoints = [];
         state.inspectionPickFit = null;
-        showStatus("Click points along the edge. Double-click or Enter to finish. Escape to cancel.");
+        const featureCount = state.inspectionPickTarget.length;
+        const msg = featureCount > 1
+          ? `Compound feature (${featureCount} segments). Click points along the edge. Double-click or Enter to finish.`
+          : "Click points along the edge. Double-click or Enter to finish. Escape to cancel.";
+        showStatus(msg);
         redraw();
         return;
       }
@@ -279,24 +290,75 @@ canvas.addEventListener("mousedown", onMouseDown);
 canvas.addEventListener("mouseup", onMouseUp);
 
 // ── Point-pick helpers ────────────────────────────────────────────────────────
+
+function _nearestSegmentDist(pt, entity, dxfAnn) {
+  /** Distance from pt (image-space) to a projected DXF entity. */
+  if (entity.type === "line" || entity.type === "polyline_line") {
+    const p1 = dxfToCanvas(entity.x1, entity.y1, dxfAnn);
+    const p2 = dxfToCanvas(entity.x2, entity.y2, dxfAnn);
+    return distPointToSegment(pt, p1, p2);
+  } else if (entity.type === "arc" || entity.type === "polyline_arc" || entity.type === "circle") {
+    const c = dxfToCanvas(entity.cx, entity.cy, dxfAnn);
+    const r = entity.radius * dxfAnn.scale;
+    return Math.abs(Math.hypot(pt.x - c.x, pt.y - c.y) - r);
+  }
+  return Infinity;
+}
+
 function _updatePickFit() {
   const pts = state.inspectionPickPoints;
-  const target = state.inspectionPickTarget;
-  if (!target) return;
-  state.inspectionPickFit = null;
-  const etype = target.type;
-  if ((etype === "line" || etype === "polyline_line") && pts.length >= 2) {
-    state.inspectionPickFit = fitLine(pts);
-  } else if ((etype === "arc" || etype === "polyline_arc" || etype === "circle") && pts.length >= 3) {
-    const result = fitCircleAlgebraic(pts);
-    if (result) state.inspectionPickFit = { type: "circle", cx: result.cx, cy: result.cy, r: result.r };
+  const targets = state.inspectionPickTarget;  // array of entities
+  if (!targets || targets.length === 0) return;
+
+  const dxfAnn = state.annotations.find(a => a.type === "dxf-overlay");
+  if (!dxfAnn) return;
+
+  if (targets.length === 1) {
+    // Single entity — simple fit
+    const etype = targets[0].type;
+    state.inspectionPickFit = null;
+    if ((etype === "line" || etype === "polyline_line") && pts.length >= 2) {
+      state.inspectionPickFit = { fits: [fitLine(pts)] };
+    } else if ((etype === "arc" || etype === "polyline_arc" || etype === "circle") && pts.length >= 3) {
+      const result = fitCircleAlgebraic(pts);
+      if (result) state.inspectionPickFit = { fits: [{ type: "circle", cx: result.cx, cy: result.cy, r: result.r }] };
+    }
+    return;
   }
+
+  // Compound feature: assign each point to nearest sub-segment
+  const buckets = targets.map(() => []);
+  for (const pt of pts) {
+    let bestIdx = 0, bestDist = Infinity;
+    for (let i = 0; i < targets.length; i++) {
+      const d = _nearestSegmentDist(pt, targets[i], dxfAnn);
+      if (d < bestDist) { bestDist = d; bestIdx = i; }
+    }
+    buckets[bestIdx].push(pt);
+  }
+
+  // Fit each sub-segment independently
+  const fits = [];
+  for (let i = 0; i < targets.length; i++) {
+    const seg = targets[i];
+    const segPts = buckets[i];
+    const etype = seg.type;
+    if ((etype === "line" || etype === "polyline_line") && segPts.length >= 2) {
+      fits.push(fitLine(segPts));
+    } else if ((etype === "arc" || etype === "polyline_arc" || etype === "circle") && segPts.length >= 3) {
+      const result = fitCircleAlgebraic(segPts);
+      if (result) fits.push({ type: "circle", cx: result.cx, cy: result.cy, r: result.r });
+    }
+    // else: not enough points for this segment yet, skip
+  }
+
+  state.inspectionPickFit = fits.length > 0 ? { fits } : null;
 }
 
 async function _finalizePickInspection() {
-  const target = state.inspectionPickTarget;
+  const targets = state.inspectionPickTarget;  // array of entities
   const pts = state.inspectionPickPoints;
-  if (!target || pts.length < 2) {
+  if (!targets || !targets.length || pts.length < 2) {
     showStatus("Need at least 2 points");
     return;
   }
@@ -305,45 +367,67 @@ async function _finalizePickInspection() {
   const cal = state.calibration;
   if (!cal?.pixelsPerMm) return;
 
-  try {
-    const resp = await fetch("/fit-feature", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        entity: target,
-        points: pts.map(p => [p.x, p.y]),
-        pixels_per_mm: cal.pixelsPerMm,
-        tx: ann.offsetX, ty: ann.offsetY,
-        angle_deg: ann.angle ?? 0,
-        flip_h: ann.flipH ?? false, flip_v: ann.flipV ?? false,
-        tolerance_warn: state.tolerances.warn,
-        tolerance_fail: state.tolerances.fail,
-      }),
-    });
-    if (!resp.ok) { showStatus("Fit failed"); return; }
-    const result = await resp.json();
-    result.source = "manual";
+  // Bucket points to nearest sub-segment (same logic as _updatePickFit)
+  const buckets = targets.map(() => []);
+  for (const pt of pts) {
+    let bestIdx = 0, bestDist = Infinity;
+    for (let i = 0; i < targets.length; i++) {
+      const d = _nearestSegmentDist(pt, targets[i], ann);
+      if (d < bestDist) { bestDist = d; bestIdx = i; }
+    }
+    buckets[bestIdx].push(pt);
+  }
 
-    // Replace or add to guided results
-    if (ann.guidedResults) {
-      const idx = ann.guidedResults.findIndex(r => r.handle === target.handle);
-      if (idx >= 0) ann.guidedResults[idx] = result;
-      else ann.guidedResults.push(result);
+  let successCount = 0;
+
+  try {
+    // Fit each sub-segment with enough points
+    for (let i = 0; i < targets.length; i++) {
+      const entity = targets[i];
+      const segPts = buckets[i];
+      if (segPts.length < 2) continue;  // not enough points
+
+      const resp = await fetch("/fit-feature", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          entity,
+          points: segPts.map(p => [p.x, p.y]),
+          pixels_per_mm: cal.pixelsPerMm,
+          tx: ann.offsetX, ty: ann.offsetY,
+          angle_deg: ann.angle ?? 0,
+          flip_h: ann.flipH ?? false, flip_v: ann.flipV ?? false,
+          tolerance_warn: state.tolerances.warn,
+          tolerance_fail: state.tolerances.fail,
+        }),
+      });
+      if (!resp.ok) continue;
+      const result = await resp.json();
+      result.source = "manual";
+
+      // Replace or add to guided results
+      if (ann.guidedResults) {
+        const idx = ann.guidedResults.findIndex(r => r.handle === entity.handle);
+        if (idx >= 0) ann.guidedResults[idx] = result;
+        else ann.guidedResults.push(result);
+      }
+
+      // Update state.inspectionResults
+      const sr = {
+        handle: result.handle, type: result.type, parent_handle: result.parent_handle,
+        matched: result.matched, deviation_mm: result.perp_dev_mm ?? result.center_dev_mm,
+        angle_error_deg: result.angle_error_deg,
+        tolerance_warn: result.tolerance_warn, tolerance_fail: result.tolerance_fail,
+        pass_fail: result.pass_fail, source: "manual",
+      };
+      const sIdx = state.inspectionResults.findIndex(r => r.handle === entity.handle);
+      if (sIdx >= 0) state.inspectionResults[sIdx] = sr;
+      else state.inspectionResults.push(sr);
+
+      successCount++;
     }
 
-    // Update state.inspectionResults
-    const sr = {
-      handle: result.handle, type: result.type, parent_handle: result.parent_handle,
-      matched: result.matched, deviation_mm: result.perp_dev_mm ?? result.center_dev_mm,
-      angle_error_deg: result.angle_error_deg,
-      tolerance_warn: result.tolerance_warn, tolerance_fail: result.tolerance_fail,
-      pass_fail: result.pass_fail, source: "manual",
-    };
-    const sIdx = state.inspectionResults.findIndex(r => r.handle === target.handle);
-    if (sIdx >= 0) state.inspectionResults[sIdx] = sr;
-    else state.inspectionResults.push(sr);
-
-    showStatus(`Manual measurement: ${result.pass_fail?.toUpperCase() ?? "done"}`);
+    showStatus(`Manual measurement: ${successCount} segment${successCount !== 1 ? "s" : ""} fitted`);
     renderInspectionTable();
   } catch (err) {
     showStatus("Fit error: " + err.message);
@@ -553,10 +637,19 @@ canvas.addEventListener("contextmenu", e => {
         { label: "Re-measure manually", action: () => {
           const entity = dxfAnn.entities.find(en => en.handle === hitResult.handle);
           if (entity) {
-            state.inspectionPickTarget = entity;
+            // If compound feature, select the whole group
+            const ph = entity.parent_handle;
+            if (ph) {
+              state.inspectionPickTarget = dxfAnn.entities.filter(e => e.parent_handle === ph);
+            } else {
+              state.inspectionPickTarget = [entity];
+            }
             state.inspectionPickPoints = [];
             state.inspectionPickFit = null;
-            showStatus("Click points along the edge. Double-click or Enter to finish.");
+            const n = state.inspectionPickTarget.length;
+            showStatus(n > 1
+              ? `Compound feature (${n} segments). Click points along the edge. Double-click or Enter to finish.`
+              : "Click points along the edge. Double-click or Enter to finish.");
             redraw();
           }
         }},
