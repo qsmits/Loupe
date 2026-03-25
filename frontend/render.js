@@ -636,7 +636,27 @@ export function drawDxfOverlay(ann) {
   if (annAngle) ctx.rotate(-annAngle * Math.PI / 180);  // rotate in DXF Y-up space
   ctx.lineWidth = 1 / (scale * viewport.zoom);  // compensate for DXF scale and viewport zoom
 
+  // Build set of handles being actively point-picked for highlighting
+  const pickHandles = new Set();
+  if (state.inspectionPickTarget) {
+    for (const t of state.inspectionPickTarget) {
+      if (t.handle) pickHandles.add(t.handle);
+    }
+  }
+
   for (const en of entities) {
+    // Highlight active pick target in bright yellow, others in cyan
+    const isPicked = pickHandles.has(en.handle);
+    if (isPicked) {
+      ctx.strokeStyle = "#fbbf24";  // amber/yellow
+      ctx.lineWidth = 3 / (scale * viewport.zoom);
+      ctx.setLineDash([]);  // solid for picked feature
+    } else {
+      ctx.strokeStyle = "#00d4ff";
+      ctx.lineWidth = 1 / (scale * viewport.zoom);
+      ctx.setLineDash([6 / (scale * viewport.zoom), 3 / (scale * viewport.zoom)]);
+    }
+
     ctx.beginPath();
     if (en.type === "line") {
       ctx.moveTo(en.x1, en.y1);

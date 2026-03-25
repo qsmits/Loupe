@@ -409,6 +409,7 @@ async function _finalizePickInspection() {
       // Replace or add to guided results
       if (!ann.guidedResults) ann.guidedResults = [];
       const grIdx = ann.guidedResults.findIndex(r => r.handle === entity.handle);
+      console.log(`fit-feature: handle=${entity.handle} matched=${result.matched} grIdx=${grIdx} total=${ann.guidedResults.length}`);
       if (grIdx >= 0) ann.guidedResults[grIdx] = result;
       else ann.guidedResults.push(result);
 
