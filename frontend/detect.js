@@ -129,6 +129,7 @@ export function initDetectHandlers() {
       type: "detected-circle", name: "Circle",
       x: c.x, y: c.y, radius: c.radius, frameWidth: fw, frameHeight: fh,
     }));
+    showStatus(circles.length > 0 ? `Found ${circles.length} circle${circles.length !== 1 ? "s" : ""}` : "No circles found — try adjusting settings");
     redraw();
   }));
 
@@ -154,6 +155,7 @@ export function initDetectHandlers() {
       x1: seg.x1, y1: seg.y1, x2: seg.x2, y2: seg.y2, length: seg.length,
       frameWidth: fw, frameHeight: fh,
     }));
+    showStatus(lines.length > 0 ? `Found ${lines.length} line${lines.length !== 1 ? "s" : ""}` : "No lines found — try adjusting settings");
     redraw();
   }));
 
@@ -176,6 +178,7 @@ export function initDetectHandlers() {
     state.annotations = state.annotations.filter(a => a.type !== "detected-line-merged");
     lines.forEach(l => addAnnotation({ type: "detected-line-merged",
       x1: l.x1, y1: l.y1, x2: l.x2, y2: l.y2, frameWidth: fw, frameHeight: fh }));
+    showStatus(lines.length > 0 ? `Found ${lines.length} line${lines.length !== 1 ? "s" : ""}` : "No lines found — try adjusting settings");
     redraw();
   }));
 
@@ -207,6 +210,7 @@ export function initDetectHandlers() {
     filteredArcs.forEach(a => addAnnotation({ type: "detected-arc-partial",
       cx: a.cx, cy: a.cy, r: a.r, start_deg: a.start_deg, end_deg: a.end_deg,
       frameWidth: fw, frameHeight: fh }));
+    showStatus(filteredArcs.length > 0 ? `Found ${filteredArcs.length} arc${filteredArcs.length !== 1 ? "s" : ""}` : "No arcs found — try adjusting settings");
     redraw();
   }));
 }

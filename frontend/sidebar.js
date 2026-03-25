@@ -278,9 +278,15 @@ export function updateDxfControlsVisibility() {
     autoAlignBtn.title = dxfCircleCount < 2 ? "At least 2 DXF circles required" : "";
   }
   const inspBtn = document.getElementById("btn-run-inspection");
-  if (inspBtn) inspBtn.disabled = !ann;
+  if (inspBtn) {
+    inspBtn.disabled = !ann;
+    inspBtn.title = !ann ? "Load a DXF and detect features first" : "Run DXF inspection";
+  }
   const moveBtn = document.getElementById("btn-dxf-move");
-  if (moveBtn) moveBtn.disabled = !ann;
+  if (moveBtn) {
+    moveBtn.disabled = !ann;
+    moveBtn.title = !ann ? "Load a DXF first" : "Drag to reposition DXF overlay";
+  }
 }
 
 // ── Inspection result table ────────────────────────────────────────────────────

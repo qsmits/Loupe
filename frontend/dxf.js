@@ -57,8 +57,14 @@ function updateExportButtons() {
   const hasResults = state.inspectionResults.length > 0;
   const csvBtn = document.getElementById("btn-export-inspection-csv");
   const pdfBtn = document.getElementById("btn-export-inspection-pdf");
-  if (csvBtn) csvBtn.disabled = !hasResults;
-  if (pdfBtn) pdfBtn.disabled = !hasResults;
+  if (csvBtn) {
+    csvBtn.disabled = !hasResults;
+    csvBtn.title = !hasResults ? "Run inspection first" : "Export inspection results as CSV";
+  }
+  if (pdfBtn) {
+    pdfBtn.disabled = !hasResults;
+    pdfBtn.title = !hasResults ? "Run inspection first" : "Export inspection report as PDF";
+  }
 }
 
 export function initDxfHandlers() {
