@@ -702,7 +702,20 @@ canvas.addEventListener("contextmenu", e => {
   }
 
   // Right-click on empty canvas
+  const hasDxfResults = dxfAnn && dxfAnn.guidedResults && dxfAnn.guidedResults.length > 0;
   showContextMenu(e.clientX, e.clientY, [
+    ...(hasDxfResults ? [
+      { label: "Clear inspection results", action: () => {
+        const ann = state.annotations.find(a => a.type === "dxf-overlay");
+        if (ann) ann.guidedResults = [];
+        state.inspectionResults = [];
+        state.inspectionFrame = null;
+        renderInspectionTable();
+        redraw();
+        showStatus("Cleared inspection results");
+      }},
+      "---",
+    ] : []),
     { label: "Clear detections", action: clearDetections },
     { label: "Clear measurements", action: clearMeasurements },
     { label: "Clear DXF overlay", action: clearDxfOverlay },
