@@ -46,8 +46,14 @@ For **each DXF entity** (line, arc, circle, polyline_line, polyline_arc):
 
 ### 1.2 Corridor geometry
 
+**Coordinate note:** The frontend function `dxfToCanvas(x, y, ann)` in render.js
+returns **image-space** coordinates (despite its name — it predates the zoom/pan
+refactor). The backend has its own equivalent projection in `line_arc_matching.py`
+(`_dxf_to_canvas_px`), which should be reused (not duplicated) in the new
+`guided_inspection.py` module.
+
 **For line entities** (line, polyline_line):
-- Project both endpoints to image-space: `P1 = dxfToImage(x1, y1)`, `P2 = dxfToImage(x2, y2)`
+- Project both endpoints to image-space using the backend projection function
 - Compute the normal vector (perpendicular to the line direction)
 - The corridor is a rectangle: `P1 ± normal * corridor_px` to `P2 ± normal * corridor_px`
 - Also extend slightly (10%) along the line direction to catch endpoints
@@ -55,14 +61,20 @@ For **each DXF entity** (line, arc, circle, polyline_line, polyline_arc):
 **For arc entities** (arc, polyline_arc, circle):
 - Project center to image-space, scale radius
 - The corridor is an annular region: `r - corridor_px` to `r + corridor_px`
-- For partial arcs, limit the angular range to `start_angle` to `end_angle` (with margin)
-- For circles, the full 360° annulus
+- For partial arcs, limit the angular range to `start_angle` to `end_angle` with a
+  margin of `corridor_px / r_px` radians (proportional to corridor width — geometrically
+  consistent at the arc endpoints)
+- For circles, the full 360° annulus (just a radial distance check)
 
 ### 1.3 Edge point collection
 
 - Run Canny once on the preprocessed frame (same preprocessing as current detection)
-- For each entity's corridor, iterate edge pixels and collect those inside the polygon
-- The corridor test is a simple point-in-polygon or distance check
+- Extract all edge pixel coordinates once as an `(E, 2)` NumPy array via `np.argwhere(edges > 0)`
+- For each entity's corridor, test all E points vectorized using NumPy broadcasting:
+  - Lines: two dot products (along-line projection + perpendicular distance)
+  - Arcs: distance-from-center + angle check
+- **Must use vectorized NumPy** — a Python-level `for` loop over 50K+ edge pixels per
+  entity would be unacceptably slow
 - Minimum points required: 5 for lines, 8 for arcs (otherwise: unmatched)
 
 ### 1.4 Geometry fitting
@@ -126,6 +138,11 @@ For **arc segments**: distance from the point to the arc curve (radial distance
 from center minus radius, but only if the point's angle falls within the arc span).
 
 Both computed in image-space using the projected DXF geometry.
+
+**Tie-breaking at junctions:** Points equidistant from two segments (within 2px)
+are assigned to the segment with the **lower `segment_index`**. This is deterministic
+and predictable. In practice, junction ambiguity rarely affects the fit because
+both adjacent segments share the junction point.
 
 ---
 
@@ -193,12 +210,20 @@ Replaces the separate `/match-dxf-lines` and `/match-dxf-arcs` calls.
 ]
 ```
 
-`edge_points_sample` returns up to 50 evenly-spaced points from the corridor for
-visualization (not all edge pixels — that could be thousands).
+`edge_points_sample` returns up to 50 points sampled evenly **along the feature
+geometry** (arc-length parameterization for arcs, projection along line direction
+for lines — NOT raster order, which would cluster points at the image top).
 
 ### 3.2 `POST /fit-feature`
 
-For manual point-pick: takes user-placed points + DXF entity, returns the fit.
+For manual point-pick **finalization only**: takes user-placed points + DXF entity,
+returns the fit + deviation + pass/fail.
+
+**During point placement**, the live fit preview is computed **client-side** to avoid
+network round-trips on every click. Line fitting (eigenvector method) and circle
+fitting (Kåsa method) are both trivial — add to `frontend/math.js` (which already
+has `fitCircle`). `/fit-feature` is called once on Enter/double-click to get the
+official deviation result from the backend.
 
 **Request:**
 ```json
@@ -253,14 +278,32 @@ inspectionPickPoints: [],    // [{x, y}, ...] placed by user
 inspectionPickFit: null,     // live fit result from backend
 ```
 
-### 4.4 Compound feature selection on canvas
+### 4.4 DXF feature hit-testing on canvas
+
+The existing `hitTestAnnotation` does not handle DXF entities. A new hit-test
+function is needed: `hitTestDxfEntity(entity, pt, ann)`.
+
+**Algorithm** (forward-projection approach):
+1. For each DXF entity, project its key geometry to image-space via `dxfToCanvas(x, y, ann)`
+2. Test distance from the click point `pt` (already in image-space from `canvasPoint`)
+   to the projected geometry:
+   - **Lines**: point-to-segment distance (same as `distPointToSegment`)
+   - **Arcs**: radial distance from projected center, plus angular bounds check
+   - **Circles**: distance from projected center to edge (`|dist - r|`)
+3. Threshold: `10 / viewport.zoom` pixels (zoom-compensated, same as other hit-tests)
+
+This function iterates all entities in `ann.entities` and returns the best match
+(or null). If the matched entity has a `parent_handle`, the whole compound group is
+selected.
+
+### 4.5 Compound feature selection on canvas
 
 When clicking a DXF feature in the overlay:
 - If the entity has a `parent_handle`, select ALL entities with that same `parent_handle`
 - Highlight all segments of the compound feature
 - Point-pick mode captures points for the entire group
 
-### 4.5 Inspection results table update
+### 4.6 Inspection results table update
 
 The sidebar inspection table (from M4) shows per-feature results. Add:
 - **Clickable rows** for unmatched features → enters point-pick mode
@@ -274,12 +317,14 @@ The sidebar inspection table (from M4) shows per-feature results. Add:
 | File | Changes |
 |------|---------|
 | `backend/api.py` | New endpoints: `/inspect-guided`, `/fit-feature`. New Pydantic models. |
-| `backend/vision/guided_inspection.py` | **NEW** — corridor detection, edge collection, geometry fitting, deviation computation |
-| `backend/vision/detection.py` | Extract `_preprocess` for reuse. May share Canny edge computation. |
+| `backend/vision/guided_inspection.py` | **NEW** — corridor detection, edge collection, geometry fitting, deviation computation. Imports projection from `line_arc_matching.py`. |
+| `backend/vision/detection.py` | Rename `_preprocess` → `preprocess` and `_fit_circle_algebraic` → `fit_circle_algebraic` (drop underscore to make public API). |
+| `backend/vision/line_arc_matching.py` | Extract `_dxf_to_canvas_px` as public `dxf_to_image_px` for reuse by guided_inspection. |
 | `frontend/dxf.js` | Rewrite "Run Inspection" handler to call `/inspect-guided`. Add point-pick mode handlers. |
 | `frontend/render.js` | Draw fitted geometry, edge points, unmatched highlights, point-pick dots + live preview. |
 | `frontend/state.js` | Add `inspectionPickTarget`, `inspectionPickPoints`, `inspectionPickFit` fields. |
-| `frontend/tools.js` | Add DXF feature click-to-select for point-pick (hit-test on projected DXF geometry). |
+| `frontend/math.js` | Add `fitLine()` (eigenvector method) for client-side line fitting in point-pick preview. |
+| `frontend/tools.js` | Add `hitTestDxfEntity()` for click-to-select on projected DXF geometry. |
 | `frontend/sidebar.js` | Clickable unmatched rows in inspection table. "Auto"/"Manual" badges. |
 | `frontend/main.js` | Wire Enter/Escape for point-pick mode. |
 | `frontend/index.html` | No structural changes expected. |
