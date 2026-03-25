@@ -609,6 +609,53 @@ export function hitTestAnnotation(ann, pt) {
   return false;
 }
 
+/**
+ * Hit-test projected DXF entities. Returns the clicked entity or null.
+ * If the hit entity has a parent_handle, the compound group can be resolved by the caller.
+ */
+export function hitTestDxfEntity(pt, ann) {
+  if (!ann || !ann.entities) return null;
+  const threshold = 10 / viewport.zoom;
+  let bestEntity = null;
+  let bestDist = threshold;
+
+  for (const en of ann.entities) {
+    let dist = Infinity;
+
+    if (en.type === "line" || en.type === "polyline_line") {
+      const p1 = dxfToCanvas(en.x1, en.y1, ann);
+      const p2 = dxfToCanvas(en.x2, en.y2, ann);
+      dist = distPointToSegment(pt, p1, p2);
+
+    } else if (en.type === "circle") {
+      const c = dxfToCanvas(en.cx, en.cy, ann);
+      const r = en.radius * ann.scale;
+      dist = Math.abs(Math.hypot(pt.x - c.x, pt.y - c.y) - r);
+
+    } else if (en.type === "arc" || en.type === "polyline_arc") {
+      const c = dxfToCanvas(en.cx, en.cy, ann);
+      const r = en.radius * ann.scale;
+      const d = Math.hypot(pt.x - c.x, pt.y - c.y);
+      if (Math.abs(d - r) < threshold) {
+        // Check angular bounds
+        let angle = Math.atan2(pt.y - c.y, pt.x - c.x) * 180 / Math.PI;
+        angle = ((angle % 360) + 360) % 360;
+        let s = ((en.start_angle % 360) + 360) % 360;
+        let e = ((en.end_angle % 360) + 360) % 360;
+        const inRange = s <= e ? (angle >= s && angle <= e) : (angle >= s || angle <= e);
+        if (inRange) dist = Math.abs(d - r);
+      }
+    }
+
+    if (dist < bestDist) {
+      bestDist = dist;
+      bestEntity = en;
+    }
+  }
+
+  return bestEntity;
+}
+
 // ── Circle snap ─────────────────────────────────────────────────────────────
 // Returns the circle annotation whose edge is closest to pt, if within 20px.
 // Handles both "circle" (canvas coords) and "detected-circle" (frame coords).
