@@ -36,6 +36,22 @@ The app has powerful features but the **end-to-end workflow is too fragile and m
 
 These aren't features — they're the minimum for the app to be trustworthy.
 
+### ~~1.0 Annotation management overhaul~~ ✅ DONE (2026-03-25)
+Implemented in full:
+- `state.selected` migrated from single ID to `Set` for multi-select
+- Click-to-select on canvas for ALL annotation types (including detections)
+- Consistent blue selection highlighting with handles on every type
+- Sidebar ↔ canvas flash (pulse halo when clicking sidebar items)
+- Shift+click to toggle multi-select
+- Rectangle drag-select in Select mode
+- **Elevation**: promote detections to measurements (`U` key or context menu)
+- **Right-click context menu**: elevate, delete, rename, convert arc→circle
+- **Clear menu** in top bar: Clear detections / measurements / DXF / all
+- Detection busy indicator (progress cursor + button disable)
+- Arc deduplication (arcs overlapping detected circles are filtered)
+- Arc-measure fully draggable (extend/shorten by dragging p1/p3)
+- Spec: `docs/superpowers/specs/2026-03-25-annotation-management-design.md`
+
 ### 1.1 Auto-save sessions
 Sessions live only in memory. Browser crash = lost work. Add IndexedDB auto-save (30-second debounce) and a "restore last session?" prompt on startup. Also warn before closing the tab with unsaved changes (`beforeunload`).
 
@@ -47,6 +63,50 @@ Several endpoints return generic errors. The status bar should show the real err
 
 ### 1.4 Renumber measurements on delete
 Deleting measurement #2 of 5 leaves a gap (①③④⑤). Renumber them. Small thing, but it makes the sidebar confusing.
+
+---
+
+## Phase 1.5: Zoom & Pan
+*Estimated effort: 1-2 weeks. Priority: high.*
+
+The camera captures more resolution than the canvas displays. Zoom unlocks precision
+and makes dense annotations manageable. This is foundational — it improves every
+other workflow.
+
+### 1.5.1 Viewport transform
+Add a viewport state: `{ zoom: 1.0, panX: 0, panY: 0 }`. All canvas rendering goes
+through this transform. The image is drawn at `zoom` scale, offset by `panX/panY`.
+Annotations, detections, DXF overlays — everything must render through the same
+viewport transform.
+
+### 1.5.2 Scroll-wheel zoom
+Mouse scroll wheel zooms in/out, centered on the cursor position. Zoom range:
+0.25x (zoom out to see full image) to 8x (zoom in for sub-pixel precision).
+Smooth zoom with momentum would be nice but not required.
+
+### 1.5.3 Pan
+Middle-mouse-button drag to pan, or hold Space + left-drag (Photoshop convention).
+When zoomed in, the viewport shows a portion of the image. Pan moves that window.
+
+### 1.5.4 Mouse coordinate transform
+Every `canvasPoint(e)` call must account for the viewport transform — converting
+screen pixels to image-space coordinates. This is the hardest part: every mouse
+handler, hit-test, snap, and tool click must work in image-space, not screen-space.
+
+### 1.5.5 Minimap (optional)
+When zoomed in, show a small overview in the corner showing the full image with a
+rectangle indicating the current viewport. Click the minimap to jump to that area.
+
+### 1.5.6 Fit-to-window
+Double-click the scroll wheel or press `0` to reset zoom to fit the full image
+in the canvas. Press `1` for 1:1 pixel mapping.
+
+**Engineering notes:** This is the hardest change in the roadmap because it touches
+the coordinate system that everything else depends on. The key insight: change
+`canvasPoint(e)` to return image-space coordinates (accounting for zoom/pan), and
+change the rendering to apply the viewport transform before drawing. If those two
+are correct, everything else follows. The DXF overlay transform (which already has
+its own scale/rotate/translate) composes with the viewport transform.
 
 ---
 
@@ -276,25 +336,33 @@ These came up in the audit but would be premature:
 ## Suggested Execution Order
 
 ```
-Now:       Phase 1 (reliability)       — 1 week      — trustworthy
-Next:      Phase 2 (one-click)         — 2 weeks     — fast
-Then:      Phase 5 (reporting)         — 1-2 weeks   — useful output
-Then:      Phase 3 (detection tuning)  — 1-2 weeks   — accurate (once microscope arrives)
-Then:      Phase 7 (batch inspection)  — 2-3 weeks   — production use case
-Ongoing:   Phase 6 (tech foundation)   — sprinkle in as you go
-Later:     Phase 4 (measurement UX)    — 1-2 weeks   — power user features
-Future:    Phase 8 (gears)             — 3-4 weeks   — when gear machine is running
+Done:      Phase 1.0 (annotation mgmt)  — COMPLETE    — selection, multi-select, elevation, context menu
+Now:       Phase 1 remainder            — 3-4 days    — auto-save, ref integrity, error feedback
+Next:      Phase 1.5 (zoom/pan)         — 1-2 weeks   — precision & usability unlock
+Then:      Phase 2 (one-click)          — 2 weeks     — fast inspection workflow
+Then:      Phase 5 (reporting)          — 1-2 weeks   — useful output
+Then:      Phase 3 (detection tuning)   — 1-2 weeks   — accurate (once microscope arrives)
+Then:      Phase 7 (batch inspection)   — 2-3 weeks   — production use case
+Ongoing:   Phase 6 (tech foundation)    — sprinkle in as you go
+Later:     Phase 4 (measurement UX)     — 1-2 weeks   — power user features
+Future:    Phase 8 (gears)              — 3-4 weeks   — when gear machine is running
 ```
+
+**Why zoom/pan before one-click inspection:** Zoom is foundational — it makes every
+measurement more precise, every detection easier to verify, and every DXF alignment
+more accurate. It also makes the annotation management features we just built much
+more useful (zoom into a crowded area to select individual features). It's hard
+engineering (touches the coordinate system everything depends on), but the payoff
+is enormous.
 
 **Why reporting before detection tuning:** Without a microscope, detection tuning is
 theoretical. But the reporting pipeline can be built and tested with saved snapshots.
-And a good report is what makes the app *genuinely useful* — the user needs to be able
-to hand someone a piece of paper (or PDF) that says "this part is in tolerance."
 
 **Why batch inspection is high priority:** This is a real production use case from a
 Swiss lathe operator. Scatter a handful of identical parts under the scope, get all of
 them measured at once. This is where the tool goes from "interesting hobby project" to
 "actually saves someone hours per week."
 
-Phase 1 makes it trustworthy. Phase 2 makes it fast. Phase 5 makes it produce useful
-output. Phase 3 makes it accurate. Phase 7 makes it a production tool.
+Phase 1 makes it trustworthy. Phase 1.5 makes it precise. Phase 2 makes it fast.
+Phase 5 produces useful output. Phase 3 makes it accurate. Phase 7 makes it a
+production tool.
