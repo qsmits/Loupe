@@ -767,13 +767,22 @@ canvas.addEventListener("wheel", e => {
   // Image point under cursor before zoom
   const imgPt = screenToImage(screenX, screenY);
 
-  // Apply zoom factor
+  // Apply zoom factor — minimum is fit-to-window (image fills canvas)
   const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
-  viewport.zoom = Math.max(0.5, Math.min(10, viewport.zoom * factor));
+  const minZoom = (imageWidth > 0 && imageHeight > 0)
+    ? Math.min(rect.width / imageWidth, rect.height / imageHeight)
+    : 0.5;
+  viewport.zoom = Math.max(minZoom, Math.min(10, viewport.zoom * factor));
 
   // Adjust pan so image point stays under cursor
   viewport.panX = imgPt.x - screenX / viewport.zoom;
   viewport.panY = imgPt.y - screenY / viewport.zoom;
+
+  // At minimum zoom (fit-to-window), reset pan to origin
+  if (viewport.zoom <= minZoom + 0.001) {
+    viewport.panX = 0;
+    viewport.panY = 0;
+  }
 
   clampPan(rect.width, rect.height);
   resizeCanvas();
