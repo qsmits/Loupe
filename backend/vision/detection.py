@@ -39,7 +39,7 @@ _ARC_PARTIAL_NMS_CENTER_PX = 20
 _ARC_PARTIAL_NMS_R_RATIO   = 0.20
 
 
-def _preprocess(frame: np.ndarray, smoothing: int = 1) -> np.ndarray:
+def preprocess(frame: np.ndarray, smoothing: int = 1) -> np.ndarray:
     """
     Convert to grayscale, boost local contrast with CLAHE, then apply
     bilateral filter(s) to smooth surface texture while preserving sharp edges.
@@ -58,7 +58,7 @@ def detect_edges(frame: np.ndarray, threshold1: int, threshold2: int) -> bytes:
     Run Canny edge detection on frame.
     Returns a PNG image (RGBA, edges white on transparent background) as bytes.
     """
-    gray = _preprocess(frame)
+    gray = preprocess(frame)
     edges = cv2.Canny(gray, threshold1, threshold2)
 
     # Build RGBA image: edges are white, background transparent
@@ -90,7 +90,7 @@ def _nms_circles(circles: list) -> list:
     return kept
 
 
-def _fit_circle_algebraic(pts: np.ndarray):
+def fit_circle_algebraic(pts: np.ndarray):
     x, y = pts[:, 0], pts[:, 1]
     A = np.column_stack([2 * x, 2 * y, np.ones(len(x))])
     b = x ** 2 + y ** 2
@@ -100,7 +100,7 @@ def _fit_circle_algebraic(pts: np.ndarray):
     return cx, cy, r
 
 
-def _arc_angular_coverage(pts: np.ndarray, cx: float, cy: float) -> float:
+def arc_angular_coverage(pts: np.ndarray, cx: float, cy: float) -> float:
     angles = np.degrees(np.arctan2(pts[:, 1] - cy, pts[:, 0] - cx))
     angles = np.sort(angles % 360)
     if len(angles) < 2:
@@ -127,7 +127,7 @@ def detect_circles(
     The legacy Hough parameters (dp, min_dist, param1, param2) are accepted for API
     compatibility but are not used.
     """
-    gray = _preprocess(frame)
+    gray = preprocess(frame)
     k_small = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (_CLOSE_KERNEL_SMALL,) * 2)
     k_large = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (_CLOSE_KERNEL_LARGE,) * 2)
 
@@ -158,7 +158,7 @@ def detect_circles(
         if not (min_radius <= enc_r <= max_radius):
             return
         try:
-            fcx, fcy, fr = _fit_circle_algebraic(pts)
+            fcx, fcy, fr = fit_circle_algebraic(pts)
         except (np.linalg.LinAlgError, ValueError):
             return
         if not (min_radius <= fr <= max_radius):
@@ -166,7 +166,7 @@ def detect_circles(
         residuals = np.abs(np.hypot(pts[:, 0] - fcx, pts[:, 1] - fcy) - fr)
         if np.mean(residuals) / (fr + 1e-6) > _ARC_MAX_RESIDUAL:
             return
-        coverage = _arc_angular_coverage(pts, fcx, fcy)
+        coverage = arc_angular_coverage(pts, fcx, fcy)
         if coverage < _ARC_MIN_COVERAGE:
             return
         arcs.append((int(fcx), int(fcy), int(round(fr)), round(coverage, 1)))
@@ -212,7 +212,7 @@ def detect_lines(
     Returns list of {"x1", "y1", "x2", "y2", "length"} dicts.
     'length' is the Euclidean length of the segment in pixels.
     """
-    gray = _preprocess(frame)
+    gray = preprocess(frame)
     edges = cv2.Canny(gray, threshold1, threshold2)
     lines = cv2.HoughLinesP(
         edges,
@@ -252,7 +252,7 @@ def merge_line_segments(
     T-junctions/corners producing two segments from genuinely separate edges are correct.
     Returns list of {"x1", "y1", "x2", "y2", "length"} dicts.
     """
-    gray = _preprocess(frame)
+    gray = preprocess(frame)
     edges = cv2.Canny(gray, threshold1, threshold2)
     raw = cv2.HoughLinesP(edges, 1, np.pi/180, hough_threshold,
                           minLineLength=min_length, maxLineGap=max_gap)
@@ -349,7 +349,7 @@ def detect_lines_contour(
     Returns list of {"x1", "y1", "x2", "y2", "length"} dicts.
     """
     import math
-    gray = _preprocess(frame, smoothing=smoothing)
+    gray = preprocess(frame, smoothing=smoothing)
     edges = cv2.Canny(gray, threshold1, threshold2)
     if close_kernel > 1:
         k = cv2.getStructuringElement(cv2.MORPH_RECT, (close_kernel, close_kernel))
@@ -429,7 +429,7 @@ def detect_partial_arcs(
     straight edges misidentified as large-radius arcs.
     Returns list of {"cx", "cy", "r", "start_deg", "end_deg"} dicts (image pixels / degrees).
     """
-    gray = _preprocess(frame, smoothing=smoothing)
+    gray = preprocess(frame, smoothing=smoothing)
     edges = cv2.Canny(gray, threshold1, threshold2)
     k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (_CLOSE_KERNEL_SMALL,) * 2)
     edges = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, k)
@@ -441,7 +441,7 @@ def detect_partial_arcs(
         if len(pts) < min_points:
             continue
         try:
-            fcx, fcy, fr = _fit_circle_algebraic(pts)
+            fcx, fcy, fr = fit_circle_algebraic(pts)
         except (np.linalg.LinAlgError, ValueError):
             continue
         if not (min_radius <= fr <= max_radius):
@@ -463,7 +463,7 @@ def detect_partial_arcs(
             continue
         if max(bw, bh) / (min(bw, bh) + 1e-6) > max_aspect:
             continue
-        coverage = _arc_angular_coverage(pts, fcx, fcy)
+        coverage = arc_angular_coverage(pts, fcx, fcy)
         if coverage < min_span_deg or coverage >= _ARC_PARTIAL_MAX_SPAN_DEG:
             continue
         angles = np.degrees(np.arctan2(pts[:, 1] - fcy, pts[:, 0] - fcx)) % 360
@@ -497,7 +497,7 @@ def preprocessed_view(frame: np.ndarray) -> bytes:
     Return the CLAHE+bilateral preprocessed grayscale image as JPEG bytes.
     Useful for diagnosing why detection succeeds or fails on a given frame.
     """
-    gray = _preprocess(frame)
+    gray = preprocess(frame)
     ok, buf = cv2.imencode(".jpg", gray, [cv2.IMWRITE_JPEG_QUALITY, 90])
     if not ok:
         raise RuntimeError("Failed to encode preprocessed image")

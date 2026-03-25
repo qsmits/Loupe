@@ -8,7 +8,7 @@ to canvas pixel coordinates (same convention as alignment.py).
 import math
 
 
-def _dxf_to_canvas_px(x_mm, y_mm, ppm, tx, ty, angle_rad, flip_h=False, flip_v=False):
+def dxf_to_image_px(x_mm, y_mm, ppm, tx, ty, angle_rad, flip_h=False, flip_v=False):
     """Convert a DXF point (mm, Y-up) to canvas pixels (Y-down) via the alignment transform."""
     cx = x_mm * ppm * (-1 if flip_h else 1)
     cy = y_mm * ppm * (-1 if flip_v else 1)
@@ -18,7 +18,7 @@ def _dxf_to_canvas_px(x_mm, y_mm, ppm, tx, ty, angle_rad, flip_h=False, flip_v=F
     return mx, my
 
 
-def _perp_dist_point_to_line(px, py, x1, y1, x2, y2):
+def perp_dist_point_to_line(px, py, x1, y1, x2, y2):
     """Perpendicular distance from point (px,py) to the infinite line through (x1,y1)-(x2,y2)."""
     dx, dy = x2 - x1, y2 - y1
     length = math.hypot(dx, dy)
@@ -27,7 +27,7 @@ def _perp_dist_point_to_line(px, py, x1, y1, x2, y2):
     return abs(dy * (x1 - px) - dx * (y1 - py)) / length
 
 
-def _angle_diff_deg(a1, a2):
+def angle_diff_deg(a1, a2):
     """Smallest angle difference in degrees between two line angles (both in [0,180))."""
     diff = abs(a1 - a2) % 180
     return min(diff, 180 - diff)
@@ -54,22 +54,22 @@ def match_lines(dxf_lines, detected_lines, ppm, tx=0.0, ty=0.0, angle_deg=0.0,
         # Transform DXF midpoint to canvas pixels
         mx_mm = (entity["x1"] + entity["x2"]) / 2.0
         my_mm = (entity["y1"] + entity["y2"]) / 2.0
-        mx_px, my_px = _dxf_to_canvas_px(mx_mm, my_mm, ppm, tx, ty, angle_rad, flip_h, flip_v)
+        mx_px, my_px = dxf_to_image_px(mx_mm, my_mm, ppm, tx, ty, angle_rad, flip_h, flip_v)
 
         # DXF line angle in canvas space
-        ex1_px, ey1_px = _dxf_to_canvas_px(entity["x1"], entity["y1"], ppm, tx, ty, angle_rad, flip_h, flip_v)
-        ex2_px, ey2_px = _dxf_to_canvas_px(entity["x2"], entity["y2"], ppm, tx, ty, angle_rad, flip_h, flip_v)
+        ex1_px, ey1_px = dxf_to_image_px(entity["x1"], entity["y1"], ppm, tx, ty, angle_rad, flip_h, flip_v)
+        ex2_px, ey2_px = dxf_to_image_px(entity["x2"], entity["y2"], ppm, tx, ty, angle_rad, flip_h, flip_v)
         dxf_angle = math.degrees(math.atan2(ey2_px - ey1_px, ex2_px - ex1_px)) % 180
 
         # Find best matching detected line: closest by perpendicular distance + angle
         best = None
         best_dist = float("inf")
         for dl in detected_lines:
-            perp = _perp_dist_point_to_line(mx_px, my_px, dl["x1"], dl["y1"], dl["x2"], dl["y2"])
+            perp = perp_dist_point_to_line(mx_px, my_px, dl["x1"], dl["y1"], dl["x2"], dl["y2"])
             if perp > max_dist_px:
                 continue
             det_angle = math.degrees(math.atan2(dl["y2"]-dl["y1"], dl["x2"]-dl["x1"])) % 180
-            angle_err = _angle_diff_deg(dxf_angle, det_angle)
+            angle_err = angle_diff_deg(dxf_angle, det_angle)
             if perp < best_dist:
                 best_dist = perp
                 best = (dl, perp, angle_err)
@@ -106,7 +106,7 @@ def match_arcs(dxf_arcs, detected_arcs, ppm, tx=0.0, ty=0.0, angle_deg=0.0,
     for entity in dxf_arcs:
         if entity.get("type") not in ("arc", "polyline_arc"):
             continue
-        ecx_px, ecy_px = _dxf_to_canvas_px(entity["cx"], entity["cy"], ppm, tx, ty, angle_rad, flip_h, flip_v)
+        ecx_px, ecy_px = dxf_to_image_px(entity["cx"], entity["cy"], ppm, tx, ty, angle_rad, flip_h, flip_v)
         er_px = entity["radius"] * ppm
 
         best = None
