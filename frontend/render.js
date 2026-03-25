@@ -938,7 +938,6 @@ export function drawDeviations(ann) {
     const my_mm = (en.y1 + en.y2) / 2;
     const nominal = dxfToCanvas(mx_mm, my_mm, ann);
 
-    const tol = (r.handle && state.featureTolerances[r.handle]) || state.tolerances;
     const color = r.pass_fail === "fail" ? "#ff453a"
       : r.pass_fail === "warn" ? "#ff9f0a"
       : r.pass_fail === "pass" ? "#32d74b"
@@ -952,9 +951,6 @@ export function drawDeviations(ann) {
       ctx.fillStyle = "#636366";
       ctx.fillText("not detected", nominal.x + 4, nominal.y);
     } else {
-      const label = en.parent_handle
-        ? `P${en.parent_handle}-s${en.segment_index ?? ""}`
-        : (r.handle ?? "");
       const devText = `⊥ ${r.perp_dev_mm?.toFixed(3)} mm`;
       const angText = r.angle_error_deg != null ? `  ∠ ${r.angle_error_deg.toFixed(1)}°` : "";
       const text = `${devText}${angText}`;
@@ -984,8 +980,6 @@ export function drawDeviations(ann) {
     const nominal = dxfToCanvas(en.cx, en.cy, ann);
     const r_px = (en.radius ?? 0) * (ann.scale ?? 1);
 
-    const tol = (r.handle && state.featureTolerances[r.handle]) || state.tolerances;
-    const dev = Math.max(r.center_dev_mm ?? 0, r.radius_dev_mm ?? 0);
     const color = r.pass_fail === "fail" ? "#ff453a"
       : r.pass_fail === "warn" ? "#ff9f0a"
       : r.pass_fail === "pass" ? "#32d74b"
@@ -1018,9 +1012,6 @@ export function drawDeviations(ann) {
       ctx.fillStyle = color;
       ctx.font = "10px ui-monospace, monospace";
       const labelX = nominal.x + r_px + 4;
-      const label = en.parent_handle
-        ? `P${en.parent_handle}-s${en.segment_index ?? ""}`
-        : (r.handle ?? "");
       const devText = `Δ ${r.center_dev_mm?.toFixed(3)} mm  Δr ${r.radius_dev_mm?.toFixed(3)} mm`;
       ctx.fillText(devText, labelX, nominal.y);
       const textW = ctx.measureText(devText).width;
