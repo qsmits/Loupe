@@ -332,6 +332,26 @@ def _inspect_arc_circle(entity, edge_xy, ppm, tx, ty, angle_rad,
 
     fit_type = "circle" if etype == "circle" else "arc"
 
+    # For arcs, compute the angular span of the inlier points relative to the fitted center
+    fit_data = {
+        "type": fit_type,
+        "cx": float(fit_cx),
+        "cy": float(fit_cy),
+        "r": float(fit_r),
+    }
+    if fit_type == "arc" and len(corridor_pts) > 0:
+        # Use the actual edge point angles to determine the arc span
+        pt_angles = np.degrees(np.arctan2(corridor_pts[:, 1] - fit_cy, corridor_pts[:, 0] - fit_cx)) % 360
+        sorted_angles = np.sort(pt_angles)
+        if len(sorted_angles) > 1:
+            gaps = np.diff(sorted_angles, append=sorted_angles[0] + 360)
+            gap_idx = int(np.argmax(gaps))
+            fit_data["start_deg"] = float(sorted_angles[(gap_idx + 1) % len(sorted_angles)])
+            fit_data["end_deg"] = float(sorted_angles[gap_idx])
+        else:
+            fit_data["start_deg"] = 0
+            fit_data["end_deg"] = 360
+
     return {
         "handle": entity.get("handle"),
         "type": entity.get("type"),
@@ -339,12 +359,7 @@ def _inspect_arc_circle(entity, edge_xy, ppm, tx, ty, angle_rad,
         "matched": True,
         "edge_point_count": len(corridor_pts),
         "edge_points_sample": _sample_points(corridor_pts),
-        "fit": {
-            "type": fit_type,
-            "cx": float(fit_cx),
-            "cy": float(fit_cy),
-            "r": float(fit_r),
-        },
+        "fit": fit_data,
         "perp_dev_mm": None,
         "angle_error_deg": None,
         "center_dev_mm": round(center_dev_mm, 4),
@@ -543,6 +558,20 @@ def fit_manual_points(
 
         fit_type = "circle" if etype == "circle" else "arc"
 
+        fit_data = {
+            "type": fit_type,
+            "cx": float(fit_cx),
+            "cy": float(fit_cy),
+            "r": float(fit_r),
+        }
+        if fit_type == "arc" and len(pts) > 1:
+            pt_angles = np.degrees(np.arctan2(pts[:, 1] - fit_cy, pts[:, 0] - fit_cx)) % 360
+            sorted_angles = np.sort(pt_angles)
+            gaps = np.diff(sorted_angles, append=sorted_angles[0] + 360)
+            gap_idx = int(np.argmax(gaps))
+            fit_data["start_deg"] = float(sorted_angles[(gap_idx + 1) % len(sorted_angles)])
+            fit_data["end_deg"] = float(sorted_angles[gap_idx])
+
         return {
             "handle": entity.get("handle"),
             "type": entity.get("type"),
@@ -550,12 +579,7 @@ def fit_manual_points(
             "matched": True,
             "edge_point_count": len(pts),
             "edge_points_sample": _sample_points(pts),
-            "fit": {
-                "type": fit_type,
-                "cx": float(fit_cx),
-                "cy": float(fit_cy),
-                "r": float(fit_r),
-            },
+            "fit": fit_data,
             "perp_dev_mm": None,
             "angle_error_deg": None,
             "center_dev_mm": round(center_dev_mm, 4),

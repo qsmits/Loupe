@@ -547,7 +547,15 @@ export function drawGuidedResults(ann) {
         drawLabel(`\u22a5 ${r.perp_dev_mm?.toFixed(3)} mm`, mx + pw(5), my - pw(5));
       } else {
         ctx.beginPath();
-        ctx.arc(r.fit.cx, r.fit.cy, r.fit.r, 0, Math.PI * 2);
+        if (r.fit.start_deg != null && r.fit.type === "arc") {
+          // Draw partial arc with angular bounds
+          const startRad = r.fit.start_deg * Math.PI / 180;
+          const endRad = r.fit.end_deg * Math.PI / 180;
+          ctx.arc(r.fit.cx, r.fit.cy, r.fit.r, startRad, endRad);
+        } else {
+          // Full circle
+          ctx.arc(r.fit.cx, r.fit.cy, r.fit.r, 0, Math.PI * 2);
+        }
         ctx.stroke();
         drawLabel(`\u0394c ${(r.center_dev_mm ?? 0).toFixed(3)} \u0394r ${(r.radius_dev_mm ?? 0).toFixed(3)}`,
           r.fit.cx + r.fit.r + pw(5), r.fit.cy);
