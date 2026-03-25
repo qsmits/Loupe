@@ -658,14 +658,11 @@ export function hitTestDxfEntity(pt, ann) {
       const c = dxfToCanvas(en.cx, en.cy, ann);
       const r = en.radius * ann.scale;
       const d = Math.hypot(pt.x - c.x, pt.y - c.y);
+      // For DXF arc hit-testing, just check radial distance — angular bounds
+      // are unreliable because DXF uses Y-up angles and the canvas is Y-down.
+      // The closest-match selection (bestDist) handles disambiguation.
       if (Math.abs(d - r) < threshold) {
-        // Check angular bounds
-        let angle = Math.atan2(pt.y - c.y, pt.x - c.x) * 180 / Math.PI;
-        angle = ((angle % 360) + 360) % 360;
-        let s = ((en.start_angle % 360) + 360) % 360;
-        let e = ((en.end_angle % 360) + 360) % 360;
-        const inRange = s <= e ? (angle >= s && angle <= e) : (angle >= s || angle <= e);
-        if (inRange) dist = Math.abs(d - r);
+        dist = Math.abs(d - r);
       }
     }
 

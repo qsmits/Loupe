@@ -183,26 +183,41 @@ function onMouseDown(e) {
     return;
   }
 
-  // DXF feature click-to-select for point-pick (when inspection results exist)
+  // DXF feature click-to-select for point-pick (works with or without prior inspection)
   if (state.tool === "select") {
     const dxfAnn = state.annotations.find(a => a.type === "dxf-overlay");
-    if (dxfAnn && dxfAnn.guidedResults) {
+    if (dxfAnn) {
       const entity = hitTestDxfEntity(pt, dxfAnn);
       if (entity) {
-        // If entity has a parent_handle, select the whole compound group
-        const parentHandle = entity.parent_handle;
-        if (parentHandle) {
-          const group = dxfAnn.entities.filter(e => e.parent_handle === parentHandle);
-          state.inspectionPickTarget = group;  // array of entities
+        if (e.shiftKey && state.inspectionPickTarget) {
+          // Shift+click: add this entity (or its group) to the existing pick target
+          const newEntities = entity.parent_handle
+            ? dxfAnn.entities.filter(en => en.parent_handle === entity.parent_handle)
+            : [entity];
+          // Merge without duplicates
+          const existingHandles = new Set(state.inspectionPickTarget.map(t => t.handle));
+          for (const ne of newEntities) {
+            if (!existingHandles.has(ne.handle)) {
+              state.inspectionPickTarget.push(ne);
+              existingHandles.add(ne.handle);
+            }
+          }
         } else {
-          state.inspectionPickTarget = [entity];  // single entity as array
+          // Normal click: start new pick with this entity (or its compound group)
+          const parentHandle = entity.parent_handle;
+          if (parentHandle) {
+            const group = dxfAnn.entities.filter(en => en.parent_handle === parentHandle);
+            state.inspectionPickTarget = group;
+          } else {
+            state.inspectionPickTarget = [entity];
+          }
+          state.inspectionPickPoints = [];
+          state.inspectionPickFit = null;
         }
-        state.inspectionPickPoints = [];
-        state.inspectionPickFit = null;
         const featureCount = state.inspectionPickTarget.length;
         const msg = featureCount > 1
-          ? `Compound feature (${featureCount} segments). Click points along the edge. Double-click or Enter to finish.`
-          : "Click points along the edge. Double-click or Enter to finish. Escape to cancel.";
+          ? `${featureCount} segments selected. Click points along the edge. Double-click or Enter to finish. Shift+click DXF to add more.`
+          : "Click points along the edge. Double-click or Enter to finish. Shift+click DXF to add more.";
         showStatus(msg);
         redraw();
         return;
