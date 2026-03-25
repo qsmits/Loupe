@@ -552,17 +552,8 @@ export function drawGuidedResults(ann) {
       }
       ctx.restore();
 
-      // Edge points (subtle dots)
-      if (r.edge_points_sample && r.edge_points_sample.length > 0) {
-        ctx.save();
-        ctx.fillStyle = "rgba(150, 150, 150, 0.5)";
-        for (const [x, y] of r.edge_points_sample) {
-          ctx.beginPath();
-          ctx.arc(x, y, pw(1.5), 0, Math.PI * 2);
-          ctx.fill();
-        }
-        ctx.restore();
-      }
+      // Edge points only shown when this result's feature is hovered/selected
+      // (removed default rendering to reduce clutter on textured parts)
     }
   }
 }

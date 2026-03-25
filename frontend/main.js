@@ -8,7 +8,7 @@ import { addAnnotation, deleteAnnotation, deleteSelected, elevateSelected, isDet
 import { setTool, handleToolClick, handleSelectDown, handleDrag,
          canvasPoint, snapPoint, collectDxfSnapPoints,
          projectConstrained, hitTestDxfEntity } from './tools.js';
-import { fitCircle, fitLine, fitCircleAlgebraic } from './math.js';
+import { fitCircle, fitLine, fitCircleAlgebraic, distPointToSegment } from './math.js';
 import { exitDxfAlignMode, initDxfHandlers,
          openFeatureTolPopover } from './dxf.js';
 import { doFreeze, initDetectHandlers } from './detect.js';
@@ -201,6 +201,22 @@ function onMouseDown(e) {
     return;
   }
   handleToolClick(pt, e);
+}
+
+function _hitTestGuidedResult(pt, dxfAnn) {
+  const threshold = 10 / viewport.zoom;
+  let best = null, bestDist = threshold;
+  for (const r of (dxfAnn.guidedResults || [])) {
+    if (!r.matched || !r.fit) continue;
+    let dist = Infinity;
+    if (r.fit.type === "line") {
+      dist = distPointToSegment(pt, { x: r.fit.x1, y: r.fit.y1 }, { x: r.fit.x2, y: r.fit.y2 });
+    } else if (r.fit.cx != null) {
+      dist = Math.abs(Math.hypot(pt.x - r.fit.cx, pt.y - r.fit.cy) - r.fit.r);
+    }
+    if (dist < bestDist) { bestDist = dist; best = r; }
+  }
+  return best;
 }
 
 function _annotationPrimaryPoint(ann) {
@@ -519,6 +535,36 @@ canvas.addEventListener("mouseleave", () => {
 canvas.addEventListener("contextmenu", e => {
   e.preventDefault();
   hideContextMenu();
+
+  // Check if right-click hits a guided inspection result
+  const pt = canvasPoint(e);
+  const dxfAnn = state.annotations.find(a => a.type === "dxf-overlay");
+  if (dxfAnn && dxfAnn.guidedResults) {
+    const hitResult = _hitTestGuidedResult(pt, dxfAnn);
+    if (hitResult) {
+      const items = [
+        { label: `Delete "${hitResult.handle}" result`, action: () => {
+          dxfAnn.guidedResults = dxfAnn.guidedResults.filter(r => r.handle !== hitResult.handle);
+          state.inspectionResults = state.inspectionResults.filter(r => r.handle !== hitResult.handle);
+          renderInspectionTable();
+          redraw();
+          showStatus(`Deleted result for ${hitResult.handle}`);
+        }},
+        { label: "Re-measure manually", action: () => {
+          const entity = dxfAnn.entities.find(en => en.handle === hitResult.handle);
+          if (entity) {
+            state.inspectionPickTarget = entity;
+            state.inspectionPickPoints = [];
+            state.inspectionPickFit = null;
+            showStatus("Click points along the edge. Double-click or Enter to finish.");
+            redraw();
+          }
+        }},
+      ];
+      showContextMenu(e.clientX, e.clientY, items);
+      return;
+    }
+  }
 
   if (state.selected.size > 0) {
     // Right-click with selection active
