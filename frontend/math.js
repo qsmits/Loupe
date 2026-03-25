@@ -77,3 +77,32 @@ export function distPointToSegment(pt, a, b) {
   const t = Math.max(0, Math.min(1, ((pt.x-a.x)*dx + (pt.y-a.y)*dy) / lenSq));
   return Math.hypot(pt.x - (a.x + t*dx), pt.y - (a.y + t*dy));
 }
+
+/**
+ * Least-squares line fit through N points (eigenvector method / orthogonal distance regression).
+ * Returns { cx, cy, dx, dy, x1, y1, x2, y2 } or null if < 2 points.
+ */
+export function fitLine(points) {
+  if (points.length < 2) return null;
+  const n = points.length;
+  const cx = points.reduce((s, p) => s + p.x, 0) / n;
+  const cy = points.reduce((s, p) => s + p.y, 0) / n;
+  let sxx = 0, sxy = 0, syy = 0;
+  for (const p of points) {
+    const dx = p.x - cx, dy = p.y - cy;
+    sxx += dx * dx; sxy += dx * dy; syy += dy * dy;
+  }
+  const theta = 0.5 * Math.atan2(2 * sxy, sxx - syy);
+  const dx = Math.cos(theta), dy = Math.sin(theta);
+  let tMin = Infinity, tMax = -Infinity;
+  for (const p of points) {
+    const t = (p.x - cx) * dx + (p.y - cy) * dy;
+    if (t < tMin) tMin = t;
+    if (t > tMax) tMax = t;
+  }
+  return {
+    cx, cy, dx, dy,
+    x1: cx + tMin * dx, y1: cy + tMin * dy,
+    x2: cx + tMax * dx, y2: cy + tMax * dy,
+  };
+}
