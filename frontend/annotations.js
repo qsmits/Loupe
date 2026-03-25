@@ -135,6 +135,77 @@ export function elevateSelected() {
   showStatus(`Elevated ${newIds.length} detection${newIds.length > 1 ? "s" : ""} to measurement${newIds.length > 1 ? "s" : ""}`);
 }
 
+// ── Merge selected lines ─────────────────────────────────────────────────────
+
+const LINE_TYPES = new Set(["detected-line", "detected-line-merged", "distance"]);
+
+export function mergeSelectedLines() {
+  // Collect all selected line-type annotations
+  const lineAnns = [...state.selected]
+    .map(id => state.annotations.find(a => a.id === id))
+    .filter(a => a && LINE_TYPES.has(a.type));
+
+  if (lineAnns.length < 2) {
+    showStatus("Select 2+ lines to merge");
+    return;
+  }
+
+  pushUndo();
+
+  // Collect all endpoints in image-space
+  const points = [];
+  for (const ann of lineAnns) {
+    if (ann.type === "distance") {
+      points.push(ann.a, ann.b);
+    } else {
+      // detected-line or detected-line-merged: scale from frame to image space
+      const sx = ann.frameWidth ? imageWidth / ann.frameWidth : 1;
+      const sy = ann.frameHeight ? imageHeight / ann.frameHeight : 1;
+      points.push({ x: ann.x1 * sx, y: ann.y1 * sy });
+      points.push({ x: ann.x2 * sx, y: ann.y2 * sy });
+    }
+  }
+
+  // Fit a single line through all points (eigenvector method)
+  const n = points.length;
+  const cx = points.reduce((s, p) => s + p.x, 0) / n;
+  const cy = points.reduce((s, p) => s + p.y, 0) / n;
+  let sxx = 0, sxy = 0, syy = 0;
+  for (const p of points) {
+    const dx = p.x - cx, dy = p.y - cy;
+    sxx += dx * dx; sxy += dx * dy; syy += dy * dy;
+  }
+  const theta = 0.5 * Math.atan2(2 * sxy, sxx - syy);
+  const dx = Math.cos(theta), dy = Math.sin(theta);
+
+  // Project all points onto the line direction to find extent
+  let tMin = Infinity, tMax = -Infinity;
+  for (const p of points) {
+    const t = (p.x - cx) * dx + (p.y - cy) * dy;
+    if (t < tMin) tMin = t;
+    if (t > tMax) tMax = t;
+  }
+
+  // Create merged distance annotation
+  const merged = {
+    type: "distance",
+    id: state.nextId++,
+    name: "",
+    a: { x: cx + tMin * dx, y: cy + tMin * dy },
+    b: { x: cx + tMax * dx, y: cy + tMax * dy },
+  };
+
+  // Remove the original lines
+  const removeIds = new Set(lineAnns.map(a => a.id));
+  state.annotations = state.annotations.filter(a => !removeIds.has(a.id));
+  state.annotations.push(merged);
+  state.selected = new Set([merged.id]);
+
+  renderSidebar();
+  redraw();
+  showStatus(`Merged ${lineAnns.length} lines into one measurement`);
+}
+
 // ── Clear operations ─────────────────────────────────────────────────────────
 
 const OVERLAY_TYPES = new Set(["edges-overlay", "preprocessed-overlay"]);

@@ -4,7 +4,7 @@ import { canvas, ctx, img, showStatus, redraw, resizeCanvas,
 import { renderSidebar, loadCameraInfo, loadUiConfig, loadTolerances,
          updateCalibrationButton, checkStartupWarning, updateFreezeUI,
          loadCameraList, renderInspectionTable } from './sidebar.js';
-import { addAnnotation, deleteAnnotation, deleteSelected, elevateSelected, isDetection, clearDetections, clearMeasurements, clearDxfOverlay, clearAll } from './annotations.js';
+import { addAnnotation, deleteAnnotation, deleteSelected, elevateSelected, isDetection, mergeSelectedLines, clearDetections, clearMeasurements, clearDxfOverlay, clearAll } from './annotations.js';
 import { setTool, handleToolClick, handleSelectDown, handleDrag,
          canvasPoint, snapPoint, collectDxfSnapPoints,
          projectConstrained, hitTestDxfEntity } from './tools.js';
@@ -694,6 +694,15 @@ canvas.addEventListener("contextmenu", e => {
     });
     if (hasDetections) {
       items.push({ label: "Elevate to measurement", action: elevateSelected });
+    }
+    // Merge lines option (when 2+ line-type annotations selected)
+    const lineTypes = new Set(["detected-line", "detected-line-merged", "distance"]);
+    const selectedLines = [...state.selected].filter(id => {
+      const a = state.annotations.find(x => x.id === id);
+      return a && lineTypes.has(a.type);
+    });
+    if (selectedLines.length >= 2) {
+      items.push({ label: `Merge ${selectedLines.length} lines`, action: mergeSelectedLines });
     }
     items.push({ label: `Delete (${state.selected.size})`, action: deleteSelected });
     if (state.selected.size === 1) {
