@@ -137,9 +137,51 @@ function onMouseDown(e) {
   handleToolClick(pt, e);
 }
 
+function _annotationPrimaryPoint(ann) {
+  // Frame-scaled types
+  if (ann.frameWidth) {
+    const sx = canvas.width / ann.frameWidth;
+    const sy = canvas.height / ann.frameHeight;
+    if (ann.cx != null) return { x: ann.cx * sx, y: ann.cy * sy };
+    if (ann.x1 != null) return { x: (ann.x1 + ann.x2) / 2 * sx, y: (ann.y1 + ann.y2) / 2 * sy };
+    if (ann.x != null) return { x: ann.x * sx, y: ann.y * sy };
+  }
+  // Canvas-space types
+  if (ann.a && ann.b) return { x: (ann.a.x + ann.b.x) / 2, y: (ann.a.y + ann.b.y) / 2 };
+  if (ann.cx != null) return { x: ann.cx, y: ann.cy };
+  if (ann.vertex) return { x: ann.vertex.x, y: ann.vertex.y };
+  if (ann.x != null) return { x: ann.x, y: ann.y };
+  if (ann.points) {
+    const cx = ann.points.reduce((s, p) => s + p.x, 0) / ann.points.length;
+    const cy = ann.points.reduce((s, p) => s + p.y, 0) / ann.points.length;
+    return { x: cx, y: cy };
+  }
+  return null;
+}
+
 function onMouseUp() {
   if (state.dxfDragMode) {
     state.dxfDragOrigin = null;
+    return;
+  }
+  if (state._selectRect) {
+    const r = state._selectRect;
+    const minX = Math.min(r.x1, r.x2), maxX = Math.max(r.x1, r.x2);
+    const minY = Math.min(r.y1, r.y2), maxY = Math.max(r.y1, r.y2);
+    if (maxX - minX > 5 && maxY - minY > 5) {
+      const ids = [];
+      for (const ann of state.annotations) {
+        const cp = _annotationPrimaryPoint(ann);
+        if (cp && cp.x >= minX && cp.x <= maxX && cp.y >= minY && cp.y <= maxY) {
+          ids.push(ann.id);
+        }
+      }
+      state.selected = new Set(ids);
+      if (ids.length > 0) showStatus(`${ids.length} selected`);
+    }
+    state._selectRect = null;
+    renderSidebar();
+    redraw();
     return;
   }
   if (state.dragState !== null) pushUndo();
@@ -181,6 +223,13 @@ canvas.addEventListener("mousemove", e => {
     } else {
       state.snapTarget = null;
     }
+    redraw();
+    return;
+  }
+  if (state._selectRect) {
+    const pt2 = canvasPoint(e);
+    state._selectRect.x2 = pt2.x;
+    state._selectRect.y2 = pt2.y;
     redraw();
     return;
   }

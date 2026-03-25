@@ -353,32 +353,45 @@ export function handleToolClick(rawPt, e = {}) {
 }
 
 export function handleSelectDown(pt, e) {
-  // First check drag handles of selected annotation
+  // Single-select: try drag handles first (only if exactly 1 selected)
   if (state.selected.size === 1) {
     const selId = [...state.selected][0];
     const ann = state.annotations.find(a => a.id === selId);
     if (ann) {
-      const handle = hitTestHandle(ann, pt);
-      if (handle) {
-        state.dragState = { annotationId: ann.id, handleKey: handle, startX: pt.x, startY: pt.y };
+      const hk = hitTestHandle(ann, pt);
+      if (hk) {
+        state.dragState = { annotationId: ann.id, handleKey: hk, startX: pt.x, startY: pt.y };
         return;
       }
     }
   }
-  // Then check if we clicked on any annotation body
+
+  // Hit-test all annotations (reverse order = top first)
   for (let i = state.annotations.length - 1; i >= 0; i--) {
     const ann = state.annotations[i];
     if (hitTestAnnotation(ann, pt)) {
-      state.selected = new Set([ann.id]);
-      state.dragState = { annotationId: ann.id, handleKey: "body", startX: pt.x, startY: pt.y };
+      if (e.shiftKey) {
+        // Shift+click: toggle in/out of selection
+        const newSet = new Set(state.selected);
+        if (newSet.has(ann.id)) newSet.delete(ann.id);
+        else newSet.add(ann.id);
+        state.selected = newSet;
+      } else {
+        // Normal click: replace selection, start body drag
+        state.selected = new Set([ann.id]);
+        state.dragState = { annotationId: ann.id, handleKey: "body", startX: pt.x, startY: pt.y };
+      }
       renderSidebar();
-      const selRow = listEl.querySelector(".measurement-item.selected");
-      if (selRow) selRow.scrollIntoView({ block: "nearest" });
       redraw();
       return;
     }
   }
-  // Clicked empty space — deselect
+
+  // Clicked empty space
+  if (e.shiftKey) return; // Shift+click on empty: preserve selection
+
+  // Start drag-select rectangle
+  state._selectRect = { x1: pt.x, y1: pt.y, x2: pt.x, y2: pt.y };
   state.selected = new Set();
   renderSidebar();
   redraw();
