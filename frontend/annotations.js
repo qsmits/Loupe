@@ -1,5 +1,5 @@
-import { state, pushUndo } from './state.js';
-import { redraw } from './render.js';
+import { state, pushUndo, DETECTION_TYPES } from './state.js';
+import { canvas, showStatus, redraw } from './render.js';
 import { renderSidebar, updateCameraInfo, updateCalibrationButton } from './sidebar.js';
 
 // ── Annotations management ──────────────────────────────────────────────────────
@@ -47,6 +47,91 @@ export function deleteSelected() {
   state.selected = new Set();
   renderSidebar();
   redraw();
+}
+
+// ── Detection → Measurement elevation ────────────────────────────────────────
+
+export function isDetection(ann) {
+  return DETECTION_TYPES.has(ann.type);
+}
+
+export function elevateAnnotation(id) {
+  const ann = state.annotations.find(a => a.id === id);
+  if (!ann || !isDetection(ann)) return null;
+
+  const sx = ann.frameWidth ? canvas.width / ann.frameWidth : 1;
+  const sy = ann.frameHeight ? canvas.height / ann.frameHeight : 1;
+
+  let elevated;
+
+  if (ann.type === "detected-line" || ann.type === "detected-line-merged") {
+    elevated = {
+      type: "distance",
+      a: { x: ann.x1 * sx, y: ann.y1 * sy },
+      b: { x: ann.x2 * sx, y: ann.y2 * sy },
+    };
+  } else if (ann.type === "detected-circle") {
+    elevated = {
+      type: "circle",
+      cx: ann.x * sx,
+      cy: ann.y * sy,
+      r: ann.radius * sx,
+    };
+  } else if (ann.type === "detected-arc-partial") {
+    const cx = ann.cx * sx, cy = ann.cy * sy, r = ann.r * sx;
+    const startRad = ann.start_deg * Math.PI / 180;
+    const endRad = ann.end_deg * Math.PI / 180;
+    // Handle wrapping: if arc crosses 0°, simple average gives wrong midpoint
+    let midDeg = (ann.start_deg + ann.end_deg) / 2;
+    if (ann.end_deg < ann.start_deg) midDeg += 180;
+    const midRad = midDeg * Math.PI / 180;
+    const p1 = { x: cx + r * Math.cos(startRad), y: cy + r * Math.sin(startRad) };
+    const p2 = { x: cx + r * Math.cos(midRad), y: cy + r * Math.sin(midRad) };
+    const p3 = { x: cx + r * Math.cos(endRad), y: cy + r * Math.sin(endRad) };
+    let spanDeg = ann.end_deg - ann.start_deg;
+    if (spanDeg < 0) spanDeg += 360;
+    const chordPx = Math.hypot(p3.x - p1.x, p3.y - p1.y);
+    elevated = {
+      type: "arc-measure",
+      cx, cy, r, p1, p2, p3,
+      span_deg: spanDeg,
+      chord_px: chordPx,
+    };
+  }
+
+  if (!elevated) return null;
+
+  // Remove original detection
+  state.annotations = state.annotations.filter(a => a.id !== id);
+  state.selected.delete(id);
+
+  // Add as new measurement
+  elevated.id = state.nextId++;
+  elevated.name = "";
+  state.annotations.push(elevated);
+  return elevated.id;
+}
+
+export function elevateSelected() {
+  const toElevate = [...state.selected].filter(id => {
+    const ann = state.annotations.find(a => a.id === id);
+    return ann && isDetection(ann);
+  });
+  if (toElevate.length === 0) {
+    showStatus("No detections selected to elevate");
+    return;
+  }
+
+  pushUndo();
+  const newIds = [];
+  for (const id of toElevate) {
+    const newId = elevateAnnotation(id);
+    if (newId != null) newIds.push(newId);
+  }
+  state.selected = new Set(newIds);
+  renderSidebar();
+  redraw();
+  showStatus(`Elevated ${newIds.length} detection${newIds.length > 1 ? "s" : ""} to measurement${newIds.length > 1 ? "s" : ""}`);
 }
 
 export function applyCalibration(ann) {

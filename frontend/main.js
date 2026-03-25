@@ -4,7 +4,7 @@ import { canvas, ctx, img, showStatus, redraw, resizeCanvas,
 import { renderSidebar, loadCameraInfo, loadUiConfig, loadTolerances,
          updateCalibrationButton, checkStartupWarning, updateFreezeUI,
          loadCameraList } from './sidebar.js';
-import { addAnnotation, deleteAnnotation, deleteSelected } from './annotations.js';
+import { addAnnotation, deleteAnnotation, deleteSelected, elevateSelected } from './annotations.js';
 import { setTool, handleToolClick, handleSelectDown, handleDrag,
          canvasPoint, snapPoint, collectDxfSnapPoints,
          projectConstrained } from './tools.js';
@@ -391,6 +391,10 @@ document.addEventListener("keydown", e => {
   const ctrlOrMeta = e.ctrlKey || e.metaKey;
   if (ctrlOrMeta && e.key === "z" && !e.shiftKey) { e.preventDefault(); undo(); return; }
   if (ctrlOrMeta && (e.key === "y" || (e.key === "z" && e.shiftKey))) { e.preventDefault(); redo(); return; }
+  if (e.key === "u" && state.selected.size > 0) {
+    elevateSelected();
+    return;
+  }
   const toolKeys = { v: "select", c: "calibrate", d: "distance", a: "angle",
                      o: "circle", f: "arc-fit", m: "center-dist", e: "detect",
                      p: "perp-dist", l: "para-dist", r: "area",

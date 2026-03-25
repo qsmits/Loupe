@@ -86,3 +86,7 @@ export const TRANSIENT_TYPES = new Set([
   "detected-circle", "detected-line",
   "detected-line-merged", "detected-arc-partial",
 ]);
+
+export const DETECTION_TYPES = new Set([
+  "detected-circle", "detected-line", "detected-line-merged", "detected-arc-partial",
+]);
