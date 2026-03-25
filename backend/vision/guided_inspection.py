@@ -26,6 +26,19 @@ def _sample_points(pts: np.ndarray, max_n: int = 50) -> list:
     return pts[indices].tolist()
 
 
+def _line_fit_endpoints(centroid, direction, pts):
+    """Compute line fit endpoints by projecting points onto the fitted direction."""
+    proj = (pts - centroid) @ direction
+    t_min, t_max = float(proj.min()), float(proj.max())
+    return {
+        "type": "line",
+        "x1": float(centroid[0] + t_min * direction[0]),
+        "y1": float(centroid[1] + t_min * direction[1]),
+        "x2": float(centroid[0] + t_max * direction[0]),
+        "y2": float(centroid[1] + t_max * direction[1]),
+    }
+
+
 def _unmatched(entity: dict, reason: str) -> dict:
     """Return a result dict for an unmatched feature."""
     return {
@@ -145,13 +158,7 @@ def _inspect_line(entity, edge_xy, ppm, tx, ty, angle_rad,
         "matched": True,
         "edge_point_count": len(corridor_pts),
         "edge_points_sample": _sample_points(corridor_pts),
-        "fit": {
-            "type": "line",
-            "cx": float(centroid[0]),
-            "cy": float(centroid[1]),
-            "dx": float(direction[0]),
-            "dy": float(direction[1]),
-        },
+        "fit": _line_fit_endpoints(centroid, direction, inlier_pts),
         "perp_dev_mm": round(perp_dev_mm, 4),
         "angle_error_deg": round(angle_err, 2),
         "center_dev_mm": None,
@@ -434,13 +441,7 @@ def fit_manual_points(
             "matched": True,
             "edge_point_count": len(pts),
             "edge_points_sample": _sample_points(pts),
-            "fit": {
-                "type": "line",
-                "cx": float(centroid[0]),
-                "cy": float(centroid[1]),
-                "dx": float(direction[0]),
-                "dy": float(direction[1]),
-            },
+            "fit": _line_fit_endpoints(centroid, direction, pts),
             "perp_dev_mm": round(perp_dev_mm, 4),
             "angle_error_deg": round(angle_err, 2),
             "center_dev_mm": None,
