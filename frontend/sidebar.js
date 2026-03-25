@@ -1,4 +1,4 @@
-import { state } from './state.js';
+import { state, DETECTION_TYPES } from './state.js';
 import { redraw, showStatus, getStatus, measurementLabel, listEl, cameraInfoEl } from './render.js';
 
 // ── Sidebar rendering ──────────────────────────────────────────────────────────
@@ -65,6 +65,24 @@ export function renderSidebar() {
     });
     listEl.appendChild(row);
   });
+
+  // Show selection count in status bar when multiple selected
+  if (state.selected.size > 1) {
+    const detCount = [...state.selected].filter(id => {
+      const a = state.annotations.find(x => x.id === id);
+      return a && DETECTION_TYPES.has(a.type);
+    }).length;
+    const measCount = state.selected.size - detCount;
+    let msg = `${state.selected.size} selected`;
+    if (detCount > 0 && measCount > 0) {
+      msg = `${detCount} detection${detCount > 1 ? "s" : ""}, ${measCount} measurement${measCount > 1 ? "s" : ""} selected`;
+    } else if (detCount > 0) {
+      msg = `${detCount} detection${detCount > 1 ? "s" : ""} selected`;
+    } else if (measCount > 0) {
+      msg = `${measCount} measurement${measCount > 1 ? "s" : ""} selected`;
+    }
+    showStatus(msg);
+  }
 }
 
 // ── Tolerances config ──────────────────────────────────────────────────────────
