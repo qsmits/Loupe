@@ -91,19 +91,19 @@
         <div class="detect-section">
           <div class="detect-section-label">Advanced Detection</div>
           <div class="detect-row">
-            <label>Min length</label>
-            <input type="range" id="adv-min-length" min="5" max="200" value="80">
-            <span id="adv-min-length-val">80</span>
+            <label class="detect-label" title="Minimum line segment length in pixels. Increase to reject short noise segments.">Min length</label>
+            <input type="range" id="adv-min-length" min="5" max="200" value="80" />
+            <span class="detect-val" id="adv-min-length-val">80</span>
           </div>
           <div class="detect-row">
-            <label>NMS dist</label>
-            <input type="range" id="adv-nms-dist" min="2" max="60" value="20">
-            <span id="adv-nms-dist-val">20</span>
+            <label class="detect-label" title="Non-maximum suppression distance in pixels. Lines closer than this (and similar angle) are merged, keeping the longest.">NMS dist</label>
+            <input type="range" id="adv-nms-dist" min="2" max="60" value="20" />
+            <span class="detect-val" id="adv-nms-dist-val">20</span>
           </div>
           <div class="detect-row">
-            <label>Min arc span°</label>
-            <input type="range" id="adv-min-span" min="10" max="180" value="50">
-            <span id="adv-min-span-val">50</span>
+            <label class="detect-label" title="Minimum arc angle in degrees. Increase to reject small arc fragments.">Min arc span°</label>
+            <input type="range" id="adv-min-span" min="10" max="180" value="50" />
+            <span class="detect-val" id="adv-min-span-val">50</span>
           </div>
           <div class="detect-actions">
             <button id="btn-detect-lines-merged" class="detect-btn">Detect lines (merged)</button>
