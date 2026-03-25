@@ -4,7 +4,7 @@ import { canvas, ctx, img, showStatus, redraw, resizeCanvas,
 import { renderSidebar, loadCameraInfo, loadUiConfig, loadTolerances,
          updateCalibrationButton, checkStartupWarning, updateFreezeUI,
          loadCameraList } from './sidebar.js';
-import { addAnnotation, deleteAnnotation } from './annotations.js';
+import { addAnnotation, deleteAnnotation, deleteSelected } from './annotations.js';
 import { setTool, handleToolClick, handleSelectDown, handleDrag,
          canvasPoint, snapPoint, collectDxfSnapPoints,
          projectConstrained } from './tools.js';
@@ -22,7 +22,9 @@ function undo() {
   state.annotations = snap.annotations;
   state.calibration = snap.calibration;
   state.origin = snap.origin;
-  state.selected = state.annotations.find(a => a.id === state.selected?.id)?.id ?? null;
+  state.selected = new Set(
+    [...state.selected].filter(id => state.annotations.some(a => a.id === id))
+  );
   renderSidebar(); redraw();
 }
 
@@ -33,7 +35,9 @@ function redo() {
   state.annotations = snap.annotations;
   state.calibration = snap.calibration;
   state.origin = snap.origin;
-  state.selected = state.annotations.find(a => a.id === state.selected?.id)?.id ?? null;
+  state.selected = new Set(
+    [...state.selected].filter(id => state.annotations.some(a => a.id === id))
+  );
   renderSidebar(); redraw();
 }
 
@@ -308,8 +312,8 @@ document.addEventListener("keydown", e => {
   // All other shortcuts are blocked when an input/select/textarea/dialog is focused
   if (document.activeElement.closest("input, select, textarea") !== null || document.querySelector(".dialog-overlay:not([hidden])") !== null) return;
 
-  if ((e.key === "Delete" || e.key === "Backspace") && state.selected !== null) {
-    deleteAnnotation(state.selected);
+  if ((e.key === "Delete" || e.key === "Backspace") && state.selected.size > 0) {
+    deleteSelected();
     return;
   }
   if (e.key === "Escape") {
@@ -536,7 +540,7 @@ document.getElementById("btn-clear")?.addEventListener("click", () => {
   if (confirm("Clear all annotations?")) {
     state.annotations = state.annotations.filter(a => a.type === "dxf-overlay");
     state.featureTolerances = {};
-    state.selected = null;
+    state.selected = new Set();
     state.calibration = null; // calibration annotation was filtered out above
     updateCalibrationButton();
     state.pendingPoints = [];

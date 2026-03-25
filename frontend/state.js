@@ -7,7 +7,7 @@ export const state = {
   crosshair: false,
   calibration: null,
   annotations: [],
-  selected: null,
+  selected: new Set(),  // Set of annotation IDs; do NOT include in JSON.stringify
   pendingPoints: [],
   pendingCenterCircle: null,
   pendingRefLine: null,
@@ -36,6 +36,8 @@ export const state = {
   },
   _originMode: false,       // was let _originMode (line 2539 in app.js)
   _dxfOriginMode: false,    // was let _dxfOriginMode (line 2547)
+  _selectRect: null,
+  _flashExpiry: 0,
   _noCamera: false,         // was let _noCamera (line 36)
 };
 

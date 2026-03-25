@@ -354,8 +354,9 @@ export function handleToolClick(rawPt, e = {}) {
 
 export function handleSelectDown(pt, e) {
   // First check drag handles of selected annotation
-  if (state.selected !== null) {
-    const ann = state.annotations.find(a => a.id === state.selected);
+  if (state.selected.size === 1) {
+    const selId = [...state.selected][0];
+    const ann = state.annotations.find(a => a.id === selId);
     if (ann) {
       const handle = hitTestHandle(ann, pt);
       if (handle) {
@@ -368,7 +369,7 @@ export function handleSelectDown(pt, e) {
   for (let i = state.annotations.length - 1; i >= 0; i--) {
     const ann = state.annotations[i];
     if (hitTestAnnotation(ann, pt)) {
-      state.selected = ann.id;
+      state.selected = new Set([ann.id]);
       state.dragState = { annotationId: ann.id, handleKey: "body", startX: pt.x, startY: pt.y };
       renderSidebar();
       const selRow = listEl.querySelector(".measurement-item.selected");
@@ -378,7 +379,7 @@ export function handleSelectDown(pt, e) {
     }
   }
   // Clicked empty space — deselect
-  state.selected = null;
+  state.selected = new Set();
   renderSidebar();
   redraw();
 }

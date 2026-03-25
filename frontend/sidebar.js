@@ -11,14 +11,14 @@ export function renderSidebar() {
     // Origin annotation: rendered without a measurement number
     if (ann.type === "origin") {
       const row = document.createElement("div");
-      row.className = "measurement-item" + (ann.id === state.selected ? " selected" : "");
+      row.className = "measurement-item" + (state.selected.has(ann.id) ? " selected" : "");
       row.innerHTML = `
         <span class="measurement-number">⊙</span>
         <span class="measurement-name" style="flex:1;font-size:12px;color:var(--muted)">Origin</span>
         <button class="del-btn" data-id="${ann.id}">✕</button>`;
       row.addEventListener("click", e => {
         if (e.target.classList.contains("del-btn")) return;
-        state.selected = ann.id;
+        state.selected = new Set([ann.id]);
         renderSidebar();
         redraw();
       });
@@ -28,7 +28,7 @@ export function renderSidebar() {
     const number = String.fromCodePoint(9312 + i);
     i++;
     const row = document.createElement("div");
-    row.className = "measurement-item" + (ann.id === state.selected ? " selected" : "");
+    row.className = "measurement-item" + (state.selected.has(ann.id) ? " selected" : "");
     row.dataset.id = ann.id;
     row.innerHTML = `
       <span class="measurement-number">${number}</span>
@@ -43,8 +43,8 @@ export function renderSidebar() {
       e.stopPropagation();
     });
     row.addEventListener("click", () => {
-      const wasSelected = state.selected === ann.id;
-      state.selected = ann.id;
+      const wasSelected = state.selected.has(ann.id);
+      state.selected = new Set([ann.id]);
       renderSidebar();
       redraw();
       if (wasSelected) {

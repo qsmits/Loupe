@@ -4,11 +4,23 @@ import { renderSidebar, updateCameraInfo, updateCalibrationButton } from './side
 
 // ── Annotations management ──────────────────────────────────────────────────────
 
+function _cleanupAnnotation(ann) {
+  if (ann.type === "calibration") { state.calibration = null; updateCalibrationButton(); }
+  if (ann.type === "origin") {
+    state.origin = null;
+    const coordEl = document.getElementById("coord-display");
+    if (coordEl) coordEl.textContent = "";
+  }
+  if (ann.type === "dxf-overlay") {
+    const p = document.getElementById("dxf-panel"); if (p) p.style.display = "none";
+  }
+}
+
 export function addAnnotation(data) {
   pushUndo();
   const ann = { ...data, id: state.nextId++, name: data.name ?? "" };
   state.annotations.push(ann);
-  state.selected = ann.id;
+  state.selected = new Set([ann.id]);
   renderSidebar();
 }
 
@@ -16,16 +28,23 @@ export function deleteAnnotation(id) {
   pushUndo();
   const ann = state.annotations.find(a => a.id === id);
   if (!ann) return;
-  if (ann.type === "calibration") { state.calibration = null; updateCalibrationButton(); }
-  if (ann.type === "dxf-overlay") { const p = document.getElementById("dxf-panel"); if (p) p.style.display = "none"; }
-  if (ann.type === "origin") {
-    state.origin = null;
-    const coordEl = document.getElementById("coord-display");
-    if (coordEl) coordEl.textContent = "";
-  }
+  _cleanupAnnotation(ann);
   state.annotations = state.annotations.filter(a => a.id !== id);
-  if (state.selected === id) state.selected = null;
+  state.selected.delete(id);
   if (state.pendingCenterCircle && state.pendingCenterCircle.id === id) state.pendingCenterCircle = null;
+  renderSidebar();
+  redraw();
+}
+
+export function deleteSelected() {
+  if (state.selected.size === 0) return;
+  pushUndo();
+  for (const id of [...state.selected]) {
+    const ann = state.annotations.find(a => a.id === id);
+    if (ann) _cleanupAnnotation(ann);
+    state.annotations = state.annotations.filter(a => a.id !== id);
+  }
+  state.selected = new Set();
   renderSidebar();
   redraw();
 }

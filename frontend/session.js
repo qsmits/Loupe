@@ -393,7 +393,7 @@ export function loadSession(raw) {
     state.nextId = maxId + 1;
   }
 
-  state.selected = null;
+  state.selected = new Set();
   state.dxfFilename = data.dxfFilename ?? null;
   state.inspectionResults = Array.isArray(data.inspectionResults) ? data.inspectionResults.slice() : [];
   state.inspectionFrame = data.inspectionFrame ?? null;

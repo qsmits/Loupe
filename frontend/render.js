@@ -302,7 +302,7 @@ export function redraw() {
 
 export function drawAnnotations() {
   state.annotations.forEach(ann => {
-    const sel = ann.id === state.selected;
+    const sel = state.selected.has(ann.id);
     const pendingHighlight = state.pendingCenterCircle && ann.id === state.pendingCenterCircle.id;
     if (ann.type === "distance")        drawDistance(ann, sel);
     else if (ann.type === "center-dist") drawDistance(ann, sel);
