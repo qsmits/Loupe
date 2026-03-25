@@ -9,7 +9,9 @@ placement or to verify detection results at full resolution.
 ## Solution
 
 A viewport transform system with scroll-wheel zoom, a Pan tool for navigation,
-and keyboard shortcuts for zoom presets.
+and keyboard shortcuts for zoom presets. **Zoom/pan only works in frozen mode.**
+In live mode, zoom controls are disabled (the MJPEG stream is an HTML `<img>`
+element that can't be canvas-transformed).
 
 ---
 
@@ -98,9 +100,28 @@ some overscroll margin (10% of canvas size) so the user doesn't feel stuck at ed
 
 ---
 
-## 4. Rendering Changes
+## 4. Canvas Resolution Strategy
 
-### 4.1 The viewport transform
+**The core insight:** For zoom to reveal actual detail (not just upscale blurry pixels),
+the canvas internal resolution must increase with zoom.
+
+**On `resizeCanvas`:** When zoom changes, update the canvas internal resolution:
+```js
+canvas.width  = Math.min(imageWidth, Math.round(r.width * viewport.zoom));
+canvas.height = Math.min(imageHeight, Math.round(r.height * viewport.zoom));
+```
+CSS size stays the same (`r.width` x `r.height`). The `canvas.width / r.width` ratio
+in `canvasPoint` now equals `viewport.zoom` (capped at image resolution), which is
+exactly the DPI scaling factor needed.
+
+**Cap at image resolution:** No point making the canvas larger than the source image.
+At zoom levels where `r.width * zoom > imageWidth`, cap at `imageWidth`.
+
+---
+
+## 5. Rendering Changes
+
+### 5.1 The viewport transform
 
 In `redraw()`, wrap all drawing in the viewport transform:
 
@@ -116,44 +137,63 @@ if (state.frozenBackground) {
 
 // Draw all annotations (they store image-space coordinates)
 drawAnnotations();
+// Draw pending points, snap indicators, arc-fit preview, DXF alignment indicators
+// (these all use image-space coordinates from canvasPoint)
 
 ctx.restore();
 
-// Draw HUD elements OUTSIDE the transform (selection rect, coord readout, etc.)
-drawHUD();
+// Draw HUD elements OUTSIDE the transform (screen-space):
+drawCrosshair();  // full-canvas lines, must NOT be viewport-transformed
+drawSelectionRect();  // convert coords via imageToScreen() before drawing
+drawCoordReadout();
 ```
 
-### 4.2 Frozen background
+### 5.2 Frozen background
 
 Currently drawn as `ctx.drawImage(bg, 0, 0, canvas.width, canvas.height)`.
 Change to `ctx.drawImage(bg, 0, 0, imageWidth, imageHeight)` — the viewport
 transform handles the scaling.
 
-### 4.3 Frame-scaled annotations
+### 5.3 Frame-scaled annotations
 
 Detected features use `frameWidth/frameHeight` to scale coordinates. Currently:
 ```js
 const sx = canvas.width / ann.frameWidth;
 ```
-Change to:
+Change **everywhere** to:
 ```js
 const sx = imageWidth / ann.frameWidth;
 ```
 
-Since the viewport transform now handles canvas-space scaling, annotation rendering
-just needs to work in image-space. `imageWidth` comes from `viewport.js`.
+This change is needed in **all** locations across the codebase:
+- `frontend/render.js` — ~12 occurrences (rendering + measurement labels)
+- `frontend/tools.js` — ~5 occurrences (hit-testing)
+- `frontend/annotations.js` — ~1 occurrence (elevation)
+- `frontend/main.js` — ~3 occurrences (`_annotationPrimaryPoint`)
+- `frontend/session.js` — ~1 occurrence (export labels)
 
-### 4.4 HUD elements (drawn OUTSIDE viewport transform)
+All must change to `imageWidth` / `imageHeight` to stay consistent. Since
+everything (rendering, hit-testing, mouse events) now works in image-space,
+frame-scaled annotations just need to map from frame-space to image-space.
 
-Some elements should stay fixed on screen regardless of zoom:
-- Selection rectangle (drag-select)
-- Flash halo
-- Coordinate readout
-- Status bar
+### 5.4 HUD elements (drawn OUTSIDE viewport transform)
 
-These are drawn after `ctx.restore()` in screen-space.
+Elements that stay fixed on screen regardless of zoom. These are drawn after
+`ctx.restore()`:
+- **Crosshair** (`drawCrosshair`) — full-canvas lines, screen-space
+- **Selection rectangle** — coordinates come from `canvasPoint` (image-space),
+  so convert via `imageToScreen()` before drawing
+- **Coordinate readout** — screen-fixed text
+- **Flash halo** — convert annotation center via `imageToScreen()` before drawing
 
-### 4.5 Label and handle sizes
+Alternatively, the selection rectangle and flash halo can be drawn INSIDE the
+viewport transform (they use image-space coords). This is simpler — the visual
+result is that they zoom/pan with the image, which is actually fine.
+
+**Recommended approach:** Draw selection rect and flash halo inside the viewport
+transform. Only crosshair and coord readout go outside.
+
+### 5.5 Label and handle sizes
 
 Labels (`drawLabel`) and handles (`drawHandle`) should stay the same screen size
 regardless of zoom — a 5px handle dot should be 5 screen pixels, not 5 image pixels.
@@ -161,11 +201,24 @@ Since they're drawn inside the viewport transform, compensate:
 ```js
 const r = 5 / viewport.zoom;  // handle radius in image-space
 ```
-Same for label font size and line widths for annotations.
+Same for label font size and annotation line widths.
+
+### 5.6 DXF overlay line width
+
+`drawDxfOverlay` compensates stroke width with `ctx.lineWidth = 1 / scale`. With
+the viewport transform active, this should be `1 / (scale * viewport.zoom)` to keep
+strokes at 1 screen pixel.
+
+### 5.7 Live mode restriction
+
+**Zoom/pan is disabled in live (unfrozen) mode.** The MJPEG stream is an HTML `<img>`
+element rendered by the browser — it cannot be affected by canvas transforms. If the
+user scrolls the wheel while live, show status: "Freeze frame to enable zoom".
+Freeze first, then zoom works.
 
 ---
 
-## 5. canvasPoint Change
+## 6. canvasPoint Change
 
 **This is the keystone change.** Currently in `tools.js`:
 ```js
@@ -193,7 +246,7 @@ with no further modifications.
 
 ---
 
-## 6. Hit-Test Adjustment
+## 7. Hit-Test Adjustment
 
 Hit-test thresholds (currently 8px) are in canvas-space. With zoom, an 8px threshold
 at 4x zoom means 2 image pixels — too tight. Adjust thresholds by dividing by zoom:
@@ -206,7 +259,7 @@ This makes clicking easier when zoomed out and more precise when zoomed in.
 
 ---
 
-## 7. Pan Tool in Toolbar
+## 8. Pan Tool in Toolbar
 
 Add a "Pan" button to the tool strip (the floating toolbar). Icon: a hand or
 a four-directional arrow. Keyboard shortcut: `H`.
@@ -221,22 +274,24 @@ In the mousedown handler, when `state.tool === "pan"`:
 
 ---
 
-## 8. Files Changed
+## 9. Files Changed
 
 | File | Changes |
 |------|---------|
 | `frontend/viewport.js` | **NEW** — viewport state, imageToScreen, screenToImage, setImageSize, zoom/pan helpers |
-| `frontend/tools.js` | Update `canvasPoint` to use `screenToImage`. Adjust hit-test thresholds by zoom. |
-| `frontend/render.js` | Wrap drawing in viewport transform. Split HUD drawing out of transform. Adjust label/handle sizes by zoom. Change frame-scaled annotations to use imageWidth. |
-| `frontend/main.js` | Add scroll-wheel zoom handler. Add middle-mouse pan handler. Add Pan tool mouse handlers. Add `H` to toolKeys. Add `0` and `1` zoom presets. Import viewport. |
-| `frontend/detect.js` | Update `resizeCanvas` or frozen-frame handling to set `imageWidth/imageHeight` via `setImageSize`. |
-| `frontend/state.js` | No changes — viewport state lives in viewport.js (it's not undo-able or session-saved). |
+| `frontend/tools.js` | Update `canvasPoint` to use `screenToImage`. Change all `canvas.width / ann.frameWidth` to `imageWidth / ann.frameWidth`. Adjust hit-test thresholds by zoom. |
+| `frontend/render.js` | Wrap drawing in viewport transform. Move `drawCrosshair` outside transform. Adjust label/handle sizes and DXF lineWidth by zoom. Change all `canvas.width / ann.frameWidth` to `imageWidth`. Update `resizeCanvas` for zoom-dependent resolution. |
+| `frontend/main.js` | Add scroll-wheel zoom handler (disabled in live mode). Add middle-mouse pan handler. Add Pan tool mouse handlers. Add `H` to toolKeys. Add `0`/`1` zoom presets. Update `_annotationPrimaryPoint` frame scaling. |
+| `frontend/detect.js` | Set `imageWidth/imageHeight` via `setImageSize` on freeze. |
+| `frontend/annotations.js` | Change `canvas.width / ann.frameWidth` to `imageWidth / ann.frameWidth` in elevation. |
+| `frontend/session.js` | Change `canvas.width / ann.frameWidth` to `imageWidth / ann.frameWidth` in export labels. |
+| `frontend/state.js` | No changes — viewport state lives in viewport.js (not undo-able or session-saved). |
 | `frontend/index.html` | Add Pan tool button to tool strip. |
 | `frontend/style.css` | Cursor styles for pan tool (`cursor: grab` / `cursor: grabbing`). |
 
 ---
 
-## 9. What's NOT in Scope
+## 10. What's NOT in Scope
 
 - Minimap (add later if zoom feels disorienting)
 - Smooth/animated zoom transitions
