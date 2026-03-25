@@ -396,30 +396,26 @@ of nominal the actual edge falls on relative to the DXF feature direction.
 ✅ Done:   Phase 1.0 (annotation mgmt)  — 2026-03-25  — selection, multi-select, elevation, context menu
 ✅ Done:   Phase 1 remainder            — 2026-03-25  — auto-save, detection counts, button tooltips
 ✅ Done:   Phase 1.5 (zoom/pan)         — 2026-03-25  — scroll zoom, pan tool, viewport transform, zoom badge
-Next:      Phase 2 (one-click)          — 2 weeks     — fast inspection workflow
+✅ Done:   Phase 2 (guided inspection)  — 2026-03-25  — corridor detection, manual point-pick, compound features
+Next:      Phase 2.5 (tolerances)       — 1 week      — Punch/Die tagging, green/amber/red bands
 Then:      Phase 5 (reporting)          — 1-2 weeks   — useful output
 Then:      Phase 3 (detection tuning)   — 1-2 weeks   — accurate (once microscope arrives)
 Then:      Phase 7 (batch inspection)   — 2-3 weeks   — production use case
 Ongoing:   Phase 6 (tech foundation)    — sprinkle in as you go
-Later:     Phase 4 (measurement UX)     — 1-2 weeks   — power user features
+Later:     Phase 4 (measurement UX)     — 1-2 weeks   — groups, templates, draggable labels, tooltips
 Later:     Phase 1.5+ (minimap+zoom UI) — 3-4 days    — minimap overlay, zoom preset dropdown
 Future:    Phase 8 (gears)              — 3-4 weeks   — when gear machine is running
+Future:    Phase 9 (Nikon XY stage)     — TBD         — hybrid encoder + camera measurement
 ```
 
-**Why zoom/pan before one-click inspection:** Zoom is foundational — it makes every
-measurement more precise, every detection easier to verify, and every DXF alignment
-more accurate. It also makes the annotation management features we just built much
-more useful (zoom into a crowded area to select individual features). It's hard
-engineering (touches the coordinate system everything depends on), but the payoff
-is enormous.
-
-**Why reporting before detection tuning:** Without a microscope, detection tuning is
-theoretical. But the reporting pipeline can be built and tested with saved snapshots.
-
-**Why batch inspection is high priority:** This is a real production use case from a
-Swiss lathe operator. Scatter a handful of identical parts under the scope, get all of
-them measured at once. This is where the tool goes from "interesting hobby project" to
-"actually saves someone hours per week."
+**What was accomplished 2026-03-25 (single day):**
+- Annotation management overhaul (multi-select, drag-select, elevation, context menu, clear)
+- Reliability (auto-save, detection counts, tooltips, mode exit fixes)
+- Zoom & pan (scroll zoom, pan tool, viewport transform, badge, hit-test scaling)
+- DXF-guided inspection (corridor detection, RANSAC inlier filtering, shadow-aware
+  edge selection, manual point-pick with compound features, arc rendering, DXF
+  feature highlighting)
+- Detection improvements (smoothing + Canny passthrough, smart label placement)
 
 Phase 1 makes it trustworthy. Phase 1.5 makes it precise. Phase 2 makes it fast.
 Phase 5 produces useful output. Phase 3 makes it accurate. Phase 7 makes it a
