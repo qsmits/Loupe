@@ -321,6 +321,8 @@ export function saveSession() {
   a.download = `microscope-session-${ts}.json`;
   a.click();
   URL.revokeObjectURL(url);
+  state._savedManually = true;
+  clearAutoSave();
 }
 
 // ── Session load ────────────────────────────────────────────────────────────
@@ -398,6 +400,9 @@ export function loadSession(raw) {
   state.inspectionResults = Array.isArray(data.inspectionResults) ? data.inspectionResults.slice() : [];
   state.inspectionFrame = data.inspectionFrame ?? null;
 
+  state._dirty = true;
+  state._savedManually = false;
+
   const coordEl = document.getElementById("coord-display");
   if (coordEl) coordEl.textContent = "";
 
@@ -408,4 +413,71 @@ export function loadSession(raw) {
   renderInspectionTable();
   document.dispatchEvent(new CustomEvent('inspection-state-changed'));
   redraw();
+}
+
+// ── Auto-save ────────────────────────────────────────────────────────────────
+const AUTOSAVE_KEY = "microscope-autosave";
+
+export function autoSave() {
+  if (!state._dirty) return;
+  const session = {
+    version: 2,
+    savedAt: new Date().toISOString(),
+    nextId: state.nextId,
+    calibration: state.calibration ? { ...state.calibration } : null,
+    origin: state.origin ? { ...state.origin } : null,
+    featureTolerances: { ...state.featureTolerances },
+    dxfFilename: state.dxfFilename ?? null,
+    inspectionResults: state.inspectionResults.slice(),
+    inspectionFrame: null,  // excluded — too large for localStorage
+    annotations: state.annotations
+      .filter(a => !TRANSIENT_TYPES.has(a.type))
+      .map(a => ({ ...a })),
+  };
+  try {
+    localStorage.setItem(AUTOSAVE_KEY, JSON.stringify(session));
+    state._dirty = false;
+  } catch (e) {
+    console.warn("Auto-save failed:", e.message);
+  }
+}
+
+export function tryAutoRestore() {
+  const raw = localStorage.getItem(AUTOSAVE_KEY);
+  if (!raw) return;
+  try {
+    const data = JSON.parse(raw);
+    if (!data.annotations || data.annotations.length === 0) {
+      localStorage.removeItem(AUTOSAVE_KEY);
+      return;
+    }
+  } catch { return; }
+
+  showStatus("Previous session found");
+  const bar = document.getElementById("status-bar");
+  if (!bar) return;
+  const prompt = document.createElement("div");
+  prompt.id = "autosave-prompt";
+  prompt.style.cssText = "display:flex; gap:8px; align-items:center; padding:4px 12px; font-size:12px;";
+  prompt.innerHTML = `
+    <span style="color:var(--text)">Restore previous session?</span>
+    <button id="restore-btn" class="tool-btn" style="font-size:11px; padding:2px 10px;">Restore</button>
+    <button id="dismiss-btn" class="tool-btn" style="font-size:11px; padding:2px 10px;">Dismiss</button>
+  `;
+  bar.parentElement.insertBefore(prompt, bar.nextSibling);
+  document.getElementById("restore-btn").addEventListener("click", () => {
+    prompt.remove();
+    loadSession(raw);
+    localStorage.removeItem(AUTOSAVE_KEY);
+    showStatus("Session restored");
+  });
+  document.getElementById("dismiss-btn").addEventListener("click", () => {
+    prompt.remove();
+    localStorage.removeItem(AUTOSAVE_KEY);
+    showStatus("Auto-save dismissed");
+  });
+}
+
+export function clearAutoSave() {
+  localStorage.removeItem(AUTOSAVE_KEY);
 }

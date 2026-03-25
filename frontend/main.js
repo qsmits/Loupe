@@ -1,4 +1,4 @@
-import { state, undoStack, redoStack, takeSnapshot, _deviationHitBoxes, pushUndo } from './state.js';
+import { state, undoStack, redoStack, takeSnapshot, _deviationHitBoxes, pushUndo, TRANSIENT_TYPES } from './state.js';
 import { canvas, ctx, img, showStatus, redraw, resizeCanvas,
          drawLine, drawOrigin, drawAreaPreview } from './render.js';
 import { renderSidebar, loadCameraInfo, loadUiConfig, loadTolerances,
@@ -12,7 +12,7 @@ import { fitCircle } from './math.js';
 import { exitDxfAlignMode, initDxfHandlers,
          openFeatureTolPopover } from './dxf.js';
 import { doFreeze, initDetectHandlers } from './detect.js';
-import { saveSession, loadSession, exportAnnotatedImage, exportCsv } from './session.js';
+import { saveSession, loadSession, exportAnnotatedImage, exportCsv, autoSave, tryAutoRestore } from './session.js';
 
 // ── Context menu ──────────────────────────────────────────────────────────
 const ctxMenu = document.getElementById("context-menu");
@@ -54,6 +54,8 @@ function undo() {
   state.selected = new Set(
     [...state.selected].filter(id => state.annotations.some(a => a.id === id))
   );
+  state._dirty = true;
+  state._savedManually = false;
   renderSidebar(); redraw();
 }
 
@@ -67,6 +69,8 @@ function redo() {
   state.selected = new Set(
     [...state.selected].filter(id => state.annotations.some(a => a.id === id))
   );
+  state._dirty = true;
+  state._savedManually = false;
   renderSidebar(); redraw();
 }
 
@@ -948,4 +952,18 @@ loadTolerances();
 updateCalibrationButton();
 checkStartupWarning();
 resizeCanvas();
+
+// Auto-save every 30 seconds
+setInterval(autoSave, 30000);
+
+// Offer to restore previous session
+tryAutoRestore();
+
+// Warn before closing if unsaved
+window.addEventListener("beforeunload", e => {
+  if (!state._savedManually && state.annotations.some(a => !TRANSIENT_TYPES.has(a.type))) {
+    e.preventDefault();
+    e.returnValue = "";
+  }
+});
 updateFreezeUI();

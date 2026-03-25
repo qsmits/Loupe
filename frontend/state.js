@@ -39,6 +39,8 @@ export const state = {
   _selectRect: null,
   _flashExpiry: 0,
   _noCamera: false,         // was let _noCamera (line 36)
+  _dirty: false,
+  _savedManually: true,
 };
 
 export const undoStack = [];
@@ -59,6 +61,8 @@ export function pushUndo() {
   if (undoStack.length >= UNDO_LIMIT) undoStack.shift();
   undoStack.push(takeSnapshot());
   redoStack.length = 0;
+  state._dirty = true;
+  state._savedManually = false;
 }
 
 // ── TOOL_STATUS ─────────────────────────────────────────────────────────────
