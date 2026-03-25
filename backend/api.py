@@ -165,6 +165,34 @@ class MatchDxfArcsBody(BaseModel):
         return self
 
 
+class InspectGuidedBody(BaseModel):
+    entities: list[dict]
+    pixels_per_mm: float = Field(gt=0)
+    tx: float = 0.0
+    ty: float = 0.0
+    angle_deg: float = 0.0
+    flip_h: bool = False
+    flip_v: bool = False
+    corridor_px: float = Field(default=15.0, gt=0)
+    tolerance_warn: float = Field(default=0.10, gt=0)
+    tolerance_fail: float = Field(default=0.25, gt=0)
+    feature_tolerances: dict = Field(default_factory=dict)
+    smoothing: int = Field(default=1, ge=1, le=3)
+
+
+class FitFeatureBody(BaseModel):
+    entity: dict
+    points: list[list[float]]
+    pixels_per_mm: float = Field(gt=0)
+    tx: float = 0.0
+    ty: float = 0.0
+    angle_deg: float = 0.0
+    flip_h: bool = False
+    flip_v: bool = False
+    tolerance_warn: float = Field(default=0.10, gt=0)
+    tolerance_fail: float = Field(default=0.25, gt=0)
+
+
 router = APIRouter()
 
 
@@ -381,6 +409,31 @@ def make_router(camera: BaseCamera, frame_store: FrameStore, startup_warning: st
                 r["pass_fail"] = "fail" if dev > body.tolerance_fail else (
                     "warn" if dev > body.tolerance_warn else "pass")
         return results
+
+    @router.post("/inspect-guided")
+    async def inspect_guided_route(body: InspectGuidedBody):
+        frame = frame_store.get()
+        if frame is None:
+            raise HTTPException(status_code=400, detail="No frame stored. Call /freeze first.")
+        from .vision.guided_inspection import inspect_features
+        return inspect_features(
+            frame, body.entities, body.pixels_per_mm,
+            body.tx, body.ty, body.angle_deg, body.flip_h, body.flip_v,
+            corridor_px=body.corridor_px,
+            tolerance_warn=body.tolerance_warn,
+            tolerance_fail=body.tolerance_fail,
+            feature_tolerances=body.feature_tolerances,
+            smoothing=body.smoothing,
+        )
+
+    @router.post("/fit-feature")
+    async def fit_feature_route(body: FitFeatureBody):
+        from .vision.guided_inspection import fit_manual_points
+        return fit_manual_points(
+            body.entity, body.points, body.pixels_per_mm,
+            body.tx, body.ty, body.angle_deg, body.flip_h, body.flip_v,
+            body.tolerance_warn, body.tolerance_fail,
+        )
 
     @router.post("/preprocessed-view")
     async def preprocessed_view_route():
