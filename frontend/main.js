@@ -175,6 +175,30 @@ function onMouseDown(e) {
       }
     }
   }
+  // During point-pick: Shift+click on a DXF feature adds it to the pick target
+  // (must check BEFORE the regular point-placement to intercept Shift+click)
+  if (state.inspectionPickTarget && e.shiftKey) {
+    const dxfAnn = state.annotations.find(a => a.type === "dxf-overlay");
+    if (dxfAnn) {
+      const entity = hitTestDxfEntity(pt, dxfAnn);
+      if (entity) {
+        const newEntities = entity.parent_handle
+          ? dxfAnn.entities.filter(en => en.parent_handle === entity.parent_handle)
+          : [entity];
+        const existingHandles = new Set(state.inspectionPickTarget.map(t => t.handle));
+        for (const ne of newEntities) {
+          if (!existingHandles.has(ne.handle)) {
+            state.inspectionPickTarget.push(ne);
+          }
+        }
+        const n = state.inspectionPickTarget.length;
+        showStatus(`${n} segments selected. Click points along the edge. Double-click or Enter to finish.`);
+        redraw();
+        return;
+      }
+    }
+  }
+
   // Point-pick mode: add a measurement point
   if (state.inspectionPickTarget) {
     state.inspectionPickPoints.push(pt);
@@ -189,31 +213,17 @@ function onMouseDown(e) {
     if (dxfAnn) {
       const entity = hitTestDxfEntity(pt, dxfAnn);
       if (entity) {
-        if (e.shiftKey && state.inspectionPickTarget) {
-          // Shift+click: add this entity (or its group) to the existing pick target
-          const newEntities = entity.parent_handle
-            ? dxfAnn.entities.filter(en => en.parent_handle === entity.parent_handle)
-            : [entity];
-          // Merge without duplicates
-          const existingHandles = new Set(state.inspectionPickTarget.map(t => t.handle));
-          for (const ne of newEntities) {
-            if (!existingHandles.has(ne.handle)) {
-              state.inspectionPickTarget.push(ne);
-              existingHandles.add(ne.handle);
-            }
-          }
+        // Normal click: start new pick with this entity (or its compound group)
+        // (Shift+click to add is handled above, before point-placement)
+        const parentHandle = entity.parent_handle;
+        if (parentHandle) {
+          const group = dxfAnn.entities.filter(en => en.parent_handle === parentHandle);
+          state.inspectionPickTarget = group;
         } else {
-          // Normal click: start new pick with this entity (or its compound group)
-          const parentHandle = entity.parent_handle;
-          if (parentHandle) {
-            const group = dxfAnn.entities.filter(en => en.parent_handle === parentHandle);
-            state.inspectionPickTarget = group;
-          } else {
-            state.inspectionPickTarget = [entity];
-          }
-          state.inspectionPickPoints = [];
-          state.inspectionPickFit = null;
+          state.inspectionPickTarget = [entity];
         }
+        state.inspectionPickPoints = [];
+        state.inspectionPickFit = null;
         const featureCount = state.inspectionPickTarget.length;
         const msg = featureCount > 1
           ? `${featureCount} segments selected. Click points along the edge. Double-click or Enter to finish. Shift+click DXF to add more.`
