@@ -393,10 +393,10 @@ export function drawAnnotations() {
   if (state._selectRect) {
     const r = state._selectRect;
     ctx.save();
-    ctx.strokeStyle = "#60a5fa";
-    ctx.lineWidth = 1;
-    ctx.setLineDash([4, 4]);
-    ctx.fillStyle = "rgba(96, 165, 250, 0.1)";
+    ctx.strokeStyle = "#ffffff";
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([6, 3]);
+    ctx.fillStyle = "rgba(96, 165, 250, 0.15)";
     ctx.beginPath();
     ctx.rect(r.x1, r.y1, r.x2 - r.x1, r.y2 - r.y1);
     ctx.fill();

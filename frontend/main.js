@@ -96,6 +96,7 @@ function toggleDropdown(btnId, dropId) {
 
 // ── Canvas mouse events ──────────────────────────────────────────────────────
 function onMouseDown(e) {
+  if (e.button !== 0) return;  // only handle left mouse button
   if (state.dxfDragMode) {
     const ann = state.annotations.find(a => a.type === "dxf-overlay");
     if (ann) {
