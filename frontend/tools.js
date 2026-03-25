@@ -432,6 +432,7 @@ export function getHandles(ann) {
       },
     };
   }
+  if (ann.type === "arc-measure") return { p1: ann.p1, p2: ann.p2, p3: ann.p3 };
   if (ann.type === "pt-circle-dist") return { pt: { x: ann.px, y: ann.py } };
   if (ann.type === "intersect") return {};
   if (ann.type === "slot-dist") return {};
@@ -545,6 +546,28 @@ export function hitTestAnnotation(ann, pt) {
       y: cy + (ann.py - cy) / dist * r,
     };
     return distPointToSegment(pt, { x: ann.px, y: ann.py }, edgePt) < 6;
+  }
+  if (ann.type === "arc-measure") {
+    const d = Math.hypot(pt.x - ann.cx, pt.y - ann.cy);
+    // Hit on arc curve (within 8px of the radius)
+    if (Math.abs(d - ann.r) < 8) {
+      // Check angle is within arc span
+      const a1 = Math.atan2(ann.p1.y - ann.cy, ann.p1.x - ann.cx);
+      const a3 = Math.atan2(ann.p3.y - ann.cy, ann.p3.x - ann.cx);
+      const ap = Math.atan2(pt.y - ann.cy, pt.x - ann.cx);
+      // Use same winding logic as drawArcMeasure
+      const twoPi = 2 * Math.PI;
+      const norm_p = ((ap - a1) % twoPi + twoPi) % twoPi;
+      const norm_3 = ((a3 - a1) % twoPi + twoPi) % twoPi;
+      const ccw = !((((Math.atan2(ann.p2.y - ann.cy, ann.p2.x - ann.cx) - a1) % twoPi + twoPi) % twoPi) < norm_3);
+      if (ccw ? norm_p >= (twoPi - norm_3) || norm_p === 0 : norm_p <= norm_3) return true;
+    }
+    // Also hit on center or control points
+    if (d < 10) return true;
+    if (Math.hypot(pt.x - ann.p1.x, pt.y - ann.p1.y) < 8) return true;
+    if (Math.hypot(pt.x - ann.p2.x, pt.y - ann.p2.y) < 8) return true;
+    if (Math.hypot(pt.x - ann.p3.x, pt.y - ann.p3.y) < 8) return true;
+    return false;
   }
   if (ann.type === "detected-circle") {
     const sx = ann.frameWidth ? canvas.width / ann.frameWidth : 1;
@@ -679,6 +702,30 @@ export function handleDrag(pt) {
       // Move entire origin (center handle or body)
       ann.x += dx; ann.y += dy;
       state.origin = { x: ann.x, y: ann.y, angle: ann.angle ?? 0 };
+    }
+  }
+  else if (ann.type === "arc-measure") {
+    if (handleKey === "p1") { ann.p1.x += dx; ann.p1.y += dy; }
+    else if (handleKey === "p2") { ann.p2.x += dx; ann.p2.y += dy; }
+    else if (handleKey === "p3") { ann.p3.x += dx; ann.p3.y += dy; }
+    else { ann.p1.x+=dx; ann.p1.y+=dy; ann.p2.x+=dx; ann.p2.y+=dy; ann.p3.x+=dx; ann.p3.y+=dy; ann.cx+=dx; ann.cy+=dy; }
+    // Re-fit circle through the 3 points (unless body drag)
+    if (handleKey !== "body") {
+      const [p1, p2, p3] = [ann.p1, ann.p2, ann.p3];
+      const ax = p2.x - p1.x, ay = p2.y - p1.y;
+      const bx = p3.x - p1.x, by = p3.y - p1.y;
+      const D = 2 * (ax * by - ay * bx);
+      if (Math.abs(D) > 1e-6) {
+        const ux = (by * (ax*ax + ay*ay) - ay * (bx*bx + by*by)) / D;
+        const uy = (ax * (bx*bx + by*by) - bx * (ax*ax + ay*ay)) / D;
+        ann.cx = p1.x + ux;
+        ann.cy = p1.y + uy;
+        ann.r = Math.hypot(ux, uy);
+        let span = Math.abs(Math.atan2(p3.y - ann.cy, p3.x - ann.cx) - Math.atan2(p1.y - ann.cy, p1.x - ann.cx)) * 180 / Math.PI;
+        if (span > 180) span = 360 - span;
+        ann.span_deg = span;
+        ann.chord_px = Math.hypot(p3.x - p1.x, p3.y - p1.y);
+      }
     }
   }
   else if (ann.type === "pt-circle-dist") {
