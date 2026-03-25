@@ -538,12 +538,24 @@ export function drawGuidedResults(ann) {
       ctx.lineWidth = pw(2);
 
       if (r.fit.type === "line") {
+        // Fit can be {cx,cy,dx,dy} or {x1,y1,x2,y2} — handle both
+        let lx1, ly1, lx2, ly2;
+        if (r.fit.x1 != null) {
+          lx1 = r.fit.x1; ly1 = r.fit.y1; lx2 = r.fit.x2; ly2 = r.fit.y2;
+        } else {
+          // Reconstruct from centroid + direction (extend 500px each way)
+          const ext = 500;
+          lx1 = r.fit.cx - r.fit.dx * ext;
+          ly1 = r.fit.cy - r.fit.dy * ext;
+          lx2 = r.fit.cx + r.fit.dx * ext;
+          ly2 = r.fit.cy + r.fit.dy * ext;
+        }
         ctx.beginPath();
-        ctx.moveTo(r.fit.x1, r.fit.y1);
-        ctx.lineTo(r.fit.x2, r.fit.y2);
+        ctx.moveTo(lx1, ly1);
+        ctx.lineTo(lx2, ly2);
         ctx.stroke();
-        const mx = (r.fit.x1 + r.fit.x2) / 2;
-        const my = (r.fit.y1 + r.fit.y2) / 2;
+        const mx = (lx1 + lx2) / 2;
+        const my = (ly1 + ly2) / 2;
         drawLabel(`\u22a5 ${r.perp_dev_mm?.toFixed(3)} mm`, mx + pw(5), my - pw(5));
       } else {
         ctx.beginPath();

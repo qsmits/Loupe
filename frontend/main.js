@@ -406,11 +406,10 @@ async function _finalizePickInspection() {
       result.source = "manual";
 
       // Replace or add to guided results
-      if (ann.guidedResults) {
-        const idx = ann.guidedResults.findIndex(r => r.handle === entity.handle);
-        if (idx >= 0) ann.guidedResults[idx] = result;
-        else ann.guidedResults.push(result);
-      }
+      if (!ann.guidedResults) ann.guidedResults = [];
+      const grIdx = ann.guidedResults.findIndex(r => r.handle === entity.handle);
+      if (grIdx >= 0) ann.guidedResults[grIdx] = result;
+      else ann.guidedResults.push(result);
 
       // Update state.inspectionResults
       const sr = {
