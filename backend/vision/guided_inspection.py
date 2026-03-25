@@ -262,6 +262,7 @@ def inspect_features(
     canny_high: int = 150,
     tolerance_warn: float = 0.1,
     tolerance_fail: float = 0.25,
+    feature_tolerances: dict | None = None,
     smoothing: int = 1,
 ) -> list[dict]:
     """
@@ -278,6 +279,7 @@ def inspect_features(
     corridor_px : half-width of the search corridor in pixels
     canny_low, canny_high : Canny edge detection thresholds
     tolerance_warn, tolerance_fail : deviation thresholds in mm
+    feature_tolerances : per-feature tolerance overrides {handle: {warn, fail}}
     smoothing : preprocessing smoothing level
 
     Returns
@@ -296,10 +298,14 @@ def inspect_features(
     angle_rad = math.radians(angle_deg)
     results = []
 
+    ft = feature_tolerances or {}
+
     for entity in entities:
         etype = entity.get("type", "")
-        tol_w = entity.get("tolerance_warn", tolerance_warn)
-        tol_f = entity.get("tolerance_fail", tolerance_fail)
+        handle = entity.get("handle")
+        per_feat = ft.get(handle, {}) if handle else {}
+        tol_w = per_feat.get("warn", tolerance_warn)
+        tol_f = per_feat.get("fail", tolerance_fail)
 
         if etype in ("line", "polyline_line"):
             result = _inspect_line(entity, edge_xy, pixels_per_mm, tx, ty,

@@ -171,6 +171,8 @@ class TestTolerancePassWarnFail:
             tx=100, ty=240,
             corridor_px=15,
             canny_low=30, canny_high=100,
+            tolerance_warn=10.0,
+            tolerance_fail=20.0,
         )
 
         assert len(results) == 1
@@ -197,6 +199,8 @@ class TestTolerancePassWarnFail:
             tx=100, ty=240,
             corridor_px=15,
             canny_low=30, canny_high=100,
+            tolerance_warn=0.0001,
+            tolerance_fail=0.0002,
         )
 
         r2 = results_tight[0]
