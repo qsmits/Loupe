@@ -5,11 +5,29 @@
 > a full DXF inspection pipeline. But it's not yet *genuinely useful* for
 > day-to-day inspection. This roadmap focuses on what would change that.
 
+## Context
+
+**Target parts:** Primarily wire EDM parts (sharp edges, mirror finish), lathe parts
+(turned surfaces, concentric tooling marks), and eventually gears (involute profiles,
+tooth spacing). 3D printed parts are used for prototyping but not the primary use case.
+
+**Why this matters for priorities:** Wire EDM parts are the *best possible* scenario for
+edge detection — razor-sharp edges with high contrast. The detection algorithms should
+work extremely well here with minimal tuning. This means Phase 3 (detection robustness)
+is less urgent than Phase 2 (workflow speed). The biggest bang for the buck is making the
+DXF→inspection→report pipeline fast and frictionless, because the input signal (EDM edges)
+is already excellent.
+
+**Future: Gears.** Gear inspection is a specialized domain — involute profile checking,
+tooth-to-tooth spacing, runout, profile deviation charts. This deserves its own phase
+once the gear-making machine is running. The existing arc detection is a starting point
+but involute curves are not circular arcs.
+
 ## The Core Problem
 
-The app has powerful features but the **end-to-end workflow is too fragile and manual** for real inspection. A user measuring a 3D-printed V-block against its DXF must: freeze frame → calibrate → load DXF → manually align → detect lines → detect arcs → run inspection → hope for matches. That's 8 steps where any one can fail silently. The detection algorithms produce noise that requires expert tuning. There's no way to save progress safely or build on previous work.
+The app has powerful features but the **end-to-end workflow is too fragile and manual** for real inspection. Inspecting a part against its DXF requires: freeze frame → calibrate → load DXF → manually align → detect lines → detect arcs → run inspection → hope for matches. That's 8 steps where any one can fail silently. There's no way to save progress safely or build on previous work.
 
-**The goal: make it so a machinist or QC tech can put a part under the microscope, load the DXF, and get a pass/fail report in under 60 seconds.**
+**The goal: put a part under the microscope, load the DXF, get a pass/fail report in under 60 seconds.**
 
 ---
 
@@ -66,41 +84,44 @@ Currently `ann.lineMatchResults` / `ann.arcMatchResults` live on the DXF annotat
 
 ---
 
-## Phase 3: Better Detection for Real Parts
-*Estimated effort: 2 weeks. Priority: high.*
+## Phase 3: Detection Tuned for Precision Parts
+*Estimated effort: 1-2 weeks. Priority: medium (EDM edges are already clean).*
 
-The detection algorithms work on clean machined parts but struggle with real-world conditions (3D prints, castings, worn parts). This phase makes detection robust enough for production.
+Wire EDM parts have mirror finishes and razor-sharp edges — edge detection should be
+near-perfect. The main challenges are: lathe tooling marks (concentric grooves that look
+like arcs), reflections on polished surfaces, and varying lighting conditions.
 
-### 3.1 Adaptive preprocessing profiles
-Instead of one preprocessing pipeline for all surfaces, offer profiles:
-- **Machined** (default): CLAHE + 1x bilateral. Good for clean metal.
-- **3D Print**: 2-3x bilateral, higher Canny thresholds. Suppresses layer lines.
-- **Cast/Rough**: Gaussian pre-blur + aggressive morphological closing.
-- **PCB**: Lower CLAHE clip limit to avoid boosting solder texture.
+### 3.1 Surface-aware preprocessing
+Instead of one pipeline for all surfaces, offer presets:
+- **Wire EDM** (default): Light preprocessing. EDM edges are so clean that aggressive
+  filtering actually hurts by rounding sharp corners. Lower CLAHE clip limit to avoid
+  boosting reflections on polished surfaces.
+- **Turned/Lathe**: Directional filtering to suppress concentric tooling marks.
+  The marks are radial arcs at a consistent radius — can be filtered by detecting the
+  dominant arc family and suppressing it.
+- **3D Print**: 2-3x bilateral (already implemented as the smoothing slider).
+- **Custom**: Expose all preprocessing parameters for power users.
 
-The user picks a profile from a dropdown, or the app auto-detects based on edge density analysis.
-
-### 3.2 Confidence scores on detections
-Every detected feature should carry a confidence score (0-1) based on:
-- Edge density along the feature
-- Fit residual (how well the geometry matches)
-- NMS survival (how dominant it is vs. nearby alternatives)
-
-Display low-confidence detections in a dimmer color. Let the user filter by confidence threshold.
-
-### 3.3 Interactive detection refinement
-After running detection, let the user:
+### 3.2 Interactive detection refinement
+After auto-detection, let the user:
 - Click a false detection to delete it
-- Click an edge to force-detect a line/arc there (manual seed + local refinement)
+- Click an edge to force-detect a line/arc there (local refinement around the click)
 - Merge two line segments into one
 
-This bridges the gap between "fully automatic" (too noisy) and "fully manual" (too slow).
+This bridges the gap between "fully automatic" and "fully manual." For EDM parts this
+should rarely be needed, but for complex geometries it's essential.
+
+### 3.3 Sub-pixel edge refinement
+For metrology-grade accuracy on EDM parts, the current pixel-level edge detection
+isn't enough. Add sub-pixel edge localization:
+- After Canny gives pixel-level edges, fit a gradient-based sub-pixel position
+  along each detected line/arc
+- This can improve measurement accuracy from ~1px to ~0.1px
+- At typical microscope magnifications, this is the difference between 10µm and 1µm accuracy
 
 ### 3.4 Detection persistence across runs
-Currently re-running detection clears all previous results. Instead:
-- Track which features are auto-detected vs user-confirmed
-- Re-running only replaces auto-detected features, preserving user confirmations
-- This lets users iteratively refine: auto-detect, delete noise, manually add missing, re-detect with different settings without losing manual work
+Track which features are auto-detected vs user-confirmed. Re-running detection only
+replaces auto-detected features, preserving manual confirmations.
 
 ---
 
@@ -158,6 +179,43 @@ The current 2-point / circle calibration is sufficient for many cases but doesn'
 
 ---
 
+## Phase 7: Gear Inspection
+*Estimated effort: 3-4 weeks. Priority: future (when the gear-making machine is running).*
+
+Gear inspection is a specialized domain that goes beyond line/arc/circle matching.
+This phase adds gear-specific measurement and analysis tools.
+
+### 7.1 Involute profile detection
+Gears don't use circular arcs — tooth profiles are involute curves (the path traced
+by a point on a string unwinding from a circle). The DXF will contain these as
+splines or polylines with many short segments.
+- Add involute curve fitting: given base circle radius and pressure angle, fit detected
+  edge points to the theoretical involute
+- Report **profile deviation** — how far the actual tooth profile deviates from the
+  theoretical involute (this is the standard gear inspection metric)
+
+### 7.2 Tooth-to-tooth measurements
+- **Tooth spacing error**: Measure the angular pitch between consecutive teeth.
+  Compare to the theoretical pitch (360° / N teeth).
+- **Tooth thickness**: Measure chordal thickness at a specified reference diameter.
+- **Runout**: If the gear can be rotated on a fixture, measure total indicated
+  runout (TIR) by tracking the pitch circle across multiple angular positions.
+
+### 7.3 Gear profile chart
+Standard gear inspection produces a profile deviation chart — a plot of deviation
+vs. roll angle for each tooth. Add this as an export:
+- X-axis: roll angle along the tooth flank
+- Y-axis: deviation from theoretical involute (in µm)
+- One trace per measured tooth, overlaid
+- This is the format that gear engineers expect to see
+
+### 7.4 DXF gear recognition
+Detect that a loaded DXF contains a gear (repeating radial pattern with involute-like
+profiles) and automatically switch to gear inspection mode. Extract module, tooth count,
+pressure angle from the geometry.
+
+---
+
 ## What NOT to Do (Yet)
 
 These came up in the audit but would be premature:
@@ -168,18 +226,26 @@ These came up in the audit but would be premature:
 - **Multi-user collaboration** — this is a single-operator tool. Collaboration adds massive complexity for minimal value.
 - **AI-assisted detection** — intriguing but premature. The classical CV pipeline needs to work reliably first.
 - **Mobile app** — the microscope is desktop-attached. A tablet companion could be useful eventually but isn't the bottleneck.
+- **GD&T (Geometric Dimensioning & Tolerancing)** — full GD&T inspection (position, concentricity, profile of a surface) is a massive scope expansion. The current pass/warn/fail system covers the 80% case. Revisit when there's a real need for formal GD&T callouts.
 
 ---
 
 ## Suggested Execution Order
 
 ```
-Now:     Phase 1 (reliability)     — 1 week
-Next:    Phase 2 (one-click)       — 2 weeks
-Then:    Phase 3 (detection)       — 2 weeks
-Ongoing: Phase 6 (tech foundation) — sprinkle in as you go
-Later:   Phase 4 (measurement UX)  — 1-2 weeks
-Later:   Phase 5 (reporting)       — 1-2 weeks
+Now:       Phase 1 (reliability)       — 1 week      — trustworthy
+Next:      Phase 2 (one-click)         — 2 weeks     — fast
+Then:      Phase 5 (reporting)         — 1-2 weeks   — useful output
+Then:      Phase 3 (detection tuning)  — 1-2 weeks   — accurate (once microscope arrives)
+Ongoing:   Phase 6 (tech foundation)   — sprinkle in as you go
+Later:     Phase 4 (measurement UX)    — 1-2 weeks   — power user features
+Future:    Phase 7 (gears)             — 3-4 weeks   — when gear machine is running
 ```
 
-Phase 1 makes the app trustworthy. Phase 2 makes it fast. Phase 3 makes it accurate. Everything after that is polish and power-user features.
+**Why reporting before detection tuning:** Without a microscope, detection tuning is
+theoretical. But the reporting pipeline can be built and tested with saved snapshots.
+And a good report is what makes the app *genuinely useful* — the user needs to be able
+to hand someone a piece of paper (or PDF) that says "this part is in tolerance."
+
+Phase 1 makes the app trustworthy. Phase 2 makes it fast. Phase 5 makes it produce
+useful output. Phase 3 makes it accurate once real hardware is in place.
