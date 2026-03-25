@@ -337,13 +337,32 @@ export function renderInspectionTable() {
       badgeClass = "badge-fail"; badgeText = "FAIL";
     }
 
+    const sourceText = r.source === "manual" ? "M" : "";
+    const sourceBadge = sourceText ? `<span class="insp-source">${sourceText}</span>` : "";
+
     tr.innerHTML = `
       <td class="insp-handle">${r.handle}</td>
       <td class="insp-type">${r.type}</td>
       <td class="insp-dev">${deviationText}</td>
       <td class="insp-tol">${toleranceText}</td>
-      <td><span class="insp-badge ${badgeClass}">${badgeText}</span></td>`;
+      <td><span class="insp-badge ${badgeClass}">${badgeText}</span>${sourceBadge}</td>`;
     tbody.appendChild(tr);
+
+    if (!r.matched) {
+      tr.style.cursor = "pointer";
+      tr.title = "Click to measure manually";
+      tr.addEventListener("click", () => {
+        const ann = state.annotations.find(a => a.type === "dxf-overlay");
+        if (!ann) return;
+        const entity = ann.entities.find(e => e.handle === r.handle);
+        if (!entity) return;
+        state.inspectionPickTarget = entity;
+        state.inspectionPickPoints = [];
+        state.inspectionPickFit = null;
+        showStatus("Click points along the edge. Double-click or Enter to finish. Escape to cancel.");
+        redraw();
+      });
+    }
   });
 
   // Wire collapse toggle (idempotent)

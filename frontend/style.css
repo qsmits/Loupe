@@ -753,6 +753,12 @@ body.no-camera .camera-section { display: none; }
 .badge-warn  { color: var(--warning); font-weight: 600; }
 .badge-fail  { color: var(--danger);  font-weight: 600; }
 .badge-unmatched { color: var(--muted); }
+.insp-source {
+  color: var(--text-secondary);
+  font-size: 8px;
+  font-weight: 600;
+  margin-left: 4px;
+}
 
 /* ─── Context menu ───────────────────────────────── */
 #context-menu {
