@@ -247,6 +247,61 @@ export function measurementLabel(ann) {
   return "";
 }
 
+function drawGrid() {
+  if (!state.showGrid) return;
+  const cal = state.calibration;
+
+  // Grid spacing: adaptive mm if calibrated, 50px otherwise
+  let spacingPx;
+  if (cal && cal.pixelsPerMm > 0) {
+    // Choose a nice grid spacing based on zoom: target ~40 screen pixels between lines
+    const targetScreenPx = 40;
+    const mmPerScreenPx = 1 / (cal.pixelsPerMm * viewport.zoom);
+    const targetMm = targetScreenPx * mmPerScreenPx;
+    const niceIntervals = [0.01, 0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 25, 50];
+    let spacing_mm = niceIntervals[0];
+    for (const n of niceIntervals) {
+      if (n >= targetMm) { spacing_mm = n; break; }
+    }
+    spacingPx = spacing_mm * cal.pixelsPerMm;
+  } else {
+    spacingPx = 50;
+  }
+
+  // Draw grid lines across the visible area (we are already inside viewport transform)
+  ctx.save();
+  ctx.strokeStyle = "rgba(255, 255, 255, 0.08)";
+  ctx.lineWidth = pw(0.5);
+  ctx.setLineDash([]);
+
+  // Visible area in image space
+  const x0 = viewport.panX;
+  const y0 = viewport.panY;
+  const x1 = x0 + (canvas.clientWidth / viewport.zoom);
+  const y1 = y0 + (canvas.clientHeight / viewport.zoom);
+
+  // Snap grid origin to spacing
+  const startX = Math.floor(x0 / spacingPx) * spacingPx;
+  const startY = Math.floor(y0 / spacingPx) * spacingPx;
+
+  // Vertical lines
+  for (let x = startX; x <= x1; x += spacingPx) {
+    ctx.beginPath();
+    ctx.moveTo(x, y0);
+    ctx.lineTo(x, y1);
+    ctx.stroke();
+  }
+  // Horizontal lines
+  for (let y = startY; y <= y1; y += spacingPx) {
+    ctx.beginPath();
+    ctx.moveTo(x0, y);
+    ctx.lineTo(x1, y);
+    ctx.stroke();
+  }
+
+  ctx.restore();
+}
+
 export function redraw() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
@@ -259,6 +314,7 @@ export function redraw() {
   if (state.frozenBackground) {
     ctx.drawImage(state.frozenBackground, 0, 0, imageWidth || canvas.width, imageHeight || canvas.height);
   }
+  drawGrid();
   drawAnnotations();
   drawPendingPoints();
   // Snap indicator

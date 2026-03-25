@@ -900,6 +900,13 @@ document.addEventListener("keydown", e => {
     resizeCanvas();
     return;
   }
+  if (e.key === "`" && !e.ctrlKey && !e.metaKey) {
+    state.showGrid = !state.showGrid;
+    document.getElementById("btn-grid")?.classList.toggle("active", state.showGrid);
+    showStatus(state.showGrid ? "Grid on" : "Grid off");
+    redraw();
+    return;
+  }
   const toolKeys = { v: "select", c: "calibrate", d: "distance", a: "angle",
                      o: "circle", f: "arc-fit", m: "center-dist", e: "detect",
                      p: "perp-dist", l: "para-dist", r: "area",
@@ -1199,6 +1206,14 @@ document.getElementById("btn-export-csv").addEventListener("click", exportCsv);
 document.getElementById("btn-crosshair").addEventListener("click", () => {
   state.crosshair = !state.crosshair;
   document.getElementById("btn-crosshair").classList.toggle("active", state.crosshair);
+  redraw();
+});
+
+// ── Grid toggle ───────────────────────────────────────────────────────────────
+document.getElementById("btn-grid")?.addEventListener("click", () => {
+  state.showGrid = !state.showGrid;
+  document.getElementById("btn-grid")?.classList.toggle("active", state.showGrid);
+  showStatus(state.showGrid ? "Grid on" : "Grid off");
   redraw();
 });
 

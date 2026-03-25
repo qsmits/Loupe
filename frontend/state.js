@@ -5,6 +5,7 @@ export const state = {
   frozenBackground: null,   // HTMLImageElement set by doFreeze()
   frozenSize: null,          // { w, h } set by doFreeze()
   crosshair: false,
+  showGrid: false,
   calibration: null,
   annotations: [],
   selected: new Set(),  // Set of annotation IDs; do NOT include in JSON.stringify
