@@ -3,6 +3,7 @@ import { redraw, canvas, showStatus, getLineEndpoints, lineAngleDeg, dxfToCanvas
 import { addAnnotation, applyCalibration } from './annotations.js';
 import { fitCircle, parseDistanceInput, distPointToSegment } from './math.js';
 import { renderSidebar } from './sidebar.js';
+import { screenToImage, imageWidth, imageHeight } from './viewport.js';
 
 export function setTool(name) {
   state.tool = name;
@@ -21,7 +22,9 @@ export function setTool(name) {
 
 export function canvasPoint(e) {
   const r = canvas.getBoundingClientRect();
-  return { x: e.clientX - r.left, y: e.clientY - r.top };
+  const screenX = (e.clientX - r.left) * (canvas.width / r.width);
+  const screenY = (e.clientY - r.top) * (canvas.height / r.height);
+  return screenToImage(screenX, screenY);
 }
 
 // Returns the nearest line-like annotation whose body is within 10px of pt, or null.
@@ -570,27 +573,27 @@ export function hitTestAnnotation(ann, pt) {
     return false;
   }
   if (ann.type === "detected-circle") {
-    const sx = ann.frameWidth ? canvas.width / ann.frameWidth : 1;
-    const sy = ann.frameHeight ? canvas.height / ann.frameHeight : 1;
+    const sx = ann.frameWidth ? imageWidth / ann.frameWidth : 1;
+    const sy = ann.frameHeight ? imageHeight / ann.frameHeight : 1;
     const cx = ann.x * sx, cy = ann.y * sy, r = ann.radius * sx;
     const d = Math.hypot(pt.x - cx, pt.y - cy);
     return Math.abs(d - r) < 10 || d < 10;
   }
   if (ann.type === "detected-line") {
-    const sx = ann.frameWidth ? canvas.width / ann.frameWidth : 1;
-    const sy = ann.frameHeight ? canvas.height / ann.frameHeight : 1;
+    const sx = ann.frameWidth ? imageWidth / ann.frameWidth : 1;
+    const sy = ann.frameHeight ? imageHeight / ann.frameHeight : 1;
     const x1 = ann.x1 * sx, y1 = ann.y1 * sy, x2 = ann.x2 * sx, y2 = ann.y2 * sy;
     return distPointToSegment(pt, { x: x1, y: y1 }, { x: x2, y: y2 }) < 8;
   }
   if (ann.type === "detected-line-merged") {
-    const sx = ann.frameWidth ? canvas.width / ann.frameWidth : 1;
-    const sy = ann.frameHeight ? canvas.height / ann.frameHeight : 1;
+    const sx = ann.frameWidth ? imageWidth / ann.frameWidth : 1;
+    const sy = ann.frameHeight ? imageHeight / ann.frameHeight : 1;
     const x1 = ann.x1 * sx, y1 = ann.y1 * sy, x2 = ann.x2 * sx, y2 = ann.y2 * sy;
     return distPointToSegment(pt, { x: x1, y: y1 }, { x: x2, y: y2 }) < 8;
   }
   if (ann.type === "detected-arc-partial") {
-    const sx = ann.frameWidth ? canvas.width / ann.frameWidth : 1;
-    const sy = ann.frameHeight ? canvas.height / ann.frameHeight : 1;
+    const sx = ann.frameWidth ? imageWidth / ann.frameWidth : 1;
+    const sy = ann.frameHeight ? imageHeight / ann.frameHeight : 1;
     const cx = ann.cx * sx, cy = ann.cy * sy, r = ann.r * sx;
     const dist = Math.hypot(pt.x - cx, pt.y - cy);
     if (Math.abs(dist - r) > 8) return false;
@@ -615,8 +618,8 @@ export function snapToCircle(pt) {
     if (ann.type === "circle") {
       cx = ann.cx; cy = ann.cy; r = ann.r;
     } else if (ann.type === "detected-circle") {
-      const sx = canvas.width / ann.frameWidth;
-      const sy = canvas.height / ann.frameHeight;
+      const sx = imageWidth / ann.frameWidth;
+      const sy = imageHeight / ann.frameHeight;
       cx = ann.x * sx; cy = ann.y * sy; r = ann.radius * sx;
     } else {
       return;
