@@ -946,7 +946,11 @@ if (overflowBtn && overflowPopup) {
 }
 
 // ── Close dropdowns on click-outside ─────────────────────────────────────────
-document.addEventListener("click", closeAllDropdowns);
+document.addEventListener("click", e => {
+  // Don't close if clicking inside a dropdown (e.g. adjusting sliders)
+  if (e.target.closest(".dropdown")) return;
+  closeAllDropdowns();
+});
 
 // ── Freeze button ─────────────────────────────────────────────────────────────
 document.getElementById("btn-freeze").addEventListener("click", async () => {
