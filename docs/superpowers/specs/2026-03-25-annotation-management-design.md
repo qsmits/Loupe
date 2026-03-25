@@ -30,18 +30,11 @@ lack it:
 
 | Type | Hit-test strategy | Threshold |
 |------|------------------|-----------|
-| `detected-line-merged` | Point-to-line-segment distance (same as `detected-line`) | 8px |
-| `detected-arc-partial` | Distance from point to arc curve (check radius proximity AND angle within arc span) | 8px |
+| `detected-line-merged` | Point-to-line-segment distance (same as `detected-line`). Must apply `canvas.width / ann.frameWidth` scaling to convert annotation coords to canvas-space before testing. | 8px |
+| `detected-arc-partial` | (a) Distance from click to arc center is within `r ± 8px`, AND (b) click angle (relative to center) falls within the arc's angular span (`start_deg` to `end_deg`). Must apply frame-to-canvas scaling to `cx`, `cy`, `r`. | 8px |
 | `edges-overlay` | Not selectable (visual-only overlay) | — |
 | `preprocessed-overlay` | Not selectable (visual-only overlay) | — |
 | `dxf-overlay` | Not selectable from canvas (has its own drag mode) | — |
-
-For `detected-line-merged`, the hit-test must apply the same `frameWidth`/`frameHeight`
-scaling that the renderer uses, so canvas-space clicks map to annotation-space coordinates.
-
-For `detected-arc-partial`, test: (a) distance from click to arc center is within
-`r ± 8px`, AND (b) click angle (relative to center) falls within the arc's angular span.
-Also apply frame scaling.
 
 ### 1.2 Consistent selection highlighting
 
@@ -52,8 +45,8 @@ Every selectable annotation type must render identically when selected:
 
 **Types that need fixing:**
 - `arc-measure`: Currently uses `#e879f9` when selected. Change to `#60a5fa`. Add handles at p1, p2, p3.
-- `detected-line-merged`: Already uses `#60a5fa` when selected. Add handles at endpoints.
-- `detected-arc-partial`: Already uses `#60a5fa` when selected. Add handles at arc start and end points.
+- `detected-line-merged`: Already uses `#60a5fa` when selected. Add handles at scaled endpoints.
+- `detected-arc-partial`: Already uses `#60a5fa` when selected. Add handles at arc start and end points (computed from `cx`/`cy`/`r`/`start_deg`/`end_deg`).
 - `slot-dist`: No handles currently. Add handles at the midpoints of both lines.
 - `intersect`: No handles. Add handle at the intersection point.
 
@@ -65,7 +58,7 @@ make it visually obvious in a dense field:
 - On selection via sidebar click, the annotation renders with a bright halo
   (`#60a5fa` at 0.5 alpha, 4px extra stroke width) for 400ms, then fades to normal
   selected state.
-- Implementation: set `state._selectionFlashUntil = Date.now() + 400` on sidebar click.
+- Implementation: set `state._flashExpiry = Date.now() + 400` on sidebar click.
   In the render loop, check if the flash is active and draw the halo. Use
   `requestAnimationFrame` to clear it after the timeout.
 
@@ -87,11 +80,36 @@ state.selected = null;        // or a number
 state.selected = new Set();   // empty = nothing selected
 ```
 
-All existing code that checks `state.selected === ann.id` must be updated to
-`state.selected.has(ann.id)`. All code that sets `state.selected = id` must use
-`state.selected = new Set([id])`.
+**Migration checklist** (all sites that reference `state.selected`):
 
-The `sel` parameter passed to draw functions becomes `state.selected.has(ann.id)`.
+| Pattern | Old | New |
+|---------|-----|-----|
+| Check if anything selected | `state.selected !== null` | `state.selected.size > 0` |
+| Check if specific ann selected | `state.selected === ann.id` | `state.selected.has(ann.id)` |
+| Select one annotation | `state.selected = id` | `state.selected = new Set([id])` |
+| Deselect all | `state.selected = null` | `state.selected = new Set()` |
+| Pass to draw function | `state.selected === ann.id` | `state.selected.has(ann.id)` |
+
+**Undo/redo restoration** (currently in `main.js` lines 25, 36): The current code does
+`state.selected = state.annotations.find(a => a.id === state.selected?.id)?.id ?? null`.
+Replace with: filter the Set to retain only IDs that still exist in the restored
+annotation list:
+```js
+state.selected = new Set(
+  [...state.selected].filter(id => state.annotations.some(a => a.id === id))
+);
+```
+
+**Session save/load**: `state.selected` is currently NOT serialized in sessions. Keep it
+that way — selection is transient UI state, not part of the saved inspection. On session
+load, `state.selected = new Set()` (already effectively happens since load sets it to null).
+
+**Undo snapshots** (`takeSnapshot()` in `state.js`): Currently does not include `selected`.
+Keep it that way — undo restores annotation data, not selection state.
+
+**JSON.stringify safety**: A `Set` serializes to `{}` via `JSON.stringify`. Since we do
+NOT serialize `selected` in sessions or snapshots, this is safe. But add a code comment
+warning future developers: `// Note: Set — do NOT include in JSON.stringify output`.
 
 ### 2.2 Rectangle drag-select
 
@@ -103,12 +121,21 @@ hit) starts a selection rectangle:
 3. `mouseup`: find all annotations whose geometry falls within the rectangle.
    Set `state.selected = new Set(matchingIds)`. Clear `state._selectRect`.
 
-**Containment test per type:**
-- Lines/distances: both endpoints inside rect
-- Circles: center inside rect
-- Arcs: center inside rect
-- Area/polygon: centroid inside rect
-- Origin: center inside rect
+**Containment test** — use a single default rule: the annotation's **primary point** must
+be inside the rectangle. Primary point per type:
+
+| Type | Primary point |
+|------|--------------|
+| `distance`, `center-dist`, `perp-dist`, `para-dist`, `parallelism`, `slot-dist` | Midpoint of (a, b) or equivalent endpoints |
+| `circle`, `detected-circle` | Center (cx, cy) |
+| `arc-measure`, `detected-arc-partial` | Center (cx, cy) |
+| `detected-line`, `detected-line-merged` | Midpoint of (x1,y1)→(x2,y2) |
+| `angle` | Vertex point |
+| `area` | Centroid |
+| `origin` | Center point |
+| `calibration` | Midpoint |
+| `pt-circle-dist` | The point (not the circle) |
+| `intersect` | Intersection point |
 
 Apply frame-to-canvas scaling for detected types before testing containment.
 
@@ -124,11 +151,26 @@ If Shift is held during drag-select, ADD to existing selection instead of replac
 
 With multiple annotations selected:
 
-- **Delete** (Delete/Backspace): delete all selected. Push single undo state before
-  the batch delete so Ctrl+Z restores all of them.
-- **Elevate** (`E` key or context menu): elevate all selected detections. Non-detection
-  types in the selection are ignored.
-- Status bar shows count: "5 annotations selected" / "3 detections, 2 measurements selected"
+- **Delete** (Delete/Backspace): Push single undo state, then delete all selected.
+  The keyboard handler must check `state.selected.size > 0` (not truthiness, since
+  an empty Set is truthy). Call a new `deleteSelected()` function that iterates the
+  Set and removes each annotation.
+- **Elevate** (context menu only — see Section 2.5 for key binding): elevate all
+  selected detections. Non-detection types in the selection are ignored.
+- Status bar shows count: "5 selected" / "3 detections, 2 measurements selected"
+
+### 2.5 Elevation key binding
+
+The `E` key is currently bound to the Detect tool (`e: "detect"` in `main.js`).
+Reassign: **`U`** for elevation ("promote **U**p"). This avoids conflicts with existing
+key bindings.
+
+Alternatively, don't assign a key at all — the context menu is the primary interface.
+The key binding is a convenience, not a requirement. Use `U` if we add one.
+
+**Drag handles during multi-select**: Drag handles are only active when exactly one
+annotation is selected. With 2+ selected, mousedown starts a drag-select rectangle
+instead of handle interaction.
 
 ---
 
@@ -138,21 +180,22 @@ With multiple annotations selected:
 
 | Source type | Target type | Geometry conversion |
 |---|---|---|
-| `detected-line-merged` | `distance` | `{a: {x: x1*sx, y: y1*sy}, b: {x: x2*sx, y: y2*sy}}`. Compute `frameWidth`/`frameHeight` scaling at elevation time so the measurement lives in canvas-space. |
-| `detected-line` | `distance` | Same as above |
-| `detected-arc-partial` | `arc-measure` | Reconstruct p1, p2, p3 from arc geometry: p1 at start angle, p3 at end angle, p2 at midpoint angle, all at radius distance from center. Scale cx/cy/r from frame-space to canvas-space. |
-| `detected-circle` | `circle` | Convert `{x, y, radius}` to 3-point circle: p1 at 0°, p2 at 120°, p3 at 240° on the circle. Scale from frame-space. |
+| `detected-line-merged` | `distance` | Scale endpoints: `a = {x: x1*sx, y: y1*sy}`, `b = {x: x2*sx, y: y2*sy}` where `sx = canvas.width / ann.frameWidth`, `sy = canvas.height / ann.frameHeight`. Note: `detected-line-merged` does NOT have a `length` field — compute it from the scaled endpoints. |
+| `detected-line` | `distance` | Same as above. `detected-line` has `x1/y1/x2/y2` plus `length` and `frameWidth/frameHeight`. |
+| `detected-arc-partial` | `arc-measure` | Scale center and radius: `cx *= sx`, `cy *= sy`, `r *= sx`. Reconstruct three points on the arc: p1 at `start_deg`, p3 at `end_deg`, p2 at midpoint angle `(start_deg + end_deg) / 2`, each at distance `r` from `(cx, cy)`. Compute `span_deg = end_deg - start_deg` (handle wrapping: if negative, add 360). Compute `chord_px = hypot(p3.x - p1.x, p3.y - p1.y)`. |
+| `detected-circle` | `circle` | Scale directly: `cx *= sx`, `cy *= sy`, `r *= sx`. The `circle` annotation type uses `{cx, cy, r}` — no 3-point conversion needed. |
 
 ### 3.2 Elevation flow
 
 1. User selects one or more detections
-2. Presses `E` or right-click → "Elevate to measurement"
-3. For each selected detection:
+2. Right-click → "Elevate to measurement" (or presses `U`)
+3. Push a single undo state
+4. For each selected detection:
    a. Create a new annotation of the target type with converted geometry
    b. Remove the original detection annotation
    c. The new annotation gets a sequential ID and appears in the sidebar
-4. New annotations are auto-selected after elevation
-5. Status: "Elevated 3 detections to measurements"
+5. New annotations are auto-selected after elevation
+6. Status: "Elevated 3 detections to measurements"
 
 ### 3.3 Post-elevation editing
 
@@ -184,15 +227,17 @@ Elevated measurements are fully editable like any manual measurement:
 | Clear detections | Remove all detection-type annotations |
 | Clear measurements | Remove all measurement-type annotations |
 | Clear DXF overlay | Remove DXF + inspection results |
-| Clear all | Remove everything (prompt: "Keep calibration and origin?") |
+| Clear all | Remove everything (with confirmation) |
 
 ### 4.2 Implementation
 
-- A single `<div id="context-menu">` appended to `<body>`, hidden by default
+- A single `<div id="context-menu">` in `index.html`, hidden by default
 - Positioned at `(e.clientX, e.clientY)` on the `contextmenu` event
 - Dismissed on: click anywhere, Escape key, scroll, or right-click elsewhere
 - Menu items are built dynamically based on what's under the cursor / what's selected
 - Prevent the browser's default context menu on the canvas element
+- Style: dark background matching the app's existing dropdown menus (`--surface-2`),
+  same font and padding as the existing `.dropdown-item` buttons
 
 ### 4.3 Annotation type classification
 
@@ -201,13 +246,18 @@ For menu logic, annotations are classified as:
 **Detections** (transient, auto-generated):
 `detected-circle`, `detected-line`, `detected-line-merged`, `detected-arc-partial`
 
-**Overlays** (visual-only, not selectable):
+**Overlays** (visual-only, not selectable, not clearable individually):
 `edges-overlay`, `preprocessed-overlay`
 
 **Measurements** (permanent, user-created or elevated):
-Everything else — `distance`, `angle`, `circle`, `arc-measure`, `area`,
-`center-dist`, `perp-dist`, `para-dist`, `parallelism`, `pt-circle-dist`,
-`intersect`, `slot-dist`, `calibration`, `origin`
+`distance`, `angle`, `circle`, `arc-measure`, `area`, `center-dist`, `perp-dist`,
+`para-dist`, `parallelism`, `pt-circle-dist`, `intersect`, `slot-dist`
+
+**Infrastructure** (preserved across clears unless explicitly cleared):
+`calibration`, `origin`
+
+**DXF** (has its own clear path):
+`dxf-overlay`
 
 ---
 
@@ -215,15 +265,14 @@ Everything else — `distance`, `angle`, `circle`, `arc-measure`, `area`,
 
 ### 5.1 Clear detections
 
-Remove all annotations where type is in the Detections set (see 4.3 above),
-plus `edges-overlay` and `preprocessed-overlay`.
+Remove all annotations where type is in the Detections or Overlays sets.
 
 Does NOT remove: measurements, DXF overlay, calibration, origin.
 
 ### 5.2 Clear measurements
 
-Remove all annotations where type is in the Measurements set, EXCEPT
-`calibration` and `origin` (these are infrastructure, not part measurements).
+Remove all annotations where type is in the Measurements set.
+Does NOT remove: calibration, origin, detections, DXF overlay.
 
 ### 5.3 Clear DXF overlay
 
@@ -235,17 +284,26 @@ from the context menu and the Clear sub-menu.
 
 ### 5.4 Clear all
 
-Remove all annotations. Show confirmation dialog:
-"Clear all annotations? Calibration and origin will be preserved."
-With buttons: [Clear all] [Clear including calibration] [Cancel]
+Remove all annotations (detections + measurements + overlays + DXF).
+Reset `state.inspectionResults`, `state.inspectionFrame`, `state.dxfFilename`.
 
-Default action preserves calibration and origin. The second button is for
-true fresh-start (new magnification, different scope setup).
+Use a simple `confirm()` dialog: "Clear all annotations? Calibration and origin
+will be preserved." [OK] / [Cancel].
+
+Calibration and origin are preserved by default. To clear those too, the user can
+delete them individually (select + delete) or use the existing calibration/origin
+buttons to reset them.
 
 ### 5.5 Clear menu in top bar
 
 Add a "Clear ▾" dropdown button in the top bar (next to the existing menu buttons)
-with the four options. This provides discoverability beyond the right-click menu.
+with the four options:
+- Clear detections
+- Clear measurements
+- Clear DXF overlay
+- Clear all
+
+This provides discoverability beyond the right-click menu.
 
 ---
 
@@ -253,15 +311,15 @@ with the four options. This provides discoverability beyond the right-click menu
 
 | File | Changes |
 |------|---------|
-| `frontend/state.js` | `selected` becomes `Set`. Add `_selectRect`, `_selectionFlashUntil` transient fields. |
-| `frontend/tools.js` | Add hit-testing for `detected-line-merged`, `detected-arc-partial`. Update `handleSelectDown` for multi-select (Shift). Add rectangle drag-select logic. Add `elevateDetection()` function. |
-| `frontend/render.js` | Update all draw functions to accept `sel` as boolean from Set check. Add selection rectangle rendering. Add flash halo rendering. Fix inconsistent highlight colors. Add handles to arc-measure, slot-dist, intersect, detected types. |
-| `frontend/main.js` | Update all `state.selected` references from ID to Set. Add `contextmenu` event handler. Wire `E` key for elevation. Add rectangle drag-select mouse handlers. |
-| `frontend/sidebar.js` | Update selected check to use Set. Highlight multiple selected items. Add flash trigger on sidebar click. |
-| `frontend/annotations.js` | Add `elevateAnnotation(id)` and `elevateSelected()` functions. Update `deleteAnnotation` for batch delete. |
-| `frontend/session.js` | Serialize `state.selected` as array in save, restore as Set on load. |
-| `frontend/index.html` | Add `<div id="context-menu">` element. Add "Clear ▾" dropdown in top bar. |
-| `frontend/style.css` | Context menu styles. Multi-selected sidebar item styles. Flash animation keyframes. |
+| `frontend/state.js` | `selected` becomes `Set()`. Add `_selectRect`, `_flashExpiry` transient fields. Add comment warning about Set serialization. |
+| `frontend/tools.js` | Add hit-testing for `detected-line-merged` (with frame scaling), `detected-arc-partial` (with frame scaling + angle check). Update `handleSelectDown` for multi-select (Shift+click, drag-rect initiation). Drag handles only active when exactly 1 selected. Add `elevateAnnotation(id)` and `elevateSelected()` functions. |
+| `frontend/render.js` | Update all draw functions: `sel` derived from `state.selected.has(ann.id)`. Add selection rectangle rendering. Add flash halo rendering. Fix `arc-measure` selection color to `#60a5fa`. Add handles to `arc-measure`, `slot-dist`, `intersect`, `detected-line-merged`, `detected-arc-partial`. |
+| `frontend/main.js` | Update all `state.selected` references (see migration checklist in 2.1). Fix undo/redo restoration to filter Set. Add `contextmenu` event handler. Wire `U` key for elevation. Add Delete key handler for `state.selected.size > 0`. Add rectangle drag-select mouse handlers in Select mode. |
+| `frontend/sidebar.js` | Update selected check to use `state.selected.has()`. Highlight multiple selected items. Set `state._flashExpiry` on sidebar click. Show selection count in status area. |
+| `frontend/annotations.js` | Add `deleteSelected()` for batch delete. Add `clearDetections()`, `clearMeasurements()`, `clearAll()`. Update `deleteAnnotation` if needed. |
+| `frontend/session.js` | Ensure `state.selected` is reset to `new Set()` on load (not null). No serialization of selection state. |
+| `frontend/index.html` | Add `<div id="context-menu">` element. Add "Clear ▾" dropdown in top bar with 4 items. |
+| `frontend/style.css` | Context menu styles (matching existing dropdown theme). Multi-selected sidebar item styles. |
 
 ---
 
@@ -271,4 +329,5 @@ with the four options. This provides discoverability beyond the right-click menu
 - Click-to-select outside Select mode (CAD convention: use Escape first)
 - Bulk drag-move (not needed for inspection)
 - Annotation grouping/folders (Phase 4 of roadmap)
-- Undo for bulk operations beyond single undo state (Ctrl+Z restores the batch)
+- Custom modal dialogs (use browser `confirm()` for Clear all)
+- `arc-fit` tool changes (it creates `arc-measure` annotations which are already measurement-type)
