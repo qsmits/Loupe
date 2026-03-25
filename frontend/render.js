@@ -542,9 +542,15 @@ export function drawGuidedResults(ann) {
         ctx.moveTo(r.fit.x1, r.fit.y1);
         ctx.lineTo(r.fit.x2, r.fit.y2);
         ctx.stroke();
+        // Position label perpendicular to the line, offset outward
         const mx = (r.fit.x1 + r.fit.x2) / 2;
         const my = (r.fit.y1 + r.fit.y2) / 2;
-        drawLabel(`\u22a5 ${r.perp_dev_mm?.toFixed(3)} mm`, mx + pw(5), my - pw(5));
+        const ldx = r.fit.x2 - r.fit.x1, ldy = r.fit.y2 - r.fit.y1;
+        const ll = Math.hypot(ldx, ldy) || 1;
+        // Normal vector (perpendicular to line direction)
+        const nx = -ldy / ll, ny = ldx / ll;
+        const labelOff = pw(12);
+        drawLabel(`\u22a5 ${r.perp_dev_mm?.toFixed(3)} mm`, mx + nx * labelOff, my + ny * labelOff);
       } else {
         ctx.beginPath();
         if (r.fit.start_deg != null && r.fit.type === "arc") {
@@ -557,8 +563,18 @@ export function drawGuidedResults(ann) {
           ctx.arc(r.fit.cx, r.fit.cy, r.fit.r, 0, Math.PI * 2);
         }
         ctx.stroke();
+        // Position label at the arc's midpoint angle (not always right side)
+        let labelAngle = 0;
+        if (r.fit.start_deg != null && r.fit.end_deg != null) {
+          let mid = (r.fit.start_deg + r.fit.end_deg) / 2;
+          if (r.fit.end_deg < r.fit.start_deg) mid += 180;
+          labelAngle = mid * Math.PI / 180;
+        }
+        const labelR = r.fit.r + pw(10);
+        const labelX = r.fit.cx + labelR * Math.cos(labelAngle);
+        const labelY = r.fit.cy + labelR * Math.sin(labelAngle);
         drawLabel(`\u0394c ${(r.center_dev_mm ?? 0).toFixed(3)} \u0394r ${(r.radius_dev_mm ?? 0).toFixed(3)}`,
-          r.fit.cx + r.fit.r + pw(5), r.fit.cy);
+          labelX, labelY);
       }
       ctx.restore();
 

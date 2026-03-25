@@ -1006,6 +1006,21 @@ viewerEl.addEventListener("drop", async e => {
 
 // ── Coordinate origin ──────────────────────────────────────────────────────────
 document.getElementById("btn-set-origin").addEventListener("click", () => {
+  // Exit other modal modes first
+  if (state.dxfAlignMode) {
+    state.dxfAlignMode = false; state.dxfAlignStep = 0;
+    state.dxfAlignPick = null; state.dxfAlignHover = null;
+    document.getElementById("btn-auto-align")?.classList.remove("active");
+  }
+  if (state.dxfDragMode) {
+    state.dxfDragMode = false; state.dxfDragOrigin = null;
+    document.getElementById("btn-dxf-move")?.classList.remove("active");
+  }
+  if (state.inspectionPickTarget) {
+    state.inspectionPickTarget = null;
+    state.inspectionPickPoints = [];
+    state.inspectionPickFit = null;
+  }
   state._originMode = !state._originMode;
   document.getElementById("btn-set-origin").classList.toggle("active", state._originMode);
 });
