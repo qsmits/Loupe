@@ -299,22 +299,26 @@ export function drawAnnotations() {
     else if (ann.type === "detected-line")   drawDetectedLine(ann, sel);
     else if (ann.type === "detected-line-merged") {
       ctx.save();
+      const sx = ann.frameWidth ? canvas.width / ann.frameWidth : 1;
+      const sy = ann.frameHeight ? canvas.height / ann.frameHeight : 1;
       ctx.strokeStyle = "#00e5ff";
       ctx.lineWidth = 1.5;
       ctx.beginPath();
-      ctx.moveTo(ann.x1, ann.y1);
-      ctx.lineTo(ann.x2, ann.y2);
+      ctx.moveTo(ann.x1 * sx, ann.y1 * sy);
+      ctx.lineTo(ann.x2 * sx, ann.y2 * sy);
       ctx.stroke();
       ctx.restore();
     }
     else if (ann.type === "detected-arc-partial") {
       ctx.save();
+      const sx = ann.frameWidth ? canvas.width / ann.frameWidth : 1;
+      const sy = ann.frameHeight ? canvas.height / ann.frameHeight : 1;
       ctx.strokeStyle = "#ffd60a";
       ctx.lineWidth = 1.5;
       const a1 = ann.start_deg * Math.PI / 180;
       const a2 = ann.end_deg   * Math.PI / 180;
       ctx.beginPath();
-      ctx.arc(ann.cx, ann.cy, ann.r, a1, a2);
+      ctx.arc(ann.cx * sx, ann.cy * sy, ann.r * sx, a1, a2);
       ctx.stroke();
       ctx.restore();
     }

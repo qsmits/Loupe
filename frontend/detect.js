@@ -135,25 +135,32 @@ export function initDetectHandlers() {
 
   // btn-detect-lines-merged: detect merged/contour lines
   document.getElementById("btn-detect-lines-merged")?.addEventListener("click", async () => {
+    await ensureFrozen();
     const r = await fetch("/detect-lines-merged", { method: "POST",
       headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) });
     if (!r.ok) { const d = await r.json().catch(() => null); showStatus(d?.detail || "Line detection failed (HTTP " + r.status + ")"); return; }
     const lines = await r.json();
+    const fw = state.frozenSize?.w || canvas.width;
+    const fh = state.frozenSize?.h || canvas.height;
     state.annotations = state.annotations.filter(a => a.type !== "detected-line-merged");
     lines.forEach(l => addAnnotation({ type: "detected-line-merged",
-      x1: l.x1, y1: l.y1, x2: l.x2, y2: l.y2 }));
+      x1: l.x1, y1: l.y1, x2: l.x2, y2: l.y2, frameWidth: fw, frameHeight: fh }));
     redraw();
   });
 
   // btn-detect-arcs-partial: detect partial arcs
   document.getElementById("btn-detect-arcs-partial")?.addEventListener("click", async () => {
+    await ensureFrozen();
     const r = await fetch("/detect-arcs-partial", { method: "POST",
       headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) });
     if (!r.ok) { const d = await r.json().catch(() => null); showStatus(d?.detail || "Arc detection failed (HTTP " + r.status + ")"); return; }
     const arcs = await r.json();
+    const fw = state.frozenSize?.w || canvas.width;
+    const fh = state.frozenSize?.h || canvas.height;
     state.annotations = state.annotations.filter(a => a.type !== "detected-arc-partial");
     arcs.forEach(a => addAnnotation({ type: "detected-arc-partial",
-      cx: a.cx, cy: a.cy, r: a.r, start_deg: a.start_deg, end_deg: a.end_deg }));
+      cx: a.cx, cy: a.cy, r: a.r, start_deg: a.start_deg, end_deg: a.end_deg,
+      frameWidth: fw, frameHeight: fh }));
     redraw();
   });
 }
