@@ -1,51 +1,61 @@
 # Microscope
 
-Video microscope application for measurement and inspection. Streams live video from USB3/GigE industrial cameras and provides measurement tools, edge/circle/line detection, DXF overlay, and calibrated pixel-to-mm conversion.
+Precision measurement and inspection tool for video microscopes. Streams live video from industrial cameras, provides measurement tools, computer vision-based feature detection, and DXF-guided part inspection with deviation reporting.
 
 ## Features
 
+### Measurement
+- **14 measurement tools**: Distance, Angle, Circle (3-point), Fit Arc, Arc Measure, Center Distance, Parallel, Perpendicular, Area, Point-Circle Distance, Line Intersect, Slot Distance, Select, Pan
+- Pixel ↔ mm calibration (two-point or circle-based)
+- Coordinate origin with rotation
+- Undo/redo for all operations
+
+### Detection & Inspection
+- **Auto-detection**: Circle detection (Hough), contour-based line detection, partial arc detection — with adjustable Canny thresholds, smoothing, and NMS parameters
+- **DXF-guided inspection**: Load a DXF drawing, align to the part, run corridor-based per-feature edge detection. Each DXF feature is matched against detected edges within a ±15px search corridor.
+- **Manual point-pick**: Click any DXF feature to measure it by placing points along the actual edge. Supports compound features (slots, outlines) — points auto-assign to the nearest sub-segment.
+- **Deviation reporting**: Per-feature pass/warn/fail with configurable tolerances. Inspection results table in sidebar. CSV and PDF export.
+
+### Annotation Management
+- **Multi-select**: Shift+click, rectangle drag-select
+- **Elevation**: Promote auto-detected features to editable measurements
+- **Merge lines**: Combine multiple line segments into one measurement
+- **Right-click context menu**: Elevate, delete, rename, merge, convert arc→circle, clear operations
+- **Clear menu**: Separate clearing of detections, measurements, DXF overlay, or all
+
+### Zoom & Pan
+- Scroll-wheel zoom centered on cursor (frozen mode, up to 10x)
+- Pan tool (`H` key) and middle-mouse-button pan
+- Zoom presets: `0` = fit to window, `1` = 1:1 pixel mapping
+- Zoom indicator badge
+
+### Camera & Session
 - Live MJPEG stream from industrial cameras (Baumer/Aravis, OpenCV fallback)
-- 11 measurement tools: Distance, Angle, Circle, Fit Arc, Center Distance, Parallel, Perpendicular, Area, Point-Circle, Line Intersect, Slot
-- Edge, circle, and line detection with adjustable parameters
-- Pixel ↔ mm calibration
-- DXF geometry import as reference overlay
-- Session save/load, snapshot capture
 - Camera controls: exposure, gain, white balance
-- Configurable app name and theme
+- Freeze frame for measurement
+- Session save/load (JSON format with inspection results)
+- Auto-save to localStorage every 30 seconds with restore prompt
+- Snapshot capture and image load
+- Annotated image export (PNG), measurement CSV, inspection PDF
 
 ## Requirements
 
-- macOS (primary platform)
-- Python 3.13
-- [Homebrew](https://brew.sh)
-
-For Baumer or other GigE/USB3 Vision cameras, Aravis is required. OpenCV is used as a fallback for other cameras.
+- Python 3.11+ (3.13 recommended)
+- For GigE/USB3 Vision cameras (Baumer, etc.): [Aravis](https://github.com/AravisProject/aravis) via Homebrew
 
 ## Installation
 
-### 1. Install system dependencies
-
 ```bash
+# Install Python (macOS)
 brew install python@3.13
-```
 
-For GigE/USB3 Vision cameras (Baumer, etc.):
-
-```bash
+# For industrial cameras (optional)
 brew install aravis
-```
 
-### 2. Clone the repository
-
-```bash
+# Clone and set up
 git clone <repo-url>
 cd microscope
-```
-
-### 3. Create a virtual environment and install Python dependencies
-
-```bash
-python3.13 -m venv .venv
+python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
 ```
 
@@ -57,7 +67,7 @@ python3.13 -m venv .venv
 ./server.sh start
 ```
 
-Then open [http://localhost:8000](http://localhost:8000) in your browser.
+Open [http://localhost:8000](http://localhost:8000). Logs in `.server.log`.
 
 ```bash
 ./server.sh stop      # stop the server
@@ -65,71 +75,100 @@ Then open [http://localhost:8000](http://localhost:8000) in your browser.
 ./server.sh status    # check if running
 ```
 
-The server starts on port 8000. Logs are written to `.server.log`.
-
-**Camera selection order at startup:**
-
-1. `NullCamera` (blank frames) — if `NO_CAMERA=1` env var is set, or `config.json` has `"no_camera": true`
-2. `AravisCamera` — if Aravis is installed (GigE/USB3 Vision, Baumer cameras)
-3. `OpenCVCamera` — fallback using camera index 1
-4. `NullCamera` — final fallback with a startup warning
-
-> **Note:** Baumer cameras require Aravis. They will not work via OpenCV.
-
-### Without a camera (development / testing)
+### Without a camera
 
 ```bash
 NO_CAMERA=1 .venv/bin/python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000
 ```
 
-This runs the app with a stub camera that returns blank frames. All measurement and annotation tools work normally.
+Load images via drag-and-drop or the File menu. All tools work normally.
+
+### Camera priority
+
+1. `NullCamera` — if `NO_CAMERA=1` or `config.json` `no_camera: true`
+2. `AravisCamera` — GigE/USB3 Vision (Baumer, etc.)
+3. `OpenCVCamera` — fallback (camera index 1)
+4. `NullCamera` — final fallback with warning
 
 ## Configuration
 
-Runtime settings are stored in `config.json` at the project root and managed through the app's Settings dialog. You can also edit it directly:
-
-```json
-{
-  "camera_id": null,
-  "no_camera": false,
-  "app_name": "Microscope",
-  "theme": "macos-dark"
-}
-```
+Runtime settings in `config.json`:
 
 | Key | Description |
 |-----|-------------|
-| `camera_id` | Aravis device ID string, or `null` to use the first found camera |
-| `no_camera` | Set to `true` to always start without a camera |
-| `app_name` | Title shown in the top bar and browser tab |
-| `theme` | UI theme name (currently `macos-dark`) |
+| `camera_id` | Aravis device ID, or `null` for first found |
+| `no_camera` | `true` to always start without a camera |
+| `app_name` | Title in top bar and browser tab |
+| `theme` | UI theme (`macos-dark`) |
+| `tolerance_warn` | Global warning tolerance in mm (default 0.10) |
+| `tolerance_fail` | Global failure tolerance in mm (default 0.25) |
 
-## Running tests
-
-No camera hardware is required to run the test suite.
+## Tests
 
 ```bash
 .venv/bin/pytest tests/        # all tests
 .venv/bin/pytest tests/ -v     # verbose
 ```
 
-## Project structure
+No camera hardware required.
+
+## Project Structure
 
 ```
 backend/
-  cameras/       BaseCamera + AravisCamera, OpenCVCamera, NullCamera
-  vision/        Edge/circle/line detection, calibration math, DXF parser
-  api.py         REST endpoints (/stream, /freeze, /detect-*, /load-dxf, …)
-  main.py        App factory and camera selection logic
-  stream.py      Background-thread camera reader (macOS thread-safety)
-  frame_store.py Thread-safe frame store for freeze feature
-  config.py      Atomic JSON config load/save
+  cameras/           BaseCamera + AravisCamera, OpenCVCamera, NullCamera
+  vision/
+    detection.py     Edge/circle/line/arc detection with preprocessing
+    guided_inspection.py  DXF-guided corridor inspection + manual fitting
+    line_arc_matching.py  DXF↔detected feature matching, shared transforms
+    dxf_parser.py    DXF → JSON (LINE, CIRCLE, ARC, LWPOLYLINE with bulge)
+    calibration.py   Pixel↔mm math
+  api.py             REST endpoints
+  main.py            App factory and camera selection
+  stream.py          Background-thread camera reader
+  frame_store.py     Thread-safe frame store
+  config.py          Atomic JSON config
 frontend/
-  index.html     App entry point
-  app.js         All client-side logic (~2900 lines, no framework)
-  style.css      macOS-dark theme
-tests/           pytest suite
-server.sh        Start/stop/restart/status script
-requirements.txt Python dependencies
-config.json      Runtime configuration
+  main.js            Entry point, events, undo/redo, context menu, point-pick
+  state.js           Global state, undo stack, type classifications
+  render.js          Canvas rendering, viewport transform, all draw functions
+  viewport.js        Zoom/pan state and coordinate transforms
+  tools.js           Tool logic, hit-testing, snap, drag, DXF entity selection
+  dxf.js             DXF overlay, alignment, guided inspection handler
+  detect.js          Detection button handlers with busy indicators
+  annotations.js     Add/delete/elevate/merge/clear annotations
+  session.js         Save/load, CSV/PDF export, auto-save
+  sidebar.js         Sidebar, inspection table, camera controls
+  math.js            fitCircle, fitLine, fitCircleAlgebraic, geometry helpers
+  calibration.js     Calibration dialog
+  index.html         App shell
+  style.css          macOS-dark theme
+tests/               pytest suite (no camera required)
+docs/
+  roadmap.md         Product roadmap
+  superpowers/       Design specs and implementation plans
+snapshots/           Saved test images
 ```
+
+## Keyboard Shortcuts
+
+| Key | Action |
+|-----|--------|
+| `V` | Select tool |
+| `D` | Distance |
+| `A` | Angle |
+| `O` | Circle (3-point) |
+| `F` | Fit Arc |
+| `H` | Pan |
+| `U` | Elevate selected detections |
+| `0` | Fit zoom to window |
+| `1` | 1:1 pixel zoom |
+| `Escape` | Cancel / exit mode / deselect |
+| `Delete` | Delete selected |
+| `Ctrl+Z` | Undo |
+| `Ctrl+Y` | Redo |
+| `S` | Save session |
+
+## License
+
+Proprietary. All rights reserved.
