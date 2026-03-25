@@ -329,6 +329,10 @@ export function drawAnnotations() {
       ctx.moveTo(x1, y1);
       ctx.lineTo(x2, y2);
       ctx.stroke();
+      if (sel) {
+        drawHandle({ x: x1, y: y1 }, "#60a5fa");
+        drawHandle({ x: x2, y: y2 }, "#60a5fa");
+      }
       drawLabel(measurementLabel(ann), (x1 + x2) / 2 + 5, (y1 + y2) / 2 - 5);
       ctx.restore();
     }
@@ -343,6 +347,12 @@ export function drawAnnotations() {
       ctx.beginPath();
       ctx.arc(ann.cx * sx, ann.cy * sy, ann.r * sx, a1, a2);
       ctx.stroke();
+      if (sel) {
+        const startRad = ann.start_deg * Math.PI / 180;
+        const endRad = ann.end_deg * Math.PI / 180;
+        drawHandle({ x: ann.cx * sx + ann.r * sx * Math.cos(startRad), y: ann.cy * sy + ann.r * sx * Math.sin(startRad) }, "#60a5fa");
+        drawHandle({ x: ann.cx * sx + ann.r * sx * Math.cos(endRad), y: ann.cy * sy + ann.r * sx * Math.sin(endRad) }, "#60a5fa");
+      }
       const midAngle = (a1 + a2) / 2;
       const labelR = ann.r * sx + 10;
       drawLabel(measurementLabel(ann), ann.cx * sx + labelR * Math.cos(midAngle), ann.cy * sy + labelR * Math.sin(midAngle));
@@ -369,16 +379,21 @@ export function drawArcMeasure(ann, sel) {
   // from a1→a3 passes through p2. Otherwise we need CCW.
   const ccw = !(norm2 < norm3);
   ctx.save();
-  ctx.strokeStyle = sel ? "#e879f9" : "#bf5af2";  // lighter purple when selected
+  ctx.strokeStyle = sel ? "#60a5fa" : "#bf5af2";  // lighter blue when selected
   ctx.lineWidth = sel ? 2 : 1.5;
   ctx.beginPath();
   ctx.arc(ann.cx, ann.cy, ann.r, a1, a3, ccw);
   ctx.stroke();
   // Draw center marker
-  ctx.fillStyle = sel ? "#e879f9" : "#bf5af2";
+  ctx.fillStyle = sel ? "#60a5fa" : "#bf5af2";
   ctx.beginPath();
   ctx.arc(ann.cx, ann.cy, 3, 0, 2 * Math.PI);
   ctx.fill();
+  if (sel) {
+    drawHandle(ann.p1, "#60a5fa");
+    drawHandle(ann.p2, "#60a5fa");
+    drawHandle(ann.p3, "#60a5fa");
+  }
   ctx.restore();
   drawLabel(measurementLabel(ann), ann.cx + 5, ann.cy - ann.r - 5);
 }

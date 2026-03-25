@@ -533,6 +533,26 @@ export function hitTestAnnotation(ann, pt) {
     };
     return distPointToSegment(pt, { x: ann.px, y: ann.py }, edgePt) < 6;
   }
+  if (ann.type === "detected-line-merged") {
+    const sx = ann.frameWidth ? canvas.width / ann.frameWidth : 1;
+    const sy = ann.frameHeight ? canvas.height / ann.frameHeight : 1;
+    const x1 = ann.x1 * sx, y1 = ann.y1 * sy, x2 = ann.x2 * sx, y2 = ann.y2 * sy;
+    return distPointToSegment(pt, { x: x1, y: y1 }, { x: x2, y: y2 }) < 8;
+  }
+  if (ann.type === "detected-arc-partial") {
+    const sx = ann.frameWidth ? canvas.width / ann.frameWidth : 1;
+    const sy = ann.frameHeight ? canvas.height / ann.frameHeight : 1;
+    const cx = ann.cx * sx, cy = ann.cy * sy, r = ann.r * sx;
+    const dist = Math.hypot(pt.x - cx, pt.y - cy);
+    if (Math.abs(dist - r) > 8) return false;
+    let angle = Math.atan2(pt.y - cy, pt.x - cx) * 180 / Math.PI;
+    let start = ann.start_deg, end = ann.end_deg;
+    angle = ((angle % 360) + 360) % 360;
+    start = ((start % 360) + 360) % 360;
+    end = ((end % 360) + 360) % 360;
+    if (start <= end) return angle >= start && angle <= end;
+    return angle >= start || angle <= end;
+  }
   return false;
 }
 
