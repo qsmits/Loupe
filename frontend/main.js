@@ -1008,6 +1008,10 @@ document.getElementById("file-input").addEventListener("change", async e => {
   e.target.value = "";
 });
 
+// ── Undo/redo buttons ─────────────────────────────────────────────────────────
+document.getElementById("btn-undo")?.addEventListener("click", undo);
+document.getElementById("btn-redo")?.addEventListener("click", redo);
+
 // ── Drag-and-drop image load (no-camera mode) ─────────────────────────────────
 const viewerEl = document.getElementById("viewer");
 const dropOverlayEl = document.getElementById("drop-overlay");

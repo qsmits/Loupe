@@ -111,6 +111,15 @@ export function measurementLabel(ann) {
       ? `r ${(mm * 1000).toFixed(2)} µm  ${spanDeg.toFixed(0)}°`
       : `r ${mm.toFixed(3)} mm  ${spanDeg.toFixed(0)}°`;
   }
+  if (ann.type === "arc-measure") {
+    const rPx = ann.r;
+    const spanDeg = ann.span_deg ?? 0;
+    if (!cal) return `r ${rPx.toFixed(1)} px  ${spanDeg.toFixed(0)}°`;
+    const mm = rPx / cal.pixelsPerMm;
+    return cal.displayUnit === "µm"
+      ? `r ${(mm * 1000).toFixed(2)} µm  ${spanDeg.toFixed(0)}°`
+      : `r ${mm.toFixed(3)} mm  ${spanDeg.toFixed(0)}°`;
+  }
   if (ann.type === "calibration") {
     const prefix = ann.x1 !== undefined ? "⟷" : "⌀";
     return `${prefix} ${ann.knownValue} ${ann.unit}`;
