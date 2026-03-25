@@ -2,6 +2,9 @@ import { state, _deviationHitBoxes } from './state.js';
 import { fitCircleAlgebraic, polygonArea } from './math.js';
 import { viewport, imageWidth, imageHeight, setImageSize } from './viewport.js';
 
+/** Pixel width compensated for zoom — keeps screen size constant */
+function pw(px) { return px / viewport.zoom; }
+
 // ── DOM refs ──────────────────────────────────────────────────────────────────
 export const img       = document.getElementById("stream-img");
 export const canvas    = document.getElementById("overlay-canvas");
@@ -253,9 +256,9 @@ export function redraw() {
   if (state.snapTarget && state.tool !== "select") {
     ctx.save();
     ctx.beginPath();
-    ctx.arc(state.snapTarget.x, state.snapTarget.y, 6, 0, Math.PI * 2);
+    ctx.arc(state.snapTarget.x, state.snapTarget.y, pw(6), 0, Math.PI * 2);
     ctx.strokeStyle = "#60a5fa";
-    ctx.lineWidth = 1.5;
+    ctx.lineWidth = pw(1.5);
     ctx.stroke();
     ctx.restore();
   }
@@ -267,8 +270,8 @@ export function redraw() {
       ctx.beginPath();
       ctx.arc(fit.cx, fit.cy, fit.r, 0, Math.PI * 2);
       ctx.strokeStyle = "rgba(251,146,60,0.6)";
-      ctx.lineWidth = 1.5;
-      ctx.setLineDash([5, 4]);
+      ctx.lineWidth = pw(1.5);
+      ctx.setLineDash([pw(5), pw(4)]);
       ctx.stroke();
       ctx.setLineDash([]);
       ctx.restore();
@@ -282,9 +285,9 @@ export function redraw() {
         const p = state.dxfAlignHover.canvas;
         ctx.save();
         ctx.strokeStyle = "#facc15";
-        ctx.lineWidth = 1.5;
+        ctx.lineWidth = pw(1.5);
         ctx.beginPath();
-        ctx.arc(p.x, p.y, 6, 0, Math.PI * 2);
+        ctx.arc(p.x, p.y, pw(6), 0, Math.PI * 2);
         ctx.stroke();
         ctx.restore();
       }
@@ -293,12 +296,12 @@ export function redraw() {
         ctx.save();
         ctx.fillStyle = "#facc15";
         ctx.beginPath();
-        ctx.arc(p.x, p.y, 4, 0, Math.PI * 2);
+        ctx.arc(p.x, p.y, pw(4), 0, Math.PI * 2);
         ctx.fill();
         if (state.mousePos) {
           ctx.strokeStyle = "rgba(250,204,21,0.6)";
-          ctx.lineWidth = 1;
-          ctx.setLineDash([4, 4]);
+          ctx.lineWidth = pw(1);
+          ctx.setLineDash([pw(4), pw(4)]);
           ctx.beginPath();
           ctx.moveTo(p.x, p.y);
           ctx.lineTo(state.mousePos.x, state.mousePos.y);
@@ -342,7 +345,7 @@ export function drawAnnotations() {
       const sy = ann.frameHeight ? imageHeight / ann.frameHeight : 1;
       const x1 = ann.x1 * sx, y1 = ann.y1 * sy, x2 = ann.x2 * sx, y2 = ann.y2 * sy;
       ctx.strokeStyle = sel ? "#60a5fa" : "#00e5ff";
-      ctx.lineWidth = sel ? 2 : 1.5;
+      ctx.lineWidth = sel ? pw(2) : pw(1.5);
       ctx.beginPath();
       ctx.moveTo(x1, y1);
       ctx.lineTo(x2, y2);
@@ -359,7 +362,7 @@ export function drawAnnotations() {
       const sx = ann.frameWidth ? imageWidth / ann.frameWidth : 1;
       const sy = ann.frameHeight ? imageHeight / ann.frameHeight : 1;
       ctx.strokeStyle = sel ? "#60a5fa" : "#ffd60a";
-      ctx.lineWidth = sel ? 2 : 1.5;
+      ctx.lineWidth = sel ? pw(2) : pw(1.5);
       const a1 = ann.start_deg * Math.PI / 180;
       const a2 = ann.end_deg   * Math.PI / 180;
       ctx.beginPath();
@@ -395,9 +398,9 @@ export function drawAnnotations() {
       if (fx != null) {
         ctx.save();
         ctx.strokeStyle = "rgba(96, 165, 250, 0.5)";
-        ctx.lineWidth = 4;
+        ctx.lineWidth = pw(4);
         ctx.beginPath();
-        ctx.arc(fx, fy, 20, 0, Math.PI * 2);
+        ctx.arc(fx, fy, pw(20), 0, Math.PI * 2);
         ctx.stroke();
         ctx.restore();
       }
@@ -411,8 +414,8 @@ export function drawAnnotations() {
     const r = state._selectRect;
     ctx.save();
     ctx.strokeStyle = "#ffffff";
-    ctx.lineWidth = 1.5;
-    ctx.setLineDash([6, 3]);
+    ctx.lineWidth = pw(1.5);
+    ctx.setLineDash([pw(6), pw(3)]);
     ctx.fillStyle = "rgba(96, 165, 250, 0.15)";
     ctx.beginPath();
     ctx.rect(r.x1, r.y1, r.x2 - r.x1, r.y2 - r.y1);
@@ -437,7 +440,7 @@ export function drawArcMeasure(ann, sel) {
   const ccw = !(norm2 < norm3);
   ctx.save();
   ctx.strokeStyle = sel ? "#60a5fa" : "#bf5af2";  // lighter blue when selected
-  ctx.lineWidth = sel ? 2 : 1.5;
+  ctx.lineWidth = sel ? pw(2) : pw(1.5);
   ctx.beginPath();
   ctx.arc(ann.cx, ann.cy, ann.r, a1, a3, ccw);
   ctx.stroke();
@@ -458,7 +461,7 @@ export function drawArcMeasure(ann, sel) {
 export function drawLine(a, b, color, width) {
   ctx.beginPath();
   ctx.strokeStyle = color;
-  ctx.lineWidth = width;
+  ctx.lineWidth = pw(width);
   ctx.moveTo(a.x, a.y);
   ctx.lineTo(b.x, b.y);
   ctx.stroke();
@@ -466,19 +469,20 @@ export function drawLine(a, b, color, width) {
 
 export function drawHandle(pt, color) {
   ctx.beginPath();
-  ctx.arc(pt.x, pt.y, 5, 0, Math.PI * 2);
+  ctx.arc(pt.x, pt.y, pw(5), 0, Math.PI * 2);
   ctx.fillStyle = color;
   ctx.fill();
   ctx.strokeStyle = "#fff";
-  ctx.lineWidth = 1;
+  ctx.lineWidth = pw(1);
   ctx.stroke();
 }
 
 export function drawLabel(text, x, y) {
-  ctx.font = "bold 12px ui-monospace, monospace";
+  const fontSize = pw(12);
+  ctx.font = `bold ${fontSize}px ui-monospace, monospace`;
   ctx.fillStyle = "rgba(0,0,0,0.65)";
   const m = ctx.measureText(text);
-  ctx.fillRect(x - 2, y - 13, m.width + 4, 16);
+  ctx.fillRect(x - pw(2), y - pw(13), m.width + pw(4), pw(16));
   ctx.fillStyle = "#fff";
   ctx.fillText(text, x, y);
 }
@@ -501,7 +505,7 @@ export function drawCircle(ann, sel) {
   ctx.beginPath();
   ctx.arc(ann.cx, ann.cy, ann.r, 0, Math.PI * 2);
   ctx.strokeStyle = sel ? "#60a5fa" : "#34d399";
-  ctx.lineWidth = sel ? 2 : 1.5;
+  ctx.lineWidth = sel ? pw(2) : pw(1.5);
   ctx.stroke();
   if (sel) {
     drawHandle({ x: ann.cx, y: ann.cy }, "#60a5fa");
@@ -528,7 +532,7 @@ export function drawDxfOverlay(ann) {
 
   ctx.save();
   ctx.strokeStyle = "#00d4ff";
-  ctx.setLineDash([6, 3]);
+  ctx.setLineDash([6 / (scale * viewport.zoom), 3 / (scale * viewport.zoom)]);
 
   // Build transform — ctx calls are applied to coordinates in REVERSE call order.
   // Desired coordinate pipeline: rotate(annAngle in DXF Y-up) → flip → scale+Y-invert → rotate(originAngle) → translate
@@ -539,7 +543,7 @@ export function drawDxfOverlay(ann) {
   if (flipH) ctx.scale(-1, 1);
   if (flipV) ctx.scale(1, -1);
   if (annAngle) ctx.rotate(-annAngle * Math.PI / 180);  // rotate in DXF Y-up space
-  ctx.lineWidth = 1 / scale;  // compensate so strokes stay 1px on screen
+  ctx.lineWidth = 1 / (scale * viewport.zoom);  // compensate for DXF scale and viewport zoom
 
   for (const en of entities) {
     ctx.beginPath();
@@ -611,7 +615,7 @@ export function drawDetectedCircle(ann, sel) {
   ctx.beginPath();
   ctx.arc(cx, cy, r, 0, Math.PI * 2);
   ctx.strokeStyle = sel ? "#60a5fa" : "#f472b6";
-  ctx.lineWidth = sel ? 2 : 1.5;
+  ctx.lineWidth = sel ? pw(2) : pw(1.5);
   ctx.stroke();
   if (sel) drawHandle({ x: cx, y: cy }, "#60a5fa");
   drawLabel(measurementLabel(ann), cx + 5, cy - r - 5);
@@ -624,7 +628,7 @@ export function drawDetectedLine(ann, sel) {
   const x2 = ann.x2 * sx, y2 = ann.y2 * sy;
   ctx.beginPath();
   ctx.strokeStyle = sel ? "#60a5fa" : "#fb923c";
-  ctx.lineWidth = sel ? 2 : 1.5;
+  ctx.lineWidth = sel ? pw(2) : pw(1.5);
   ctx.moveTo(x1, y1);
   ctx.lineTo(x2, y2);
   ctx.stroke();
@@ -672,7 +676,7 @@ export function drawPerpDist(ann, sel) {
     ctx.lineTo(ann.a.x + ux * s + vx * s, ann.a.y + uy * s + vy * s);
     ctx.lineTo(ann.a.x + vx * s, ann.a.y + vy * s);
     ctx.strokeStyle = sel ? "#60a5fa" : "#a78bfa";
-    ctx.lineWidth = 1;
+    ctx.lineWidth = pw(1);
     ctx.stroke();
   }
 }
@@ -696,7 +700,7 @@ export function drawParaDist(ann, sel) {
 
 export function drawParallelism(ann, sel) {
   ctx.save();
-  ctx.setLineDash([4, 4]);
+  ctx.setLineDash([pw(4), pw(4)]);
   drawLine(ann.a, ann.b, sel ? "#60a5fa" : "#facc15", sel ? 2 : 1.5);
   ctx.setLineDash([]);
   ctx.restore();
@@ -710,10 +714,10 @@ export function drawPtCircleDist(ann, sel) {
   if (!circle) {
     ctx.save();
     ctx.beginPath();
-    ctx.arc(ann.px, ann.py, 6, 0, Math.PI * 2);
+    ctx.arc(ann.px, ann.py, pw(6), 0, Math.PI * 2);
     ctx.strokeStyle = "#ef4444";
-    ctx.lineWidth = 1.5;
-    ctx.setLineDash([3, 3]);
+    ctx.lineWidth = pw(1.5);
+    ctx.setLineDash([pw(3), pw(3)]);
     ctx.stroke();
     ctx.restore();
     return;
@@ -770,7 +774,7 @@ export function drawIntersect(ann, sel) {
   const ARM = 8;
   ctx.beginPath();
   ctx.strokeStyle = color;
-  ctx.lineWidth = sel ? 2 : 1.5;
+  ctx.lineWidth = sel ? pw(2) : pw(1.5);
   ctx.moveTo(ix - ARM, iy); ctx.lineTo(ix + ARM, iy);
   ctx.moveTo(ix, iy - ARM); ctx.lineTo(ix, iy + ARM);
   ctx.stroke();
@@ -811,7 +815,7 @@ export function drawArea(ann, sel) {
   ctx.fillStyle = sel ? "rgba(96,165,250,0.12)" : "rgba(251,146,60,0.12)";
   ctx.fill();
   ctx.strokeStyle = sel ? "#60a5fa" : "rgba(251,146,60,0.7)";
-  ctx.lineWidth = sel ? 2 : 1.5;
+  ctx.lineWidth = sel ? pw(2) : pw(1.5);
   ctx.stroke();
   if (sel) ann.points.forEach(p => drawHandle(p, "#60a5fa"));
   const cx = ann.points.reduce((s, p) => s + p.x, 0) / ann.points.length;
@@ -828,7 +832,7 @@ export function drawAreaPreview(pts, cursor) {
   ctx.fillStyle = "rgba(251,146,60,0.08)";
   ctx.fill();
   ctx.strokeStyle = "rgba(251,146,60,0.4)";
-  ctx.lineWidth = 1;
+  ctx.lineWidth = pw(1);
   ctx.stroke();
 }
 
@@ -871,14 +875,14 @@ export function drawOrigin(ann, sel) {
 
   // Small circle at origin
   ctx.beginPath();
-  ctx.arc(ann.x, ann.y, 3, 0, Math.PI * 2);
+  ctx.arc(ann.x, ann.y, pw(3), 0, Math.PI * 2);
   ctx.strokeStyle = color;
-  ctx.lineWidth = 1;
+  ctx.lineWidth = pw(1);
   ctx.stroke();
 
   // Axis labels — wrapped in save/restore to prevent ctx.font and ctx.fillStyle leaking
   ctx.save();
-  ctx.font = "bold 10px ui-monospace, monospace";
+  ctx.font = `bold ${pw(10)}px ui-monospace, monospace`;
   ctx.fillStyle = color;
   ctx.fillText("X", xTip.x + xcos * 8, xTip.y + xsin * 8);
   ctx.fillText("Y", yTip.x + ycos * 8, yTip.y + ysin * 8);
@@ -990,43 +994,43 @@ export function drawDeviations(ann) {
       // Unmatched: muted dashed circle + crosshair at nominal
       ctx.save();
       ctx.strokeStyle = "#636366";
-      ctx.setLineDash([4, 3]);
-      ctx.lineWidth = 1;
+      ctx.setLineDash([pw(4), pw(3)]);
+      ctx.lineWidth = pw(1);
       ctx.beginPath();
       ctx.arc(m.nominal.x, m.nominal.y, m.r_px, 0, Math.PI * 2);
       ctx.stroke();
       ctx.setLineDash([]);
       ctx.beginPath();
-      ctx.moveTo(m.nominal.x - 5, m.nominal.y); ctx.lineTo(m.nominal.x + 5, m.nominal.y);
-      ctx.moveTo(m.nominal.x, m.nominal.y - 5); ctx.lineTo(m.nominal.x, m.nominal.y + 5);
+      ctx.moveTo(m.nominal.x - pw(5), m.nominal.y); ctx.lineTo(m.nominal.x + pw(5), m.nominal.y);
+      ctx.moveTo(m.nominal.x, m.nominal.y - pw(5)); ctx.lineTo(m.nominal.x, m.nominal.y + pw(5));
       ctx.stroke();
       ctx.fillStyle = "#636366";
-      ctx.font = "9px ui-monospace, monospace";
-      ctx.fillText("not detected", m.nominal.x + m.r_px + 4, m.nominal.y);
+      ctx.font = `${pw(9)}px ui-monospace, monospace`;
+      ctx.fillText("not detected", m.nominal.x + m.r_px + pw(4), m.nominal.y);
       ctx.restore();
     } else {
       const { nominal, r_px, detected: det, delta_xy_mm, delta_r_mm, color } = m;
       ctx.save();
       // Nominal circle (dashed blue)
       ctx.strokeStyle = "#0a84ff";
-      ctx.setLineDash([4, 3]);
-      ctx.lineWidth = 1;
+      ctx.setLineDash([pw(4), pw(3)]);
+      ctx.lineWidth = pw(1);
       ctx.globalAlpha = 0.55;
       ctx.beginPath(); ctx.arc(nominal.x, nominal.y, r_px, 0, Math.PI * 2); ctx.stroke();
       ctx.beginPath();
-      ctx.moveTo(nominal.x - 5, nominal.y); ctx.lineTo(nominal.x + 5, nominal.y);
-      ctx.moveTo(nominal.x, nominal.y - 5); ctx.lineTo(nominal.x, nominal.y + 5);
+      ctx.moveTo(nominal.x - pw(5), nominal.y); ctx.lineTo(nominal.x + pw(5), nominal.y);
+      ctx.moveTo(nominal.x, nominal.y - pw(5)); ctx.lineTo(nominal.x, nominal.y + pw(5));
       ctx.stroke();
       ctx.setLineDash([]);
       ctx.globalAlpha = 1;
       // Detected circle (solid, colour-coded)
       ctx.strokeStyle = color;
-      ctx.lineWidth = 1.5;
+      ctx.lineWidth = pw(1.5);
       ctx.beginPath(); ctx.arc(det.cx, det.cy, det.r, 0, Math.PI * 2); ctx.stroke();
       ctx.fillStyle = color;
-      ctx.beginPath(); ctx.arc(det.cx, det.cy, 2.5, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(det.cx, det.cy, pw(2.5), 0, Math.PI * 2); ctx.fill();
       // Labels
-      ctx.font = "10px ui-monospace, monospace";
+      ctx.font = `${pw(10)}px ui-monospace, monospace`;
       ctx.fillStyle = color;
       const labelX = det.cx + det.r + 4;
       const labelText = `\u0394 ${delta_xy_mm.toFixed(3)} mm`;
@@ -1056,27 +1060,27 @@ export function drawDeviations(ann) {
 
     ctx.save();
     ctx.fillStyle = color;
-    ctx.font = "10px ui-monospace, monospace";
+    ctx.font = `${pw(10)}px ui-monospace, monospace`;
 
     if (!r.matched) {
       ctx.fillStyle = "#636366";
-      ctx.fillText("not detected", nominal.x + 4, nominal.y);
+      ctx.fillText("not detected", nominal.x + pw(4), nominal.y);
     } else {
       const devText = `⊥ ${r.perp_dev_mm?.toFixed(3)} mm`;
       const angText = r.angle_error_deg != null ? `  ∠ ${r.angle_error_deg.toFixed(1)}°` : "";
       const text = `${devText}${angText}`;
-      ctx.fillText(text, nominal.x + 4, nominal.y - 4);
+      ctx.fillText(text, nominal.x + pw(4), nominal.y - pw(4));
       const textW = ctx.measureText(text).width;
-      _deviationHitBoxes.push({ handle: r.handle, x: nominal.x + 4, y: nominal.y - 14, w: textW, h: 14 });
+      _deviationHitBoxes.push({ handle: r.handle, x: nominal.x + pw(4), y: nominal.y - pw(14), w: textW, h: pw(14) });
 
       // Small crosshair at nominal midpoint
       ctx.strokeStyle = "#0a84ff";
-      ctx.setLineDash([3, 2]);
-      ctx.lineWidth = 1;
+      ctx.setLineDash([pw(3), pw(2)]);
+      ctx.lineWidth = pw(1);
       ctx.globalAlpha = 0.6;
       ctx.beginPath();
-      ctx.moveTo(nominal.x - 5, nominal.y); ctx.lineTo(nominal.x + 5, nominal.y);
-      ctx.moveTo(nominal.x, nominal.y - 5); ctx.lineTo(nominal.x, nominal.y + 5);
+      ctx.moveTo(nominal.x - pw(5), nominal.y); ctx.lineTo(nominal.x + pw(5), nominal.y);
+      ctx.moveTo(nominal.x, nominal.y - pw(5)); ctx.lineTo(nominal.x, nominal.y + pw(5));
       ctx.stroke();
       ctx.setLineDash([]);
       ctx.globalAlpha = 1;
@@ -1099,20 +1103,20 @@ export function drawDeviations(ann) {
     ctx.save();
     if (!r.matched) {
       ctx.strokeStyle = "#636366";
-      ctx.setLineDash([4, 3]);
-      ctx.lineWidth = 1;
+      ctx.setLineDash([pw(4), pw(3)]);
+      ctx.lineWidth = pw(1);
       ctx.beginPath();
       ctx.arc(nominal.x, nominal.y, r_px, 0, Math.PI * 2);
       ctx.stroke();
       ctx.setLineDash([]);
       ctx.fillStyle = "#636366";
-      ctx.font = "10px ui-monospace, monospace";
-      ctx.fillText("not detected", nominal.x + r_px + 4, nominal.y);
+      ctx.font = `${pw(10)}px ui-monospace, monospace`;
+      ctx.fillText("not detected", nominal.x + r_px + pw(4), nominal.y);
     } else {
       // Nominal arc dashed
       ctx.strokeStyle = "#0a84ff";
-      ctx.setLineDash([4, 3]);
-      ctx.lineWidth = 1;
+      ctx.setLineDash([pw(4), pw(3)]);
+      ctx.lineWidth = pw(1);
       ctx.globalAlpha = 0.55;
       ctx.beginPath();
       ctx.arc(nominal.x, nominal.y, r_px, 0, Math.PI * 2);
@@ -1121,12 +1125,12 @@ export function drawDeviations(ann) {
       ctx.globalAlpha = 1;
 
       ctx.fillStyle = color;
-      ctx.font = "10px ui-monospace, monospace";
-      const labelX = nominal.x + r_px + 4;
+      ctx.font = `${pw(10)}px ui-monospace, monospace`;
+      const labelX = nominal.x + r_px + pw(4);
       const devText = `Δ ${r.center_dev_mm?.toFixed(3)} mm  Δr ${r.radius_dev_mm?.toFixed(3)} mm`;
       ctx.fillText(devText, labelX, nominal.y);
       const textW = ctx.measureText(devText).width;
-      _deviationHitBoxes.push({ handle: r.handle, x: labelX, y: nominal.y - 10, w: textW, h: 14 });
+      _deviationHitBoxes.push({ handle: r.handle, x: labelX, y: nominal.y - pw(10), w: textW, h: pw(14) });
     }
     ctx.restore();
   }
