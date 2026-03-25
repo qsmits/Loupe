@@ -13,7 +13,7 @@ import { exitDxfAlignMode, initDxfHandlers,
          openFeatureTolPopover } from './dxf.js';
 import { doFreeze, initDetectHandlers } from './detect.js';
 import { saveSession, loadSession, exportAnnotatedImage, exportCsv, autoSave, tryAutoRestore } from './session.js';
-import { imageWidth, imageHeight } from './viewport.js';
+import { viewport, screenToImage, clampPan, fitToWindow, zoomOneToOne, imageWidth, imageHeight } from './viewport.js';
 
 // ── Context menu ──────────────────────────────────────────────────────────
 const ctxMenu = document.getElementById("context-menu");
@@ -441,6 +441,34 @@ canvas.addEventListener("contextmenu", e => {
     { label: "Clear all", action: clearAll },
   ]);
 });
+
+// ── Scroll-wheel zoom ─────────────────────────────────────────────────────
+canvas.addEventListener("wheel", e => {
+  e.preventDefault();
+
+  if (!state.frozen) {
+    showStatus("Freeze frame to enable zoom");
+    return;
+  }
+
+  const rect = canvas.getBoundingClientRect();
+  const screenX = (e.clientX - rect.left) * (canvas.width / rect.width);
+  const screenY = (e.clientY - rect.top) * (canvas.height / rect.height);
+
+  // Image point under cursor before zoom
+  const imgPt = screenToImage(screenX, screenY);
+
+  // Apply zoom factor
+  const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
+  viewport.zoom = Math.max(0.5, Math.min(10, viewport.zoom * factor));
+
+  // Adjust pan so image point stays under cursor
+  viewport.panX = imgPt.x - screenX / viewport.zoom;
+  viewport.panY = imgPt.y - screenY / viewport.zoom;
+
+  clampPan(rect.width, rect.height);
+  resizeCanvas();
+}, { passive: false });
 
 // ── Keyboard ─────────────────────────────────────────────────────────────────
 document.addEventListener("keydown", e => {
