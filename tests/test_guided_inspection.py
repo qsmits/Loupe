@@ -247,7 +247,7 @@ class TestFitManualPointsLine:
         }
 
         result = fit_manual_points(
-            entity, [[100, 100], [100, 200]],
+            entity, [[100, 100]],  # only 1 point — need at least 2
             pixels_per_mm=1.0,
         )
 
@@ -296,7 +296,7 @@ class TestFitManualPointsCircle:
         }
 
         result = fit_manual_points(
-            entity, [[100, 100], [110, 110], [120, 120]],
+            entity, [[100, 100], [110, 110]],  # only 2 points — need at least 3 for arc
             pixels_per_mm=1.0,
         )
 

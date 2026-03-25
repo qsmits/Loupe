@@ -466,8 +466,8 @@ def fit_manual_points(
     pts = np.array(points, dtype=np.float64)
 
     if etype in ("line", "polyline_line"):
-        if len(pts) < _MIN_POINTS_LINE:
-            return _unmatched(entity, f"need at least {_MIN_POINTS_LINE} points, got {len(pts)}")
+        if len(pts) < 2:
+            return _unmatched(entity, f"need at least 2 points, got {len(pts)}")
 
         # Project nominal endpoints
         x1_px, y1_px = dxf_to_image_px(entity["x1"], entity["y1"], pixels_per_mm,
@@ -521,8 +521,8 @@ def fit_manual_points(
         }
 
     elif etype in ("arc", "polyline_arc", "circle"):
-        if len(pts) < _MIN_POINTS_ARC:
-            return _unmatched(entity, f"need at least {_MIN_POINTS_ARC} points, got {len(pts)}")
+        if len(pts) < 3:
+            return _unmatched(entity, f"need at least 3 points, got {len(pts)}")
 
         cx_px, cy_px = dxf_to_image_px(entity["cx"], entity["cy"], pixels_per_mm,
                                          tx, ty, angle_rad, flip_h, flip_v)

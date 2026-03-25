@@ -401,8 +401,9 @@ async function _finalizePickInspection() {
           tolerance_fail: state.tolerances.fail,
         }),
       });
-      if (!resp.ok) continue;
+      if (!resp.ok) { console.warn("fit-feature failed:", resp.status); continue; }
       const result = await resp.json();
+      console.log("fit-feature result:", JSON.stringify(result).slice(0, 200));
       result.source = "manual";
 
       // Replace or add to guided results
