@@ -229,6 +229,20 @@ body.no-camera #stream-img {
   pointer-events: none;
 }
 
+#zoom-badge {
+  position: absolute;
+  bottom: 8px;
+  right: 8px;
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  font-size: 11px;
+  font-family: ui-monospace, monospace;
+  padding: 2px 6px;
+  border-radius: 4px;
+  pointer-events: none;
+  z-index: 10;
+}
+
 /* ─── Drop overlay ──────────────────────────────────────────── */
 #drop-overlay {
   display: none;

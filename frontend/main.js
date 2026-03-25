@@ -539,6 +539,18 @@ document.addEventListener("keydown", e => {
     elevateSelected();
     return;
   }
+  if (e.key === "0" && state.frozen) {
+    const rect = canvas.getBoundingClientRect();
+    fitToWindow(rect.width, rect.height);
+    resizeCanvas();
+    return;
+  }
+  if (e.key === "1" && state.frozen) {
+    const rect = canvas.getBoundingClientRect();
+    zoomOneToOne(rect.width, rect.height);
+    resizeCanvas();
+    return;
+  }
   const toolKeys = { v: "select", c: "calibrate", d: "distance", a: "angle",
                      o: "circle", f: "arc-fit", m: "center-dist", e: "detect",
                      p: "perp-dist", l: "para-dist", r: "area",
@@ -636,6 +648,9 @@ document.getElementById("btn-freeze").addEventListener("click", async () => {
     img.style.opacity = "1";
     state.frozen = false;
     state.frozenBackground = null;
+    viewport.zoom = 1;
+    viewport.panX = 0;
+    viewport.panY = 0;
     updateFreezeUI();
     redraw();
   } else {

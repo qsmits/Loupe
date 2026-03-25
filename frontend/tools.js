@@ -3,7 +3,7 @@ import { redraw, canvas, showStatus, getLineEndpoints, lineAngleDeg, dxfToCanvas
 import { addAnnotation, applyCalibration } from './annotations.js';
 import { fitCircle, parseDistanceInput, distPointToSegment } from './math.js';
 import { renderSidebar } from './sidebar.js';
-import { screenToImage, imageWidth, imageHeight } from './viewport.js';
+import { viewport, screenToImage, imageWidth, imageHeight } from './viewport.js';
 
 export function setTool(name) {
   state.tool = name;
@@ -34,7 +34,7 @@ export function findSnapLine(pt) {
     if (ann.type === "parallelism") continue;
     const ep = getLineEndpoints(ann);
     if (!ep) continue;
-    if (distPointToSegment(pt, ep.a, ep.b) < 10) return ann;
+    if (distPointToSegment(pt, ep.a, ep.b) < 10 / viewport.zoom) return ann;
   }
   return null;
 }
@@ -63,7 +63,7 @@ export function snapPoint(rawPt, bypass = false) {
     }
   });
   for (const t of targets) {
-    if (Math.hypot(t.x - rawPt.x, t.y - rawPt.y) <= SNAP_RADIUS) {
+    if (Math.hypot(t.x - rawPt.x, t.y - rawPt.y) <= SNAP_RADIUS / viewport.zoom) {
       return { pt: { x: t.x, y: t.y }, snapped: true };
     }
   }
@@ -401,7 +401,7 @@ export function handleSelectDown(pt, e) {
 }
 
 export function hitTestHandle(ann, pt) {
-  const RADIUS = 8;
+  const RADIUS = 8 / viewport.zoom;
   const handles = getHandles(ann);
   for (const [key, hp] of Object.entries(handles)) {
     if (Math.hypot(pt.x - hp.x, pt.y - hp.y) < RADIUS) return key;
@@ -443,32 +443,33 @@ export function getHandles(ann) {
 }
 
 export function hitTestAnnotation(ann, pt) {
+  const z = viewport.zoom;
   if (ann.type === "distance" || ann.type === "center-dist" ||
       ann.type === "perp-dist" || ann.type === "para-dist" ||
       ann.type === "parallelism") {
-    return distPointToSegment(pt, ann.a, ann.b) < 8;
+    return distPointToSegment(pt, ann.a, ann.b) < 8 / z;
   }
   if (ann.type === "angle") {
-    return distPointToSegment(pt, ann.p1, ann.vertex) < 8 ||
-           distPointToSegment(pt, ann.vertex, ann.p3) < 8;
+    return distPointToSegment(pt, ann.p1, ann.vertex) < 8 / z ||
+           distPointToSegment(pt, ann.vertex, ann.p3) < 8 / z;
   }
   if (ann.type === "circle") {
     const d = Math.hypot(pt.x - ann.cx, pt.y - ann.cy);
-    return Math.abs(d - ann.r) < 10 || d < 10;
+    return Math.abs(d - ann.r) < 10 / z || d < 10 / z;
   }
   if (ann.type === "calibration") {
     if (ann.x1 !== undefined) {
-      return distPointToSegment(pt, { x: ann.x1, y: ann.y1 }, { x: ann.x2, y: ann.y2 }) < 8;
+      return distPointToSegment(pt, { x: ann.x1, y: ann.y1 }, { x: ann.x2, y: ann.y2 }) < 8 / z;
     } else {
       // Circle calibration: horizontal diameter line
-      return distPointToSegment(pt, { x: ann.cx - ann.r, y: ann.cy }, { x: ann.cx + ann.r, y: ann.cy }) < 8;
+      return distPointToSegment(pt, { x: ann.cx - ann.r, y: ann.cy }, { x: ann.cx + ann.r, y: ann.cy }) < 8 / z;
     }
   }
   if (ann.type === "area") {
     // Check proximity to any edge
     const n = ann.points.length;
     for (let i = 0; i < n; i++) {
-      if (distPointToSegment(pt, ann.points[i], ann.points[(i + 1) % n]) < 8) return true;
+      if (distPointToSegment(pt, ann.points[i], ann.points[(i + 1) % n]) < 8 / z) return true;
     }
     // Ray-casting point-in-polygon test
     let inside = false;
@@ -488,9 +489,9 @@ export function hitTestAnnotation(ann, pt) {
     const xTip = { x: ann.x + Math.cos(angle) * axisLen, y: ann.y + Math.sin(angle) * axisLen };
     const yTip = { x: ann.x + Math.sin(angle) * axisLen, y: ann.y - Math.cos(angle) * axisLen };
     const orig = { x: ann.x, y: ann.y };
-    return Math.hypot(pt.x - orig.x, pt.y - orig.y) < 10
-      || distPointToSegment(pt, orig, xTip) < 6
-      || distPointToSegment(pt, orig, yTip) < 6;
+    return Math.hypot(pt.x - orig.x, pt.y - orig.y) < 10 / z
+      || distPointToSegment(pt, orig, xTip) < 6 / z
+      || distPointToSegment(pt, orig, yTip) < 6 / z;
   }
   if (ann.type === "slot-dist") {
     const annA = state.annotations.find(a => a.id === ann.lineAId);
@@ -507,7 +508,7 @@ export function hitTestAnnotation(ann, pt) {
     if (lenSqB < 1e-10) return false;
     const t = ((midA.x - epB.a.x) * dx_b + (midA.y - epB.a.y) * dy_b) / lenSqB;
     const projA = { x: epB.a.x + t * dx_b, y: epB.a.y + t * dy_b };
-    return distPointToSegment(pt, midA, projA) < 6;
+    return distPointToSegment(pt, midA, projA) < 6 / z;
   }
   if (ann.type === "intersect") {
     const annA = state.annotations.find(a => a.id === ann.lineAId);
@@ -528,10 +529,10 @@ export function hitTestAnnotation(ann, pt) {
     const iy = epA.a.y + t * dy_a;
     const margin = Math.max(canvas.width, canvas.height);
     if (ix < -margin || ix > canvas.width + margin || iy < -margin || iy > canvas.height + margin) return false;
-    return Math.hypot(pt.x - ix, pt.y - iy) < 8;
+    return Math.hypot(pt.x - ix, pt.y - iy) < 8 / z;
   }
   if (ann.type === "pt-circle-dist") {
-    if (Math.hypot(pt.x - ann.px, pt.y - ann.py) < 8) return true;
+    if (Math.hypot(pt.x - ann.px, pt.y - ann.py) < 8 / z) return true;
     const circle = state.annotations.find(a => a.id === ann.circleId);
     if (!circle) return false;
     let cx, cy, r;
@@ -548,12 +549,12 @@ export function hitTestAnnotation(ann, pt) {
       x: cx + (ann.px - cx) / dist * r,
       y: cy + (ann.py - cy) / dist * r,
     };
-    return distPointToSegment(pt, { x: ann.px, y: ann.py }, edgePt) < 6;
+    return distPointToSegment(pt, { x: ann.px, y: ann.py }, edgePt) < 6 / z;
   }
   if (ann.type === "arc-measure") {
     const d = Math.hypot(pt.x - ann.cx, pt.y - ann.cy);
     // Hit on arc curve (within 8px of the radius)
-    if (Math.abs(d - ann.r) < 8) {
+    if (Math.abs(d - ann.r) < 8 / z) {
       // Check angle is within arc span
       const a1 = Math.atan2(ann.p1.y - ann.cy, ann.p1.x - ann.cx);
       const a3 = Math.atan2(ann.p3.y - ann.cy, ann.p3.x - ann.cx);
@@ -566,10 +567,10 @@ export function hitTestAnnotation(ann, pt) {
       if (ccw ? norm_p >= (twoPi - norm_3) || norm_p === 0 : norm_p <= norm_3) return true;
     }
     // Also hit on center or control points
-    if (d < 10) return true;
-    if (Math.hypot(pt.x - ann.p1.x, pt.y - ann.p1.y) < 8) return true;
-    if (Math.hypot(pt.x - ann.p2.x, pt.y - ann.p2.y) < 8) return true;
-    if (Math.hypot(pt.x - ann.p3.x, pt.y - ann.p3.y) < 8) return true;
+    if (d < 10 / z) return true;
+    if (Math.hypot(pt.x - ann.p1.x, pt.y - ann.p1.y) < 8 / z) return true;
+    if (Math.hypot(pt.x - ann.p2.x, pt.y - ann.p2.y) < 8 / z) return true;
+    if (Math.hypot(pt.x - ann.p3.x, pt.y - ann.p3.y) < 8 / z) return true;
     return false;
   }
   if (ann.type === "detected-circle") {
@@ -577,26 +578,26 @@ export function hitTestAnnotation(ann, pt) {
     const sy = ann.frameHeight ? imageHeight / ann.frameHeight : 1;
     const cx = ann.x * sx, cy = ann.y * sy, r = ann.radius * sx;
     const d = Math.hypot(pt.x - cx, pt.y - cy);
-    return Math.abs(d - r) < 10 || d < 10;
+    return Math.abs(d - r) < 10 / z || d < 10 / z;
   }
   if (ann.type === "detected-line") {
     const sx = ann.frameWidth ? imageWidth / ann.frameWidth : 1;
     const sy = ann.frameHeight ? imageHeight / ann.frameHeight : 1;
     const x1 = ann.x1 * sx, y1 = ann.y1 * sy, x2 = ann.x2 * sx, y2 = ann.y2 * sy;
-    return distPointToSegment(pt, { x: x1, y: y1 }, { x: x2, y: y2 }) < 8;
+    return distPointToSegment(pt, { x: x1, y: y1 }, { x: x2, y: y2 }) < 8 / z;
   }
   if (ann.type === "detected-line-merged") {
     const sx = ann.frameWidth ? imageWidth / ann.frameWidth : 1;
     const sy = ann.frameHeight ? imageHeight / ann.frameHeight : 1;
     const x1 = ann.x1 * sx, y1 = ann.y1 * sy, x2 = ann.x2 * sx, y2 = ann.y2 * sy;
-    return distPointToSegment(pt, { x: x1, y: y1 }, { x: x2, y: y2 }) < 8;
+    return distPointToSegment(pt, { x: x1, y: y1 }, { x: x2, y: y2 }) < 8 / z;
   }
   if (ann.type === "detected-arc-partial") {
     const sx = ann.frameWidth ? imageWidth / ann.frameWidth : 1;
     const sy = ann.frameHeight ? imageHeight / ann.frameHeight : 1;
     const cx = ann.cx * sx, cy = ann.cy * sy, r = ann.r * sx;
     const dist = Math.hypot(pt.x - cx, pt.y - cy);
-    if (Math.abs(dist - r) > 8) return false;
+    if (Math.abs(dist - r) > 8 / z) return false;
     let angle = Math.atan2(pt.y - cy, pt.x - cx) * 180 / Math.PI;
     let start = ann.start_deg, end = ann.end_deg;
     angle = ((angle % 360) + 360) % 360;
@@ -612,7 +613,7 @@ export function hitTestAnnotation(ann, pt) {
 // Returns the circle annotation whose edge is closest to pt, if within 20px.
 // Handles both "circle" (canvas coords) and "detected-circle" (frame coords).
 export function snapToCircle(pt) {
-  let best = null, bestDist = 20;
+  let best = null, bestDist = 20 / viewport.zoom;
   state.annotations.forEach(ann => {
     let cx, cy, r;
     if (ann.type === "circle") {
