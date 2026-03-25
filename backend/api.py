@@ -114,6 +114,7 @@ class DetectLinesParams(BaseModel):
     dp_epsilon: float = 0.012
     nms_dist: float = 20.0
     nms_angle: float = 10.0
+    smoothing: int = 1
 
 
 class DetectArcsParams(BaseModel):
@@ -123,6 +124,7 @@ class DetectArcsParams(BaseModel):
     min_radius: int = 10
     max_radius: int = 500
     residual_tol: float = 0.05
+    smoothing: int = 1
 
 
 class MatchDxfLinesBody(BaseModel):
@@ -336,7 +338,8 @@ def make_router(camera: BaseCamera, frame_store: FrameStore, startup_warning: st
         return detection.detect_lines_contour(
             frame, params.threshold1, params.threshold2,
             dp_epsilon=params.dp_epsilon, min_length_px=params.min_length,
-            nms_dist_px=params.nms_dist, nms_angle_deg=params.nms_angle)
+            nms_dist_px=params.nms_dist, nms_angle_deg=params.nms_angle,
+            smoothing=params.smoothing)
 
     @router.post("/detect-arcs-partial")
     async def detect_arcs_partial_route(params: DetectArcsParams):
@@ -346,7 +349,8 @@ def make_router(camera: BaseCamera, frame_store: FrameStore, startup_warning: st
         return detection.detect_partial_arcs(
             frame, params.threshold1, params.threshold2,
             min_radius=params.min_radius, max_radius=params.max_radius,
-            min_span_deg=params.min_span_deg, residual_tol=params.residual_tol)
+            min_span_deg=params.min_span_deg, residual_tol=params.residual_tol,
+            smoothing=params.smoothing)
 
     @router.post("/match-dxf-lines")
     def match_dxf_lines_route(body: MatchDxfLinesBody):

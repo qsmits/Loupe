@@ -91,6 +91,11 @@
         <div class="detect-section">
           <div class="detect-section-label">Advanced Detection</div>
           <div class="detect-row">
+            <label class="detect-label" title="Surface smoothing passes. Increase for textured surfaces (3D prints, castings) to suppress noise. 1=standard, 2-3=aggressive.">Smoothing</label>
+            <input type="range" id="adv-smoothing" min="1" max="3" value="1" />
+            <span class="detect-val" id="adv-smoothing-val">1</span>
+          </div>
+          <div class="detect-row">
             <label class="detect-label" title="Minimum line segment length in pixels. Increase to reject short noise segments.">Min length</label>
             <input type="range" id="adv-min-length" min="5" max="200" value="80" />
             <span class="detect-val" id="adv-min-length-val">80</span>

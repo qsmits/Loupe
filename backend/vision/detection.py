@@ -39,16 +39,17 @@ _ARC_PARTIAL_NMS_CENTER_PX = 20
 _ARC_PARTIAL_NMS_R_RATIO   = 0.20
 
 
-def _preprocess(frame: np.ndarray) -> np.ndarray:
+def _preprocess(frame: np.ndarray, smoothing: int = 1) -> np.ndarray:
     """
-    Convert to grayscale, boost local contrast with CLAHE, then apply a
-    bilateral filter to smooth surface texture while preserving sharp edges
-    (circle rims, machined boundaries, tick marks).
+    Convert to grayscale, boost local contrast with CLAHE, then apply
+    bilateral filter(s) to smooth surface texture while preserving sharp edges.
+    smoothing: 1=standard (machined parts), 2-3=aggressive (3D prints, textured surfaces).
     """
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(16, 16))
     gray = clahe.apply(gray)
-    gray = cv2.bilateralFilter(gray, d=9, sigmaColor=75, sigmaSpace=75)
+    for _ in range(max(1, smoothing)):
+        gray = cv2.bilateralFilter(gray, d=9, sigmaColor=75, sigmaSpace=75)
     return gray
 
 
@@ -340,6 +341,7 @@ def detect_lines_contour(
     nms_angle_deg: float = _CONTOUR_NMS_ANGLE,
     close_kernel: int = _CONTOUR_CLOSE_KERNEL,
     min_edge_density: float = _CONTOUR_MIN_EDGE_DENSITY,
+    smoothing: int = 1,
 ) -> list[dict]:
     """
     Detect straight segments via Douglas-Peucker contour approximation.
@@ -347,7 +349,7 @@ def detect_lines_contour(
     Returns list of {"x1", "y1", "x2", "y2", "length"} dicts.
     """
     import math
-    gray = _preprocess(frame)
+    gray = _preprocess(frame, smoothing=smoothing)
     edges = cv2.Canny(gray, threshold1, threshold2)
     if close_kernel > 1:
         k = cv2.getStructuringElement(cv2.MORPH_RECT, (close_kernel, close_kernel))
@@ -419,6 +421,7 @@ def detect_partial_arcs(
     min_points: int = _ARC_PARTIAL_MIN_POINTS,
     max_aspect: float = _ARC_PARTIAL_MAX_ASPECT,
     line_ratio: float = _ARC_PARTIAL_LINE_RATIO,
+    smoothing: int = 1,
 ) -> list[dict]:
     """
     Detect partial arcs (arc segments subtending >= min_span_deg degrees).
@@ -426,7 +429,7 @@ def detect_partial_arcs(
     straight edges misidentified as large-radius arcs.
     Returns list of {"cx", "cy", "r", "start_deg", "end_deg"} dicts (image pixels / degrees).
     """
-    gray = _preprocess(frame)
+    gray = _preprocess(frame, smoothing=smoothing)
     edges = cv2.Canny(gray, threshold1, threshold2)
     k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (_CLOSE_KERNEL_SMALL,) * 2)
     edges = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, k)
