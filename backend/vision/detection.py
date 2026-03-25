@@ -21,17 +21,22 @@ _MERGE_MIN_LENGTH      = 20
 _MERGE_MAX_GAP         = 8
 
 # ── Contour-based line detection ──────────────────────────────────────────────
-_CONTOUR_DP_EPSILON = 0.02
-_CONTOUR_MIN_LENGTH = 20
-_CONTOUR_NMS_DIST   = 8
-_CONTOUR_NMS_ANGLE  = 5.0
+_CONTOUR_DP_EPSILON      = 0.012
+_CONTOUR_MIN_LENGTH      = 80
+_CONTOUR_NMS_PERP_PX     = 20     # perpendicular distance for NMS (was midpoint-based)
+_CONTOUR_NMS_ANGLE       = 10.0
+_CONTOUR_CLOSE_KERNEL    = 3
+_CONTOUR_MIN_EDGE_DENSITY = 0.5   # fraction of segment on Canny edges
 
 # ── Partial arc detection constants ───────────────────────────────────────────
-_ARC_PARTIAL_MIN_SPAN_DEG  = 45.0
+_ARC_PARTIAL_MIN_SPAN_DEG  = 50.0
 _ARC_PARTIAL_MAX_SPAN_DEG  = 340.0   # suppress near-full circles
-_ARC_PARTIAL_RESIDUAL_TOL  = 0.08    # looser than _ARC_MAX_RESIDUAL=0.06
-_ARC_PARTIAL_NMS_CENTER_PX = 10
-_ARC_PARTIAL_NMS_R_RATIO   = 0.10
+_ARC_PARTIAL_RESIDUAL_TOL  = 0.05    # tighter than before (was 0.08)
+_ARC_PARTIAL_MIN_POINTS    = 20      # more points required (was 8)
+_ARC_PARTIAL_MAX_ASPECT    = 5.0     # reject very elongated contours
+_ARC_PARTIAL_LINE_RATIO    = 2.0     # arc must fit this much better than line
+_ARC_PARTIAL_NMS_CENTER_PX = 20
+_ARC_PARTIAL_NMS_R_RATIO   = 0.20
 
 
 def _preprocess(frame: np.ndarray) -> np.ndarray:
@@ -331,17 +336,26 @@ def detect_lines_contour(
     threshold2: int = 130,
     dp_epsilon: float = _CONTOUR_DP_EPSILON,
     min_length_px: int = _CONTOUR_MIN_LENGTH,
-    nms_dist_px: float = _CONTOUR_NMS_DIST,
+    nms_dist_px: float = _CONTOUR_NMS_PERP_PX,
     nms_angle_deg: float = _CONTOUR_NMS_ANGLE,
+    close_kernel: int = _CONTOUR_CLOSE_KERNEL,
+    min_edge_density: float = _CONTOUR_MIN_EDGE_DENSITY,
 ) -> list[dict]:
     """
     Detect straight segments via Douglas-Peucker contour approximation.
-    Primary path. Does not use Hough. Each visible edge produces at most one segment.
+    Uses morphological closing, edge density filtering, and perpendicular NMS.
     Returns list of {"x1", "y1", "x2", "y2", "length"} dicts.
     """
+    import math
     gray = _preprocess(frame)
     edges = cv2.Canny(gray, threshold1, threshold2)
-    contours, _ = cv2.findContours(edges, cv2.RETR_LIST, cv2.CHAIN_APPROX_NONE)
+    if close_kernel > 1:
+        k = cv2.getStructuringElement(cv2.MORPH_RECT, (close_kernel, close_kernel))
+        edges_closed = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, k)
+    else:
+        edges_closed = edges
+    contours, _ = cv2.findContours(edges_closed, cv2.RETR_LIST, cv2.CHAIN_APPROX_NONE)
+    h, w = edges.shape
 
     candidates = []
     for cnt in contours:
@@ -356,20 +370,36 @@ def detect_lines_contour(
             length = float(np.hypot(x2-x1, y2-y1))
             if length < min_length_px:
                 continue
+            # Edge density: fraction of sampled points lying on original Canny edges
+            nsamples = max(int(length / 3), 10)
+            ts = np.linspace(0, 1, nsamples)
+            sx = (x1 + ts * (x2 - x1)).astype(int)
+            sy = (y1 + ts * (y2 - y1)).astype(int)
+            valid = (sx >= 0) & (sx < w) & (sy >= 0) & (sy < h)
+            if valid.sum() == 0:
+                continue
+            density = (edges[sy[valid], sx[valid]] > 0).sum() / valid.sum()
+            if density < min_edge_density:
+                continue
             angle = float(np.degrees(np.arctan2(y2-y1, x2-x1)) % 180)
             candidates.append((length, x1, y1, x2, y2, angle))
 
+    # Perpendicular-distance NMS (replaces midpoint-based NMS)
     candidates.sort(key=lambda c: c[0], reverse=True)
     kept = []
     for length, x1, y1, x2, y2, angle in candidates:
         mx, my = (x1+x2)/2.0, (y1+y2)/2.0
         suppressed = False
         for _, kx1, ky1, kx2, ky2, kangle in kept:
-            kmx, kmy = (kx1+kx2)/2.0, (ky1+ky2)/2.0
-            dist = np.hypot(mx-kmx, my-kmy)
             adiff = abs(angle - kangle)
             if adiff > 90: adiff = 180 - adiff
-            if dist < nms_dist_px and adiff < nms_angle_deg:
+            if adiff > nms_angle_deg:
+                continue
+            dx, dy = kx2-kx1, ky2-ky1
+            ln = math.hypot(dx, dy) + 1e-9
+            perp = abs(dy*mx - dx*my + kx2*ky1 - ky2*kx1) / ln
+            t = ((mx-kx1)*dx + (my-ky1)*dy) / (ln*ln)
+            if perp < nms_dist_px and -0.3 < t < 1.3:
                 suppressed = True; break
         if not suppressed:
             kept.append((length, x1, y1, x2, y2, angle))
@@ -386,11 +416,14 @@ def detect_partial_arcs(
     max_radius: int = 500,
     min_span_deg: float = _ARC_PARTIAL_MIN_SPAN_DEG,
     residual_tol: float = _ARC_PARTIAL_RESIDUAL_TOL,
+    min_points: int = _ARC_PARTIAL_MIN_POINTS,
+    max_aspect: float = _ARC_PARTIAL_MAX_ASPECT,
+    line_ratio: float = _ARC_PARTIAL_LINE_RATIO,
 ) -> list[dict]:
     """
     Detect partial arcs (arc segments subtending >= min_span_deg degrees).
-
-    Entirely independent of detect_circles. _ARC_MIN_COVERAGE=160 is not used here.
+    Uses line-vs-arc discrimination and aspect ratio filtering to reject
+    straight edges misidentified as large-radius arcs.
     Returns list of {"cx", "cy", "r", "start_deg", "end_deg"} dicts (image pixels / degrees).
     """
     gray = _preprocess(frame)
@@ -402,7 +435,7 @@ def detect_partial_arcs(
     candidates = []  # (coverage, cx, cy, r, start_deg, end_deg)
     for cnt in contours:
         pts = cnt[:, 0, :].astype(np.float32)
-        if len(pts) < 8:
+        if len(pts) < min_points:
             continue
         try:
             fcx, fcy, fr = _fit_circle_algebraic(pts)
@@ -413,20 +446,29 @@ def detect_partial_arcs(
         residuals = np.abs(np.hypot(pts[:, 0] - fcx, pts[:, 1] - fcy) - fr)
         if np.mean(residuals) / (fr + 1e-6) > residual_tol:
             continue
+        # Line-vs-arc: reject contours that fit a line as well as a circle
+        if len(pts) >= 5:
+            vx, vy, x0, y0 = cv2.fitLine(
+                pts.reshape(-1, 1, 2), cv2.DIST_L2, 0, 0.01, 0.01).flatten()
+            line_dists = np.abs((pts[:, 0] - x0) * vy - (pts[:, 1] - y0) * vx)
+            if np.mean(line_dists) < np.mean(residuals) * line_ratio:
+                continue
+        # Aspect ratio: reject very elongated contours (straight edges)
+        bbox = cv2.minAreaRect(cnt)
+        bw, bh = bbox[1]
+        if min(bw, bh) < 1:
+            continue
+        if max(bw, bh) / (min(bw, bh) + 1e-6) > max_aspect:
+            continue
         coverage = _arc_angular_coverage(pts, fcx, fcy)
         if coverage < min_span_deg or coverage >= _ARC_PARTIAL_MAX_SPAN_DEG:
             continue
-        # Compute start/end angles by finding the largest angular gap (same logic
-        # as _arc_angular_coverage) and using the gap boundaries as arc endpoints.
         angles = np.degrees(np.arctan2(pts[:, 1] - fcy, pts[:, 0] - fcx)) % 360
         angles_sorted = np.sort(angles)
         gaps = np.diff(angles_sorted, append=angles_sorted[0] + 360)
         gap_idx = int(np.argmax(gaps))
-        # Arc starts just after the largest gap and ends just before it
         start_deg = float(angles_sorted[(gap_idx + 1) % len(angles_sorted)])
         end_deg   = float(angles_sorted[gap_idx])
-        # Normalize: if the arc spans the 0°/360° boundary, shift start into [0°, 360°)
-        # so that start < end (e.g. start=358° end=92° → start=-2° end=92°, closer to 0°).
         if start_deg > end_deg:
             start_deg -= 360.0
         candidates.append((coverage, float(fcx), float(fcy), float(fr), start_deg, end_deg))

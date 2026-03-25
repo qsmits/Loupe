@@ -110,19 +110,19 @@ class DetectedArc(BaseModel):
 class DetectLinesParams(BaseModel):
     threshold1: int = 50
     threshold2: int = 130
-    min_length: int = 20
-    dp_epsilon: float = 0.02
-    nms_dist: float = 8.0
-    nms_angle: float = 5.0
+    min_length: int = 80
+    dp_epsilon: float = 0.012
+    nms_dist: float = 20.0
+    nms_angle: float = 10.0
 
 
 class DetectArcsParams(BaseModel):
     threshold1: int = 50
     threshold2: int = 130
-    min_span_deg: float = 45.0
-    min_radius: int = 8
+    min_span_deg: float = 50.0
+    min_radius: int = 10
     max_radius: int = 500
-    residual_tol: float = 0.08
+    residual_tol: float = 0.05
 
 
 class MatchDxfLinesBody(BaseModel):
