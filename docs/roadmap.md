@@ -52,70 +52,46 @@ Implemented in full:
 - Arc-measure fully draggable (extend/shorten by dragging p1/p3)
 - Spec: `docs/superpowers/specs/2026-03-25-annotation-management-design.md`
 
-### 1.1 Auto-save sessions
-Sessions live only in memory. Browser crash = lost work. Add IndexedDB auto-save (30-second debounce) and a "restore last session?" prompt on startup. Also warn before closing the tab with unsaved changes (`beforeunload`).
+### ~~1.1 Auto-save sessions~~ ✅ DONE (2026-03-25)
+Auto-save to localStorage every 30 seconds. Restore prompt on startup. beforeunload
+warning for unsaved work. Excludes inspectionFrame from auto-save (too large).
 
 ### 1.2 Measurement reference integrity
-Deleting a circle that a center-distance measurement references leaves a broken annotation. Track dependencies: warn before deleting referenced geometry, or cascade-delete dependent measurements.
+Downgraded — measurements store computed coordinates, not references to source
+geometry. Deleting a circle doesn't break the center-dist measurement. Nice-to-have
+visual indicator for future.
 
-### 1.3 Better error feedback everywhere
-Several endpoints return generic errors. The status bar should show the real error from the server. Detection failures should explain *why* (no frame? no edges found? all filtered?). The inspection "Run" button should disable with a tooltip explaining prerequisites.
+### ~~1.3 Better error feedback everywhere~~ ✅ DONE (2026-03-25)
+Detection result counts ("Found N circles/lines/arcs"). Disabled button tooltips
+explaining prerequisites. Real error messages from server (done earlier in M3/M4 work).
 
 ### 1.4 Renumber measurements on delete
-Deleting measurement #2 of 5 leaves a gap (①③④⑤). Renumber them. Small thing, but it makes the sidebar confusing.
+Already works — sidebar numbering uses iteration index, not annotation ID.
 
 ---
 
-## Phase 1.5: Zoom & Pan
-*Estimated effort: 1-2 weeks. Priority: high.*
+## ~~Phase 1.5: Zoom & Pan~~ ✅ DONE (2026-03-25)
+*Completed in one session.*
 
-The camera captures more resolution than the canvas displays. Zoom unlocks precision
-and makes dense annotations manageable. This is foundational — it improves every
-other workflow.
+Zoom and pan are fully operational:
 
-### 1.5.1 Viewport transform
-Add a viewport state: `{ zoom: 1.0, panX: 0, panY: 0 }`. All canvas rendering goes
-through this transform. The image is drawn at `zoom` scale, offset by `panX/panY`.
-Annotations, detections, DXF overlays — everything must render through the same
-viewport transform.
+### ~~1.5.1 Viewport transform~~ ✅ `viewport.js` module with zoom/pan state and transforms
+### ~~1.5.2 Scroll-wheel zoom~~ ✅ Cursor-centered, 0.5x–10x range, frozen mode only
+### ~~1.5.3 Pan tool~~ ✅ `H` key, middle-mouse drag in any tool
+### ~~1.5.4 Mouse coordinate transform~~ ✅ `canvasPoint` → `screenToImage`, all frame-scaling migrated
+### ~~1.5.5 Fit-to-window~~ ✅ `0` = fit, `1` = 1:1 pixel
+### ~~1.5.6 Zoom indicator~~ ✅ Badge in bottom-right corner, hidden at default zoom
 
-### 1.5.2 Scroll-wheel zoom
-Mouse scroll wheel zooms in/out, centered on the cursor position. Zoom range:
-0.25x (zoom out to see full image) to 8x (zoom in for sub-pixel precision).
-Smooth zoom with momentum would be nice but not required.
+### 1.5.7 Zoom preset dropdown (future)
+Click the zoom badge to get a dropdown with preset zoom levels (Fit, 50%, 100%, 200%, 400%).
 
-### 1.5.3 Pan
-Middle-mouse-button drag to pan, or hold Space + left-drag (Photoshop convention).
-When zoomed in, the viewport shows a portion of the image. Pan moves that window.
-
-### 1.5.4 Mouse coordinate transform
-Every `canvasPoint(e)` call must account for the viewport transform — converting
-screen pixels to image-space coordinates. This is the hardest part: every mouse
-handler, hit-test, snap, and tool click must work in image-space, not screen-space.
-
-### 1.5.5 Fit-to-window
-Double-click the scroll wheel or press `0` to reset zoom to fit the full image
-in the canvas. Press `1` for 1:1 pixel mapping.
-
-### 1.5.6 Zoom indicator
-Show the current zoom level as a small badge in the corner of the canvas (e.g.
-"2.0x" or "100%"). Updates live as user zooms. Click it to get a dropdown with
-preset zoom levels (Fit, 50%, 100%, 200%, 400%).
-
-### 1.5.7 Minimap
+### 1.5.8 Minimap (future)
 When zoomed in past fit-to-window, show a small semi-transparent overview in a
 corner showing the full image with a rectangle indicating the current viewport.
 - Click the minimap to jump to that area
 - Drag the rectangle to pan quickly
-- Hide automatically when zoom = fit-to-window (not useful when you can see everything)
-- Should be unobtrusive — small (e.g. 150x100px), low opacity until hovered
-
-**Engineering notes:** This is the hardest change in the roadmap because it touches
-the coordinate system that everything else depends on. The key insight: change
-`canvasPoint(e)` to return image-space coordinates (accounting for zoom/pan), and
-change the rendering to apply the viewport transform before drawing. If those two
-are correct, everything else follows. The DXF overlay transform (which already has
-its own scale/rotate/translate) composes with the viewport transform.
+- Hide automatically when zoom = fit-to-window
+- Small (e.g. 150x100px), low opacity until hovered
 
 ---
 
@@ -345,15 +321,16 @@ These came up in the audit but would be premature:
 ## Suggested Execution Order
 
 ```
-Done:      Phase 1.0 (annotation mgmt)  — COMPLETE    — selection, multi-select, elevation, context menu
-Now:       Phase 1 remainder            — 3-4 days    — auto-save, ref integrity, error feedback
-Next:      Phase 1.5 (zoom/pan)         — 1-2 weeks   — precision & usability unlock
-Then:      Phase 2 (one-click)          — 2 weeks     — fast inspection workflow
+✅ Done:   Phase 1.0 (annotation mgmt)  — 2026-03-25  — selection, multi-select, elevation, context menu
+✅ Done:   Phase 1 remainder            — 2026-03-25  — auto-save, detection counts, button tooltips
+✅ Done:   Phase 1.5 (zoom/pan)         — 2026-03-25  — scroll zoom, pan tool, viewport transform, zoom badge
+Next:      Phase 2 (one-click)          — 2 weeks     — fast inspection workflow
 Then:      Phase 5 (reporting)          — 1-2 weeks   — useful output
 Then:      Phase 3 (detection tuning)   — 1-2 weeks   — accurate (once microscope arrives)
 Then:      Phase 7 (batch inspection)   — 2-3 weeks   — production use case
 Ongoing:   Phase 6 (tech foundation)    — sprinkle in as you go
 Later:     Phase 4 (measurement UX)     — 1-2 weeks   — power user features
+Later:     Phase 1.5+ (minimap+zoom UI) — 3-4 days    — minimap overlay, zoom preset dropdown
 Future:    Phase 8 (gears)              — 3-4 weeks   — when gear machine is running
 ```
 
