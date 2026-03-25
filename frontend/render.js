@@ -313,6 +313,37 @@ export function redraw() {
     }
   }
 
+  // Point-pick mode rendering
+  if (state.inspectionPickTarget) {
+    // Orange dots for placed points
+    ctx.save();
+    ctx.fillStyle = "#fb923c";
+    for (const p of state.inspectionPickPoints) {
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, pw(4), 0, Math.PI * 2);
+      ctx.fill();
+    }
+    // Live fit preview (dashed green)
+    if (state.inspectionPickFit) {
+      ctx.strokeStyle = "rgba(50, 215, 75, 0.7)";
+      ctx.lineWidth = pw(1.5);
+      ctx.setLineDash([pw(4), pw(4)]);
+      const f = state.inspectionPickFit;
+      if (f.x1 != null) {
+        ctx.beginPath();
+        ctx.moveTo(f.x1, f.y1);
+        ctx.lineTo(f.x2, f.y2);
+        ctx.stroke();
+      } else if (f.cx != null) {
+        ctx.beginPath();
+        ctx.arc(f.cx, f.cy, f.r, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+      ctx.setLineDash([]);
+    }
+    ctx.restore();
+  }
+
   ctx.restore();
   // ── End viewport transform ──
 
@@ -349,7 +380,7 @@ export function drawAnnotations() {
     else if (ann.type === "circle")     drawCircle(ann, pendingHighlight || sel);
     else if (ann.type === "edges-overlay")    drawEdgesOverlay(ann);
     else if (ann.type === "preprocessed-overlay") drawPreprocessedOverlay(ann);
-    else if (ann.type === "dxf-overlay")      { drawDxfOverlay(ann); if (state.showDeviations) drawDeviations(ann); }
+    else if (ann.type === "dxf-overlay")      { drawDxfOverlay(ann); if (state.showDeviations) drawDeviations(ann); if (ann.guidedResults) drawGuidedResults(ann); }
     else if (ann.type === "detected-circle") drawDetectedCircle(ann, pendingHighlight || sel);
     else if (ann.type === "detected-line")   drawDetectedLine(ann, sel);
     else if (ann.type === "detected-line-merged") {
@@ -488,6 +519,52 @@ export function drawHandle(pt, color) {
   ctx.strokeStyle = "#fff";
   ctx.lineWidth = pw(1);
   ctx.stroke();
+}
+
+export function drawGuidedResults(ann) {
+  const results = ann.guidedResults;
+  if (!results || results.length === 0) return;
+
+  for (const r of results) {
+    if (r.matched && r.fit) {
+      const color = r.pass_fail === "fail" ? "#ff453a"
+        : r.pass_fail === "warn" ? "#ff9f0a"
+        : "#32d74b";
+
+      ctx.save();
+      ctx.strokeStyle = color;
+      ctx.lineWidth = pw(2);
+
+      if (r.fit.type === "line") {
+        ctx.beginPath();
+        ctx.moveTo(r.fit.x1, r.fit.y1);
+        ctx.lineTo(r.fit.x2, r.fit.y2);
+        ctx.stroke();
+        const mx = (r.fit.x1 + r.fit.x2) / 2;
+        const my = (r.fit.y1 + r.fit.y2) / 2;
+        drawLabel(`\u22a5 ${r.perp_dev_mm?.toFixed(3)} mm`, mx + pw(5), my - pw(5));
+      } else {
+        ctx.beginPath();
+        ctx.arc(r.fit.cx, r.fit.cy, r.fit.r, 0, Math.PI * 2);
+        ctx.stroke();
+        drawLabel(`\u0394c ${(r.center_dev_mm ?? 0).toFixed(3)} \u0394r ${(r.radius_dev_mm ?? 0).toFixed(3)}`,
+          r.fit.cx + r.fit.r + pw(5), r.fit.cy);
+      }
+      ctx.restore();
+
+      // Edge points (subtle dots)
+      if (r.edge_points_sample && r.edge_points_sample.length > 0) {
+        ctx.save();
+        ctx.fillStyle = "rgba(150, 150, 150, 0.5)";
+        for (const [x, y] of r.edge_points_sample) {
+          ctx.beginPath();
+          ctx.arc(x, y, pw(1.5), 0, Math.PI * 2);
+          ctx.fill();
+        }
+        ctx.restore();
+      }
+    }
+  }
 }
 
 export function drawLabel(text, x, y) {
