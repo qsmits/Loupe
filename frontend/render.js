@@ -1,6 +1,6 @@
 import { state, _deviationHitBoxes } from './state.js';
 import { fitCircleAlgebraic, polygonArea } from './math.js';
-import { imageWidth, imageHeight, setImageSize } from './viewport.js';
+import { viewport, imageWidth, imageHeight, setImageSize } from './viewport.js';
 
 // ── DOM refs ──────────────────────────────────────────────────────────────────
 export const img       = document.getElementById("stream-img");
@@ -27,8 +27,11 @@ export function resizeCanvas() {
   canvas.style.top    = (r.top  - vr.top)  + "px";
   canvas.style.width  = r.width  + "px";
   canvas.style.height = r.height + "px";
-  canvas.width  = Math.round(r.width);
-  canvas.height = Math.round(r.height);
+  // Internal resolution scales with zoom (capped at image resolution)
+  const iw = imageWidth || Math.round(r.width);
+  const ih = imageHeight || Math.round(r.height);
+  canvas.width  = Math.min(iw, Math.round(r.width * viewport.zoom));
+  canvas.height = Math.min(ih, Math.round(r.height * viewport.zoom));
   if (!imageWidth) setImageSize(canvas.width, canvas.height);
   redraw();
 }
@@ -234,8 +237,15 @@ export function measurementLabel(ann) {
 
 export function redraw() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  // ── Viewport transform (all image-space drawing goes inside) ──
+  ctx.save();
+  ctx.scale(viewport.zoom, viewport.zoom);
+  ctx.translate(-viewport.panX, -viewport.panY);
+
+  // Frozen background at native image size (NOT canvas size)
   if (state.frozenBackground) {
-    ctx.drawImage(state.frozenBackground, 0, 0, canvas.width, canvas.height);
+    ctx.drawImage(state.frozenBackground, 0, 0, imageWidth || canvas.width, imageHeight || canvas.height);
   }
   drawAnnotations();
   drawPendingPoints();
@@ -264,7 +274,6 @@ export function redraw() {
       ctx.restore();
     }
   }
-  drawCrosshair();
   // DXF alignment mode indicators
   if (state.dxfAlignMode) {
     const ann = state.annotations.find(a => a.type === "dxf-overlay");
@@ -300,6 +309,12 @@ export function redraw() {
       }
     }
   }
+
+  ctx.restore();
+  // ── End viewport transform ──
+
+  // ── HUD (screen-space, not affected by zoom/pan) ──
+  drawCrosshair();
 }
 
 export function drawAnnotations() {
