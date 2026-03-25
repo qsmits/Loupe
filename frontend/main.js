@@ -101,7 +101,14 @@ function toggleDropdown(btnId, dropId) {
 
 // ── Canvas mouse events ──────────────────────────────────────────────────────
 function onMouseDown(e) {
-  if (e.button !== 0) return;  // only handle left mouse button
+  if (e.button !== 0 && e.button !== 1) return;
+  // Pan: middle-mouse always, or left-click in pan tool
+  if (e.button === 1 || (e.button === 0 && state.tool === "pan")) {
+    e.preventDefault();
+    state._panStart = { x: e.clientX, y: e.clientY, panX: viewport.panX, panY: viewport.panY };
+    canvas.style.cursor = "grabbing";
+    return;
+  }
   if (state.dxfDragMode) {
     const ann = state.annotations.find(a => a.type === "dxf-overlay");
     if (ann) {
@@ -195,6 +202,11 @@ function _annotationPrimaryPoint(ann) {
 }
 
 function onMouseUp() {
+  if (state._panStart) {
+    state._panStart = null;
+    canvas.style.cursor = state.tool === "pan" ? "grab" : "";
+    return;
+  }
   if (state.dxfDragMode) {
     state.dxfDragOrigin = null;
     return;
@@ -231,6 +243,17 @@ canvas.addEventListener("mousemove", e => {
   const pt = canvasPoint(e);
   const rawPt = pt;
   state.mousePos = pt;
+  if (state._panStart) {
+    const dx = (e.clientX - state._panStart.x);
+    const dy = (e.clientY - state._panStart.y);
+    const rect = canvas.getBoundingClientRect();
+    const scale = canvas.width / rect.width;
+    viewport.panX = state._panStart.panX - dx * scale / viewport.zoom;
+    viewport.panY = state._panStart.panY - dy * scale / viewport.zoom;
+    clampPan(rect.width, rect.height);
+    resizeCanvas();
+    return;
+  }
   if (state.dxfDragMode && state.dxfDragOrigin) {
     const ann = state.annotations.find(a => a.type === "dxf-overlay");
     if (ann) {
@@ -519,7 +542,7 @@ document.addEventListener("keydown", e => {
   const toolKeys = { v: "select", c: "calibrate", d: "distance", a: "angle",
                      o: "circle", f: "arc-fit", m: "center-dist", e: "detect",
                      p: "perp-dist", l: "para-dist", r: "area",
-                     g: "pt-circle-dist", i: "intersect", w: "slot-dist" };
+                     g: "pt-circle-dist", i: "intersect", w: "slot-dist", h: "pan" };
   const toolName = toolKeys[e.key.toLowerCase()];
   if (toolName) {
     setTool(toolName);

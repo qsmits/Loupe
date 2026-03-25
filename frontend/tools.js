@@ -16,7 +16,7 @@ export function setTool(name) {
     btn.classList.toggle("active", btn.dataset.tool === name);
   });
   showStatus(TOOL_STATUS[name] ?? name);
-  canvas.style.cursor = name === "select" ? "default" : "crosshair";
+  canvas.style.cursor = name === "pan" ? "grab" : name === "select" ? "default" : "crosshair";
   redraw();
 }
 

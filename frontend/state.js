@@ -37,6 +37,7 @@ export const state = {
   _originMode: false,       // was let _originMode (line 2539 in app.js)
   _dxfOriginMode: false,    // was let _dxfOriginMode (line 2547)
   _selectRect: null,
+  _panStart: null,
   _flashExpiry: 0,
   _noCamera: false,         // was let _noCamera (line 36)
   _dirty: false,
