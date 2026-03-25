@@ -12,6 +12,28 @@ export function setTool(name) {
   state.pendingRefLine = null;
   state.pendingCircleRef = null;
   state.snapTarget = null;
+  // Exit any modal modes that would intercept clicks
+  if (state.dxfAlignMode) {
+    state.dxfAlignMode = false;
+    state.dxfAlignStep = 0;
+    state.dxfAlignPick = null;
+    state.dxfAlignHover = null;
+    document.getElementById("btn-auto-align")?.classList.remove("active");
+  }
+  if (state.dxfDragMode) {
+    state.dxfDragMode = false;
+    state.dxfDragOrigin = null;
+    document.getElementById("btn-dxf-move")?.classList.remove("active");
+  }
+  if (state._originMode) {
+    state._originMode = false;
+    document.getElementById("btn-set-origin")?.classList.remove("active");
+  }
+  if (state.inspectionPickTarget) {
+    state.inspectionPickTarget = null;
+    state.inspectionPickPoints = [];
+    state.inspectionPickFit = null;
+  }
   document.querySelectorAll("#tool-strip .strip-btn[data-tool]").forEach(btn => {
     btn.classList.toggle("active", btn.dataset.tool === name);
   });
