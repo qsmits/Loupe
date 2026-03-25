@@ -136,8 +136,10 @@ export function initDetectHandlers() {
   // btn-detect-lines-merged: detect merged/contour lines
   document.getElementById("btn-detect-lines-merged")?.addEventListener("click", async () => {
     await ensureFrozen();
+    const t1 = parseInt(document.getElementById("canny-low").value);
+    const t2 = parseInt(document.getElementById("canny-high").value);
     const r = await fetch("/detect-lines-merged", { method: "POST",
-      headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) });
+      headers: { "Content-Type": "application/json" }, body: JSON.stringify({ threshold1: t1, threshold2: t2 }) });
     if (!r.ok) { const d = await r.json().catch(() => null); showStatus(d?.detail || "Line detection failed (HTTP " + r.status + ")"); return; }
     const lines = await r.json();
     const fw = state.frozenSize?.w || canvas.width;
@@ -151,8 +153,10 @@ export function initDetectHandlers() {
   // btn-detect-arcs-partial: detect partial arcs
   document.getElementById("btn-detect-arcs-partial")?.addEventListener("click", async () => {
     await ensureFrozen();
+    const t1 = parseInt(document.getElementById("canny-low").value);
+    const t2 = parseInt(document.getElementById("canny-high").value);
     const r = await fetch("/detect-arcs-partial", { method: "POST",
-      headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) });
+      headers: { "Content-Type": "application/json" }, body: JSON.stringify({ threshold1: t1, threshold2: t2 }) });
     if (!r.ok) { const d = await r.json().catch(() => null); showStatus(d?.detail || "Arc detection failed (HTTP " + r.status + ")"); return; }
     const arcs = await r.json();
     const fw = state.frozenSize?.w || canvas.width;

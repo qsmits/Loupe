@@ -82,6 +82,27 @@ export function measurementLabel(ann) {
       ? `${(mm * 1000).toFixed(2)} µm`
       : `${mm.toFixed(3)} mm`;
   }
+  if (ann.type === "detected-line-merged") {
+    const sx = ann.frameWidth ? canvas.width / ann.frameWidth : 1;
+    const lenPx = Math.hypot((ann.x2 - ann.x1) * sx, (ann.y2 - ann.y1) * sx);
+    if (!cal) return `${lenPx.toFixed(1)} px`;
+    const mm = lenPx / cal.pixelsPerMm;
+    return cal.displayUnit === "µm"
+      ? `${(mm * 1000).toFixed(2)} µm`
+      : `${mm.toFixed(3)} mm`;
+  }
+  if (ann.type === "detected-arc-partial") {
+    const sx = ann.frameWidth ? canvas.width / ann.frameWidth : 1;
+    const rPx = ann.r * sx;
+    const spanDeg = ann.end_deg >= ann.start_deg
+      ? ann.end_deg - ann.start_deg
+      : 360 - (ann.start_deg - ann.end_deg);
+    if (!cal) return `r ${rPx.toFixed(1)} px  ${spanDeg.toFixed(0)}°`;
+    const mm = rPx / cal.pixelsPerMm;
+    return cal.displayUnit === "µm"
+      ? `r ${(mm * 1000).toFixed(2)} µm  ${spanDeg.toFixed(0)}°`
+      : `r ${mm.toFixed(3)} mm  ${spanDeg.toFixed(0)}°`;
+  }
   if (ann.type === "calibration") {
     const prefix = ann.x1 !== undefined ? "⟷" : "⌀";
     return `${prefix} ${ann.knownValue} ${ann.unit}`;
@@ -301,25 +322,30 @@ export function drawAnnotations() {
       ctx.save();
       const sx = ann.frameWidth ? canvas.width / ann.frameWidth : 1;
       const sy = ann.frameHeight ? canvas.height / ann.frameHeight : 1;
-      ctx.strokeStyle = "#00e5ff";
-      ctx.lineWidth = 1.5;
+      const x1 = ann.x1 * sx, y1 = ann.y1 * sy, x2 = ann.x2 * sx, y2 = ann.y2 * sy;
+      ctx.strokeStyle = sel ? "#60a5fa" : "#00e5ff";
+      ctx.lineWidth = sel ? 2 : 1.5;
       ctx.beginPath();
-      ctx.moveTo(ann.x1 * sx, ann.y1 * sy);
-      ctx.lineTo(ann.x2 * sx, ann.y2 * sy);
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(x2, y2);
       ctx.stroke();
+      drawLabel(measurementLabel(ann), (x1 + x2) / 2 + 5, (y1 + y2) / 2 - 5);
       ctx.restore();
     }
     else if (ann.type === "detected-arc-partial") {
       ctx.save();
       const sx = ann.frameWidth ? canvas.width / ann.frameWidth : 1;
       const sy = ann.frameHeight ? canvas.height / ann.frameHeight : 1;
-      ctx.strokeStyle = "#ffd60a";
-      ctx.lineWidth = 1.5;
+      ctx.strokeStyle = sel ? "#60a5fa" : "#ffd60a";
+      ctx.lineWidth = sel ? 2 : 1.5;
       const a1 = ann.start_deg * Math.PI / 180;
       const a2 = ann.end_deg   * Math.PI / 180;
       ctx.beginPath();
       ctx.arc(ann.cx * sx, ann.cy * sy, ann.r * sx, a1, a2);
       ctx.stroke();
+      const midAngle = (a1 + a2) / 2;
+      const labelR = ann.r * sx + 10;
+      drawLabel(measurementLabel(ann), ann.cx * sx + labelR * Math.cos(midAngle), ann.cy * sy + labelR * Math.sin(midAngle));
       ctx.restore();
     }
     else if (ann.type === "calibration") drawCalibration(ann, sel);
