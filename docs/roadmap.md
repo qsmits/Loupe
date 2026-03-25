@@ -314,7 +314,34 @@ These came up in the audit but would be premature:
 - **Multi-user collaboration** — this is a single-operator tool. Collaboration adds massive complexity for minimal value.
 - **AI-assisted detection** — intriguing but premature. The classical CV pipeline needs to work reliably first.
 - **Mobile app** — the microscope is desktop-attached. A tablet companion could be useful eventually but isn't the bottleneck.
-- **GD&T (Geometric Dimensioning & Tolerancing)** — full GD&T inspection (position, concentricity, profile of a surface) is a massive scope expansion. The current pass/warn/fail system covers the 80% case. Revisit when there's a real need for formal GD&T callouts.
+- **Full GD&T (position, concentricity, profile of a surface)** — massive scope expansion. The per-feature tolerance system (see Phase 2.5) covers the practical 80%. Revisit formal GD&T callouts when there's a compliance requirement.
+
+---
+
+## Phase 2.5: Per-Feature Tolerance Visualization
+*Estimated effort: 1 week. Priority: medium (after Phase 2).*
+
+Extend the existing tolerance system with visual tolerance bands on the canvas.
+
+### 2.5.1 Global + per-feature tolerances on DXF
+- Global warn/fail tolerances already exist (`state.tolerances`)
+- Per-feature overrides already exist (`state.featureTolerances` keyed by DXF handle)
+- Add a UI to set per-feature tolerances directly: click a DXF feature → set its
+  warn/fail thresholds (the popover already exists but needs better discoverability)
+
+### 2.5.2 Tolerance band visualization
+- Draw tolerance bands on the canvas around each DXF feature:
+  - **Green zone**: within warn tolerance (±warn_mm around nominal)
+  - **Amber zone**: between warn and fail tolerance
+  - **Red zone**: beyond fail tolerance
+- Bands are semi-transparent filled areas along each line/arc
+- The fitted geometry (from inspection) shows as a line within these bands
+- Makes it immediately obvious which features are in/out of tolerance
+
+### 2.5.3 Tolerance callout annotations
+- Small callout labels on each feature showing the tolerance: "±0.10 / ±0.25"
+- Color-coded to match pass/warn/fail result
+- Hide when not in inspection mode to keep the view clean
 
 ---
 
