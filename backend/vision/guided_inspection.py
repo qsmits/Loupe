@@ -108,25 +108,63 @@ def _inspect_line(entity, edge_xy, ppm, tx, ty, angle_rad,
     if len(corridor_pts) < _MIN_POINTS_LINE:
         return _unmatched(entity, f"too few edge points ({len(corridor_pts)})")
 
-    # RANSAC-like robust line fit: use only inliers close to the best fit
-    # First pass: eigenvector fit on all points
-    centroid = corridor_pts.mean(axis=0)
-    centered = corridor_pts - centroid
+    # Shadow-aware line fitting:
+    # The corridor may contain two parallel edges: the real part edge and its shadow.
+    # Strategy: find edge clusters, pick the one closest to the DXF nominal.
+
+    # Compute signed perpendicular distance of each point from the NOMINAL line
+    perp_signed = perp[mask]  # already computed — signed distance from nominal
+
+    # Bin points by their signed perpendicular distance to find edge clusters
+    # Use a histogram with 1px bins
+    bin_edges = np.arange(-corridor_px, corridor_px + 1, 1.0)
+    hist, _ = np.histogram(perp_signed, bins=bin_edges)
+
+    # Find the peak closest to 0 (the nominal) — this is the real edge
+    bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+    # Smooth histogram slightly to merge adjacent bins
+    if len(hist) >= 3:
+        smoothed = np.convolve(hist, [0.25, 0.5, 0.25], mode='same')
+    else:
+        smoothed = hist.astype(float)
+
+    # Find peak closest to zero with at least some points
+    min_peak_height = max(3, len(corridor_pts) * 0.05)
+    best_offset = 0
+    best_score = -1
+    for i, (center, count) in enumerate(zip(bin_centers, smoothed)):
+        if count < min_peak_height:
+            continue
+        # Score: prefer high count and proximity to zero
+        score = count / (1 + abs(center))
+        if score > best_score:
+            best_score = score
+            best_offset = center
+
+    # Filter to points near the best edge (within ±3px of the peak)
+    edge_band = 3.0
+    near_mask = np.abs(perp_signed - best_offset) < edge_band
+    near_pts = corridor_pts[near_mask]
+
+    if len(near_pts) < _MIN_POINTS_LINE:
+        near_pts = corridor_pts  # fallback to all corridor points
+
+    # Fit line via eigenvector method on the near-edge points
+    centroid = near_pts.mean(axis=0)
+    centered = near_pts - centroid
     cov = centered.T @ centered
     eigenvalues, eigenvectors = np.linalg.eigh(cov)
-    direction = eigenvectors[:, 1]  # eigenvector with largest eigenvalue
-    normal = eigenvectors[:, 0]     # perpendicular (smallest eigenvalue)
+    direction = eigenvectors[:, 1]
+    normal = eigenvectors[:, 0]
 
-    # Compute perpendicular residual of each point to the fitted line
+    # Final inlier filter (tight)
     residuals = np.abs(centered @ normal)
-    # Keep only inliers within 3px of the fitted line (reject texture noise)
-    inlier_threshold = min(3.0, corridor_px * 0.3)
+    inlier_threshold = min(2.0, corridor_px * 0.2)
     inlier_mask = residuals < inlier_threshold
-    inlier_pts = corridor_pts[inlier_mask]
+    inlier_pts = near_pts[inlier_mask]
 
     if len(inlier_pts) < _MIN_POINTS_LINE:
-        # Fall back to all corridor points if too few inliers
-        inlier_pts = corridor_pts
+        inlier_pts = near_pts
 
     # Second pass: refit on inliers only
     centroid = inlier_pts.mean(axis=0)
@@ -231,17 +269,47 @@ def _inspect_arc_circle(entity, edge_xy, ppm, tx, ty, angle_rad,
     if len(corridor_pts) < _MIN_POINTS_ARC:
         return _unmatched(entity, f"too few edge points ({len(corridor_pts)})")
 
-    # First pass: fit circle to all corridor points
+    # Shadow-aware arc fitting: prefer points closest to the nominal radius
+    # Compute signed radial offset from nominal (positive = outside, negative = inside)
+    radial_offsets = dists[mask] - r_px
+
+    # Histogram to find the dominant edge cluster nearest to 0
+    bin_edges = np.arange(-corridor_px, corridor_px + 1, 1.0)
+    hist, _ = np.histogram(radial_offsets, bins=bin_edges)
+    bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+    if len(hist) >= 3:
+        smoothed = np.convolve(hist, [0.25, 0.5, 0.25], mode='same')
+    else:
+        smoothed = hist.astype(float)
+
+    min_peak_height = max(3, len(corridor_pts) * 0.05)
+    best_offset = 0
+    best_score = -1
+    for center, count in zip(bin_centers, smoothed):
+        if count < min_peak_height:
+            continue
+        score = count / (1 + abs(center))
+        if score > best_score:
+            best_score = score
+            best_offset = center
+
+    # Filter to points near the best edge
+    near_mask = np.abs(radial_offsets - best_offset) < 3.0
+    near_pts = corridor_pts[near_mask]
+    if len(near_pts) < _MIN_POINTS_ARC:
+        near_pts = corridor_pts
+
+    # Fit circle to near-edge points
     try:
-        fit_cx, fit_cy, fit_r = fit_circle_algebraic(corridor_pts)
+        fit_cx, fit_cy, fit_r = fit_circle_algebraic(near_pts)
     except (np.linalg.LinAlgError, ValueError):
         return _unmatched(entity, "circle fit failed")
 
-    # RANSAC-like inlier filtering: keep points close to the fitted circle
-    radial_residuals = np.abs(np.hypot(corridor_pts[:, 0] - fit_cx, corridor_pts[:, 1] - fit_cy) - fit_r)
-    inlier_threshold = min(3.0, corridor_px * 0.3)
+    # Final inlier filter
+    radial_residuals = np.abs(np.hypot(near_pts[:, 0] - fit_cx, near_pts[:, 1] - fit_cy) - fit_r)
+    inlier_threshold = min(2.0, corridor_px * 0.2)
     inlier_mask = radial_residuals < inlier_threshold
-    inlier_pts = corridor_pts[inlier_mask]
+    inlier_pts = near_pts[inlier_mask]
 
     if len(inlier_pts) >= _MIN_POINTS_ARC:
         # Second pass: refit on inliers only
