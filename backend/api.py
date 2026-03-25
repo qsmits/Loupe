@@ -110,12 +110,19 @@ class DetectedArc(BaseModel):
 class DetectLinesParams(BaseModel):
     threshold1: int = 50
     threshold2: int = 130
+    min_length: int = 20
+    dp_epsilon: float = 0.02
+    nms_dist: float = 8.0
+    nms_angle: float = 5.0
 
 
 class DetectArcsParams(BaseModel):
     threshold1: int = 50
     threshold2: int = 130
     min_span_deg: float = 45.0
+    min_radius: int = 8
+    max_radius: int = 500
+    residual_tol: float = 0.08
 
 
 class MatchDxfLinesBody(BaseModel):
@@ -326,15 +333,20 @@ def make_router(camera: BaseCamera, frame_store: FrameStore, startup_warning: st
         frame = frame_store.get()
         if frame is None:
             raise HTTPException(status_code=400, detail="No frame stored. Call /freeze first.")
-        return detection.detect_lines_contour(frame, params.threshold1, params.threshold2)
+        return detection.detect_lines_contour(
+            frame, params.threshold1, params.threshold2,
+            dp_epsilon=params.dp_epsilon, min_length_px=params.min_length,
+            nms_dist_px=params.nms_dist, nms_angle_deg=params.nms_angle)
 
     @router.post("/detect-arcs-partial")
     async def detect_arcs_partial_route(params: DetectArcsParams):
         frame = frame_store.get()
         if frame is None:
             raise HTTPException(status_code=400, detail="No frame stored. Call /freeze first.")
-        return detection.detect_partial_arcs(frame, params.threshold1, params.threshold2,
-                                              min_span_deg=params.min_span_deg)
+        return detection.detect_partial_arcs(
+            frame, params.threshold1, params.threshold2,
+            min_radius=params.min_radius, max_radius=params.max_radius,
+            min_span_deg=params.min_span_deg, residual_tol=params.residual_tol)
 
     @router.post("/match-dxf-lines")
     def match_dxf_lines_route(body: MatchDxfLinesBody):

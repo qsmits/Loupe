@@ -34,7 +34,7 @@ export async function doFreeze() {
 // ── Detect tool event handlers ──────────────────────────────────────────────
 export function initDetectHandlers() {
   // Slider input handlers: update the display value on input
-  ["canny-low","canny-high","hough-p2","circle-min-r","circle-max-r","line-sensitivity","line-min-length"].forEach(id => {
+  ["canny-low","canny-high","hough-p2","circle-min-r","circle-max-r","line-sensitivity","line-min-length","adv-min-length","adv-nms-dist","adv-min-span"].forEach(id => {
     const el = document.getElementById(id);
     if (!el) return;
     el.addEventListener("input", () => {
@@ -138,8 +138,11 @@ export function initDetectHandlers() {
     await ensureFrozen();
     const t1 = parseInt(document.getElementById("canny-low").value);
     const t2 = parseInt(document.getElementById("canny-high").value);
+    const minLen = parseInt(document.getElementById("adv-min-length").value);
+    const nmsDist = parseInt(document.getElementById("adv-nms-dist").value);
     const r = await fetch("/detect-lines-merged", { method: "POST",
-      headers: { "Content-Type": "application/json" }, body: JSON.stringify({ threshold1: t1, threshold2: t2 }) });
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ threshold1: t1, threshold2: t2, min_length: minLen, nms_dist: nmsDist }) });
     if (!r.ok) { const d = await r.json().catch(() => null); showStatus(d?.detail || "Line detection failed (HTTP " + r.status + ")"); return; }
     const lines = await r.json();
     const fw = state.frozenSize?.w || canvas.width;
@@ -155,8 +158,10 @@ export function initDetectHandlers() {
     await ensureFrozen();
     const t1 = parseInt(document.getElementById("canny-low").value);
     const t2 = parseInt(document.getElementById("canny-high").value);
+    const minSpan = parseInt(document.getElementById("adv-min-span").value);
     const r = await fetch("/detect-arcs-partial", { method: "POST",
-      headers: { "Content-Type": "application/json" }, body: JSON.stringify({ threshold1: t1, threshold2: t2 }) });
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ threshold1: t1, threshold2: t2, min_span_deg: minSpan }) });
     if (!r.ok) { const d = await r.json().catch(() => null); showStatus(d?.detail || "Arc detection failed (HTTP " + r.status + ")"); return; }
     const arcs = await r.json();
     const fw = state.frozenSize?.w || canvas.width;
