@@ -178,6 +178,8 @@ class InspectGuidedBody(BaseModel):
     tolerance_fail: float = Field(default=0.25, gt=0)
     feature_tolerances: dict = Field(default_factory=dict)
     smoothing: int = Field(default=1, ge=1, le=3)
+    canny_low: int = Field(default=50, ge=0, le=255)
+    canny_high: int = Field(default=130, ge=0, le=255)
 
 
 class FitFeatureBody(BaseModel):
@@ -424,6 +426,8 @@ def make_router(camera: BaseCamera, frame_store: FrameStore, startup_warning: st
             tolerance_fail=body.tolerance_fail,
             feature_tolerances=body.feature_tolerances,
             smoothing=body.smoothing,
+            canny_low=body.canny_low,
+            canny_high=body.canny_high,
         )
 
     @router.post("/fit-feature")

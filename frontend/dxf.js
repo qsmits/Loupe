@@ -316,6 +316,8 @@ export function initDxfHandlers() {
           flip_v: ann.flipV ?? false,
           corridor_px: 15,
           smoothing: parseInt(document.getElementById("adv-smoothing")?.value || "1"),
+          canny_low: parseInt(document.getElementById("canny-low")?.value || "50"),
+          canny_high: parseInt(document.getElementById("canny-high")?.value || "130"),
           tolerance_warn: state.tolerances.warn,
           tolerance_fail: state.tolerances.fail,
           feature_tolerances: state.featureTolerances,
