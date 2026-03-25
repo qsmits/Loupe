@@ -3,12 +3,12 @@ import { canvas, ctx, img, showStatus, redraw, resizeCanvas,
          drawLine, drawOrigin, drawAreaPreview } from './render.js';
 import { renderSidebar, loadCameraInfo, loadUiConfig, loadTolerances,
          updateCalibrationButton, checkStartupWarning, updateFreezeUI,
-         loadCameraList } from './sidebar.js';
+         loadCameraList, renderInspectionTable } from './sidebar.js';
 import { addAnnotation, deleteAnnotation, deleteSelected, elevateSelected, isDetection, clearDetections, clearMeasurements, clearDxfOverlay, clearAll } from './annotations.js';
 import { setTool, handleToolClick, handleSelectDown, handleDrag,
          canvasPoint, snapPoint, collectDxfSnapPoints,
-         projectConstrained } from './tools.js';
-import { fitCircle } from './math.js';
+         projectConstrained, hitTestDxfEntity } from './tools.js';
+import { fitCircle, fitLine, fitCircleAlgebraic } from './math.js';
 import { exitDxfAlignMode, initDxfHandlers,
          openFeatureTolPopover } from './dxf.js';
 import { doFreeze, initDetectHandlers } from './detect.js';
@@ -175,7 +175,31 @@ function onMouseDown(e) {
       }
     }
   }
-  if (state.tool === "select") { handleSelectDown(pt, e); return; }
+  // Point-pick mode: add a measurement point
+  if (state.inspectionPickTarget) {
+    state.inspectionPickPoints.push(pt);
+    _updatePickFit();
+    redraw();
+    return;
+  }
+
+  // DXF feature click-to-select for point-pick (when inspection results exist)
+  if (state.tool === "select") {
+    const dxfAnn = state.annotations.find(a => a.type === "dxf-overlay");
+    if (dxfAnn && dxfAnn.guidedResults) {
+      const entity = hitTestDxfEntity(pt, dxfAnn);
+      if (entity) {
+        state.inspectionPickTarget = entity;
+        state.inspectionPickPoints = [];
+        state.inspectionPickFit = null;
+        showStatus("Click points along the edge. Double-click or Enter to finish. Escape to cancel.");
+        redraw();
+        return;
+      }
+    }
+    handleSelectDown(pt, e);
+    return;
+  }
   handleToolClick(pt, e);
 }
 
@@ -237,6 +261,90 @@ function onMouseUp() {
 
 canvas.addEventListener("mousedown", onMouseDown);
 canvas.addEventListener("mouseup", onMouseUp);
+
+// ── Point-pick helpers ────────────────────────────────────────────────────────
+function _updatePickFit() {
+  const pts = state.inspectionPickPoints;
+  const target = state.inspectionPickTarget;
+  if (!target) return;
+  state.inspectionPickFit = null;
+  const etype = target.type;
+  if ((etype === "line" || etype === "polyline_line") && pts.length >= 2) {
+    state.inspectionPickFit = fitLine(pts);
+  } else if ((etype === "arc" || etype === "polyline_arc" || etype === "circle") && pts.length >= 3) {
+    const result = fitCircleAlgebraic(pts);
+    if (result) state.inspectionPickFit = { type: "circle", cx: result.cx, cy: result.cy, r: result.r };
+  }
+}
+
+async function _finalizePickInspection() {
+  const target = state.inspectionPickTarget;
+  const pts = state.inspectionPickPoints;
+  if (!target || pts.length < 2) {
+    showStatus("Need at least 2 points");
+    return;
+  }
+  const ann = state.annotations.find(a => a.type === "dxf-overlay");
+  if (!ann) return;
+  const cal = state.calibration;
+  if (!cal?.pixelsPerMm) return;
+
+  try {
+    const resp = await fetch("/fit-feature", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        entity: target,
+        points: pts.map(p => [p.x, p.y]),
+        pixels_per_mm: cal.pixelsPerMm,
+        tx: ann.offsetX, ty: ann.offsetY,
+        angle_deg: ann.angle ?? 0,
+        flip_h: ann.flipH ?? false, flip_v: ann.flipV ?? false,
+        tolerance_warn: state.tolerances.warn,
+        tolerance_fail: state.tolerances.fail,
+      }),
+    });
+    if (!resp.ok) { showStatus("Fit failed"); return; }
+    const result = await resp.json();
+    result.source = "manual";
+
+    // Replace or add to guided results
+    if (ann.guidedResults) {
+      const idx = ann.guidedResults.findIndex(r => r.handle === target.handle);
+      if (idx >= 0) ann.guidedResults[idx] = result;
+      else ann.guidedResults.push(result);
+    }
+
+    // Update state.inspectionResults
+    const sr = {
+      handle: result.handle, type: result.type, parent_handle: result.parent_handle,
+      matched: result.matched, deviation_mm: result.perp_dev_mm ?? result.center_dev_mm,
+      angle_error_deg: result.angle_error_deg,
+      tolerance_warn: result.tolerance_warn, tolerance_fail: result.tolerance_fail,
+      pass_fail: result.pass_fail, source: "manual",
+    };
+    const sIdx = state.inspectionResults.findIndex(r => r.handle === target.handle);
+    if (sIdx >= 0) state.inspectionResults[sIdx] = sr;
+    else state.inspectionResults.push(sr);
+
+    showStatus(`Manual measurement: ${result.pass_fail?.toUpperCase() ?? "done"}`);
+    renderInspectionTable();
+  } catch (err) {
+    showStatus("Fit error: " + err.message);
+  }
+
+  state.inspectionPickTarget = null;
+  state.inspectionPickPoints = [];
+  state.inspectionPickFit = null;
+  redraw();
+}
+
+canvas.addEventListener("dblclick", e => {
+  if (state.inspectionPickTarget) {
+    e.preventDefault();
+    _finalizePickInspection();
+  }
+});
 
 // ── Mousemove ────────────────────────────────────────────────────────────────
 canvas.addEventListener("mousemove", e => {
@@ -504,11 +612,23 @@ document.addEventListener("keydown", e => {
   // All other shortcuts are blocked when an input/select/textarea/dialog is focused
   if (document.activeElement.closest("input, select, textarea") !== null || document.querySelector(".dialog-overlay:not([hidden])") !== null) return;
 
+  if (e.key === "Enter" && state.inspectionPickTarget) {
+    _finalizePickInspection();
+    return;
+  }
   if ((e.key === "Delete" || e.key === "Backspace") && state.selected.size > 0) {
     deleteSelected();
     return;
   }
   if (e.key === "Escape") {
+    if (state.inspectionPickTarget) {
+      state.inspectionPickTarget = null;
+      state.inspectionPickPoints = [];
+      state.inspectionPickFit = null;
+      showStatus("Point-pick cancelled");
+      redraw();
+      return;
+    }
     hideContextMenu();
     closeAllDropdowns();
     if (state.dxfDragMode) {
