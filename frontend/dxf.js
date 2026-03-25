@@ -288,111 +288,63 @@ export function initDxfHandlers() {
     }
   });
 
-  // btn-run-inspection: call /match-dxf-lines and /match-dxf-arcs, store on ann
+  // btn-run-inspection: call /inspect-guided corridor-based API
   document.getElementById("btn-run-inspection")?.addEventListener("click", async () => {
     const ann = state.annotations.find(a => a.type === "dxf-overlay");
     if (!ann) return;
     const cal = state.calibration;
     if (!cal?.pixelsPerMm) { showStatus("Calibrate first"); return; }
 
-    const ppm    = cal.pixelsPerMm;
-    const tx     = ann.offsetX;
-    const ty     = ann.offsetY;
-    const angle  = ann.angle ?? 0;
-    const flip_h = ann.flipH ?? false;
-    const flip_v = ann.flipV ?? false;
-
-    const detectedLines = state.annotations
-      .filter(a => a.type === "detected-line-merged")
-      .map(a => ({
-        x1: a.x1, y1: a.y1, x2: a.x2, y2: a.y2,
-        length: Math.hypot(a.x2 - a.x1, a.y2 - a.y1),
-      }));
-
-    const detectedArcs = state.annotations
-      .filter(a => a.type === "detected-arc-partial")
-      .map(a => ({
-        cx: a.cx, cy: a.cy, r: a.r,
-        start_deg: a.start_deg, end_deg: a.end_deg,
-      }));
-
-    const lineEntities = ann.entities.filter(e =>
-      e.type === "line" || e.type === "polyline_line");
-    const arcEntities  = ann.entities.filter(e =>
-      e.type === "arc"  || e.type === "polyline_arc");
-
-    const tol = state.tolerances;
+    const btnEl = document.getElementById("btn-run-inspection");
+    const origText = btnEl?.textContent;
+    if (btnEl) { btnEl.disabled = true; btnEl.textContent = "Inspecting…"; }
+    document.body.style.cursor = "progress";
+    canvas.style.cursor = "progress";
 
     try {
-      const [lineRes, arcRes] = await Promise.all([
-        fetch("/match-dxf-lines", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            entities: lineEntities,
-            lines: detectedLines,
-            pixels_per_mm: ppm,
-            tx, ty, angle_deg: angle, flip_h, flip_v,
-            tolerance_warn: tol.warn,
-            tolerance_fail: tol.fail,
-          }),
+      const inspectableTypes = ["line", "polyline_line", "arc", "polyline_arc", "circle"];
+      const resp = await fetch("/inspect-guided", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          entities: ann.entities.filter(e => inspectableTypes.includes(e.type)),
+          pixels_per_mm: cal.pixelsPerMm,
+          tx: ann.offsetX,
+          ty: ann.offsetY,
+          angle_deg: ann.angle ?? 0,
+          flip_h: ann.flipH ?? false,
+          flip_v: ann.flipV ?? false,
+          corridor_px: 15,
+          tolerance_warn: state.tolerances.warn,
+          tolerance_fail: state.tolerances.fail,
+          feature_tolerances: state.featureTolerances,
         }),
-        fetch("/match-dxf-arcs", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            entities: arcEntities,
-            arcs: detectedArcs,
-            pixels_per_mm: ppm,
-            tx, ty, angle_deg: angle, flip_h, flip_v,
-            tolerance_warn: tol.warn,
-            tolerance_fail: tol.fail,
-          }),
-        }),
-      ]);
+      });
 
-      if (!lineRes.ok || !arcRes.ok) {
-        showStatus("Inspection failed — check console");
+      if (!resp.ok) {
+        const d = await resp.json().catch(() => null);
+        showStatus(d?.detail || "Inspection failed");
         return;
       }
 
-      ann.lineMatchResults = await lineRes.json();
-      ann.arcMatchResults  = await arcRes.json();
+      const results = await resp.json();
+      ann.guidedResults = results;
 
-      // Populate state.inspectionResults for session persistence and export
-      const lineResults = ann.lineMatchResults.map(r => {
-        const en = lineEntities.find(e => e.handle === r.handle) || {};
-        return {
-          handle: r.handle,
-          type: en.type || "line",
-          parent_handle: en.parent_handle || null,
-          matched: r.matched,
-          deviation_mm: r.perp_dev_mm ?? null,
-          angle_error_deg: r.angle_error_deg ?? null,
-          tolerance_warn: r.tolerance_warn ?? tol.warn,
-          tolerance_fail: r.tolerance_fail ?? tol.fail,
-          pass_fail: r.pass_fail,
-        };
-      });
+      // Populate state.inspectionResults for session/export
+      state.inspectionResults = results.map(r => ({
+        handle: r.handle,
+        type: r.type,
+        parent_handle: r.parent_handle,
+        matched: r.matched,
+        deviation_mm: r.perp_dev_mm ?? r.center_dev_mm ?? null,
+        angle_error_deg: r.angle_error_deg ?? null,
+        tolerance_warn: r.tolerance_warn ?? state.tolerances.warn,
+        tolerance_fail: r.tolerance_fail ?? state.tolerances.fail,
+        pass_fail: r.pass_fail,
+        source: "auto",
+      }));
 
-      const arcResults = ann.arcMatchResults.map(r => {
-        const en = arcEntities.find(e => e.handle === r.handle) || {};
-        return {
-          handle: r.handle,
-          type: en.type || "arc",
-          parent_handle: en.parent_handle || null,
-          matched: r.matched,
-          deviation_mm: r.center_dev_mm ?? null,
-          angle_error_deg: null,
-          tolerance_warn: r.tolerance_warn ?? tol.warn,
-          tolerance_fail: r.tolerance_fail ?? tol.fail,
-          pass_fail: r.pass_fail,
-        };
-      });
-
-      state.inspectionResults = [...lineResults, ...arcResults];
-
-      // Capture composited camera+overlay as inspection frame
+      // Capture inspection frame
       try {
         const offscreen = document.createElement("canvas");
         offscreen.width = canvas.width;
@@ -401,16 +353,21 @@ export function initDxfHandlers() {
         octx.drawImage(img, 0, 0, offscreen.width, offscreen.height);
         octx.drawImage(canvas, 0, 0);
         state.inspectionFrame = offscreen.toDataURL("image/jpeg", 0.85);
-      } catch (_) {
-        state.inspectionFrame = null;
-      }
+      } catch (_) { state.inspectionFrame = null; }
+
+      const matched = results.filter(r => r.matched).length;
+      showStatus(`Inspection complete — ${matched}/${results.length} features matched`);
+      state.showDeviations = true;
 
       renderInspectionTable();
       updateExportButtons();
       redraw();
-      showStatus(`Inspection complete — ${ann.lineMatchResults.length} lines, ${ann.arcMatchResults.length} arcs`);
     } catch (err) {
       showStatus("Inspection error: " + err.message);
+    } finally {
+      if (btnEl) { btnEl.disabled = false; btnEl.textContent = origText; }
+      document.body.style.cursor = "";
+      canvas.style.cursor = "";
     }
   });
 

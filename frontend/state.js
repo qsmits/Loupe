@@ -28,6 +28,9 @@ export const state = {
   inspectionResults: [],   // populated by "Run inspection"; persisted in session v2
   inspectionFrame: null,   // base64 JPEG of composited camera+overlay at inspection time
   dxfFilename: null,       // set from DXF filename on load; cleared on DXF clear
+  inspectionPickTarget: null,   // DXF entity being manually measured (point-pick mode)
+  inspectionPickPoints: [],     // [{x, y}, ...] placed by user
+  inspectionPickFit: null,      // live fit result (client-side)
   nextId: 1,
   settings: {
     crosshairColor: "#ffffff",
