@@ -137,7 +137,7 @@ export function initDetectHandlers() {
   document.getElementById("btn-detect-lines-merged")?.addEventListener("click", async () => {
     const r = await fetch("/detect-lines-merged", { method: "POST",
       headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) });
-    if (!r.ok) { showStatus("Freeze a frame first"); return; }
+    if (!r.ok) { const d = await r.json().catch(() => null); showStatus(d?.detail || "Line detection failed (HTTP " + r.status + ")"); return; }
     const lines = await r.json();
     state.annotations = state.annotations.filter(a => a.type !== "detected-line-merged");
     lines.forEach(l => addAnnotation({ type: "detected-line-merged",
@@ -149,7 +149,7 @@ export function initDetectHandlers() {
   document.getElementById("btn-detect-arcs-partial")?.addEventListener("click", async () => {
     const r = await fetch("/detect-arcs-partial", { method: "POST",
       headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) });
-    if (!r.ok) { showStatus("Freeze a frame first"); return; }
+    if (!r.ok) { const d = await r.json().catch(() => null); showStatus(d?.detail || "Arc detection failed (HTTP " + r.status + ")"); return; }
     const arcs = await r.json();
     state.annotations = state.annotations.filter(a => a.type !== "detected-arc-partial");
     arcs.forEach(a => addAnnotation({ type: "detected-arc-partial",
