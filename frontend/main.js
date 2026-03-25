@@ -72,11 +72,11 @@ function redo() {
 
 // ─── Dropdown helpers ────────────────────────────────────────────────────────
 function closeAllDropdowns() {
-  ["dropdown-measure","dropdown-detect","dropdown-overlay"].forEach(id => {
+  ["dropdown-measure","dropdown-detect","dropdown-overlay","dropdown-clear"].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.hidden = true;
   });
-  ["btn-menu-measure","btn-menu-detect","btn-menu-overlay"].forEach(id => {
+  ["btn-menu-measure","btn-menu-detect","btn-menu-overlay","btn-menu-clear"].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.classList.remove("open");
   });
@@ -502,6 +502,15 @@ document.getElementById("btn-menu-overlay").addEventListener("click", e => {
   e.stopPropagation();
   toggleDropdown("btn-menu-overlay", "dropdown-overlay");
 });
+document.getElementById("btn-menu-clear").addEventListener("click", e => {
+  e.stopPropagation();
+  toggleDropdown("btn-menu-clear", "dropdown-clear");
+});
+
+document.getElementById("btn-clear-detections")?.addEventListener("click", () => { closeAllDropdowns(); clearDetections(); });
+document.getElementById("btn-clear-measurements")?.addEventListener("click", () => { closeAllDropdowns(); clearMeasurements(); });
+document.getElementById("btn-clear-dxf")?.addEventListener("click", () => { closeAllDropdowns(); clearDxfOverlay(); });
+document.getElementById("btn-clear-all")?.addEventListener("click", () => { closeAllDropdowns(); clearAll(); });
 
 document.querySelectorAll("#dropdown-measure .dropdown-item[data-tool]").forEach(item => {
   item.addEventListener("click", () => {
