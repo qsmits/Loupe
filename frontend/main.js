@@ -4,7 +4,7 @@ import { canvas, ctx, img, showStatus, redraw, resizeCanvas,
 import { renderSidebar, loadCameraInfo, loadUiConfig, loadTolerances,
          updateCalibrationButton, checkStartupWarning, updateFreezeUI,
          loadCameraList } from './sidebar.js';
-import { addAnnotation, deleteAnnotation, deleteSelected, elevateSelected } from './annotations.js';
+import { addAnnotation, deleteAnnotation, deleteSelected, elevateSelected, isDetection, clearDetections, clearMeasurements, clearDxfOverlay, clearAll } from './annotations.js';
 import { setTool, handleToolClick, handleSelectDown, handleDrag,
          canvasPoint, snapPoint, collectDxfSnapPoints,
          projectConstrained } from './tools.js';
@@ -13,6 +13,35 @@ import { exitDxfAlignMode, initDxfHandlers,
          openFeatureTolPopover } from './dxf.js';
 import { doFreeze, initDetectHandlers } from './detect.js';
 import { saveSession, loadSession, exportAnnotatedImage, exportCsv } from './session.js';
+
+// ── Context menu ──────────────────────────────────────────────────────────
+const ctxMenu = document.getElementById("context-menu");
+
+function showContextMenu(x, y, items) {
+  ctxMenu.innerHTML = "";
+  for (const item of items) {
+    if (item === "---") {
+      const d = document.createElement("div");
+      d.className = "ctx-divider";
+      ctxMenu.appendChild(d);
+    } else {
+      const btn = document.createElement("button");
+      btn.className = "ctx-item";
+      btn.textContent = item.label;
+      btn.addEventListener("click", () => { ctxMenu.hidden = true; item.action(); });
+      ctxMenu.appendChild(btn);
+    }
+  }
+  // Position, keeping on screen
+  ctxMenu.hidden = false;
+  const rect = ctxMenu.getBoundingClientRect();
+  ctxMenu.style.left = Math.min(x, window.innerWidth - rect.width - 5) + "px";
+  ctxMenu.style.top = Math.min(y, window.innerHeight - rect.height - 5) + "px";
+}
+
+function hideContextMenu() { ctxMenu.hidden = true; }
+
+document.addEventListener("click", hideContextMenu);
 
 // ── Undo / Redo ─────────────────────────────────────────────────────────────
 function undo() {
@@ -350,6 +379,45 @@ canvas.addEventListener("mouseleave", () => {
   if (coordEl) coordEl.textContent = "";
 });
 
+canvas.addEventListener("contextmenu", e => {
+  e.preventDefault();
+  hideContextMenu();
+
+  if (state.selected.size > 0) {
+    // Right-click with selection active
+    const items = [];
+    const hasDetections = [...state.selected].some(id => {
+      const ann = state.annotations.find(a => a.id === id);
+      return ann && isDetection(ann);
+    });
+    if (hasDetections) {
+      items.push({ label: "Elevate to measurement", action: elevateSelected });
+    }
+    items.push({ label: `Delete (${state.selected.size})`, action: deleteSelected });
+    if (state.selected.size === 1) {
+      const ann = state.annotations.find(a => a.id === [...state.selected][0]);
+      if (ann && !isDetection(ann)) {
+        items.push("---");
+        items.push({ label: "Rename", action: () => {
+          const row = document.querySelector(`.measurement-item[data-id="${ann.id}"]`);
+          if (row) row.querySelector(".measurement-name")?.focus();
+        }});
+      }
+    }
+    showContextMenu(e.clientX, e.clientY, items);
+    return;
+  }
+
+  // Right-click on empty canvas
+  showContextMenu(e.clientX, e.clientY, [
+    { label: "Clear detections", action: clearDetections },
+    { label: "Clear measurements", action: clearMeasurements },
+    { label: "Clear DXF overlay", action: clearDxfOverlay },
+    "---",
+    { label: "Clear all", action: clearAll },
+  ]);
+});
+
 // ── Keyboard ─────────────────────────────────────────────────────────────────
 document.addEventListener("keydown", e => {
   // Help dialog shortcut — works even when an input is focused
@@ -366,6 +434,7 @@ document.addEventListener("keydown", e => {
     return;
   }
   if (e.key === "Escape") {
+    hideContextMenu();
     closeAllDropdowns();
     if (state.dxfDragMode) {
       state.dxfDragMode = false;

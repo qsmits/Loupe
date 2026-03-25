@@ -134,6 +134,62 @@ export function elevateSelected() {
   showStatus(`Elevated ${newIds.length} detection${newIds.length > 1 ? "s" : ""} to measurement${newIds.length > 1 ? "s" : ""}`);
 }
 
+// ── Clear operations ─────────────────────────────────────────────────────────
+
+const OVERLAY_TYPES = new Set(["edges-overlay", "preprocessed-overlay"]);
+
+export function clearDetections() {
+  pushUndo();
+  state.annotations = state.annotations.filter(a =>
+    !DETECTION_TYPES.has(a.type) && !OVERLAY_TYPES.has(a.type)
+  );
+  state.selected = new Set();
+  renderSidebar();
+  redraw();
+  showStatus("Cleared detections");
+}
+
+export function clearMeasurements() {
+  pushUndo();
+  const KEEP = new Set([...DETECTION_TYPES, ...OVERLAY_TYPES, "calibration", "origin", "dxf-overlay"]);
+  state.annotations = state.annotations.filter(a => KEEP.has(a.type));
+  state.selected = new Set();
+  renderSidebar();
+  redraw();
+  showStatus("Cleared measurements");
+}
+
+export function clearDxfOverlay() {
+  pushUndo();
+  state.annotations = state.annotations.filter(a => a.type !== "dxf-overlay");
+  state.inspectionResults = [];
+  state.inspectionFrame = null;
+  state.dxfFilename = null;
+  const p = document.getElementById("dxf-panel");
+  if (p) p.style.display = "none";
+  state.selected = new Set();
+  renderSidebar();
+  redraw();
+  showStatus("Cleared DXF overlay");
+}
+
+export function clearAll() {
+  if (!confirm("Clear all annotations? Calibration and origin will be preserved.")) return;
+  pushUndo();
+  state.annotations = state.annotations.filter(a =>
+    a.type === "calibration" || a.type === "origin"
+  );
+  state.inspectionResults = [];
+  state.inspectionFrame = null;
+  state.dxfFilename = null;
+  const p = document.getElementById("dxf-panel");
+  if (p) p.style.display = "none";
+  state.selected = new Set();
+  renderSidebar();
+  redraw();
+  showStatus("Cleared all annotations");
+}
+
 export function applyCalibration(ann) {
   pushUndo();
   // Remove any existing calibration annotation
