@@ -169,7 +169,16 @@ export function initDetectHandlers() {
     const fw = state.frozenSize?.w || canvas.width;
     const fh = state.frozenSize?.h || canvas.height;
     state.annotations = state.annotations.filter(a => a.type !== "detected-arc-partial");
-    arcs.forEach(a => addAnnotation({ type: "detected-arc-partial",
+    // Filter out arcs that overlap with already-detected circles
+    const existingCircles = state.annotations.filter(a => a.type === "detected-circle");
+    const filteredArcs = arcs.filter(a => {
+      return !existingCircles.some(c => {
+        const dist = Math.hypot(a.cx - c.x, a.cy - c.y);
+        const rRatio = Math.abs(a.r - c.radius) / (Math.max(a.r, c.radius) + 1e-6);
+        return dist < 20 && rRatio < 0.2;  // same center within 20px and radius within 20%
+      });
+    });
+    filteredArcs.forEach(a => addAnnotation({ type: "detected-arc-partial",
       cx: a.cx, cy: a.cy, r: a.r, start_deg: a.start_deg, end_deg: a.end_deg,
       frameWidth: fw, frameHeight: fh }));
     redraw();

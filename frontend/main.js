@@ -399,6 +399,24 @@ canvas.addEventListener("contextmenu", e => {
       const ann = state.annotations.find(a => a.id === [...state.selected][0]);
       if (ann && !isDetection(ann)) {
         items.push("---");
+        if (ann.type === "arc-measure") {
+          items.push({ label: "Convert to circle", action: () => {
+            pushUndo();
+            const idx = state.annotations.findIndex(a => a.id === ann.id);
+            if (idx === -1) return;
+            const circle = {
+              type: "circle",
+              id: state.nextId++,
+              name: ann.name || "",
+              cx: ann.cx, cy: ann.cy, r: ann.r,
+            };
+            state.annotations.splice(idx, 1, circle);
+            state.selected = new Set([circle.id]);
+            renderSidebar();
+            redraw();
+            showStatus("Converted arc to circle");
+          }});
+        }
         items.push({ label: "Rename", action: () => {
           const row = document.querySelector(`.measurement-item[data-id="${ann.id}"]`);
           if (row) row.querySelector(".measurement-name")?.focus();
