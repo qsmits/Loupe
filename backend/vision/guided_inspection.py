@@ -95,13 +95,32 @@ def _inspect_line(entity, edge_xy, ppm, tx, ty, angle_rad,
     if len(corridor_pts) < _MIN_POINTS_LINE:
         return _unmatched(entity, f"too few edge points ({len(corridor_pts)})")
 
-    # Fit line via eigenvector method (orthogonal distance regression)
+    # RANSAC-like robust line fit: use only inliers close to the best fit
+    # First pass: eigenvector fit on all points
     centroid = corridor_pts.mean(axis=0)
     centered = corridor_pts - centroid
     cov = centered.T @ centered
     eigenvalues, eigenvectors = np.linalg.eigh(cov)
-    # Principal direction is eigenvector with largest eigenvalue
-    direction = eigenvectors[:, 1]  # eigh returns ascending order
+    direction = eigenvectors[:, 1]  # eigenvector with largest eigenvalue
+    normal = eigenvectors[:, 0]     # perpendicular (smallest eigenvalue)
+
+    # Compute perpendicular residual of each point to the fitted line
+    residuals = np.abs(centered @ normal)
+    # Keep only inliers within 3px of the fitted line (reject texture noise)
+    inlier_threshold = min(3.0, corridor_px * 0.3)
+    inlier_mask = residuals < inlier_threshold
+    inlier_pts = corridor_pts[inlier_mask]
+
+    if len(inlier_pts) < _MIN_POINTS_LINE:
+        # Fall back to all corridor points if too few inliers
+        inlier_pts = corridor_pts
+
+    # Second pass: refit on inliers only
+    centroid = inlier_pts.mean(axis=0)
+    centered = inlier_pts - centroid
+    cov = centered.T @ centered
+    eigenvalues, eigenvectors = np.linalg.eigh(cov)
+    direction = eigenvectors[:, 1]
 
     # Deviation = perpendicular distance from fitted centroid to nominal line
     perp_dev_px = abs(
@@ -205,11 +224,25 @@ def _inspect_arc_circle(entity, edge_xy, ppm, tx, ty, angle_rad,
     if len(corridor_pts) < _MIN_POINTS_ARC:
         return _unmatched(entity, f"too few edge points ({len(corridor_pts)})")
 
-    # Fit circle to collected edge points
+    # First pass: fit circle to all corridor points
     try:
         fit_cx, fit_cy, fit_r = fit_circle_algebraic(corridor_pts)
     except (np.linalg.LinAlgError, ValueError):
         return _unmatched(entity, "circle fit failed")
+
+    # RANSAC-like inlier filtering: keep points close to the fitted circle
+    radial_residuals = np.abs(np.hypot(corridor_pts[:, 0] - fit_cx, corridor_pts[:, 1] - fit_cy) - fit_r)
+    inlier_threshold = min(3.0, corridor_px * 0.3)
+    inlier_mask = radial_residuals < inlier_threshold
+    inlier_pts = corridor_pts[inlier_mask]
+
+    if len(inlier_pts) >= _MIN_POINTS_ARC:
+        # Second pass: refit on inliers only
+        try:
+            fit_cx, fit_cy, fit_r = fit_circle_algebraic(inlier_pts)
+            corridor_pts = inlier_pts  # use inliers for edge_points_sample
+        except (np.linalg.LinAlgError, ValueError):
+            pass  # keep first-pass fit
 
     # Deviation: center distance + radius deviation
     center_dev_px = math.hypot(fit_cx - cx_px, fit_cy - cy_px)

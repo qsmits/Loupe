@@ -315,6 +315,7 @@ export function initDxfHandlers() {
           flip_h: ann.flipH ?? false,
           flip_v: ann.flipV ?? false,
           corridor_px: 15,
+          smoothing: parseInt(document.getElementById("adv-smoothing")?.value || "1"),
           tolerance_warn: state.tolerances.warn,
           tolerance_fail: state.tolerances.fail,
           feature_tolerances: state.featureTolerances,
