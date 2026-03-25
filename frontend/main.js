@@ -102,6 +102,39 @@ function toggleDropdown(btnId, dropId) {
 // ── Canvas mouse events ──────────────────────────────────────────────────────
 function onMouseDown(e) {
   if (e.button !== 0 && e.button !== 1) return;
+
+  // Minimap click-to-jump
+  if (e.button === 0 && state.frozenBackground && imageWidth > 0) {
+    const rect = canvas.getBoundingClientRect();
+    const screenX = e.clientX - rect.left;
+    const screenY = e.clientY - rect.top;
+    const fitZoom = Math.min(rect.width / imageWidth, rect.height / imageHeight);
+    if (viewport.zoom > fitZoom * 1.05) {
+      const padding = 8;
+      const maxW = 180, maxH = 120;
+      const aspect = imageWidth / imageHeight;
+      let mmW, mmH;
+      if (aspect > maxW / maxH) { mmW = maxW; mmH = maxW / aspect; }
+      else { mmH = maxH; mmW = maxH * aspect; }
+      const mmX = padding;
+      const mmY = rect.height - mmH - padding;
+
+      if (screenX >= mmX && screenX <= mmX + mmW && screenY >= mmY && screenY <= mmY + mmH) {
+        // Convert click position in minimap to image coordinates
+        const imgX = ((screenX - mmX) / mmW) * imageWidth;
+        const imgY = ((screenY - mmY) / mmH) * imageHeight;
+        // Center viewport on clicked position
+        const visibleW = rect.width / viewport.zoom;
+        const visibleH = rect.height / viewport.zoom;
+        viewport.panX = imgX - visibleW / 2;
+        viewport.panY = imgY - visibleH / 2;
+        clampPan(rect.width, rect.height);
+        resizeCanvas();
+        return;
+      }
+    }
+  }
+
   // Pan: middle-mouse always, or left-click in pan tool
   if (e.button === 1 || (e.button === 0 && state.tool === "pan")) {
     e.preventDefault();

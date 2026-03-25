@@ -373,6 +373,69 @@ export function redraw() {
       badge.hidden = true;
     }
   }
+
+  // Minimap overlay (bottom-left corner, only when zoomed in)
+  drawMinimap();
+}
+
+function drawMinimap() {
+  // Only show when zoomed in past fit-to-window
+  if (!state.frozenBackground || imageWidth === 0) return;
+  const fitZoom = Math.min(canvas.clientWidth / imageWidth, canvas.clientHeight / imageHeight);
+  if (viewport.zoom <= fitZoom * 1.05) return;  // small margin to avoid flicker
+
+  const padding = 8;
+  const maxW = 180;
+  const maxH = 120;
+
+  // Scale minimap to fit within maxW x maxH while preserving aspect ratio
+  const aspect = imageWidth / imageHeight;
+  let mmW, mmH;
+  if (aspect > maxW / maxH) {
+    mmW = maxW;
+    mmH = maxW / aspect;
+  } else {
+    mmH = maxH;
+    mmW = maxH * aspect;
+  }
+
+  const mmX = padding;
+  const mmY = canvas.clientHeight - mmH - padding;
+
+  // Draw minimap background (scaled-down frozen image)
+  // ctx operates on canvas internal resolution, so scale accordingly
+  const dpr = canvas.width / canvas.clientWidth;  // device pixel ratio equivalent
+  const x = mmX * dpr, y = mmY * dpr, w = mmW * dpr, h = mmH * dpr;
+
+  ctx.save();
+
+  // Semi-transparent dark background
+  ctx.fillStyle = "rgba(0, 0, 0, 0.6)";
+  ctx.fillRect(x - 1, y - 1, w + 2, h + 2);
+
+  // Draw the full frozen image scaled down into the minimap area
+  ctx.drawImage(state.frozenBackground, x, y, w, h);
+
+  // Draw viewport rectangle showing the visible area
+  const visibleW = canvas.clientWidth / viewport.zoom;
+  const visibleH = canvas.clientHeight / viewport.zoom;
+
+  // Convert viewport bounds to minimap coordinates
+  const rectX = x + (viewport.panX / imageWidth) * w;
+  const rectY = y + (viewport.panY / imageHeight) * h;
+  const rectW = (visibleW / imageWidth) * w;
+  const rectH = (visibleH / imageHeight) * h;
+
+  ctx.strokeStyle = "#60a5fa";
+  ctx.lineWidth = 1.5 * dpr;
+  ctx.setLineDash([]);
+  ctx.strokeRect(rectX, rectY, rectW, rectH);
+
+  // Slight blue fill for the viewport rectangle
+  ctx.fillStyle = "rgba(96, 165, 250, 0.1)";
+  ctx.fillRect(rectX, rectY, rectW, rectH);
+
+  ctx.restore();
 }
 
 export function drawAnnotations() {
