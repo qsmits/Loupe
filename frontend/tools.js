@@ -546,6 +546,19 @@ export function hitTestAnnotation(ann, pt) {
     };
     return distPointToSegment(pt, { x: ann.px, y: ann.py }, edgePt) < 6;
   }
+  if (ann.type === "detected-circle") {
+    const sx = ann.frameWidth ? canvas.width / ann.frameWidth : 1;
+    const sy = ann.frameHeight ? canvas.height / ann.frameHeight : 1;
+    const cx = ann.x * sx, cy = ann.y * sy, r = ann.radius * sx;
+    const d = Math.hypot(pt.x - cx, pt.y - cy);
+    return Math.abs(d - r) < 10 || d < 10;
+  }
+  if (ann.type === "detected-line") {
+    const sx = ann.frameWidth ? canvas.width / ann.frameWidth : 1;
+    const sy = ann.frameHeight ? canvas.height / ann.frameHeight : 1;
+    const x1 = ann.x1 * sx, y1 = ann.y1 * sy, x2 = ann.x2 * sx, y2 = ann.y2 * sy;
+    return distPointToSegment(pt, { x: x1, y: y1 }, { x: x2, y: y2 }) < 8;
+  }
   if (ann.type === "detected-line-merged") {
     const sx = ann.frameWidth ? canvas.width / ann.frameWidth : 1;
     const sy = ann.frameHeight ? canvas.height / ann.frameHeight : 1;
