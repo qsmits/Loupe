@@ -3,6 +3,7 @@ import { redraw, canvas, img, showStatus, measurementLabel } from './render.js';
 import { renderSidebar, renderInspectionTable } from './sidebar.js';
 import { addAnnotation } from './annotations.js';
 import { polygonArea } from './math.js';
+import { imageWidth, imageHeight } from './viewport.js';
 
 // ── CSV value helper ────────────────────────────────────────────────────────
 function formatCsvValue(ann) {
@@ -60,7 +61,7 @@ function formatCsvValue(ann) {
     return `center=${centerStr}  r=${rStr}  span ${ann.span_deg.toFixed(1)}°  chord=${chordStr}`;
   }
   if (ann.type === "detected-circle") {
-    const sx = canvas.width / ann.frameWidth;
+    const sx = imageWidth / ann.frameWidth;
     return distResult((ann.radius * sx) * 2);
   }
   if (ann.type === "area") {

@@ -13,6 +13,7 @@ import { exitDxfAlignMode, initDxfHandlers,
          openFeatureTolPopover } from './dxf.js';
 import { doFreeze, initDetectHandlers } from './detect.js';
 import { saveSession, loadSession, exportAnnotatedImage, exportCsv, autoSave, tryAutoRestore } from './session.js';
+import { imageWidth, imageHeight } from './viewport.js';
 
 // ── Context menu ──────────────────────────────────────────────────────────
 const ctxMenu = document.getElementById("context-menu");
@@ -174,8 +175,8 @@ function onMouseDown(e) {
 function _annotationPrimaryPoint(ann) {
   // Frame-scaled types
   if (ann.frameWidth) {
-    const sx = canvas.width / ann.frameWidth;
-    const sy = canvas.height / ann.frameHeight;
+    const sx = imageWidth / ann.frameWidth;
+    const sy = imageHeight / ann.frameHeight;
     if (ann.cx != null) return { x: ann.cx * sx, y: ann.cy * sy };
     if (ann.x1 != null) return { x: (ann.x1 + ann.x2) / 2 * sx, y: (ann.y1 + ann.y2) / 2 * sy };
     if (ann.x != null) return { x: ann.x * sx, y: ann.y * sy };

@@ -1,6 +1,7 @@
 import { state, pushUndo, DETECTION_TYPES } from './state.js';
 import { canvas, showStatus, redraw } from './render.js';
 import { renderSidebar, updateCameraInfo, updateCalibrationButton } from './sidebar.js';
+import { imageWidth, imageHeight } from './viewport.js';
 
 // ── Annotations management ──────────────────────────────────────────────────────
 
@@ -59,8 +60,8 @@ export function elevateAnnotation(id) {
   const ann = state.annotations.find(a => a.id === id);
   if (!ann || !isDetection(ann)) return null;
 
-  const sx = ann.frameWidth ? canvas.width / ann.frameWidth : 1;
-  const sy = ann.frameHeight ? canvas.height / ann.frameHeight : 1;
+  const sx = ann.frameWidth ? imageWidth / ann.frameWidth : 1;
+  const sy = ann.frameHeight ? imageHeight / ann.frameHeight : 1;
 
   let elevated;
 

@@ -1,5 +1,6 @@
 import { state, _deviationHitBoxes } from './state.js';
 import { fitCircleAlgebraic, polygonArea } from './math.js';
+import { imageWidth, imageHeight, setImageSize } from './viewport.js';
 
 // ── DOM refs ──────────────────────────────────────────────────────────────────
 export const img       = document.getElementById("stream-img");
@@ -28,6 +29,7 @@ export function resizeCanvas() {
   canvas.style.height = r.height + "px";
   canvas.width  = Math.round(r.width);
   canvas.height = Math.round(r.height);
+  if (!imageWidth) setImageSize(canvas.width, canvas.height);
   redraw();
 }
 
@@ -65,7 +67,7 @@ export function measurementLabel(ann) {
       : `⌀ ${mm.toFixed(3)} mm`;
   }
   if (ann.type === "detected-circle") {
-    const sx = canvas.width / ann.frameWidth;
+    const sx = imageWidth / ann.frameWidth;
     const r = ann.radius * sx;
     if (!cal) return `⌀ ${(r * 2).toFixed(1)} px`;
     const mm = (r * 2) / cal.pixelsPerMm;
@@ -74,7 +76,7 @@ export function measurementLabel(ann) {
       : `⌀ ${mm.toFixed(3)} mm`;
   }
   if (ann.type === "detected-line") {
-    const sx = canvas.width / ann.frameWidth;
+    const sx = imageWidth / ann.frameWidth;
     const lenPx = ann.length * sx;
     if (!cal) return `${lenPx.toFixed(1)} px`;
     const mm = lenPx / cal.pixelsPerMm;
@@ -83,7 +85,7 @@ export function measurementLabel(ann) {
       : `${mm.toFixed(3)} mm`;
   }
   if (ann.type === "detected-line-merged") {
-    const sx = ann.frameWidth ? canvas.width / ann.frameWidth : 1;
+    const sx = ann.frameWidth ? imageWidth / ann.frameWidth : 1;
     const lenPx = Math.hypot((ann.x2 - ann.x1) * sx, (ann.y2 - ann.y1) * sx);
     if (!cal) return `${lenPx.toFixed(1)} px`;
     const mm = lenPx / cal.pixelsPerMm;
@@ -92,7 +94,7 @@ export function measurementLabel(ann) {
       : `${mm.toFixed(3)} mm`;
   }
   if (ann.type === "detected-arc-partial") {
-    const sx = ann.frameWidth ? canvas.width / ann.frameWidth : 1;
+    const sx = ann.frameWidth ? imageWidth / ann.frameWidth : 1;
     const rPx = ann.r * sx;
     const spanDeg = ann.end_deg >= ann.start_deg
       ? ann.end_deg - ann.start_deg
@@ -321,8 +323,8 @@ export function drawAnnotations() {
     else if (ann.type === "detected-line")   drawDetectedLine(ann, sel);
     else if (ann.type === "detected-line-merged") {
       ctx.save();
-      const sx = ann.frameWidth ? canvas.width / ann.frameWidth : 1;
-      const sy = ann.frameHeight ? canvas.height / ann.frameHeight : 1;
+      const sx = ann.frameWidth ? imageWidth / ann.frameWidth : 1;
+      const sy = ann.frameHeight ? imageHeight / ann.frameHeight : 1;
       const x1 = ann.x1 * sx, y1 = ann.y1 * sy, x2 = ann.x2 * sx, y2 = ann.y2 * sy;
       ctx.strokeStyle = sel ? "#60a5fa" : "#00e5ff";
       ctx.lineWidth = sel ? 2 : 1.5;
@@ -339,8 +341,8 @@ export function drawAnnotations() {
     }
     else if (ann.type === "detected-arc-partial") {
       ctx.save();
-      const sx = ann.frameWidth ? canvas.width / ann.frameWidth : 1;
-      const sy = ann.frameHeight ? canvas.height / ann.frameHeight : 1;
+      const sx = ann.frameWidth ? imageWidth / ann.frameWidth : 1;
+      const sy = ann.frameHeight ? imageHeight / ann.frameHeight : 1;
       ctx.strokeStyle = sel ? "#60a5fa" : "#ffd60a";
       ctx.lineWidth = sel ? 2 : 1.5;
       const a1 = ann.start_deg * Math.PI / 180;
@@ -368,12 +370,12 @@ export function drawAnnotations() {
     if (sel && flashActive) {
       let fx, fy;
       if (ann.a && ann.b) { fx = (ann.a.x + ann.b.x) / 2; fy = (ann.a.y + ann.b.y) / 2; }
-      else if (ann.cx != null && ann.frameWidth) { fx = ann.cx * (canvas.width / ann.frameWidth); fy = ann.cy * (canvas.height / ann.frameHeight); }
+      else if (ann.cx != null && ann.frameWidth) { fx = ann.cx * (imageWidth / ann.frameWidth); fy = ann.cy * (imageHeight / ann.frameHeight); }
       else if (ann.cx != null) { fx = ann.cx; fy = ann.cy; }
       else if (ann.vertex) { fx = ann.vertex.x; fy = ann.vertex.y; }
-      else if (ann.x != null && ann.frameWidth) { fx = ann.x * (canvas.width / ann.frameWidth); fy = ann.y * (canvas.height / ann.frameHeight); }
+      else if (ann.x != null && ann.frameWidth) { fx = ann.x * (imageWidth / ann.frameWidth); fy = ann.y * (imageHeight / ann.frameHeight); }
       else if (ann.x != null) { fx = ann.x; fy = ann.y; }
-      else if (ann.x1 != null && ann.frameWidth) { fx = (ann.x1 + ann.x2) / 2 * (canvas.width / ann.frameWidth); fy = (ann.y1 + ann.y2) / 2 * (canvas.height / ann.frameHeight); }
+      else if (ann.x1 != null && ann.frameWidth) { fx = (ann.x1 + ann.x2) / 2 * (imageWidth / ann.frameWidth); fy = (ann.y1 + ann.y2) / 2 * (imageHeight / ann.frameHeight); }
       else if (ann.x1 != null) { fx = (ann.x1 + ann.x2) / 2; fy = (ann.y1 + ann.y2) / 2; }
       if (fx != null) {
         ctx.save();
@@ -588,8 +590,8 @@ export function dxfToCanvas(x, y, ann) {
 }
 
 export function drawDetectedCircle(ann, sel) {
-  const sx = canvas.width / ann.frameWidth;
-  const sy = canvas.height / ann.frameHeight;
+  const sx = imageWidth / ann.frameWidth;
+  const sy = imageHeight / ann.frameHeight;
   const cx = ann.x * sx, cy = ann.y * sy, r = ann.radius * sx;
   ctx.beginPath();
   ctx.arc(cx, cy, r, 0, Math.PI * 2);
@@ -601,8 +603,8 @@ export function drawDetectedCircle(ann, sel) {
 }
 
 export function drawDetectedLine(ann, sel) {
-  const sx = canvas.width / ann.frameWidth;
-  const sy = canvas.height / ann.frameHeight;
+  const sx = imageWidth / ann.frameWidth;
+  const sy = imageHeight / ann.frameHeight;
   const x1 = ann.x1 * sx, y1 = ann.y1 * sy;
   const x2 = ann.x2 * sx, y2 = ann.y2 * sy;
   ctx.beginPath();
@@ -902,7 +904,7 @@ export function getLineEndpoints(ann) {
   }
   if (ann.type === "detected-line") {
     const sx = canvas.width  / ann.frameWidth;
-    const sy = canvas.height / ann.frameHeight;
+    const sy = imageHeight / ann.frameHeight;
     return { a: { x: ann.x1 * sx, y: ann.y1 * sy },
              b: { x: ann.x2 * sx, y: ann.y2 * sy } };
   }
