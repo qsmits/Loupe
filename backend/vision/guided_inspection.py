@@ -1,0 +1,462 @@
+"""
+Corridor-based guided inspection: per-feature edge detection and geometry fitting.
+
+For each DXF entity, projects nominal geometry to image-space, defines a corridor
+(perpendicular band for lines, annular ring for arcs/circles), collects Canny edge
+pixels within the corridor using vectorized NumPy, then fits the appropriate geometry
+and computes deviation from nominal.
+"""
+import math
+import numpy as np
+import cv2
+
+from .detection import preprocess, fit_circle_algebraic
+from .line_arc_matching import dxf_to_image_px, perp_dist_point_to_line
+
+# Minimum edge points required for fitting
+_MIN_POINTS_LINE = 5
+_MIN_POINTS_ARC = 8
+
+
+def _sample_points(pts: np.ndarray, max_n: int = 50) -> list:
+    """Evenly sample up to max_n points from an Nx2 array for frontend visualization."""
+    if len(pts) <= max_n:
+        return pts.tolist()
+    indices = np.linspace(0, len(pts) - 1, max_n, dtype=int)
+    return pts[indices].tolist()
+
+
+def _unmatched(entity: dict, reason: str) -> dict:
+    """Return a result dict for an unmatched feature."""
+    return {
+        "handle": entity.get("handle"),
+        "type": entity.get("type"),
+        "parent_handle": entity.get("parent_handle"),
+        "matched": False,
+        "edge_point_count": 0,
+        "edge_points_sample": [],
+        "fit": None,
+        "perp_dev_mm": None,
+        "angle_error_deg": None,
+        "center_dev_mm": None,
+        "radius_dev_mm": None,
+        "tolerance_warn": entity.get("tolerance_warn", 0.1),
+        "tolerance_fail": entity.get("tolerance_fail", 0.25),
+        "pass_fail": None,
+        "reason": reason,
+    }
+
+
+def _pass_fail(dev_mm: float, tol_warn: float, tol_fail: float) -> str:
+    """Classify deviation against tolerance thresholds."""
+    if dev_mm <= tol_warn:
+        return "pass"
+    elif dev_mm <= tol_fail:
+        return "warn"
+    else:
+        return "fail"
+
+
+def _inspect_line(entity, edge_xy, ppm, tx, ty, angle_rad,
+                  corridor_px, flip_h, flip_v, tol_warn, tol_fail):
+    """Inspect a line/polyline_line entity against corridor-filtered edge pixels."""
+    # Project endpoints to image space
+    x1_px, y1_px = dxf_to_image_px(entity["x1"], entity["y1"], ppm, tx, ty,
+                                     angle_rad, flip_h, flip_v)
+    x2_px, y2_px = dxf_to_image_px(entity["x2"], entity["y2"], ppm, tx, ty,
+                                     angle_rad, flip_h, flip_v)
+
+    # Direction vector and perpendicular
+    dx = x2_px - x1_px
+    dy = y2_px - y1_px
+    length = math.hypot(dx, dy)
+    if length < 1e-6:
+        return _unmatched(entity, "degenerate line (zero length)")
+
+    ux, uy = dx / length, dy / length  # unit along
+    nx, ny = -uy, ux  # unit perpendicular
+
+    # Project all edge points onto the line's local coordinate system
+    rel_x = edge_xy[:, 0] - x1_px
+    rel_y = edge_xy[:, 1] - y1_px
+
+    along = rel_x * ux + rel_y * uy  # projection along line
+    perp = rel_x * nx + rel_y * ny   # projection perpendicular
+
+    # Corridor: ±corridor_px perpendicular, extended 10% along direction
+    margin = 0.1 * length
+    mask = (
+        (along >= -margin) &
+        (along <= length + margin) &
+        (np.abs(perp) <= corridor_px)
+    )
+    corridor_pts = edge_xy[mask]
+
+    if len(corridor_pts) < _MIN_POINTS_LINE:
+        return _unmatched(entity, f"too few edge points ({len(corridor_pts)})")
+
+    # Fit line via eigenvector method (orthogonal distance regression)
+    centroid = corridor_pts.mean(axis=0)
+    centered = corridor_pts - centroid
+    cov = centered.T @ centered
+    eigenvalues, eigenvectors = np.linalg.eigh(cov)
+    # Principal direction is eigenvector with largest eigenvalue
+    direction = eigenvectors[:, 1]  # eigh returns ascending order
+
+    # Deviation = perpendicular distance from fitted centroid to nominal line
+    perp_dev_px = abs(
+        (centroid[0] - x1_px) * nx + (centroid[1] - y1_px) * ny
+    )
+    perp_dev_mm = perp_dev_px / ppm
+
+    # Angle error between fitted direction and nominal direction
+    fit_angle = math.degrees(math.atan2(direction[1], direction[0])) % 180
+    nom_angle = math.degrees(math.atan2(uy, ux)) % 180
+    angle_err = abs(fit_angle - nom_angle)
+    if angle_err > 90:
+        angle_err = 180 - angle_err
+
+    # Determine pass/fail from perpendicular deviation
+    pf = _pass_fail(perp_dev_mm, tol_warn, tol_fail)
+
+    return {
+        "handle": entity.get("handle"),
+        "type": entity.get("type"),
+        "parent_handle": entity.get("parent_handle"),
+        "matched": True,
+        "edge_point_count": len(corridor_pts),
+        "edge_points_sample": _sample_points(corridor_pts),
+        "fit": {
+            "type": "line",
+            "cx": float(centroid[0]),
+            "cy": float(centroid[1]),
+            "dx": float(direction[0]),
+            "dy": float(direction[1]),
+        },
+        "perp_dev_mm": round(perp_dev_mm, 4),
+        "angle_error_deg": round(angle_err, 2),
+        "center_dev_mm": None,
+        "radius_dev_mm": None,
+        "tolerance_warn": tol_warn,
+        "tolerance_fail": tol_fail,
+        "pass_fail": pf,
+        "reason": None,
+    }
+
+
+def _inspect_arc_circle(entity, edge_xy, ppm, tx, ty, angle_rad,
+                        corridor_px, flip_h, flip_v, tol_warn, tol_fail):
+    """Inspect an arc/polyline_arc/circle entity against corridor-filtered edge pixels."""
+    # Project center to image space, scale radius
+    cx_px, cy_px = dxf_to_image_px(entity["cx"], entity["cy"], ppm, tx, ty,
+                                     angle_rad, flip_h, flip_v)
+    r_px = entity["radius"] * ppm
+
+    if r_px < 1e-3:
+        return _unmatched(entity, "degenerate arc (zero radius)")
+
+    # Radial distances from all edge points to nominal center
+    dx = edge_xy[:, 0] - cx_px
+    dy = edge_xy[:, 1] - cy_px
+    dists = np.sqrt(dx * dx + dy * dy)
+
+    # Annular corridor: r ± corridor_px
+    radial_mask = np.abs(dists - r_px) <= corridor_px
+
+    # For partial arcs, apply angular bounds
+    etype = entity.get("type", "")
+    if etype in ("arc", "polyline_arc"):
+        # Get angular bounds from entity
+        start_deg = entity.get("start_angle", 0.0)
+        end_deg = entity.get("end_angle", 360.0)
+
+        # Angular margin proportional to corridor width
+        ang_margin = corridor_px / r_px  # radians
+
+        # Compute angles of edge points relative to center
+        angles = np.arctan2(dy, dx)  # radians, [-pi, pi]
+
+        # Normalize start/end to radians
+        start_rad = math.radians(start_deg)
+        end_rad = math.radians(end_deg)
+
+        # Expand angular range by margin
+        start_rad -= ang_margin
+        end_rad += ang_margin
+
+        # Check if point angle is within [start_rad, end_rad] (handling wraparound)
+        # Normalize angles to [0, 2pi)
+        angles_norm = angles % (2 * math.pi)
+        start_norm = start_rad % (2 * math.pi)
+        end_norm = end_rad % (2 * math.pi)
+
+        if start_norm <= end_norm:
+            angle_mask = (angles_norm >= start_norm) & (angles_norm <= end_norm)
+        else:
+            angle_mask = (angles_norm >= start_norm) | (angles_norm <= end_norm)
+
+        mask = radial_mask & angle_mask
+    else:
+        # Full circle: no angular restriction
+        mask = radial_mask
+
+    corridor_pts = edge_xy[mask]
+
+    if len(corridor_pts) < _MIN_POINTS_ARC:
+        return _unmatched(entity, f"too few edge points ({len(corridor_pts)})")
+
+    # Fit circle to collected edge points
+    try:
+        fit_cx, fit_cy, fit_r = fit_circle_algebraic(corridor_pts)
+    except (np.linalg.LinAlgError, ValueError):
+        return _unmatched(entity, "circle fit failed")
+
+    # Deviation: center distance + radius deviation
+    center_dev_px = math.hypot(fit_cx - cx_px, fit_cy - cy_px)
+    radius_dev_px = abs(fit_r - r_px)
+
+    center_dev_mm = center_dev_px / ppm
+    radius_dev_mm = radius_dev_px / ppm
+
+    # Combined deviation for pass/fail (use the larger of the two)
+    max_dev_mm = max(center_dev_mm, radius_dev_mm)
+    pf = _pass_fail(max_dev_mm, tol_warn, tol_fail)
+
+    fit_type = "circle" if etype == "circle" else "arc"
+
+    return {
+        "handle": entity.get("handle"),
+        "type": entity.get("type"),
+        "parent_handle": entity.get("parent_handle"),
+        "matched": True,
+        "edge_point_count": len(corridor_pts),
+        "edge_points_sample": _sample_points(corridor_pts),
+        "fit": {
+            "type": fit_type,
+            "cx": float(fit_cx),
+            "cy": float(fit_cy),
+            "r": float(fit_r),
+        },
+        "perp_dev_mm": None,
+        "angle_error_deg": None,
+        "center_dev_mm": round(center_dev_mm, 4),
+        "radius_dev_mm": round(radius_dev_mm, 4),
+        "tolerance_warn": tol_warn,
+        "tolerance_fail": tol_fail,
+        "pass_fail": pf,
+        "reason": None,
+    }
+
+
+def inspect_features(
+    frame: np.ndarray,
+    entities: list[dict],
+    pixels_per_mm: float,
+    tx: float = 0.0,
+    ty: float = 0.0,
+    angle_deg: float = 0.0,
+    flip_h: bool = False,
+    flip_v: bool = False,
+    corridor_px: float = 20.0,
+    canny_low: int = 50,
+    canny_high: int = 150,
+    tolerance_warn: float = 0.1,
+    tolerance_fail: float = 0.25,
+    smoothing: int = 1,
+) -> list[dict]:
+    """
+    Main entry point: preprocess frame, run Canny once, then inspect each entity.
+
+    Parameters
+    ----------
+    frame : BGR image (numpy array)
+    entities : list of DXF entity dicts with 'type', geometry fields, etc.
+    pixels_per_mm : scale factor
+    tx, ty : translation offset in pixels
+    angle_deg : rotation in degrees
+    flip_h, flip_v : horizontal/vertical flip
+    corridor_px : half-width of the search corridor in pixels
+    canny_low, canny_high : Canny edge detection thresholds
+    tolerance_warn, tolerance_fail : deviation thresholds in mm
+    smoothing : preprocessing smoothing level
+
+    Returns
+    -------
+    List of result dicts, one per entity.
+    """
+    gray = preprocess(frame, smoothing=smoothing)
+    edges = cv2.Canny(gray, canny_low, canny_high)
+
+    # Collect all edge pixel coordinates as (x, y) — note argwhere returns (row, col)
+    edge_yx = np.argwhere(edges > 0)
+    if len(edge_yx) == 0:
+        return [_unmatched(e, "no edges in frame") for e in entities]
+    edge_xy = edge_yx[:, ::-1].astype(np.float64)  # flip (y,x) -> (x,y)
+
+    angle_rad = math.radians(angle_deg)
+    results = []
+
+    for entity in entities:
+        etype = entity.get("type", "")
+        tol_w = entity.get("tolerance_warn", tolerance_warn)
+        tol_f = entity.get("tolerance_fail", tolerance_fail)
+
+        if etype in ("line", "polyline_line"):
+            result = _inspect_line(entity, edge_xy, pixels_per_mm, tx, ty,
+                                   angle_rad, corridor_px, flip_h, flip_v,
+                                   tol_w, tol_f)
+        elif etype in ("arc", "polyline_arc", "circle"):
+            result = _inspect_arc_circle(entity, edge_xy, pixels_per_mm, tx, ty,
+                                         angle_rad, corridor_px, flip_h, flip_v,
+                                         tol_w, tol_f)
+        else:
+            result = _unmatched(entity, f"unsupported entity type: {etype}")
+
+        results.append(result)
+
+    return results
+
+
+def fit_manual_points(
+    entity: dict,
+    points: list[list[float]],
+    pixels_per_mm: float,
+    tx: float = 0.0,
+    ty: float = 0.0,
+    angle_deg: float = 0.0,
+    flip_h: bool = False,
+    flip_v: bool = False,
+    tolerance_warn: float = 0.1,
+    tolerance_fail: float = 0.25,
+) -> dict:
+    """
+    Fit geometry to user-provided points (manual point-pick) instead of
+    corridor-collected edge points. Same fitting logic as inspect functions.
+
+    Parameters
+    ----------
+    entity : DXF entity dict
+    points : list of [x, y] pixel coordinates from user clicks
+    pixels_per_mm : scale factor
+    tx, ty, angle_deg, flip_h, flip_v : alignment transform
+    tolerance_warn, tolerance_fail : deviation thresholds in mm
+
+    Returns
+    -------
+    Result dict with fit geometry and deviation.
+    """
+    angle_rad = math.radians(angle_deg)
+    etype = entity.get("type", "")
+    tol_w = entity.get("tolerance_warn", tolerance_warn)
+    tol_f = entity.get("tolerance_fail", tolerance_fail)
+    pts = np.array(points, dtype=np.float64)
+
+    if etype in ("line", "polyline_line"):
+        if len(pts) < _MIN_POINTS_LINE:
+            return _unmatched(entity, f"need at least {_MIN_POINTS_LINE} points, got {len(pts)}")
+
+        # Project nominal endpoints
+        x1_px, y1_px = dxf_to_image_px(entity["x1"], entity["y1"], pixels_per_mm,
+                                         tx, ty, angle_rad, flip_h, flip_v)
+        x2_px, y2_px = dxf_to_image_px(entity["x2"], entity["y2"], pixels_per_mm,
+                                         tx, ty, angle_rad, flip_h, flip_v)
+
+        dx = x2_px - x1_px
+        dy = y2_px - y1_px
+        length = math.hypot(dx, dy)
+        if length < 1e-6:
+            return _unmatched(entity, "degenerate line (zero length)")
+
+        ux, uy = dx / length, dy / length
+        nx, ny = -uy, ux
+
+        # Eigenvector line fit
+        centroid = pts.mean(axis=0)
+        centered = pts - centroid
+        cov = centered.T @ centered
+        eigenvalues, eigenvectors = np.linalg.eigh(cov)
+        direction = eigenvectors[:, 1]
+
+        perp_dev_px = abs((centroid[0] - x1_px) * nx + (centroid[1] - y1_px) * ny)
+        perp_dev_mm = perp_dev_px / pixels_per_mm
+
+        fit_angle = math.degrees(math.atan2(direction[1], direction[0])) % 180
+        nom_angle = math.degrees(math.atan2(uy, ux)) % 180
+        angle_err = abs(fit_angle - nom_angle)
+        if angle_err > 90:
+            angle_err = 180 - angle_err
+
+        pf = _pass_fail(perp_dev_mm, tol_w, tol_f)
+
+        return {
+            "handle": entity.get("handle"),
+            "type": entity.get("type"),
+            "parent_handle": entity.get("parent_handle"),
+            "matched": True,
+            "edge_point_count": len(pts),
+            "edge_points_sample": _sample_points(pts),
+            "fit": {
+                "type": "line",
+                "cx": float(centroid[0]),
+                "cy": float(centroid[1]),
+                "dx": float(direction[0]),
+                "dy": float(direction[1]),
+            },
+            "perp_dev_mm": round(perp_dev_mm, 4),
+            "angle_error_deg": round(angle_err, 2),
+            "center_dev_mm": None,
+            "radius_dev_mm": None,
+            "tolerance_warn": tol_w,
+            "tolerance_fail": tol_f,
+            "pass_fail": pf,
+            "reason": None,
+        }
+
+    elif etype in ("arc", "polyline_arc", "circle"):
+        if len(pts) < _MIN_POINTS_ARC:
+            return _unmatched(entity, f"need at least {_MIN_POINTS_ARC} points, got {len(pts)}")
+
+        cx_px, cy_px = dxf_to_image_px(entity["cx"], entity["cy"], pixels_per_mm,
+                                         tx, ty, angle_rad, flip_h, flip_v)
+        r_px = entity["radius"] * pixels_per_mm
+
+        try:
+            fit_cx, fit_cy, fit_r = fit_circle_algebraic(pts)
+        except (np.linalg.LinAlgError, ValueError):
+            return _unmatched(entity, "circle fit failed")
+
+        center_dev_px = math.hypot(fit_cx - cx_px, fit_cy - cy_px)
+        radius_dev_px = abs(fit_r - r_px)
+        center_dev_mm = center_dev_px / pixels_per_mm
+        radius_dev_mm = radius_dev_px / pixels_per_mm
+
+        max_dev_mm = max(center_dev_mm, radius_dev_mm)
+        pf = _pass_fail(max_dev_mm, tol_w, tol_f)
+
+        fit_type = "circle" if etype == "circle" else "arc"
+
+        return {
+            "handle": entity.get("handle"),
+            "type": entity.get("type"),
+            "parent_handle": entity.get("parent_handle"),
+            "matched": True,
+            "edge_point_count": len(pts),
+            "edge_points_sample": _sample_points(pts),
+            "fit": {
+                "type": fit_type,
+                "cx": float(fit_cx),
+                "cy": float(fit_cy),
+                "r": float(fit_r),
+            },
+            "perp_dev_mm": None,
+            "angle_error_deg": None,
+            "center_dev_mm": round(center_dev_mm, 4),
+            "radius_dev_mm": round(radius_dev_mm, 4),
+            "tolerance_warn": tol_w,
+            "tolerance_fail": tol_f,
+            "pass_fail": pf,
+            "reason": None,
+        }
+
+    else:
+        return _unmatched(entity, f"unsupported entity type: {etype}")
