@@ -185,6 +185,26 @@ Save a sequence of measurement types as a template: "Slot inspection = 2 lines +
 ### 4.4 Measurement comparison
 Compare measurements across sessions: "This slot was 10.032mm last time, now it's 10.048mm." Useful for wear tracking or batch comparison.
 
+### 4.5 Draggable annotation labels
+Deviation labels and measurement labels are currently at hardcoded offsets from the
+geometry. They overlap, obscure features, or land off-screen on arcs. Make them
+draggable:
+- Click and drag a label to reposition it
+- Store the offset per annotation/result so it persists across redraws
+- Leader line from label to the feature it refers to (thin gray line)
+- Double-click to reset to default position
+
+### 4.6 Label tooltips with detail
+Hovering over a deviation label or measurement label shows a tooltip with full detail:
+- Feature handle/ID, entity type, parent compound group
+- Nominal geometry (from DXF)
+- Measured geometry (from fit)
+- Deviation breakdown (perpendicular, angular, center, radius)
+- Tolerance thresholds and pass/warn/fail status
+- Source: "auto" or "manual"
+Currently this information is only in the sidebar table — surfacing it on hover
+makes the canvas self-documenting.
+
 ---
 
 ## Phase 5: Reporting & Traceability
