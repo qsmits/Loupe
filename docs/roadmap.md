@@ -82,13 +82,9 @@ Zoom and pan are fully operational:
 ### ~~1.5.5 Fit-to-window~~ ✅ `0` = fit, `1` = 1:1 pixel
 ### ~~1.5.6 Zoom indicator~~ ✅ Badge in bottom-right corner, hidden at default zoom
 
-### 1.5.7 Zoom preset dropdown (future)
-Click the zoom badge to get a dropdown with preset zoom levels (Fit, 50%, 100%, 200%, 400%).
-
-### 1.5.8 Minimap (future)
-When zoomed in past fit-to-window, show a small semi-transparent overview in a
-corner showing the full image with a rectangle indicating the current viewport.
-- Click the minimap to jump to that area
+### ~~1.5.7 Zoom preset dropdown~~ ✅ Click badge → dropdown (Fit, 50%, 100%, 200%, 400%, 800%)
+### ~~1.5.8 Minimap~~ ✅ Bottom-left overview when zoomed in, click to jump
+### ~~1.5.9 Measurement grid~~ ✅ Adaptive spacing grid overlay (backtick to toggle, Overlay menu)
 - Drag the rectangle to pan quickly
 - Hide automatically when zoom = fit-to-window
 - Small (e.g. 150x100px), low opacity until hovered
