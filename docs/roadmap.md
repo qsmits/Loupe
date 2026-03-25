@@ -329,18 +329,43 @@ Extend the existing tolerance system with visual tolerance bands on the canvas.
 - Add a UI to set per-feature tolerances directly: click a DXF feature → set its
   warn/fail thresholds (the popover already exists but needs better discoverability)
 
-### 2.5.2 Tolerance band visualization
-- Draw tolerance bands on the canvas around each DXF feature:
-  - **Green zone**: within warn tolerance (±warn_mm around nominal)
-  - **Amber zone**: between warn and fail tolerance
-  - **Red zone**: beyond fail tolerance
-- Bands are semi-transparent filled areas along each line/arc
-- The fitted geometry (from inspection) shows as a line within these bands
-- Makes it immediately obvious which features are in/out of tolerance
+### 2.5.2 Punch / Die feature tagging
+Each DXF feature (or compound feature group) is tagged as **Punch** or **Die**:
+- **Punch** (outer contour, shaft, boss): part material is on the *outside* of the
+  feature. Oversized = reworkable (remove material). Undersized = scrap.
+- **Die** (hole, pocket, slot): part material is on the *outside* of the cavity.
+  Undersized = reworkable (remove material). Oversized = scrap.
 
-### 2.5.3 Tolerance callout annotations
-- Small callout labels on each feature showing the tolerance: "±0.10 / ±0.25"
-- Color-coded to match pass/warn/fail result
+Default: **Die** (holes/pockets/slots are the most common inspected features).
+The user toggles to Punch for outer contours. This can be set per-feature or
+per-compound-group (all segments of a slot share the same Punch/Die tag).
+
+Analogous to Punch/Die designation on wire EDM toolpaths — machinists already
+understand this concept.
+
+### 2.5.3 Deviation coloring (green / amber / red)
+Based on the Punch/Die tag and the deviation direction:
+- **Green**: within tolerance (either direction)
+- **Amber (rework)**: out of tolerance, but in the direction where material can be
+  removed to fix it. E.g., a Die hole that's too small, a Punch shaft that's too big.
+- **Red (scrap)**: out of tolerance in the non-reworkable direction. E.g., a Die hole
+  that's too big, a Punch shaft that's too small.
+
+This requires knowing the **sign** of the deviation (not just magnitude). The guided
+inspection already computes perpendicular deviation — the sign indicates which side
+of nominal the actual edge falls on relative to the DXF feature direction.
+
+### 2.5.4 Tolerance band visualization
+- Draw tolerance bands on the canvas around each DXF feature:
+  - One side green→amber (reworkable overshoot)
+  - Other side green→red (non-reworkable overshoot)
+- Bands are semi-transparent filled areas along each line/arc
+- The fitted geometry shows as a line within these bands
+
+### 2.5.5 Tolerance callout annotations
+- Small callout labels on each feature showing the tolerance and result
+- Color-coded green/amber/red
+- Show Punch/Die icon or label
 - Hide when not in inspection mode to keep the view clean
 
 ---
