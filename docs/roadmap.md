@@ -179,7 +179,50 @@ The current 2-point / circle calibration is sufficient for many cases but doesn'
 
 ---
 
-## Phase 7: Gear Inspection
+## Phase 7: Multi-Part Batch Inspection
+*Estimated effort: 2-3 weeks. Priority: high (real production use case).*
+
+A Swiss lathe operator makes hundreds of identical parts. They should be able to
+scatter a handful under the microscope and get all of them measured at once.
+
+### 7.1 Part instance detection
+Given a frozen frame with multiple identical parts visible:
+- Detect all instances of the part using the DXF as a template
+- Use contour matching or feature-based matching (detected circles/lines) to find
+  each copy's position and rotation
+- Handle parts at different orientations and slight overlaps
+- Show each detected instance outlined and numbered
+
+### 7.2 Per-instance alignment and inspection
+For each detected part instance:
+- Compute the DXF→instance transform (position, rotation, scale)
+- Run the feature matching pipeline against detected edges local to that instance
+- Produce a per-instance deviation report
+
+This reuses the existing inspection pipeline but runs it N times with different
+transforms. The hard part is isolating each instance's edges from its neighbors.
+
+### 7.3 Batch results view
+- Summary table: instance #, pass/fail, worst deviation, key dimensions
+- Color-coded overlay: green parts pass, red parts fail, amber parts warn
+- Click an instance to drill into its full deviation report
+- Statistical summary across the batch: mean, std, Cpk for each feature
+- Histogram of key dimension across all instances
+
+### 7.4 Batch export
+- Single PDF report covering all instances (one page per part, summary page at front)
+- CSV with one row per instance per feature (pivot-table friendly)
+- SPC (Statistical Process Control) chart: dimension vs. part number, with control limits
+
+### 7.5 Quick re-inspection
+For production use, the operator needs speed:
+- "Same setup" mode: keep the DXF, calibration, and detection settings. Just freeze a
+  new frame (new handful of parts) and click "Inspect batch"
+- Target: under 10 seconds from placing parts to seeing results
+
+---
+
+## Phase 8: Gear Inspection (Future)
 *Estimated effort: 3-4 weeks. Priority: future (when the gear-making machine is running).*
 
 Gear inspection is a specialized domain that goes beyond line/arc/circle matching.
@@ -237,9 +280,10 @@ Now:       Phase 1 (reliability)       — 1 week      — trustworthy
 Next:      Phase 2 (one-click)         — 2 weeks     — fast
 Then:      Phase 5 (reporting)         — 1-2 weeks   — useful output
 Then:      Phase 3 (detection tuning)  — 1-2 weeks   — accurate (once microscope arrives)
+Then:      Phase 7 (batch inspection)  — 2-3 weeks   — production use case
 Ongoing:   Phase 6 (tech foundation)   — sprinkle in as you go
 Later:     Phase 4 (measurement UX)    — 1-2 weeks   — power user features
-Future:    Phase 7 (gears)             — 3-4 weeks   — when gear machine is running
+Future:    Phase 8 (gears)             — 3-4 weeks   — when gear machine is running
 ```
 
 **Why reporting before detection tuning:** Without a microscope, detection tuning is
@@ -247,5 +291,10 @@ theoretical. But the reporting pipeline can be built and tested with saved snaps
 And a good report is what makes the app *genuinely useful* — the user needs to be able
 to hand someone a piece of paper (or PDF) that says "this part is in tolerance."
 
-Phase 1 makes the app trustworthy. Phase 2 makes it fast. Phase 5 makes it produce
-useful output. Phase 3 makes it accurate once real hardware is in place.
+**Why batch inspection is high priority:** This is a real production use case from a
+Swiss lathe operator. Scatter a handful of identical parts under the scope, get all of
+them measured at once. This is where the tool goes from "interesting hobby project" to
+"actually saves someone hours per week."
+
+Phase 1 makes it trustworthy. Phase 2 makes it fast. Phase 5 makes it produce useful
+output. Phase 3 makes it accurate. Phase 7 makes it a production tool.
