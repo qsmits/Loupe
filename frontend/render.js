@@ -358,12 +358,21 @@ export function drawAnnotations() {
 
 export function drawArcMeasure(ann, sel) {
   const a1 = Math.atan2(ann.p1.y - ann.cy, ann.p1.x - ann.cx);
+  const a2 = Math.atan2(ann.p2.y - ann.cy, ann.p2.x - ann.cx);
   const a3 = Math.atan2(ann.p3.y - ann.cy, ann.p3.x - ann.cx);
+  // Determine winding: check if p2 is on the CW arc from p1→p3.
+  // Normalize angles to [0, 2π) relative to a1.
+  const twoPi = 2 * Math.PI;
+  const norm2 = ((a2 - a1) % twoPi + twoPi) % twoPi;
+  const norm3 = ((a3 - a1) % twoPi + twoPi) % twoPi;
+  // If p2's angle (relative to p1) is between 0 and p3's angle, then CW arc
+  // from a1→a3 passes through p2. Otherwise we need CCW.
+  const ccw = !(norm2 < norm3);
   ctx.save();
   ctx.strokeStyle = sel ? "#e879f9" : "#bf5af2";  // lighter purple when selected
   ctx.lineWidth = sel ? 2 : 1.5;
   ctx.beginPath();
-  ctx.arc(ann.cx, ann.cy, ann.r, a1, a3);
+  ctx.arc(ann.cx, ann.cy, ann.r, a1, a3, ccw);
   ctx.stroke();
   // Draw center marker
   ctx.fillStyle = sel ? "#e879f9" : "#bf5af2";
