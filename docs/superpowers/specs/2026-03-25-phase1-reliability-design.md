@@ -15,6 +15,20 @@ Three reliability gaps that erode trust in the app:
 (same format as manual save) and write to `localStorage` under key `microscope-autosave`.
 Track changes via a dirty flag set in `pushUndo()` and cleared after auto-save.
 
+**Exclude `inspectionFrame` from auto-save** — the base64 JPEG data URL can be 2-6 MB,
+which risks exceeding localStorage's ~5 MB quota. The frame is reconstructible by
+re-running inspection. Wrap `localStorage.setItem` in a try/catch for `QuotaExceededError`
+as a safety net.
+
+**Dirty flag coverage:** Set `_dirty = true` in `pushUndo()`, in `loadSession()`, and
+in undo/redo (since visible state changes). Clear after successful auto-save.
+
+**Two separate concerns:**
+- `_dirty` flag → controls whether auto-save fires (cleared by auto-save)
+- `_savedManually` flag → controls beforeunload warning (cleared by manual save only,
+  NOT by auto-save). If `_savedManually` is false and there are non-transient annotations,
+  warn before close.
+
 **Restore:** On app startup (in `main.js` init), check `localStorage` for the key. If
 found, show an inline prompt in the status bar area: "Previous session found — [Restore] [Dismiss]".
 Restore calls `loadSession()` with the stored JSON. Dismiss clears the key.
@@ -53,9 +67,10 @@ For now, this is low-priority — the computed-coordinate approach is already sa
 ### 1.3 Better error feedback
 
 **Detection result count:** After each detection runs, show result count in status bar.
-Already partially implemented (the `withBusy` wrapper shows "Detecting...").
-Add: after detection completes, show "Found N circles" / "Found N lines" / "No features
-found — try adjusting settings".
+Add a `showStatus` call inside each detection handler (NOT in the `withBusy` finally
+block, which has no access to results and runs on error too). Place it after annotations
+are added, before `redraw()`. Examples: "Found 5 circles" / "Found 12 lines" / "No
+features found — try adjusting settings".
 
 **Disabled button tooltips:** Add `title` attributes to disabled buttons that explain
 prerequisites:
@@ -64,9 +79,10 @@ prerequisites:
 - Export buttons → `title="Run inspection first"`
 
 **Files:**
-- `frontend/detect.js` — add result count to status after each detection
+- `frontend/detect.js` — add result count to status inside each detection handler
 - `frontend/index.html` — add `title` attributes to disabled buttons
 - `frontend/sidebar.js` — update button titles dynamically in `updateDxfControlsVisibility`
+- `frontend/dxf.js` — update export button titles in `updateExportButtons`
 
 ---
 
