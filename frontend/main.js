@@ -1045,6 +1045,38 @@ document.getElementById("file-input").addEventListener("change", async e => {
 document.getElementById("btn-undo")?.addEventListener("click", undo);
 document.getElementById("btn-redo")?.addEventListener("click", redo);
 
+// ── Zoom badge presets ───────────────────────────────────────────────────────
+const zoomBadge = document.getElementById("zoom-badge");
+const zoomPresets = document.getElementById("zoom-presets");
+if (zoomBadge && zoomPresets) {
+  zoomBadge.addEventListener("click", e => {
+    e.stopPropagation();
+    zoomPresets.hidden = !zoomPresets.hidden;
+  });
+  document.addEventListener("click", () => { zoomPresets.hidden = true; });
+  zoomPresets.addEventListener("click", e => e.stopPropagation());
+  zoomPresets.querySelectorAll(".zoom-preset-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const rect = canvas.getBoundingClientRect();
+      const val = btn.dataset.zoom;
+      if (val === "fit") {
+        fitToWindow(rect.width, rect.height);
+      } else {
+        const z = parseFloat(val);
+        // Center the view when jumping to a preset
+        const visibleW = rect.width / z;
+        const visibleH = rect.height / z;
+        viewport.zoom = z;
+        viewport.panX = (imageWidth - visibleW) / 2;
+        viewport.panY = (imageHeight - visibleH) / 2;
+      }
+      clampPan(rect.width, rect.height);
+      resizeCanvas();
+      zoomPresets.hidden = true;
+    });
+  });
+}
+
 // ── Drag-and-drop image load (no-camera mode) ─────────────────────────────────
 const viewerEl = document.getElementById("viewer");
 const dropOverlayEl = document.getElementById("drop-overlay");
