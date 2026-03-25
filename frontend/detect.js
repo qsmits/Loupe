@@ -3,6 +3,26 @@ import { redraw, showStatus, img, canvas, resizeCanvas } from './render.js';
 import { addAnnotation } from './annotations.js';
 import { updateFreezeUI } from './sidebar.js';
 
+// ── Detection busy indicator ──────────────────────────────────────────────
+function withBusy(btn, label, fn) {
+  return async () => {
+    const origText = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = label + "…";
+    showStatus(label + "…");
+    document.body.style.cursor = "progress";
+    canvas.style.cursor = "progress";
+    try {
+      await fn();
+    } finally {
+      btn.disabled = false;
+      btn.textContent = origText;
+      document.body.style.cursor = "";
+      canvas.style.cursor = "";
+    }
+  };
+}
+
 // ── Freeze / Live ──────────────────────────────────────────────────────────
 export async function ensureFrozen() {
   if (!state.frozen) await doFreeze();
@@ -44,7 +64,8 @@ export function initDetectHandlers() {
   });
 
   // btn-run-edges: detect and display edge overlay
-  document.getElementById("btn-run-edges").addEventListener("click", async () => {
+  const btnEdges = document.getElementById("btn-run-edges");
+  btnEdges.addEventListener("click", withBusy(btnEdges, "Detecting edges", async () => {
     await ensureFrozen();
     const t1 = parseInt(document.getElementById("canny-low").value);
     const t2 = parseInt(document.getElementById("canny-high").value);
@@ -65,10 +86,11 @@ export function initDetectHandlers() {
     };
     edgeImg.onerror = () => { URL.revokeObjectURL(url); alert("Failed to load edge image."); };
     edgeImg.src = url;
-  });
+  }));
 
   // btn-show-preprocessed: display preprocessed image overlay
-  document.getElementById("btn-show-preprocessed").addEventListener("click", async () => {
+  const btnPreproc = document.getElementById("btn-show-preprocessed");
+  btnPreproc.addEventListener("click", withBusy(btnPreproc, "Preprocessing", async () => {
     await ensureFrozen();
     const r = await fetch("/preprocessed-view", { method: "POST" });
     if (!r.ok) { alert(await r.text()); return; }
@@ -83,10 +105,11 @@ export function initDetectHandlers() {
     };
     ppImg.onerror = () => { URL.revokeObjectURL(url); alert("Failed to load preprocessed image."); };
     ppImg.src = url;
-  });
+  }));
 
   // btn-run-circles: detect and display circles
-  document.getElementById("btn-run-circles").addEventListener("click", async () => {
+  const btnCircles = document.getElementById("btn-run-circles");
+  btnCircles.addEventListener("click", withBusy(btnCircles, "Detecting circles", async () => {
     await ensureFrozen();
     const p2   = parseInt(document.getElementById("hough-p2").value);
     const minR = parseInt(document.getElementById("circle-min-r").value);
@@ -107,10 +130,11 @@ export function initDetectHandlers() {
       x: c.x, y: c.y, radius: c.radius, frameWidth: fw, frameHeight: fh,
     }));
     redraw();
-  });
+  }));
 
   // btn-run-lines: detect and display lines using Hough
-  document.getElementById("btn-run-lines")?.addEventListener("click", async () => {
+  const btnLines = document.getElementById("btn-run-lines");
+  if (btnLines) btnLines.addEventListener("click", withBusy(btnLines, "Detecting lines", async () => {
     await ensureFrozen();
     const sensitivity = parseInt(document.getElementById("line-sensitivity").value);
     const minLength   = parseInt(document.getElementById("line-min-length").value);
@@ -131,10 +155,11 @@ export function initDetectHandlers() {
       frameWidth: fw, frameHeight: fh,
     }));
     redraw();
-  });
+  }));
 
   // btn-detect-lines-merged: detect merged/contour lines
-  document.getElementById("btn-detect-lines-merged")?.addEventListener("click", async () => {
+  const btnMergedLines = document.getElementById("btn-detect-lines-merged");
+  if (btnMergedLines) btnMergedLines.addEventListener("click", withBusy(btnMergedLines, "Detecting lines", async () => {
     await ensureFrozen();
     const t1 = parseInt(document.getElementById("canny-low").value);
     const t2 = parseInt(document.getElementById("canny-high").value);
@@ -152,10 +177,11 @@ export function initDetectHandlers() {
     lines.forEach(l => addAnnotation({ type: "detected-line-merged",
       x1: l.x1, y1: l.y1, x2: l.x2, y2: l.y2, frameWidth: fw, frameHeight: fh }));
     redraw();
-  });
+  }));
 
   // btn-detect-arcs-partial: detect partial arcs
-  document.getElementById("btn-detect-arcs-partial")?.addEventListener("click", async () => {
+  const btnArcs = document.getElementById("btn-detect-arcs-partial");
+  if (btnArcs) btnArcs.addEventListener("click", withBusy(btnArcs, "Detecting arcs", async () => {
     await ensureFrozen();
     const t1 = parseInt(document.getElementById("canny-low").value);
     const t2 = parseInt(document.getElementById("canny-high").value);
@@ -182,5 +208,5 @@ export function initDetectHandlers() {
       cx: a.cx, cy: a.cy, r: a.r, start_deg: a.start_deg, end_deg: a.end_deg,
       frameWidth: fw, frameHeight: fh }));
     redraw();
-  });
+  }));
 }
