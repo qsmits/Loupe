@@ -301,6 +301,7 @@ export function redraw() {
 }
 
 export function drawAnnotations() {
+  const flashActive = Date.now() < state._flashExpiry;
   state.annotations.forEach(ann => {
     const sel = state.selected.has(ann.id);
     const pendingHighlight = state.pendingCenterCircle && ann.id === state.pendingCenterCircle.id;
@@ -363,7 +364,31 @@ export function drawAnnotations() {
     else if (ann.type === "intersect")      drawIntersect(ann, sel);
     else if (ann.type === "slot-dist")      drawSlotDist(ann, sel);
     else if (ann.type === "arc-measure")    drawArcMeasure(ann, sel);
+
+    if (sel && flashActive) {
+      let fx, fy;
+      if (ann.a && ann.b) { fx = (ann.a.x + ann.b.x) / 2; fy = (ann.a.y + ann.b.y) / 2; }
+      else if (ann.cx != null && ann.frameWidth) { fx = ann.cx * (canvas.width / ann.frameWidth); fy = ann.cy * (canvas.height / ann.frameHeight); }
+      else if (ann.cx != null) { fx = ann.cx; fy = ann.cy; }
+      else if (ann.vertex) { fx = ann.vertex.x; fy = ann.vertex.y; }
+      else if (ann.x != null && ann.frameWidth) { fx = ann.x * (canvas.width / ann.frameWidth); fy = ann.y * (canvas.height / ann.frameHeight); }
+      else if (ann.x != null) { fx = ann.x; fy = ann.y; }
+      else if (ann.x1 != null && ann.frameWidth) { fx = (ann.x1 + ann.x2) / 2 * (canvas.width / ann.frameWidth); fy = (ann.y1 + ann.y2) / 2 * (canvas.height / ann.frameHeight); }
+      else if (ann.x1 != null) { fx = (ann.x1 + ann.x2) / 2; fy = (ann.y1 + ann.y2) / 2; }
+      if (fx != null) {
+        ctx.save();
+        ctx.strokeStyle = "rgba(96, 165, 250, 0.5)";
+        ctx.lineWidth = 4;
+        ctx.beginPath();
+        ctx.arc(fx, fy, 20, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.restore();
+      }
+    }
   });
+  if (flashActive) {
+    requestAnimationFrame(() => redraw());
+  }
 }
 
 export function drawArcMeasure(ann, sel) {

@@ -19,6 +19,7 @@ export function renderSidebar() {
       row.addEventListener("click", e => {
         if (e.target.classList.contains("del-btn")) return;
         state.selected = new Set([ann.id]);
+        state._flashExpiry = Date.now() + 400;
         renderSidebar();
         redraw();
       });
@@ -45,6 +46,7 @@ export function renderSidebar() {
     row.addEventListener("click", () => {
       const wasSelected = state.selected.has(ann.id);
       state.selected = new Set([ann.id]);
+      state._flashExpiry = Date.now() + 400;
       renderSidebar();
       redraw();
       if (wasSelected) {
