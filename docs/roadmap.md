@@ -93,13 +93,22 @@ Every `canvasPoint(e)` call must account for the viewport transform — converti
 screen pixels to image-space coordinates. This is the hardest part: every mouse
 handler, hit-test, snap, and tool click must work in image-space, not screen-space.
 
-### 1.5.5 Minimap (optional)
-When zoomed in, show a small overview in the corner showing the full image with a
-rectangle indicating the current viewport. Click the minimap to jump to that area.
-
-### 1.5.6 Fit-to-window
+### 1.5.5 Fit-to-window
 Double-click the scroll wheel or press `0` to reset zoom to fit the full image
 in the canvas. Press `1` for 1:1 pixel mapping.
+
+### 1.5.6 Zoom indicator
+Show the current zoom level as a small badge in the corner of the canvas (e.g.
+"2.0x" or "100%"). Updates live as user zooms. Click it to get a dropdown with
+preset zoom levels (Fit, 50%, 100%, 200%, 400%).
+
+### 1.5.7 Minimap
+When zoomed in past fit-to-window, show a small semi-transparent overview in a
+corner showing the full image with a rectangle indicating the current viewport.
+- Click the minimap to jump to that area
+- Drag the rectangle to pan quickly
+- Hide automatically when zoom = fit-to-window (not useful when you can see everything)
+- Should be unobtrusive — small (e.g. 150x100px), low opacity until hovered
 
 **Engineering notes:** This is the hardest change in the roadmap because it touches
 the coordinate system that everything else depends on. The key insight: change
