@@ -48,7 +48,7 @@ class CameraReader(BaseCamera):
     def close(self) -> None:
         self._stop.set()
         if self._thread is not None:
-            self._thread.join(timeout=2)
+            self._thread.join(timeout=5)  # Camera timeout_pop_buffer is 2s, need headroom
         self._camera.close()
 
     def get_frame(self) -> np.ndarray:

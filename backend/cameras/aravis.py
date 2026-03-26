@@ -43,9 +43,33 @@ class AravisCamera(BaseCamera):
 
     def close(self) -> None:
         if self._cam is not None:
-            self._cam.stop_acquisition()
-            self._stream = None
+            try:
+                self._cam.stop_acquisition()
+            except Exception:
+                pass  # best-effort; camera may already be in an error state
+
+            # Drain any remaining buffers from the stream — holding references
+            # to buffers prevents the Aravis stream from releasing the USB/GigE handle.
+            if self._stream is not None:
+                while True:
+                    buf = self._stream.try_pop_buffer()
+                    if buf is None:
+                        break
+                del self._stream
+                self._stream = None
+
+            del self._cam
             self._cam = None
+
+            # Force garbage collection to ensure GObject C resources are released.
+            # Without this, Python may not finalize the Aravis objects before
+            # the process exits, leaving the USB/GigE device locked.
+            import gc
+            gc.collect()
+
+            # Brief pause to let the USB/GigE stack finish releasing the device.
+            import time
+            time.sleep(0.2)
 
     def get_frame(self) -> np.ndarray:
         buf = self._stream.timeout_pop_buffer(2_000_000)  # 2 s timeout in µs

@@ -32,8 +32,8 @@ stop() {
         return
     fi
     kill "$PID"
-    # Wait up to 5 s for graceful shutdown (Aravis needs time to release USB)
-    for i in $(seq 1 10); do
+    # Wait up to 10s for graceful shutdown (Aravis needs time to release USB/GigE)
+    for i in $(seq 1 20); do
         sleep 0.5
         kill -0 "$PID" 2>/dev/null || break
     done
