@@ -97,20 +97,30 @@ class CameraReader(BaseCamera):
         with self._format_lock:
             self._stop.set()
             if self._thread is not None:
-                self._thread.join(timeout=2)
+                self._thread.join(timeout=5)
                 if self._thread.is_alive():
                     raise RuntimeError(
-                        "Reader thread did not stop within 2 s; aborting camera switch."
+                        "Reader thread did not stop within 5 s; aborting camera switch."
                     )
             old_camera = self._camera
             try:
-                new_camera.open()
+                # Close old camera FIRST to release the USB/GigE device,
+                # then open the new one. Necessary because USB cameras can't
+                # have two handles open on the same device simultaneously.
                 old_camera.close()
+                new_camera.open()
                 self._camera = new_camera
             except Exception as switch_err:
-                # new_camera.open() failed; old_camera was never closed,
-                # and self._camera still points to old_camera (still open).
-                # Just restart the thread on the existing camera.
+                # new_camera.open() failed; try to reopen the old camera
+                try:
+                    old_camera.open()
+                    self._camera = old_camera
+                except Exception:
+                    # Old camera also failed to reopen — fall back to NullCamera
+                    from .cameras.null import NullCamera
+                    self._camera = NullCamera()
+                    self._camera.open()
+                    _log.warning("Camera switch failed and old camera could not reopen; using NullCamera")
                 self._stop.clear()
                 self._thread = threading.Thread(target=self._run, daemon=True)
                 self._thread.start()
