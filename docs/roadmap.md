@@ -391,15 +391,16 @@ of nominal the actual edge falls on relative to the DXF feature direction.
 ```
 ✅ Done:   Phase 1.0 (annotation mgmt)  — 2026-03-25  — selection, multi-select, elevation, context menu
 ✅ Done:   Phase 1 remainder            — 2026-03-25  — auto-save, detection counts, button tooltips
-✅ Done:   Phase 1.5 (zoom/pan)         — 2026-03-25  — scroll zoom, pan tool, viewport transform, zoom badge
+✅ Done:   Phase 1.5 (zoom/pan)         — 2026-03-25  — scroll zoom, pan, minimap, grid, zoom presets
 ✅ Done:   Phase 2 (guided inspection)  — 2026-03-25  — corridor detection, manual point-pick, compound features
+✅ Done:   Misc polish                  — 2026-03-26  — camera shutdown, merge lines, audit fixes, mode fixes
+
 Next:      Phase 2.5 (tolerances)       — 1 week      — Punch/Die tagging, green/amber/red bands
 Then:      Phase 5 (reporting)          — 1-2 weeks   — useful output
 Then:      Phase 3 (detection tuning)   — 1-2 weeks   — accurate (once microscope arrives)
 Then:      Phase 7 (batch inspection)   — 2-3 weeks   — production use case
 Ongoing:   Phase 6 (tech foundation)    — sprinkle in as you go
 Later:     Phase 4 (measurement UX)     — 1-2 weeks   — groups, templates, draggable labels, tooltips
-Later:     Phase 1.5+ (minimap+zoom UI) — 3-4 days    — minimap overlay, zoom preset dropdown
 Future:    Phase 8 (gears)              — 3-4 weeks   — when gear machine is running
 Future:    Phase 9 (Nikon XY stage)     — TBD         — hybrid encoder + camera measurement
 ```
@@ -412,6 +413,17 @@ Future:    Phase 9 (Nikon XY stage)     — TBD         — hybrid encoder + cam
   edge selection, manual point-pick with compound features, arc rendering, DXF
   feature highlighting)
 - Detection improvements (smoothing + Canny passthrough, smart label placement)
+- Minimap, zoom preset dropdown, measurement grid overlay
+
+**What was accomplished 2026-03-26:**
+- Camera shutdown fix (proper GObject release, buffer draining, forced GC)
+- Camera switch fix (close old before opening new)
+- Merge selected lines feature
+- Arc-measure shows radius+span in sidebar
+- Undo/redo buttons in toolbar
+- Reliability audit fixes (doFreeze error handling, calibration division guard)
+- Dropdown stays open while adjusting sliders
+- Zoom-out clamped to fit-to-window
 
 Phase 1 makes it trustworthy. Phase 1.5 makes it precise. Phase 2 makes it fast.
 Phase 5 produces useful output. Phase 3 makes it accurate. Phase 7 makes it a
