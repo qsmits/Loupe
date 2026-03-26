@@ -62,9 +62,10 @@ def _unmatched(entity: dict, reason: str) -> dict:
 
 def _pass_fail(dev_mm: float, tol_warn: float, tol_fail: float) -> str:
     """Classify deviation against tolerance thresholds."""
-    if dev_mm <= tol_warn:
+    d = abs(dev_mm)
+    if d <= tol_warn:
         return "pass"
-    elif dev_mm <= tol_fail:
+    elif d <= tol_fail:
         return "warn"
     else:
         return "fail"
@@ -174,9 +175,7 @@ def _inspect_line(entity, edge_xy, ppm, tx, ty, angle_rad,
     direction = eigenvectors[:, 1]
 
     # Deviation = perpendicular distance from fitted centroid to nominal line
-    perp_dev_px = abs(
-        (centroid[0] - x1_px) * nx + (centroid[1] - y1_px) * ny
-    )
+    perp_dev_px = (centroid[0] - x1_px) * nx + (centroid[1] - y1_px) * ny
     perp_dev_mm = perp_dev_px / ppm
 
     # Angle error between fitted direction and nominal direction
@@ -321,7 +320,7 @@ def _inspect_arc_circle(entity, edge_xy, ppm, tx, ty, angle_rad,
 
     # Deviation: center distance + radius deviation
     center_dev_px = math.hypot(fit_cx - cx_px, fit_cy - cy_px)
-    radius_dev_px = abs(fit_r - r_px)
+    radius_dev_px = fit_r - r_px  # positive = larger than nominal
 
     center_dev_mm = center_dev_px / ppm
     radius_dev_mm = radius_dev_px / ppm
@@ -506,7 +505,7 @@ def fit_manual_points(
         eigenvalues, eigenvectors = np.linalg.eigh(cov)
         direction = eigenvectors[:, 1]
 
-        perp_dev_px = abs((centroid[0] - x1_px) * nx + (centroid[1] - y1_px) * ny)
+        perp_dev_px = (centroid[0] - x1_px) * nx + (centroid[1] - y1_px) * ny
         perp_dev_mm = perp_dev_px / pixels_per_mm
 
         fit_angle = math.degrees(math.atan2(direction[1], direction[0])) % 180
@@ -549,7 +548,7 @@ def fit_manual_points(
             return _unmatched(entity, "circle fit failed")
 
         center_dev_px = math.hypot(fit_cx - cx_px, fit_cy - cy_px)
-        radius_dev_px = abs(fit_r - r_px)
+        radius_dev_px = fit_r - r_px  # positive = larger than nominal
         center_dev_mm = center_dev_px / pixels_per_mm
         radius_dev_mm = radius_dev_px / pixels_per_mm
 

@@ -58,7 +58,7 @@ class TestInspectLine:
         assert r["edge_point_count"] >= 5
         # Deviation should be small (line is exactly at expected position)
         assert r["perp_dev_mm"] is not None
-        assert r["perp_dev_mm"] < 5.0  # generous threshold for edge detection jitter
+        assert abs(r["perp_dev_mm"]) < 5.0  # generous threshold for edge detection jitter
 
     def test_no_edge_unmatched(self):
         """A uniform gray frame should produce no edges, so the entity is unmatched."""
@@ -116,7 +116,7 @@ class TestInspectCircle:
         assert r["center_dev_mm"] is not None
         assert r["center_dev_mm"] < 5.0
         assert r["radius_dev_mm"] is not None
-        assert r["radius_dev_mm"] < 5.0
+        assert abs(r["radius_dev_mm"]) < 5.0
 
 
 class TestInspectWithTransform:
@@ -145,7 +145,7 @@ class TestInspectWithTransform:
         assert len(results) == 1
         r = results[0]
         assert r["matched"] is True
-        assert r["perp_dev_mm"] < 5.0
+        assert abs(r["perp_dev_mm"]) < 5.0
 
 
 class TestTolerancePassWarnFail:
@@ -283,7 +283,7 @@ class TestFitManualPointsCircle:
         assert result["center_dev_mm"] is not None
         assert result["center_dev_mm"] < 2.0
         assert result["radius_dev_mm"] is not None
-        assert result["radius_dev_mm"] < 2.0
+        assert abs(result["radius_dev_mm"]) < 2.0
 
     def test_too_few_points(self):
         """Fewer than 8 points should return unmatched."""
