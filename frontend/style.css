@@ -817,3 +817,21 @@ body.no-camera .camera-section { display: none; }
   margin: 4px 0;
   background: var(--border);
 }
+
+#label-tooltip {
+  position: fixed;
+  z-index: 1001;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 12px;
+  font-size: 11px;
+  font-family: ui-monospace, monospace;
+  color: var(--text);
+  line-height: 1.5;
+  max-width: 300px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+  pointer-events: none;
+  white-space: pre-line;
+}
+#label-tooltip[hidden] { display: none; }
