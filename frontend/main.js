@@ -1,4 +1,4 @@
-import { state, undoStack, redoStack, takeSnapshot, _deviationHitBoxes, pushUndo, TRANSIENT_TYPES } from './state.js';
+import { state, undoStack, redoStack, takeSnapshot, _deviationHitBoxes, _labelHitBoxes, pushUndo, TRANSIENT_TYPES } from './state.js';
 import { canvas, ctx, img, showStatus, redraw, resizeCanvas,
          drawLine, drawOrigin, drawAreaPreview, dxfToCanvas } from './render.js';
 import { renderSidebar, loadCameraInfo, loadUiConfig, loadTolerances,
@@ -208,6 +208,25 @@ function onMouseDown(e) {
       }
     }
   }
+  // Label drag
+  if (state.tool === "select" && !e.shiftKey && _labelHitBoxes.length > 0) {
+    const rect = canvas.getBoundingClientRect();
+    const dpr = canvas.width / rect.width;
+    const screenX = (e.clientX - rect.left) * dpr;
+    const screenY = (e.clientY - rect.top) * dpr;
+    for (const box of _labelHitBoxes) {
+      if (screenX >= box.x && screenX <= box.x + box.w && screenY >= box.y && screenY <= box.y + box.h) {
+        const dxfAnn = state.annotations.find(a => a.type === "dxf-overlay");
+        const result = dxfAnn?.guidedResults?.find(r => r.handle === box.handle);
+        if (result) {
+          const offset = result.labelOffset || { dx: 0, dy: 0 };
+          state._labelDrag = { handle: box.handle, startX: pt.x, startY: pt.y,
+                               origDx: offset.dx, origDy: offset.dy };
+          return;
+        }
+      }
+    }
+  }
   // During point-pick: Shift+click on a DXF feature adds it to the pick target
   // (must check BEFORE the regular point-placement to intercept Shift+click)
   if (state.inspectionPickTarget && e.shiftKey) {
@@ -314,6 +333,10 @@ function onMouseUp() {
   if (state._panStart) {
     state._panStart = null;
     canvas.style.cursor = state.tool === "pan" ? "grab" : "";
+    return;
+  }
+  if (state._labelDrag) {
+    state._labelDrag = null;
     return;
   }
   if (state.dxfDragMode) {
@@ -526,6 +549,18 @@ canvas.addEventListener("mousemove", e => {
     if (ann) {
       ann.offsetX = state.dxfDragOrigin.annOffsetX + (pt.x - state.dxfDragOrigin.mouseX);
       ann.offsetY = state.dxfDragOrigin.annOffsetY + (pt.y - state.dxfDragOrigin.mouseY);
+      redraw();
+    }
+    return;
+  }
+  if (state._labelDrag) {
+    const dxfAnn = state.annotations.find(a => a.type === "dxf-overlay");
+    const result = dxfAnn?.guidedResults?.find(r => r.handle === state._labelDrag.handle);
+    if (result) {
+      result.labelOffset = {
+        dx: state._labelDrag.origDx + (pt.x - state._labelDrag.startX),
+        dy: state._labelDrag.origDy + (pt.y - state._labelDrag.startY),
+      };
       redraw();
     }
     return;
