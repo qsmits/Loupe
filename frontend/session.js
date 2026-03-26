@@ -306,6 +306,7 @@ export function saveSession() {
     calibration: state.calibration ? { ...state.calibration } : null,
     origin: state.origin ? { ...state.origin } : null,
     featureTolerances: { ...state.featureTolerances },
+    featureModes: { ...state.featureModes },
     dxfFilename: state.dxfFilename ?? null,
     inspectionResults: state.inspectionResults.slice(),
     inspectionFrame: state.inspectionFrame ?? null,
@@ -382,6 +383,9 @@ export function loadSession(raw) {
   state.featureTolerances = (data.featureTolerances && typeof data.featureTolerances === "object")
     ? { ...data.featureTolerances }
     : {};
+  state.featureModes = (data.featureModes && typeof data.featureModes === "object")
+    ? { ...data.featureModes }
+    : {};
 
   // Sync origin annotation's angle from state.origin (state.origin is authoritative)
   if (state.origin) {
@@ -428,6 +432,7 @@ export function autoSave() {
     calibration: state.calibration ? { ...state.calibration } : null,
     origin: state.origin ? { ...state.origin } : null,
     featureTolerances: { ...state.featureTolerances },
+    featureModes: { ...state.featureModes },
     dxfFilename: state.dxfFilename ?? null,
     inspectionResults: state.inspectionResults.slice(),
     inspectionFrame: null,  // excluded — too large for localStorage

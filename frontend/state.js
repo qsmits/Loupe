@@ -26,6 +26,7 @@ export const state = {
   showDeviations: false,
   tolerances: { warn: 0.10, fail: 0.25 },
   featureTolerances: {},
+  featureModes: {},        // { [handle]: "punch" | "die" } — default is "die"
   inspectionResults: [],   // populated by "Run inspection"; persisted in session v2
   inspectionFrame: null,   // base64 JPEG of composited camera+overlay at inspection time
   dxfFilename: null,       // set from DXF filename on load; cleared on DXF clear
@@ -43,6 +44,7 @@ export const state = {
   _selectRect: null,
   _panStart: null,
   _flashExpiry: 0,
+  _labelDrag: null,         // { handle, startX, startY, origDx, origDy }
   _noCamera: false,         // was let _noCamera (line 36)
   _dirty: false,
   _savedManually: true,
@@ -53,6 +55,7 @@ export const redoStack = [];
 export const UNDO_LIMIT = 50;
 
 export const _deviationHitBoxes = [];  // populated by drawDeviations, read by main.js
+export const _labelHitBoxes = [];     // populated by drawGuidedResults, used for drag + tooltip
 
 export function takeSnapshot() {
   return JSON.stringify({
