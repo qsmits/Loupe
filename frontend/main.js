@@ -102,6 +102,7 @@ function toggleDropdown(btnId, dropId) {
 // ── Canvas mouse events ──────────────────────────────────────────────────────
 function onMouseDown(e) {
   if (e.button !== 0 && e.button !== 1) return;
+  document.getElementById("label-tooltip")?.setAttribute("hidden", "");
 
   // Minimap click-to-jump
   if (e.button === 0 && state.frozenBackground && imageWidth > 0) {
@@ -594,6 +595,53 @@ canvas.addEventListener("mousemove", e => {
     return;
   }
   if (state.dragState) { handleDrag(pt); return; }
+
+  // Label tooltip on hover
+  const tooltip = document.getElementById("label-tooltip");
+  if (tooltip) {
+    const rect = canvas.getBoundingClientRect();
+    const dpr = canvas.width / rect.width;
+    const screenX = (e.clientX - rect.left) * dpr;
+    const screenY = (e.clientY - rect.top) * dpr;
+    let hoveredBox = null;
+    for (const box of _labelHitBoxes) {
+      if (screenX >= box.x && screenX <= box.x + box.w && screenY >= box.y && screenY <= box.y + box.h) {
+        hoveredBox = box;
+        break;
+      }
+    }
+    if (hoveredBox) {
+      const dxfAnn = state.annotations.find(a => a.type === "dxf-overlay");
+      const r = dxfAnn?.guidedResults?.find(res => res.handle === hoveredBox.handle);
+      if (r) {
+        const mode = state.featureModes[r.handle] || "die";
+        const lines = [];
+        lines.push(`Feature: ${r.handle} (${r.type})`);
+        if (r.parent_handle) lines.push(`Group: ${r.parent_handle}`);
+        lines.push(`Mode: ${mode.charAt(0).toUpperCase() + mode.slice(1)}`);
+        lines.push("");
+        if (r.perp_dev_mm != null) {
+          lines.push(`Deviation: \u22a5 ${r.perp_dev_mm.toFixed(4)} mm`);
+          if (r.angle_error_deg != null) lines.push(`Angle: ${r.angle_error_deg.toFixed(2)}\xb0`);
+        }
+        if (r.center_dev_mm != null) lines.push(`Center dev: ${r.center_dev_mm.toFixed(4)} mm`);
+        if (r.radius_dev_mm != null) lines.push(`Radius dev: ${r.radius_dev_mm.toFixed(4)} mm`);
+        lines.push("");
+        lines.push(`Tolerance: warn \xb1${r.tolerance_warn}  fail \xb1${r.tolerance_fail}`);
+        lines.push(`Result: ${r.pass_fail?.toUpperCase() ?? "?"}`);
+        lines.push(`Source: ${r.source ?? "auto"}`);
+        tooltip.textContent = lines.join("\n");
+        tooltip.style.left = (e.clientX + 12) + "px";
+        tooltip.style.top = (e.clientY - 10) + "px";
+        tooltip.hidden = false;
+      } else {
+        tooltip.hidden = true;
+      }
+    } else {
+      tooltip.hidden = true;
+    }
+  }
+
   if (state.tool !== "select" && state.tool !== "calibrate" && state.tool !== "center-dist") {
     const { pt: snappedPt, snapped } = snapPoint(rawPt, e.altKey);
     state.snapTarget = (snapped && !e.altKey) ? snappedPt : null;
@@ -708,6 +756,7 @@ canvas.addEventListener("mousemove", e => {
 canvas.addEventListener("mouseleave", () => {
   const coordEl = document.getElementById("coord-display");
   if (coordEl) coordEl.textContent = "";
+  document.getElementById("label-tooltip")?.setAttribute("hidden", "");
 });
 
 canvas.addEventListener("contextmenu", e => {
@@ -748,6 +797,22 @@ canvas.addEventListener("contextmenu", e => {
           }
         }},
       ];
+      const currentMode = state.featureModes[hitResult.handle] || "die";
+      items.push("---");
+      items.push({
+        label: currentMode === "die" ? "Set as Punch" : "Set as Die",
+        action: () => {
+          state.featureModes[hitResult.handle] = currentMode === "die" ? "punch" : "die";
+          redraw();
+          showStatus(`Feature ${hitResult.handle}: ${state.featureModes[hitResult.handle]}`);
+        }
+      });
+      if (hitResult.labelOffset && (hitResult.labelOffset.dx !== 0 || hitResult.labelOffset.dy !== 0)) {
+        items.push({ label: "Reset label position", action: () => {
+          delete hitResult.labelOffset;
+          redraw();
+        }});
+      }
       showContextMenu(e.clientX, e.clientY, items);
       return;
     }
