@@ -40,7 +40,7 @@ export function resizeCanvas() {
 }
 
 export function measurementLabel(ann) {
-  const cal = state.calibration;
+  const cal = state.calibration && state.calibration.pixelsPerMm > 0 ? state.calibration : null;
   if (ann.type === "distance") {
     const px = Math.hypot(ann.b.x - ann.a.x, ann.b.y - ann.a.y);
     if (!cal) return `${px.toFixed(1)} px`;

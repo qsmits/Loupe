@@ -38,14 +38,24 @@ export async function doFreeze() {
 
   // Fetch the frozen frame as a real JPEG — drawing the MJPEG stream <img>
   // element to a canvas is unreliable (blank result on most browsers).
-  const frameBlob = await fetch("/frame").then(res => res.blob());
-  const frameUrl = URL.createObjectURL(frameBlob);
-  state.frozenBackground = await new Promise((resolve, reject) => {
-    const bmpImg = new Image();
-    bmpImg.onload = () => { URL.revokeObjectURL(frameUrl); resolve(bmpImg); };
-    bmpImg.onerror = reject;
-    bmpImg.src = frameUrl;
-  });
+  try {
+    const frameResp = await fetch("/frame");
+    if (!frameResp.ok) throw new Error("Failed to fetch frame");
+    const frameBlob = await frameResp.blob();
+    const frameUrl = URL.createObjectURL(frameBlob);
+    state.frozenBackground = await new Promise((resolve, reject) => {
+      const bmpImg = new Image();
+      bmpImg.onload = () => { URL.revokeObjectURL(frameUrl); resolve(bmpImg); };
+      bmpImg.onerror = () => { URL.revokeObjectURL(frameUrl); reject(new Error("Frame image decode failed")); };
+      bmpImg.src = frameUrl;
+    });
+  } catch (err) {
+    showStatus("Failed to capture frame: " + err.message);
+    state.frozenBackground = null;
+    state.frozen = false;
+    updateFreezeUI();
+    return;
+  }
 
   img.style.opacity = "0";   // hide stream
   state.frozen = true;
