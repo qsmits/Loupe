@@ -1,4 +1,4 @@
-import { state, _deviationHitBoxes } from './state.js';
+import { state, _deviationHitBoxes, _labelHitBoxes } from './state.js';
 import { fitCircleAlgebraic, polygonArea } from './math.js';
 import { viewport, imageWidth, imageHeight, setImageSize } from './viewport.js';
 
@@ -651,15 +651,36 @@ export function drawHandle(pt, color) {
   ctx.stroke();
 }
 
+function _deviationColor(r) {
+  const magnitude = Math.abs(r.perp_dev_mm ?? r.radius_dev_mm ?? 0);
+  const tol_w = r.tolerance_warn ?? state.tolerances.warn;
+  const tol_f = r.tolerance_fail ?? state.tolerances.fail;
+
+  if (magnitude <= tol_w) return "#32d74b";  // green — pass
+
+  const mode = state.featureModes[r.handle] || "die";
+  const radiusDev = r.radius_dev_mm;
+
+  if (radiusDev != null && magnitude > tol_w) {
+    // Arc/circle: positive radius_dev = larger than nominal
+    const reworkable = (mode === "die" && radiusDev < 0)   // die smaller = rework
+                    || (mode === "punch" && radiusDev > 0); // punch larger = rework
+    return reworkable ? "#ff9f0a" : "#ff453a";  // amber or red
+  }
+
+  // Lines: use magnitude-based warn/fail (sign interpretation needs winding order)
+  return magnitude <= tol_f ? "#ff9f0a" : "#ff453a";
+}
+
 export function drawGuidedResults(ann) {
   const results = ann.guidedResults;
   if (!results || results.length === 0) return;
 
+  _labelHitBoxes.length = 0;
+
   for (const r of results) {
     if (r.matched && r.fit) {
-      const color = r.pass_fail === "fail" ? "#ff453a"
-        : r.pass_fail === "warn" ? "#ff9f0a"
-        : "#32d74b";
+      const color = _deviationColor(r);
 
       ctx.save();
       ctx.strokeStyle = color;
@@ -678,7 +699,35 @@ export function drawGuidedResults(ann) {
         // Normal vector (perpendicular to line direction)
         const nx = -ldy / ll, ny = ldx / ll;
         const labelOff = pw(12);
-        drawLabel(`\u22a5 ${r.perp_dev_mm?.toFixed(3)} mm`, mx + nx * labelOff, my + ny * labelOff);
+        // Compute default label position
+        const defaultLabelX = mx + nx * labelOff;
+        const defaultLabelY = my + ny * labelOff;
+        // Apply stored offset
+        const offset = r.labelOffset || { dx: 0, dy: 0 };
+        const labelX = defaultLabelX + offset.dx;
+        const labelY = defaultLabelY + offset.dy;
+        // Draw leader line if offset is non-zero
+        if (offset.dx !== 0 || offset.dy !== 0) {
+          ctx.save();
+          ctx.strokeStyle = "rgba(150, 150, 150, 0.5)";
+          ctx.lineWidth = pw(0.5);
+          ctx.beginPath();
+          ctx.moveTo(labelX, labelY);
+          ctx.lineTo(mx, my);
+          ctx.stroke();
+          ctx.restore();
+        }
+        const labelText = `\u22a5 ${r.perp_dev_mm?.toFixed(3)} mm`;
+        drawLabel(labelText, labelX, labelY);
+        // Record hitbox for drag + tooltip
+        const fontSize = pw(12);
+        ctx.font = `bold ${fontSize}px ui-monospace, monospace`;
+        const textW = ctx.measureText(labelText).width;
+        _labelHitBoxes.push({
+          handle: r.handle, x: labelX - pw(2), y: labelY - pw(13),
+          w: textW + pw(4), h: pw(16),
+          refX: mx, refY: my,
+        });
       } else {
         ctx.beginPath();
         if (r.fit.start_deg != null && r.fit.type === "arc") {
@@ -699,10 +748,35 @@ export function drawGuidedResults(ann) {
           labelAngle = mid * Math.PI / 180;
         }
         const labelR = r.fit.r + pw(10);
-        const labelX = r.fit.cx + labelR * Math.cos(labelAngle);
-        const labelY = r.fit.cy + labelR * Math.sin(labelAngle);
-        drawLabel(`\u0394c ${(r.center_dev_mm ?? 0).toFixed(3)} \u0394r ${(r.radius_dev_mm ?? 0).toFixed(3)}`,
-          labelX, labelY);
+        // Compute default label position
+        const defaultArcLabelX = r.fit.cx + labelR * Math.cos(labelAngle);
+        const defaultArcLabelY = r.fit.cy + labelR * Math.sin(labelAngle);
+        // Apply stored offset
+        const arcOffset = r.labelOffset || { dx: 0, dy: 0 };
+        const arcLabelX = defaultArcLabelX + arcOffset.dx;
+        const arcLabelY = defaultArcLabelY + arcOffset.dy;
+        // Draw leader line if offset is non-zero
+        if (arcOffset.dx !== 0 || arcOffset.dy !== 0) {
+          ctx.save();
+          ctx.strokeStyle = "rgba(150, 150, 150, 0.5)";
+          ctx.lineWidth = pw(0.5);
+          ctx.beginPath();
+          ctx.moveTo(arcLabelX, arcLabelY);
+          ctx.lineTo(r.fit.cx, r.fit.cy);
+          ctx.stroke();
+          ctx.restore();
+        }
+        const arcLabelText = `\u0394c ${(r.center_dev_mm ?? 0).toFixed(3)} \u0394r ${(r.radius_dev_mm ?? 0).toFixed(3)}`;
+        drawLabel(arcLabelText, arcLabelX, arcLabelY);
+        // Record hitbox for drag + tooltip
+        const arcFontSize = pw(12);
+        ctx.font = `bold ${arcFontSize}px ui-monospace, monospace`;
+        const arcTextW = ctx.measureText(arcLabelText).width;
+        _labelHitBoxes.push({
+          handle: r.handle, x: arcLabelX - pw(2), y: arcLabelY - pw(13),
+          w: arcTextW + pw(4), h: pw(16),
+          refX: r.fit.cx, refY: r.fit.cy,
+        });
       }
       ctx.restore();
 
