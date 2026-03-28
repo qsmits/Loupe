@@ -111,9 +111,42 @@ export function initDxfHandlers() {
       });
       const dxfPanelEl = document.getElementById("dxf-panel");
       if (dxfPanelEl) dxfPanelEl.style.display = "";
-      enterDxfAlignMode();
       updateDxfControlsVisibility();
       redraw();
+
+      // Auto-align if calibrated and frozen
+      if (cal?.pixelsPerMm && state.frozen) {
+        showStatus("Auto-aligning DXF…");
+        try {
+          const smoothing = parseInt(document.getElementById("adv-smoothing")?.value || "2");
+          const alignResp = await fetch("/align-dxf-edges", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              entities,
+              pixels_per_mm: cal.pixelsPerMm,
+              smoothing,
+            }),
+          });
+          if (alignResp.ok) {
+            const result = await alignResp.json();
+            const ann = state.annotations.find(a => a.type === "dxf-overlay");
+            if (ann) {
+              ann.offsetX = result.tx;
+              ann.offsetY = result.ty;
+              ann.angle = result.angle_deg ?? 0;
+              showStatus(`DXF auto-aligned (score ${(result.score * 100).toFixed(0)}%)`);
+            }
+          } else {
+            showStatus("Auto-align failed — use Move DXF to position manually");
+          }
+        } catch (_) {
+          showStatus("Auto-align failed — use Move DXF to position manually");
+        }
+        redraw();
+      } else {
+        enterDxfAlignMode();
+      }
       e.target.value = "";
     } catch (err) {
       alert("Could not load DXF: " + err.message);

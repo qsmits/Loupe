@@ -248,22 +248,6 @@ class AlignEdgesBody(BaseModel):
     smoothing: int = Field(default=2, ge=1, le=3)
 
 
-@router.post("/align-dxf-edges")
-async def align_dxf_edges_route(body: AlignEdgesBody):
-    frame = frame_store.get()
-    if frame is None:
-        raise HTTPException(status_code=400, detail="No frame stored. Call /freeze first.")
-    from .vision.alignment import align_dxf_edges
-    result = align_dxf_edges(
-        frame, body.entities, body.pixels_per_mm,
-        angle_range=body.angle_range,
-        smoothing=body.smoothing,
-    )
-    if not result.get("success"):
-        raise HTTPException(status_code=400, detail=result.get("reason", "Alignment failed"))
-    return result
-
-
 def make_router(camera: BaseCamera, frame_store: FrameStore, startup_warning: str | None = None) -> APIRouter:
     router = APIRouter()
     _warning = [startup_warning]   # mutable container for pop semantics
@@ -434,6 +418,21 @@ def make_router(camera: BaseCamera, frame_store: FrameStore, startup_warning: st
                 r["pass_fail"] = "fail" if dev > body.tolerance_fail else (
                     "warn" if dev > body.tolerance_warn else "pass")
         return results
+
+    @router.post("/align-dxf-edges")
+    async def align_dxf_edges_route(body: AlignEdgesBody):
+        frame = frame_store.get()
+        if frame is None:
+            raise HTTPException(status_code=400, detail="No frame stored. Call /freeze first.")
+        from .vision.alignment import align_dxf_edges
+        result = align_dxf_edges(
+            frame, body.entities, body.pixels_per_mm,
+            angle_range=body.angle_range,
+            smoothing=body.smoothing,
+        )
+        if not result.get("success"):
+            raise HTTPException(status_code=400, detail=result.get("reason", "Alignment failed"))
+        return result
 
     @router.post("/inspect-guided")
     async def inspect_guided_route(body: InspectGuidedBody):
