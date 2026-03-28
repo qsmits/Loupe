@@ -2,13 +2,113 @@ import { state, DETECTION_TYPES } from './state.js';
 import { redraw, showStatus, getStatus, measurementLabel, listEl, cameraInfoEl } from './render.js';
 
 // ── Sidebar rendering ──────────────────────────────────────────────────────────
+function _createMeasurementRow(ann, number) {
+  const row = document.createElement("div");
+  row.className = "measurement-item" + (state.selected.has(ann.id) ? " selected" : "");
+  row.dataset.id = ann.id;
+  row.innerHTML = `
+    <span class="measurement-number">${number}</span>
+    <input class="measurement-name" type="text" placeholder="Label…">
+    <span class="measurement-value">${measurementLabel(ann)}</span>
+    <button class="del-btn" data-id="${ann.id}">✕</button>`;
+  row.querySelector(".measurement-name").value = ann.name || "";
+  row.querySelector(".measurement-name").addEventListener("input", e => { ann.name = e.target.value; });
+  row.querySelector(".measurement-name").addEventListener("click", e => { e.stopPropagation(); });
+  row.addEventListener("click", () => {
+    const wasSelected = state.selected.has(ann.id);
+    state.selected = new Set([ann.id]);
+    state._flashExpiry = Date.now() + 400;
+    renderSidebar();
+    redraw();
+    if (wasSelected) {
+      const label = measurementLabel(ann);
+      if (!label) return;
+      const text = ann.name ? `${ann.name}: ${label}` : label;
+      navigator.clipboard.writeText(text).then(() => {
+        const flashRow = listEl.querySelector(`.measurement-item[data-id="${ann.id}"]`);
+        if (flashRow) { flashRow.classList.add("copied"); setTimeout(() => flashRow.classList.remove("copied"), 600); }
+      }).catch(() => {});
+    }
+  });
+  return row;
+}
+
 export function renderSidebar() {
   listEl.innerHTML = "";
+
+  // Partition annotations into: skip, origin, grouped, ungrouped
+  const skip = new Set(["edges-overlay", "preprocessed-overlay", "dxf-overlay"]);
+  const visible = state.annotations.filter(a => !skip.has(a.type));
+
+  // Build groups from state.measurementGroups
+  const groupMap = new Map();  // groupName → [ann, ...]
+  const ungrouped = [];
+  for (const ann of visible) {
+    const groupName = state.measurementGroups[ann.id];
+    if (groupName) {
+      if (!groupMap.has(groupName)) groupMap.set(groupName, []);
+      groupMap.get(groupName).push(ann);
+    } else {
+      ungrouped.push(ann);
+    }
+  }
+
   let i = 0;
-  state.annotations.forEach(ann => {
-    if (ann.type === "edges-overlay" || ann.type === "preprocessed-overlay") return;
-    if (ann.type === "dxf-overlay") return;  // DXF overlay is drawn on canvas, not in sidebar
-    // Origin annotation: rendered without a measurement number
+
+  // Render groups first
+  for (const [groupName, members] of groupMap) {
+    const header = document.createElement("div");
+    header.className = "meas-group-header";
+    header.innerHTML = `
+      <span class="meas-group-chevron">▾</span>
+      <span class="meas-group-label">${groupName}</span>
+      <span class="meas-group-count">(${members.length})</span>`;
+    header.style.cursor = "pointer";
+    let collapsed = false;
+    header.addEventListener("click", () => {
+      collapsed = !collapsed;
+      header.querySelector(".meas-group-chevron").textContent = collapsed ? "▸" : "▾";
+      let sibling = header.nextElementSibling;
+      while (sibling && !sibling.classList.contains("meas-group-header")) {
+        if (sibling.classList.contains("meas-group-member")) sibling.hidden = collapsed;
+        sibling = sibling.nextElementSibling;
+      }
+    });
+    // Double-click to rename group
+    header.addEventListener("dblclick", e => {
+      e.stopPropagation();
+      const labelSpan = header.querySelector(".meas-group-label");
+      const input = document.createElement("input");
+      input.type = "text";
+      input.value = groupName;
+      input.style.cssText = "width:80px; font-size:10px; padding:0 2px; background:var(--surface-3); color:var(--text); border:1px solid var(--border);";
+      input.addEventListener("blur", () => {
+        const newName = input.value.trim();
+        if (newName && newName !== groupName) {
+          for (const m of members) {
+            state.measurementGroups[m.id] = newName;
+          }
+        }
+        renderSidebar();
+      });
+      input.addEventListener("keydown", ev => { if (ev.key === "Enter") input.blur(); });
+      labelSpan.replaceWith(input);
+      input.focus(); input.select();
+    });
+    listEl.appendChild(header);
+
+    for (const ann of members) {
+      if (ann.type === "origin") continue;
+      const number = String.fromCodePoint(9312 + i);
+      i++;
+      const row = _createMeasurementRow(ann, number);
+      row.classList.add("meas-group-member");
+      listEl.appendChild(row);
+    }
+  }
+
+  // Render ungrouped annotations
+  for (const ann of ungrouped) {
     if (ann.type === "origin") {
       const row = document.createElement("div");
       row.className = "measurement-item" + (state.selected.has(ann.id) ? " selected" : "");
@@ -24,47 +124,12 @@ export function renderSidebar() {
         redraw();
       });
       listEl.appendChild(row);
-      return; // skip i++
+      continue;
     }
     const number = String.fromCodePoint(9312 + i);
     i++;
-    const row = document.createElement("div");
-    row.className = "measurement-item" + (state.selected.has(ann.id) ? " selected" : "");
-    row.dataset.id = ann.id;
-    row.innerHTML = `
-      <span class="measurement-number">${number}</span>
-      <input class="measurement-name" type="text" placeholder="Label…">
-      <span class="measurement-value">${measurementLabel(ann)}</span>
-      <button class="del-btn" data-id="${ann.id}">✕</button>`;
-    row.querySelector(".measurement-name").value = ann.name;
-    row.querySelector(".measurement-name").addEventListener("input", e => {
-      ann.name = e.target.value;
-    });
-    row.querySelector(".measurement-name").addEventListener("click", e => {
-      e.stopPropagation();
-    });
-    row.addEventListener("click", () => {
-      const wasSelected = state.selected.has(ann.id);
-      state.selected = new Set([ann.id]);
-      state._flashExpiry = Date.now() + 400;
-      renderSidebar();
-      redraw();
-      if (wasSelected) {
-        const label = measurementLabel(ann);
-        if (!label) return; // origin or unknown — nothing to copy
-        const text = ann.name ? `${ann.name}: ${label}` : label;
-        navigator.clipboard.writeText(text).then(() => {
-          // Flash the newly re-rendered row
-          const flashRow = listEl.querySelector(`.measurement-item[data-id="${ann.id}"]`);
-          if (flashRow) {
-            flashRow.classList.add("copied");
-            setTimeout(() => flashRow.classList.remove("copied"), 600);
-          }
-        }).catch(() => { /* clipboard unavailable — silent no-op */ });
-      }
-    });
-    listEl.appendChild(row);
-  });
+    listEl.appendChild(_createMeasurementRow(ann, number));
+  }
 
   // Show selection count in status bar when multiple selected
   if (state.selected.size > 1) {

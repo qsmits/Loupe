@@ -799,6 +799,26 @@ body.no-camera .camera-section { display: none; }
   font-weight: 600;
   margin-left: 4px;
 }
+/* ─── Measurement group headers ─────────────────────────── */
+.meas-group-header {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  font-size: 10px;
+  font-weight: 600;
+  background: var(--surface-3);
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  user-select: none;
+}
+.meas-group-header:hover { background: var(--surface-2); }
+.meas-group-chevron { font-size: 8px; color: var(--muted); width: 10px; }
+.meas-group-label { color: var(--text); }
+.meas-group-count { color: var(--muted); font-weight: 400; }
+.meas-group-member { padding-left: 12px; }
+
+/* ─── Inspection group headers ─────────────────────────── */
 .insp-group-header td {
   padding: 4px 6px;
   font-weight: 600;

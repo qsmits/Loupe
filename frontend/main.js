@@ -921,6 +921,27 @@ canvas.addEventListener("contextmenu", e => {
     if (selectedLines.length >= 2) {
       items.push({ label: `Merge ${selectedLines.length} lines`, action: mergeSelectedLines });
     }
+    // Group/ungroup option
+    if (state.selected.size >= 2) {
+      items.push({ label: "Group selected…", action: () => {
+        const name = prompt("Group name:", "Feature");
+        if (!name) return;
+        for (const id of state.selected) {
+          state.measurementGroups[id] = name;
+        }
+        renderSidebar();
+      }});
+    }
+    // Check if selected items are in a group — offer ungroup
+    const groupedSelected = [...state.selected].filter(id => state.measurementGroups[id]);
+    if (groupedSelected.length > 0) {
+      items.push({ label: "Ungroup", action: () => {
+        for (const id of groupedSelected) {
+          delete state.measurementGroups[id];
+        }
+        renderSidebar();
+      }});
+    }
     items.push({ label: `Delete (${state.selected.size})`, action: deleteSelected });
     if (state.selected.size === 1) {
       const ann = state.annotations.find(a => a.id === [...state.selected][0]);
