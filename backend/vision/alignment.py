@@ -287,6 +287,34 @@ def align_dxf_edges(
     if best_score < 0.01:
         return {"success": False, "reason": "No good match found"}
 
+    # Fine-angle refinement: search ±0.5° around best in 0.1° steps
+    fine_angles = np.arange(best_angle - 0.5, best_angle + 0.55, 0.1)
+    for angle_deg in fine_angles:
+        render_result = _render_dxf_template(entities, scale, angle_deg, padding)
+        if render_result is None or render_result[0] is None:
+            continue
+        tmpl, r_min_x, r_min_y = render_result
+        th, tw = tmpl.shape
+        if tw >= w_padded or th >= h_padded:
+            continue
+        result = cv2.matchTemplate(edges_thick, tmpl, cv2.TM_CCORR_NORMED)
+        mask = np.zeros_like(result)
+        vxs = pad_x
+        vxe = min(result.shape[1], pad_x + w - tw)
+        vys = pad_y
+        vye = min(result.shape[0], pad_y + h - th)
+        if vxe > vxs and vye > vys:
+            mask[vys:vye, vxs:vxe] = 1
+            result = result * mask
+        _, max_val, _, max_loc = cv2.minMaxLoc(result)
+        if max_val > best_score:
+            best_score = max_val
+            best_angle = angle_deg
+            best_loc = max_loc
+            best_r_min_x = r_min_x
+            best_r_min_y = r_min_y
+            best_tmpl_shape = (th, tw)
+
     # Convert template match to DXF overlay (offsetX, offsetY).
     #
     # The template renders DXF with Y flipped (Y-up → Y-down). The DXF overlay

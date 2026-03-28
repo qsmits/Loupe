@@ -173,7 +173,7 @@ async def mjpeg_generator(camera: BaseCamera, fps: int = 30):
     interval = 1.0 / fps
     loop = asyncio.get_running_loop()
 
-    while True:
+    while not (hasattr(camera, '_stop') and camera._stop.is_set()):
         start = loop.time()
 
         frame = camera.get_frame()
