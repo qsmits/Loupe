@@ -1,81 +1,19 @@
-import { state, undoStack, redoStack, takeSnapshot, _deviationHitBoxes, _labelHitBoxes, pushUndo, TRANSIENT_TYPES } from './state.js';
-import { canvas, ctx, img, showStatus, redraw, resizeCanvas,
-         drawLine, drawOrigin, drawAreaPreview, dxfToCanvas } from './render.js';
+import { state, TRANSIENT_TYPES } from './state.js';
+import { canvas, ctx, img, showStatus, redraw, resizeCanvas } from './render.js';
 import { renderSidebar, loadCameraInfo, loadUiConfig, loadTolerances,
          updateCalibrationButton, checkStartupWarning, updateFreezeUI,
-         loadCameraList, renderInspectionTable } from './sidebar.js';
-import { addAnnotation, deleteAnnotation, deleteSelected, elevateSelected, isDetection, mergeSelectedLines, clearDetections, clearMeasurements, clearDxfOverlay, clearAll } from './annotations.js';
-import { setTool, handleToolClick, handleSelectDown, handleDrag,
-         canvasPoint, snapPoint, collectDxfSnapPoints,
-         projectConstrained, hitTestDxfEntity } from './tools.js';
-import { fitCircle, fitLine, fitCircleAlgebraic, distPointToSegment } from './math.js';
-import { exitDxfAlignMode, initDxfHandlers,
-         openFeatureTolPopover } from './dxf.js';
+         loadCameraList } from './sidebar.js';
+import { deleteAnnotation, elevateSelected, clearDetections, clearMeasurements, clearDxfOverlay, clearAll } from './annotations.js';
+import { setTool } from './tools.js';
+import { initDxfHandlers } from './dxf.js';
 import { doFreeze, initDetectHandlers } from './detect.js';
 import { saveSession, loadSession, exportAnnotatedImage, exportCsv, exportDxf, autoSave, tryAutoRestore } from './session.js';
-import { viewport, screenToImage, clampPan, fitToWindow, zoomOneToOne, setImageSize, imageWidth, imageHeight } from './viewport.js';
+import { viewport, clampPan, fitToWindow, setImageSize, imageWidth, imageHeight } from './viewport.js';
+import { showContextMenu, hideContextMenu } from './events-context-menu.js';
+import { undo, redo, initKeyboard } from './events-keyboard.js';
+import { initMouseHandlers } from './events-mouse.js';
 
-// ── Context menu ──────────────────────────────────────────────────────────
-const ctxMenu = document.getElementById("context-menu");
-
-function showContextMenu(x, y, items) {
-  ctxMenu.innerHTML = "";
-  for (const item of items) {
-    if (item === "---") {
-      const d = document.createElement("div");
-      d.className = "ctx-divider";
-      ctxMenu.appendChild(d);
-    } else {
-      const btn = document.createElement("button");
-      btn.className = "ctx-item";
-      btn.textContent = item.label;
-      btn.addEventListener("click", () => { ctxMenu.hidden = true; item.action(); });
-      ctxMenu.appendChild(btn);
-    }
-  }
-  // Position, keeping on screen
-  ctxMenu.hidden = false;
-  const rect = ctxMenu.getBoundingClientRect();
-  ctxMenu.style.left = Math.min(x, window.innerWidth - rect.width - 5) + "px";
-  ctxMenu.style.top = Math.min(y, window.innerHeight - rect.height - 5) + "px";
-}
-
-function hideContextMenu() { ctxMenu.hidden = true; }
-
-document.addEventListener("click", hideContextMenu);
-
-// ── Undo / Redo ─────────────────────────────────────────────────────────────
-function undo() {
-  if (!undoStack.length) return;
-  redoStack.push(takeSnapshot());
-  const snap = JSON.parse(undoStack.pop());
-  state.annotations = snap.annotations;
-  state.calibration = snap.calibration;
-  state.origin = snap.origin;
-  state.selected = new Set(
-    [...state.selected].filter(id => state.annotations.some(a => a.id === id))
-  );
-  state._dirty = true;
-  state._savedManually = false;
-  renderSidebar(); redraw();
-}
-
-function redo() {
-  if (!redoStack.length) return;
-  undoStack.push(takeSnapshot());
-  const snap = JSON.parse(redoStack.pop());
-  state.annotations = snap.annotations;
-  state.calibration = snap.calibration;
-  state.origin = snap.origin;
-  state.selected = new Set(
-    [...state.selected].filter(id => state.annotations.some(a => a.id === id))
-  );
-  state._dirty = true;
-  state._savedManually = false;
-  renderSidebar(); redraw();
-}
-
-// ─── Dropdown helpers ────────────────────────────────────────────────────────
+// ─── Dropdown helpers ─────��──────────────────────────────────────────────────
 function closeAllDropdowns() {
   ["dropdown-measure","dropdown-detect","dropdown-overlay","dropdown-clear"].forEach(id => {
     const el = document.getElementById(id);
@@ -99,1050 +37,9 @@ function toggleDropdown(btnId, dropId) {
   }
 }
 
-// ── Canvas mouse events ──────────────────────────────────────────────────────
-function onMouseDown(e) {
-  if (e.button !== 0 && e.button !== 1) return;
-  document.getElementById("label-tooltip")?.setAttribute("hidden", "");
-
-  // Minimap click-to-jump
-  if (e.button === 0 && state.frozenBackground && imageWidth > 0) {
-    const rect = canvas.getBoundingClientRect();
-    const screenX = e.clientX - rect.left;
-    const screenY = e.clientY - rect.top;
-    const fitZoom = Math.min(rect.width / imageWidth, rect.height / imageHeight);
-    if (viewport.zoom > fitZoom * 1.05) {
-      const padding = 8;
-      const maxW = 180, maxH = 120;
-      const aspect = imageWidth / imageHeight;
-      let mmW, mmH;
-      if (aspect > maxW / maxH) { mmW = maxW; mmH = maxW / aspect; }
-      else { mmH = maxH; mmW = maxH * aspect; }
-      const mmX = padding;
-      const mmY = rect.height - mmH - padding;
-
-      if (screenX >= mmX && screenX <= mmX + mmW && screenY >= mmY && screenY <= mmY + mmH) {
-        // Convert click position in minimap to image coordinates
-        const imgX = ((screenX - mmX) / mmW) * imageWidth;
-        const imgY = ((screenY - mmY) / mmH) * imageHeight;
-        // Center viewport on clicked position
-        const visibleW = rect.width / viewport.zoom;
-        const visibleH = rect.height / viewport.zoom;
-        viewport.panX = imgX - visibleW / 2;
-        viewport.panY = imgY - visibleH / 2;
-        clampPan(rect.width, rect.height);
-        resizeCanvas();
-        return;
-      }
-    }
-  }
-
-  // Pan: middle-mouse always, or left-click in pan tool
-  if (e.button === 1 || (e.button === 0 && state.tool === "pan")) {
-    e.preventDefault();
-    state._panStart = { x: e.clientX, y: e.clientY, panX: viewport.panX, panY: viewport.panY };
-    canvas.style.cursor = "grabbing";
-    return;
-  }
-  if (state.dxfDragMode) {
-    const ann = state.annotations.find(a => a.type === "dxf-overlay");
-    if (ann) {
-      const pt = canvasPoint(e);
-      state.dxfDragOrigin = {
-        mouseX: pt.x, mouseY: pt.y,
-        annOffsetX: ann.offsetX, annOffsetY: ann.offsetY,
-      };
-    }
-    return;
-  }
-  const pt = canvasPoint(e);
-  if (state.dxfAlignMode) {
-    const ann = state.annotations.find(a => a.type === "dxf-overlay");
-    if (!ann) { exitDxfAlignMode(); return; }
-
-    if (state.dxfAlignStep === 0) {
-      const target = state.dxfAlignHover;
-      if (!target) return;
-      state.dxfAlignPick = target;
-      state.dxfAlignStep = 1;
-      showStatus("Click the image point to align to…");
-    } else {
-      const imagePt = e.altKey ? pt : snapPoint(pt, false).pt;
-      pushUndo();
-      ann.offsetX += imagePt.x - state.dxfAlignPick.canvas.x;
-      ann.offsetY += imagePt.y - state.dxfAlignPick.canvas.y;
-      exitDxfAlignMode();
-      showStatus("DXF aligned");
-      redraw();
-    }
-    return;
-  }
-  if (state._originMode) {
-    pushUndo();
-    // Remove any existing origin annotation
-    state.annotations = state.annotations.filter(a => a.type !== "origin");
-    state.origin = { x: pt.x, y: pt.y, angle: 0 };
-    addAnnotation({ type: "origin", x: pt.x, y: pt.y, angle: 0 });
-    state._originMode = false;
-    document.getElementById("btn-set-origin").classList.remove("active");
-    return;
-  }
-  if (state._dxfOriginMode) {
-    const ann = state.annotations.find(a => a.type === "dxf-overlay");
-    if (ann) { ann.offsetX = pt.x; ann.offsetY = pt.y; redraw(); }
-    state._dxfOriginMode = false;
-    document.getElementById("btn-dxf-set-origin")?.classList.remove("active");
-    showStatus(state.frozen ? "Frozen" : "Live");
-    return;
-  }
-  // Hit-test deviation labels — open per-feature tolerance popover if clicked
-  if (state.showDeviations && _deviationHitBoxes.length) {
-    const rect = canvas.getBoundingClientRect();
-    const scaleX = canvas.width / rect.width;
-    const scaleY = canvas.height / rect.height;
-    const cx = (e.clientX - rect.left) * scaleX;
-    const cy = (e.clientY - rect.top)  * scaleY;
-    for (const box of _deviationHitBoxes) {
-      if (box.handle && cx >= box.x && cx <= box.x + box.w && cy >= box.y && cy <= box.y + box.h) {
-        openFeatureTolPopover(box.handle, e.clientX, e.clientY);
-        e.stopPropagation();
-        return;
-      }
-    }
-  }
-  // Label drag (guided results + regular measurements)
-  if (state.tool === "select" && !e.shiftKey && _labelHitBoxes.length > 0) {
-    const rect = canvas.getBoundingClientRect();
-    const dpr = canvas.width / rect.width;
-    const screenX = (e.clientX - rect.left) * dpr;
-    const screenY = (e.clientY - rect.top) * dpr;
-    for (const box of _labelHitBoxes) {
-      if (screenX >= box.x && screenX <= box.x + box.w && screenY >= box.y && screenY <= box.y + box.h) {
-        // Check guided result first
-        if (box.handle) {
-          const dxfAnn = state.annotations.find(a => a.type === "dxf-overlay");
-          const result = dxfAnn?.guidedResults?.find(r => r.handle === box.handle);
-          if (result) {
-            const offset = result.labelOffset || { dx: 0, dy: 0 };
-            state._labelDrag = { handle: box.handle, startX: pt.x, startY: pt.y,
-                                 origDx: offset.dx, origDy: offset.dy };
-            return;
-          }
-        }
-        // Check regular measurement annotation
-        if (box.annId) {
-          const ann = state.annotations.find(a => a.id === box.annId);
-          if (ann) {
-            const offset = ann.labelOffset || { dx: 0, dy: 0 };
-            state._labelDrag = { annId: box.annId, startX: pt.x, startY: pt.y,
-                                 origDx: offset.dx, origDy: offset.dy };
-            return;
-          }
-        }
-      }
-    }
-  }
-  // During point-pick: Shift+click on a DXF feature adds it to the pick target
-  // (must check BEFORE the regular point-placement to intercept Shift+click)
-  if (state.inspectionPickTarget && e.shiftKey) {
-    const dxfAnn = state.annotations.find(a => a.type === "dxf-overlay");
-    if (dxfAnn) {
-      const entity = hitTestDxfEntity(pt, dxfAnn);
-      if (entity) {
-        const newEntities = entity.parent_handle
-          ? dxfAnn.entities.filter(en => en.parent_handle === entity.parent_handle)
-          : [entity];
-        const existingHandles = new Set(state.inspectionPickTarget.map(t => t.handle));
-        for (const ne of newEntities) {
-          if (!existingHandles.has(ne.handle)) {
-            state.inspectionPickTarget.push(ne);
-          }
-        }
-        const n = state.inspectionPickTarget.length;
-        showStatus(`${n} segments selected. Click points along the edge. Double-click or Enter to finish.`);
-        redraw();
-        return;
-      }
-    }
-  }
-
-  // Point-pick mode: add a measurement point
-  if (state.inspectionPickTarget) {
-    state.inspectionPickPoints.push(pt);
-    _updatePickFit();
-    redraw();
-    return;
-  }
-
-  // DXF feature click-to-select for point-pick (works with or without prior inspection)
-  if (state.tool === "select") {
-    const dxfAnn = state.annotations.find(a => a.type === "dxf-overlay");
-    if (dxfAnn) {
-      const entity = hitTestDxfEntity(pt, dxfAnn);
-      if (entity) {
-        // Normal click: start new pick with this entity (or its compound/connected group)
-        // (Shift+click to add is handled above, before point-placement)
-        const parentHandle = entity.parent_handle;
-        if (parentHandle) {
-          const group = dxfAnn.entities.filter(en => en.parent_handle === parentHandle);
-          state.inspectionPickTarget = group;
-        } else {
-          // Auto-discover connected standalone entities via shared endpoints
-          state.inspectionPickTarget = _findConnectedEntities(entity, dxfAnn.entities);
-        }
-        state.inspectionPickPoints = [];
-        state.inspectionPickFit = null;
-        const featureCount = state.inspectionPickTarget.length;
-        const msg = featureCount > 1
-          ? `${featureCount} segments selected. Click points along the edge. Double-click or Enter to finish. Shift+click DXF to add more.`
-          : "Click points along the edge. Double-click or Enter to finish. Shift+click DXF to add more.";
-        showStatus(msg);
-        redraw();
-        return;
-      }
-    }
-    handleSelectDown(pt, e);
-    return;
-  }
-  handleToolClick(pt, e);
-}
-
-function _hitTestGuidedResult(pt, dxfAnn) {
-  const threshold = 10 / viewport.zoom;
-  let best = null, bestDist = threshold;
-  for (const r of (dxfAnn.guidedResults || [])) {
-    if (!r.matched || !r.fit) continue;
-    let dist = Infinity;
-    if (r.fit.type === "line") {
-      dist = distPointToSegment(pt, { x: r.fit.x1, y: r.fit.y1 }, { x: r.fit.x2, y: r.fit.y2 });
-    } else if (r.fit.cx != null) {
-      dist = Math.abs(Math.hypot(pt.x - r.fit.cx, pt.y - r.fit.cy) - r.fit.r);
-    }
-    if (dist < bestDist) { bestDist = dist; best = r; }
-  }
-  return best;
-}
-
-function _entityEndpoints(en) {
-  /** Get the endpoints of a DXF entity in DXF space. */
-  if (en.type === "line" || en.type === "polyline_line") {
-    return [{ x: en.x1, y: en.y1 }, { x: en.x2, y: en.y2 }];
-  }
-  if (en.type === "arc" || en.type === "polyline_arc") {
-    const sr = en.start_angle * Math.PI / 180;
-    const er = en.end_angle * Math.PI / 180;
-    return [
-      { x: en.cx + en.radius * Math.cos(sr), y: en.cy + en.radius * Math.sin(sr) },
-      { x: en.cx + en.radius * Math.cos(er), y: en.cy + en.radius * Math.sin(er) },
-    ];
-  }
-  return [];
-}
-
-function _findConnectedEntities(startEntity, allEntities) {
-  /** Find all standalone entities connected to startEntity via shared endpoints. */
-  const TOL = 0.01;  // mm tolerance for endpoint matching in DXF space
-  const standalone = allEntities.filter(e => !e.parent_handle && e.type !== "circle");
-  const connected = new Set([startEntity.handle]);
-  const queue = [startEntity];
-
-  while (queue.length > 0) {
-    const current = queue.shift();
-    const endpoints = _entityEndpoints(current);
-    for (const en of standalone) {
-      if (connected.has(en.handle)) continue;
-      const enPoints = _entityEndpoints(en);
-      // Check if any endpoint of en matches any endpoint of current
-      for (const ep of endpoints) {
-        for (const cp of enPoints) {
-          if (Math.abs(ep.x - cp.x) < TOL && Math.abs(ep.y - cp.y) < TOL) {
-            connected.add(en.handle);
-            queue.push(en);
-          }
-        }
-      }
-    }
-  }
-
-  return allEntities.filter(e => connected.has(e.handle));
-}
-
-function _annotationPrimaryPoint(ann) {
-  // Frame-scaled types
-  if (ann.frameWidth) {
-    const sx = imageWidth / ann.frameWidth;
-    const sy = imageHeight / ann.frameHeight;
-    if (ann.cx != null) return { x: ann.cx * sx, y: ann.cy * sy };
-    if (ann.x1 != null) return { x: (ann.x1 + ann.x2) / 2 * sx, y: (ann.y1 + ann.y2) / 2 * sy };
-    if (ann.x != null) return { x: ann.x * sx, y: ann.y * sy };
-  }
-  // Canvas-space types
-  if (ann.a && ann.b) return { x: (ann.a.x + ann.b.x) / 2, y: (ann.a.y + ann.b.y) / 2 };
-  if (ann.cx != null) return { x: ann.cx, y: ann.cy };
-  if (ann.vertex) return { x: ann.vertex.x, y: ann.vertex.y };
-  if (ann.x != null) return { x: ann.x, y: ann.y };
-  if (ann.points) {
-    const cx = ann.points.reduce((s, p) => s + p.x, 0) / ann.points.length;
-    const cy = ann.points.reduce((s, p) => s + p.y, 0) / ann.points.length;
-    return { x: cx, y: cy };
-  }
-  return null;
-}
-
-function onMouseUp() {
-  if (state._panStart) {
-    state._panStart = null;
-    canvas.style.cursor = state.tool === "pan" ? "grab" : "";
-    return;
-  }
-  if (state._labelDrag) {
-    state._labelDrag = null;
-    return;
-  }
-  if (state.dxfDragMode) {
-    state.dxfDragOrigin = null;
-    return;
-  }
-  if (state._selectRect) {
-    const r = state._selectRect;
-    const minX = Math.min(r.x1, r.x2), maxX = Math.max(r.x1, r.x2);
-    const minY = Math.min(r.y1, r.y2), maxY = Math.max(r.y1, r.y2);
-    if (maxX - minX > 5 && maxY - minY > 5) {
-      const ids = [];
-      for (const ann of state.annotations) {
-        const cp = _annotationPrimaryPoint(ann);
-        if (cp && cp.x >= minX && cp.x <= maxX && cp.y >= minY && cp.y <= maxY) {
-          ids.push(ann.id);
-        }
-      }
-      state.selected = new Set(ids);
-      if (ids.length > 0) showStatus(`${ids.length} selected`);
-    }
-    state._selectRect = null;
-    renderSidebar();
-    redraw();
-    return;
-  }
-  if (state.dragState !== null) pushUndo();
-  state.dragState = null;
-}
-
-canvas.addEventListener("mousedown", onMouseDown);
-canvas.addEventListener("mouseup", onMouseUp);
-
-// ── Point-pick helpers ────────────────────────────────────────────────────────
-
-function _nearestSegmentDist(pt, entity, dxfAnn) {
-  /** Distance from pt (image-space) to a projected DXF entity. */
-  if (entity.type === "line" || entity.type === "polyline_line") {
-    const p1 = dxfToCanvas(entity.x1, entity.y1, dxfAnn);
-    const p2 = dxfToCanvas(entity.x2, entity.y2, dxfAnn);
-    return distPointToSegment(pt, p1, p2);
-  } else if (entity.type === "arc" || entity.type === "polyline_arc" || entity.type === "circle") {
-    const c = dxfToCanvas(entity.cx, entity.cy, dxfAnn);
-    const r = entity.radius * dxfAnn.scale;
-    return Math.abs(Math.hypot(pt.x - c.x, pt.y - c.y) - r);
-  }
-  return Infinity;
-}
-
-function _updatePickFit() {
-  const pts = state.inspectionPickPoints;
-  const targets = state.inspectionPickTarget;  // array of entities
-  if (!targets || targets.length === 0) return;
-
-  const dxfAnn = state.annotations.find(a => a.type === "dxf-overlay");
-  if (!dxfAnn) return;
-
-  if (targets.length === 1) {
-    // Single entity — simple fit
-    const etype = targets[0].type;
-    state.inspectionPickFit = null;
-    if ((etype === "line" || etype === "polyline_line") && pts.length >= 2) {
-      state.inspectionPickFit = { fits: [fitLine(pts)] };
-    } else if ((etype === "arc" || etype === "polyline_arc" || etype === "circle") && pts.length >= 3) {
-      const result = fitCircleAlgebraic(pts);
-      if (result) state.inspectionPickFit = { fits: [{ type: "circle", cx: result.cx, cy: result.cy, r: result.r }] };
-    }
-    return;
-  }
-
-  // Compound feature: assign each point to nearest sub-segment
-  const buckets = targets.map(() => []);
-  for (const pt of pts) {
-    let bestIdx = 0, bestDist = Infinity;
-    for (let i = 0; i < targets.length; i++) {
-      const d = _nearestSegmentDist(pt, targets[i], dxfAnn);
-      if (d < bestDist) { bestDist = d; bestIdx = i; }
-    }
-    buckets[bestIdx].push(pt);
-  }
-
-  // Fit each sub-segment independently
-  const fits = [];
-  for (let i = 0; i < targets.length; i++) {
-    const seg = targets[i];
-    const segPts = buckets[i];
-    const etype = seg.type;
-    if ((etype === "line" || etype === "polyline_line") && segPts.length >= 2) {
-      fits.push(fitLine(segPts));
-    } else if ((etype === "arc" || etype === "polyline_arc" || etype === "circle") && segPts.length >= 3) {
-      const result = fitCircleAlgebraic(segPts);
-      if (result) fits.push({ type: "circle", cx: result.cx, cy: result.cy, r: result.r });
-    }
-    // else: not enough points for this segment yet, skip
-  }
-
-  state.inspectionPickFit = fits.length > 0 ? { fits } : null;
-}
-
-async function _finalizePickInspection() {
-  const targets = state.inspectionPickTarget;  // array of entities
-  const pts = state.inspectionPickPoints;
-  if (!targets || !targets.length || pts.length < 2) {
-    showStatus("Need at least 2 points");
-    return;
-  }
-  const ann = state.annotations.find(a => a.type === "dxf-overlay");
-  if (!ann) return;
-  const cal = state.calibration;
-  if (!cal?.pixelsPerMm) return;
-
-  // Bucket points to nearest sub-segment (same logic as _updatePickFit)
-  const buckets = targets.map(() => []);
-  for (const pt of pts) {
-    let bestIdx = 0, bestDist = Infinity;
-    for (let i = 0; i < targets.length; i++) {
-      const d = _nearestSegmentDist(pt, targets[i], ann);
-      if (d < bestDist) { bestDist = d; bestIdx = i; }
-    }
-    buckets[bestIdx].push(pt);
-  }
-
-  let successCount = 0;
-
-  try {
-    // Fit each sub-segment with enough points
-    for (let i = 0; i < targets.length; i++) {
-      const entity = targets[i];
-      const segPts = buckets[i];
-      if (segPts.length < 2) continue;  // not enough points
-
-      const resp = await fetch("/fit-feature", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          entity,
-          points: segPts.map(p => [p.x, p.y]),
-          pixels_per_mm: cal.pixelsPerMm,
-          tx: ann.offsetX, ty: ann.offsetY,
-          angle_deg: ann.angle ?? 0,
-          flip_h: ann.flipH ?? false, flip_v: ann.flipV ?? false,
-          tolerance_warn: state.tolerances.warn,
-          tolerance_fail: state.tolerances.fail,
-        }),
-      });
-      if (!resp.ok) continue;
-      const result = await resp.json();
-      result.source = "manual";
-
-      // Replace or add to guided results
-      if (!ann.guidedResults) ann.guidedResults = [];
-      const grIdx = ann.guidedResults.findIndex(r => r.handle === entity.handle);
-      if (grIdx >= 0) ann.guidedResults[grIdx] = result;
-      else ann.guidedResults.push(result);
-
-      // Update state.inspectionResults
-      const sr = {
-        handle: result.handle, type: result.type, parent_handle: result.parent_handle,
-        matched: result.matched, deviation_mm: result.perp_dev_mm ?? result.center_dev_mm,
-        angle_error_deg: result.angle_error_deg,
-        tolerance_warn: result.tolerance_warn, tolerance_fail: result.tolerance_fail,
-        pass_fail: result.pass_fail, source: "manual",
-      };
-      const sIdx = state.inspectionResults.findIndex(r => r.handle === entity.handle);
-      if (sIdx >= 0) state.inspectionResults[sIdx] = sr;
-      else state.inspectionResults.push(sr);
-
-      successCount++;
-    }
-
-    showStatus(`Manual measurement: ${successCount} segment${successCount !== 1 ? "s" : ""} fitted`);
-    renderInspectionTable();
-  } catch (err) {
-    showStatus("Fit error: " + err.message);
-  }
-
-  state.inspectionPickTarget = null;
-  state.inspectionPickPoints = [];
-  state.inspectionPickFit = null;
-  redraw();
-}
-
-canvas.addEventListener("dblclick", e => {
-  if (state.inspectionPickTarget) {
-    e.preventDefault();
-    _finalizePickInspection();
-  }
-});
-
-// ── Mousemove ────────────────────────────────────────────────────────────────
-canvas.addEventListener("mousemove", e => {
-  const pt = canvasPoint(e);
-  const rawPt = pt;
-  state.mousePos = pt;
-  if (state._panStart) {
-    const dx = (e.clientX - state._panStart.x);
-    const dy = (e.clientY - state._panStart.y);
-    const rect = canvas.getBoundingClientRect();
-    const scale = canvas.width / rect.width;
-    viewport.panX = state._panStart.panX - dx * scale / viewport.zoom;
-    viewport.panY = state._panStart.panY - dy * scale / viewport.zoom;
-    clampPan(rect.width, rect.height);
-    resizeCanvas();
-    return;
-  }
-  if (state.dxfDragMode && state.dxfDragOrigin) {
-    const ann = state.annotations.find(a => a.type === "dxf-overlay");
-    if (ann) {
-      ann.offsetX = state.dxfDragOrigin.annOffsetX + (pt.x - state.dxfDragOrigin.mouseX);
-      ann.offsetY = state.dxfDragOrigin.annOffsetY + (pt.y - state.dxfDragOrigin.mouseY);
-      redraw();
-    }
-    return;
-  }
-  if (state._labelDrag) {
-    const newOffset = {
-      dx: state._labelDrag.origDx + (pt.x - state._labelDrag.startX),
-      dy: state._labelDrag.origDy + (pt.y - state._labelDrag.startY),
-    };
-    if (state._labelDrag.handle) {
-      const dxfAnn = state.annotations.find(a => a.type === "dxf-overlay");
-      const result = dxfAnn?.guidedResults?.find(r => r.handle === state._labelDrag.handle);
-      if (result) result.labelOffset = newOffset;
-    } else if (state._labelDrag.annId) {
-      const ann = state.annotations.find(a => a.id === state._labelDrag.annId);
-      if (ann) ann.labelOffset = newOffset;
-    }
-    redraw();
-    return;
-  }
-  if (state.dxfAlignMode) {
-    const ann = state.annotations.find(a => a.type === "dxf-overlay");
-    if (ann) {
-      const pts = collectDxfSnapPoints(ann);
-      const SNAP_R = 12;
-      let best = null, bestD = Infinity;
-      for (const p of pts) {
-        const d = Math.hypot(pt.x - p.canvas.x, pt.y - p.canvas.y);
-        if (d < bestD) { bestD = d; best = p; }
-      }
-      state.dxfAlignHover = (bestD < SNAP_R) ? best : null;
-    }
-    if (state.dxfAlignStep === 1) {
-      const { pt: snappedPt, snapped } = snapPoint(rawPt, e.altKey);
-      state.snapTarget = (snapped && !e.altKey) ? snappedPt : null;
-    } else {
-      state.snapTarget = null;
-    }
-    redraw();
-    return;
-  }
-  if (state._selectRect) {
-    const pt2 = canvasPoint(e);
-    state._selectRect.x2 = pt2.x;
-    state._selectRect.y2 = pt2.y;
-    redraw();
-    return;
-  }
-  if (state.dragState) { handleDrag(pt); return; }
-
-  // Label tooltip on hover
-  const tooltip = document.getElementById("label-tooltip");
-  if (tooltip) {
-    const rect = canvas.getBoundingClientRect();
-    const dpr = canvas.width / rect.width;
-    const screenX = (e.clientX - rect.left) * dpr;
-    const screenY = (e.clientY - rect.top) * dpr;
-    let hoveredBox = null;
-    for (const box of _labelHitBoxes) {
-      if (screenX >= box.x && screenX <= box.x + box.w && screenY >= box.y && screenY <= box.y + box.h) {
-        hoveredBox = box;
-        break;
-      }
-    }
-    if (hoveredBox) {
-      const dxfAnn = state.annotations.find(a => a.type === "dxf-overlay");
-      const r = dxfAnn?.guidedResults?.find(res => res.handle === hoveredBox.handle);
-      if (r) {
-        const mode = state.featureModes[r.handle] || state.featureModes[r.parent_handle] || "die";
-        const lines = [];
-        lines.push(`Feature: ${r.handle} (${r.type})`);
-        if (r.parent_handle) lines.push(`Group: ${r.parent_handle}`);
-        lines.push(`Mode: ${mode.charAt(0).toUpperCase() + mode.slice(1)}`);
-        lines.push("");
-        if (r.perp_dev_mm != null) {
-          lines.push(`Deviation: \u22a5 ${r.perp_dev_mm.toFixed(4)} mm`);
-          if (r.angle_error_deg != null) lines.push(`Angle: ${r.angle_error_deg.toFixed(2)}\xb0`);
-        }
-        if (r.center_dev_mm != null) lines.push(`Center dev: ${r.center_dev_mm.toFixed(4)} mm`);
-        if (r.radius_dev_mm != null) lines.push(`Radius dev: ${r.radius_dev_mm.toFixed(4)} mm`);
-        lines.push("");
-        lines.push(`Tolerance: warn \xb1${r.tolerance_warn}  fail \xb1${r.tolerance_fail}`);
-        lines.push(`Result: ${r.pass_fail?.toUpperCase() ?? "?"}`);
-        lines.push(`Source: ${r.source ?? "auto"}`);
-        tooltip.textContent = lines.join("\n");
-        tooltip.style.left = (e.clientX + 12) + "px";
-        tooltip.style.top = (e.clientY - 10) + "px";
-        tooltip.hidden = false;
-      } else {
-        tooltip.hidden = true;
-      }
-    } else {
-      tooltip.hidden = true;
-    }
-  }
-
-  if (state.tool !== "select" && state.tool !== "calibrate" && state.tool !== "center-dist") {
-    const { pt: snappedPt, snapped } = snapPoint(rawPt, e.altKey);
-    state.snapTarget = (snapped && !e.altKey) ? snappedPt : null;
-    redraw();
-  }
-  if (state.pendingPoints.length > 0 && state.tool !== "select"
-      && state.tool !== "arc-fit"
-      && state.tool !== "perp-dist"
-      && state.tool !== "para-dist"
-      && state.tool !== "area") {
-    const { pt: snappedPt, snapped } = snapPoint(rawPt, e.altKey);
-    state.snapTarget = (snapped && !e.altKey) ? snappedPt : null;
-    redraw();
-    const last = state.pendingPoints[state.pendingPoints.length - 1];
-    if (state.tool === "circle" && state.pendingPoints.length === 2) {
-      try {
-        const preview = fitCircle(state.pendingPoints[0], state.pendingPoints[1], snappedPt);
-        ctx.save();
-        ctx.beginPath();
-        ctx.arc(preview.cx, preview.cy, preview.r, 0, Math.PI * 2);
-        ctx.strokeStyle = "rgba(251,146,60,0.6)";
-        ctx.lineWidth = 1.5;
-        ctx.setLineDash([5, 4]);
-        ctx.stroke();
-        ctx.setLineDash([]);
-        ctx.restore();
-      } catch {
-        // collinear — no preview
-      }
-    } else if (state.tool === "arc-measure" && state.pendingPoints.length === 2) {
-      const [p1, p2] = state.pendingPoints;
-      const p3 = snappedPt;
-      const ax = p2.x - p1.x, ay = p2.y - p1.y;
-      const bx = p3.x - p1.x, by = p3.y - p1.y;
-      const D = 2 * (ax * by - ay * bx);
-      if (Math.abs(D) >= 1e-6) {
-        const ux = (by * (ax*ax + ay*ay) - ay * (bx*bx + by*by)) / D;
-        const uy = (ax * (bx*bx + by*by) - bx * (ax*ax + ay*ay)) / D;
-        const pcx = p1.x + ux, pcy = p1.y + uy;
-        const pr  = Math.hypot(ux, uy);
-        const pa1 = Math.atan2(p1.y - pcy, p1.x - pcx);
-        const pa3 = Math.atan2(p3.y - pcy, p3.x - pcx);
-        ctx.save();
-        ctx.beginPath();
-        ctx.arc(pcx, pcy, pr, pa1, pa3);
-        ctx.strokeStyle = "rgba(191,90,242,0.6)";
-        ctx.lineWidth = 1.5;
-        ctx.setLineDash([5, 4]);
-        ctx.stroke();
-        ctx.setLineDash([]);
-        ctx.restore();
-      }
-    } else {
-      drawLine(last, snappedPt, "rgba(251,146,60,0.5)", 1);
-    }
-  }
-
-  // Constrained rubber-band for perp-dist and para-dist
-  if ((state.tool === "perp-dist" || state.tool === "para-dist")
-      && state.pendingPoints.length === 1 && state.pendingRefLine) {
-    const { pt: snappedPt, snapped } = snapPoint(rawPt, e.altKey);
-    state.snapTarget = (snapped && !e.altKey) ? snappedPt : null;
-    redraw();
-    const b = projectConstrained(snappedPt, state.pendingPoints[0], state.pendingRefLine,
-                                 state.tool === "perp-dist");
-    drawLine(state.pendingPoints[0], b, "rgba(251,146,60,0.5)", 1);
-  }
-
-  // Area polygon preview
-  if (state.tool === "area" && state.pendingPoints.length >= 1) {
-    const { pt: snappedPt, snapped } = snapPoint(rawPt, e.altKey);
-    state.snapTarget = (snapped && !e.altKey) ? snappedPt : null;
-    redraw();
-    drawAreaPreview(state.pendingPoints, snappedPt);
-  }
-
-  // Coordinate readout HUD
-  const coordEl = document.getElementById("coord-display");
-  if (coordEl && state.origin) {
-    const rawDx = pt.x - state.origin.x;
-    const rawDy = pt.y - state.origin.y;
-    // Project into user frame: dot with X unit (cos θ, sin θ) and Y unit (sin θ, -cos θ)
-    // Y unit is 90° CCW on screen (canvas Y-down), so Y+ points up when angle=0
-    const a = state.origin.angle ?? 0;
-    const rx =  Math.cos(a) * rawDx + Math.sin(a) * rawDy;
-    const ry =  Math.sin(a) * rawDx - Math.cos(a) * rawDy;
-    if (!state.calibration) {
-      coordEl.textContent = `X: ${rx.toFixed(0)} px  Y: ${ry.toFixed(0)} px`;
-    } else {
-      const ppm = state.calibration.pixelsPerMm;
-      if (state.calibration.displayUnit === "µm") {
-        coordEl.textContent =
-          `X: ${(rx / ppm * 1000).toFixed(1)} µm  Y: ${(ry / ppm * 1000).toFixed(1)} µm`;
-      } else {
-        coordEl.textContent =
-          `X: ${(rx / ppm).toFixed(3)} mm  Y: ${(ry / ppm).toFixed(3)} mm`;
-      }
-    }
-  }
-  if (state._originMode) {
-    redraw();
-    ctx.save();
-    ctx.globalAlpha = 0.5;
-    drawOrigin({ x: pt.x, y: pt.y, angle: state.origin?.angle ?? 0 }, false);
-    ctx.restore();
-  }
-  if (state.tool === "select") {
-    state.snapTarget = null;
-  }
-});
-
-canvas.addEventListener("mouseleave", () => {
-  const coordEl = document.getElementById("coord-display");
-  if (coordEl) coordEl.textContent = "";
-  document.getElementById("label-tooltip")?.setAttribute("hidden", "");
-});
-
-canvas.addEventListener("contextmenu", e => {
-  e.preventDefault();
-  hideContextMenu();
-
-  // Check if right-click hits a guided inspection result
-  const pt = canvasPoint(e);
-  const dxfAnn = state.annotations.find(a => a.type === "dxf-overlay");
-  if (dxfAnn && dxfAnn.guidedResults) {
-    const hitResult = _hitTestGuidedResult(pt, dxfAnn);
-    if (hitResult) {
-      const items = [
-        { label: `Delete "${hitResult.handle}" result`, action: () => {
-          dxfAnn.guidedResults = dxfAnn.guidedResults.filter(r => r.handle !== hitResult.handle);
-          state.inspectionResults = state.inspectionResults.filter(r => r.handle !== hitResult.handle);
-          renderInspectionTable();
-          redraw();
-          showStatus(`Deleted result for ${hitResult.handle}`);
-        }},
-        { label: "Re-measure manually", action: () => {
-          const entity = dxfAnn.entities.find(en => en.handle === hitResult.handle);
-          if (entity) {
-            // If compound feature, select the whole group
-            const ph = entity.parent_handle;
-            if (ph) {
-              state.inspectionPickTarget = dxfAnn.entities.filter(e => e.parent_handle === ph);
-            } else {
-              state.inspectionPickTarget = [entity];
-            }
-            state.inspectionPickPoints = [];
-            state.inspectionPickFit = null;
-            const n = state.inspectionPickTarget.length;
-            showStatus(n > 1
-              ? `Compound feature (${n} segments). Click points along the edge. Double-click or Enter to finish.`
-              : "Click points along the edge. Double-click or Enter to finish.");
-            redraw();
-          }
-        }},
-      ];
-      const currentMode = state.featureModes[hitResult.handle] || "die";
-      items.push("---");
-      items.push({
-        label: currentMode === "die" ? "Set as Punch" : "Set as Die",
-        action: () => {
-          state.featureModes[hitResult.handle] = currentMode === "die" ? "punch" : "die";
-          renderInspectionTable();
-          redraw();
-          showStatus(`Feature ${hitResult.handle}: ${state.featureModes[hitResult.handle]}`);
-        }
-      });
-      if (hitResult.labelOffset && (hitResult.labelOffset.dx !== 0 || hitResult.labelOffset.dy !== 0)) {
-        items.push({ label: "Reset label position", action: () => {
-          delete hitResult.labelOffset;
-          redraw();
-        }});
-      }
-      showContextMenu(e.clientX, e.clientY, items);
-      return;
-    }
-  }
-
-  // Right-click on a DXF entity (for Punch/Die setting, even without inspection)
-  if (dxfAnn) {
-    const dxfEntity = hitTestDxfEntity(pt, dxfAnn);
-    if (dxfEntity) {
-      // Find the group: parent_handle group OR connected standalone entities
-      const connectedGroup = dxfEntity.parent_handle
-        ? dxfAnn.entities.filter(e => e.parent_handle === dxfEntity.parent_handle)
-        : _findConnectedEntities(dxfEntity, dxfAnn.entities);
-      const handle = dxfEntity.parent_handle || dxfEntity.handle;
-      const currentMode = state.featureModes[handle] || "die";
-      const groupHandles = connectedGroup.map(e => e.handle);
-
-      const items = [
-        {
-          label: currentMode === "die" ? `Set as Punch (${groupHandles.length} seg)` : `Set as Die (${groupHandles.length} seg)`,
-          action: () => {
-            const newMode = currentMode === "die" ? "punch" : "die";
-            for (const h of groupHandles) state.featureModes[h] = newMode;
-            if (dxfEntity.parent_handle) state.featureModes[dxfEntity.parent_handle] = newMode;
-            renderInspectionTable();
-            redraw();
-            showStatus(`Feature ${handle}: ${newMode}`);
-          }
-        },
-        { label: "Measure manually", action: () => {
-          state.inspectionPickTarget = connectedGroup;
-          state.inspectionPickPoints = [];
-          state.inspectionPickFit = null;
-          const n = state.inspectionPickTarget.length;
-          showStatus(n > 1
-            ? `${n} segments. Click points along edge. Double-click or Enter to finish.`
-            : "Click points along edge. Double-click or Enter to finish.");
-          redraw();
-        }},
-      ];
-      showContextMenu(e.clientX, e.clientY, items);
-      return;
-    }
-  }
-
-  if (state.selected.size > 0) {
-    // Right-click with selection active
-    const items = [];
-    const hasDetections = [...state.selected].some(id => {
-      const ann = state.annotations.find(a => a.id === id);
-      return ann && isDetection(ann);
-    });
-    if (hasDetections) {
-      items.push({ label: "Elevate to measurement", action: elevateSelected });
-    }
-    // Merge lines option (when 2+ line-type annotations selected)
-    const lineTypes = new Set(["detected-line", "detected-line-merged", "distance"]);
-    const selectedLines = [...state.selected].filter(id => {
-      const a = state.annotations.find(x => x.id === id);
-      return a && lineTypes.has(a.type);
-    });
-    if (selectedLines.length >= 2) {
-      items.push({ label: `Merge ${selectedLines.length} lines`, action: mergeSelectedLines });
-    }
-    // Group/ungroup option
-    if (state.selected.size >= 2) {
-      items.push({ label: "Group selected…", action: () => {
-        const name = prompt("Group name:", "Feature");
-        if (!name) return;
-        for (const id of state.selected) {
-          state.measurementGroups[id] = name;
-        }
-        renderSidebar();
-      }});
-    }
-    // Check if selected items are in a group — offer ungroup
-    const groupedSelected = [...state.selected].filter(id => state.measurementGroups[id]);
-    if (groupedSelected.length > 0) {
-      items.push({ label: "Ungroup", action: () => {
-        for (const id of groupedSelected) {
-          delete state.measurementGroups[id];
-        }
-        renderSidebar();
-      }});
-    }
-    items.push({ label: `Delete (${state.selected.size})`, action: deleteSelected });
-    if (state.selected.size === 1) {
-      const ann = state.annotations.find(a => a.id === [...state.selected][0]);
-      if (ann && !isDetection(ann)) {
-        items.push("---");
-        if (ann.type === "arc-measure") {
-          items.push({ label: "Convert to circle", action: () => {
-            pushUndo();
-            const idx = state.annotations.findIndex(a => a.id === ann.id);
-            if (idx === -1) return;
-            const circle = {
-              type: "circle",
-              id: state.nextId++,
-              name: ann.name || "",
-              cx: ann.cx, cy: ann.cy, r: ann.r,
-            };
-            state.annotations.splice(idx, 1, circle);
-            state.selected = new Set([circle.id]);
-            renderSidebar();
-            redraw();
-            showStatus("Converted arc to circle");
-          }});
-        }
-        items.push({ label: "Rename", action: () => {
-          const row = document.querySelector(`.measurement-item[data-id="${ann.id}"]`);
-          if (row) row.querySelector(".measurement-name")?.focus();
-        }});
-      }
-    }
-    showContextMenu(e.clientX, e.clientY, items);
-    return;
-  }
-
-  // Right-click on empty canvas
-  const hasDxfResults = dxfAnn && dxfAnn.guidedResults && dxfAnn.guidedResults.length > 0;
-  showContextMenu(e.clientX, e.clientY, [
-    ...(hasDxfResults ? [
-      { label: "Clear inspection results", action: () => {
-        const ann = state.annotations.find(a => a.type === "dxf-overlay");
-        if (ann) ann.guidedResults = [];
-        state.inspectionResults = [];
-        state.inspectionFrame = null;
-        renderInspectionTable();
-        redraw();
-        showStatus("Cleared inspection results");
-      }},
-      "---",
-    ] : []),
-    { label: "Clear detections", action: clearDetections },
-    { label: "Clear measurements", action: clearMeasurements },
-    { label: "Clear DXF overlay", action: clearDxfOverlay },
-    "---",
-    { label: "Clear all", action: clearAll },
-  ]);
-});
-
-// ── Scroll-wheel zoom ─────────────────────────────────────────────────────
-canvas.addEventListener("wheel", e => {
-  e.preventDefault();
-
-  if (!state.frozen) {
-    showStatus("Freeze frame to enable zoom");
-    return;
-  }
-
-  const rect = canvas.getBoundingClientRect();
-  const screenX = (e.clientX - rect.left) * (canvas.width / rect.width);
-  const screenY = (e.clientY - rect.top) * (canvas.height / rect.height);
-
-  // Image point under cursor before zoom
-  const imgPt = screenToImage(screenX, screenY);
-
-  // Apply zoom factor — minimum is fit-to-window (image fills canvas)
-  const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
-  const minZoom = (imageWidth > 0 && imageHeight > 0)
-    ? Math.min(rect.width / imageWidth, rect.height / imageHeight)
-    : 0.5;
-  viewport.zoom = Math.max(minZoom, Math.min(10, viewport.zoom * factor));
-
-  // Adjust pan so image point stays under cursor
-  viewport.panX = imgPt.x - screenX / viewport.zoom;
-  viewport.panY = imgPt.y - screenY / viewport.zoom;
-
-  // At minimum zoom (fit-to-window), reset pan to origin
-  if (viewport.zoom <= minZoom + 0.001) {
-    viewport.panX = 0;
-    viewport.panY = 0;
-  }
-
-  clampPan(rect.width, rect.height);
-  resizeCanvas();
-}, { passive: false });
-
-// ── Keyboard ─────────────────────────────────────────────────────────────────
-document.addEventListener("keydown", e => {
-  // Help dialog shortcut — works even when an input is focused
-  if (e.key === "?") {
-    const anyDialogOpen = document.querySelector(".dialog-overlay:not([hidden])") !== null;
-    if (!anyDialogOpen) document.getElementById("help-dialog").hidden = false;
-    return;
-  }
-  // All other shortcuts are blocked when an input/select/textarea/dialog is focused
-  if (document.activeElement.closest("input, select, textarea") !== null || document.querySelector(".dialog-overlay:not([hidden])") !== null) return;
-
-  if (e.key === "Enter" && state.inspectionPickTarget) {
-    _finalizePickInspection();
-    return;
-  }
-  if ((e.key === "Delete" || e.key === "Backspace") && state.selected.size > 0) {
-    deleteSelected();
-    return;
-  }
-  if (e.key === "Escape") {
-    if (state.inspectionPickTarget) {
-      state.inspectionPickTarget = null;
-      state.inspectionPickPoints = [];
-      state.inspectionPickFit = null;
-      showStatus("Point-pick cancelled");
-      redraw();
-      return;
-    }
-    hideContextMenu();
-    closeAllDropdowns();
-    if (state.dxfDragMode) {
-      state.dxfDragMode = false;
-      state.dxfDragOrigin = null;
-      document.getElementById("btn-dxf-move")?.classList.remove("active");
-      showStatus(state.frozen ? "Frozen" : "Live");
-    }
-    if (state.dxfAlignMode) { exitDxfAlignMode(); redraw(); return; }
-    state.pendingPoints = [];
-    state.pendingCenterCircle = null;
-    if (state._dxfOriginMode) {
-      state._dxfOriginMode = false;
-      document.getElementById("btn-dxf-set-origin")?.classList.remove("active");
-      showStatus(state.frozen ? "Frozen" : "Live");
-    }
-    setTool("select");
-    if (state._originMode) {
-      state._originMode = false;
-      document.getElementById("btn-set-origin").classList.remove("active");
-    }
-    return;
-  }
-  const ctrlOrMeta = e.ctrlKey || e.metaKey;
-  if (ctrlOrMeta && e.key === "z" && !e.shiftKey) { e.preventDefault(); undo(); return; }
-  if (ctrlOrMeta && (e.key === "y" || (e.key === "z" && e.shiftKey))) { e.preventDefault(); redo(); return; }
-  if (e.key === "u" && state.selected.size > 0) {
-    elevateSelected();
-    return;
-  }
-  if (e.key === "0" && state.frozen) {
-    const rect = canvas.getBoundingClientRect();
-    fitToWindow(rect.width, rect.height);
-    resizeCanvas();
-    return;
-  }
-  if (e.key === "1" && state.frozen) {
-    const rect = canvas.getBoundingClientRect();
-    zoomOneToOne(rect.width, rect.height);
-    resizeCanvas();
-    return;
-  }
-  if (e.key === "`" && !e.ctrlKey && !e.metaKey) {
-    state.showGrid = !state.showGrid;
-    document.getElementById("btn-grid")?.classList.toggle("active", state.showGrid);
-    showStatus(state.showGrid ? "Grid on" : "Grid off");
-    redraw();
-    return;
-  }
-  const toolKeys = { v: "select", c: "calibrate", d: "distance", a: "angle",
-                     o: "circle", f: "arc-fit", m: "center-dist", e: "detect",
-                     p: "perp-dist", l: "para-dist", r: "area",
-                     g: "pt-circle-dist", i: "intersect", w: "slot-dist", h: "pan" };
-  const toolName = toolKeys[e.key.toLowerCase()];
-  if (toolName) {
-    setTool(toolName);
-    return;
-  }
-  if (e.key.toLowerCase() === "s") {
-    saveSession();
-    return;
-  }
-});
+// ── Init event modules ───────────────────────────────���────────────────────────
+initMouseHandlers();
+initKeyboard(closeAllDropdowns);
 
 // ── Tool strip buttons + camera collapse ─────────────────────────────────────
 const cameraSectionHeader = document.getElementById("camera-section-header");
@@ -1154,7 +51,7 @@ if (cameraSectionHeader && cameraSectionBody) {
   });
 }
 
-// ── Dropdown menu wiring ─────────────────────────────────────────────────────
+// ── Dropdown menu wiring ───────────────────────────��─────────────────────────
 document.getElementById("btn-menu-measure").addEventListener("click", e => {
   e.stopPropagation();
   toggleDropdown("btn-menu-measure", "dropdown-measure");
@@ -1223,7 +120,7 @@ document.addEventListener("click", e => {
   closeAllDropdowns();
 });
 
-// ── Freeze button ─────────────────────────────────────────────────────────────
+// ─��� Freeze button ───���───────────────────────────────��─────────────────────────
 document.getElementById("btn-freeze").addEventListener("click", async () => {
   if (state.frozen) {
     // Unfreeze
@@ -1240,7 +137,7 @@ document.getElementById("btn-freeze").addEventListener("click", async () => {
   }
 });
 
-// ── Load image ────────────────────────────────────────────────────────────────
+// ── Load image ──────────────────────────────────────���─────────────────────────
 document.getElementById("btn-load").addEventListener("click", () => {
   document.getElementById("file-input").click();
 });
@@ -1385,7 +282,7 @@ viewerEl.addEventListener("drop", async e => {
   loadedImg.src = url;
 });
 
-// ── Coordinate origin ──────────────────────────────────────────────────────────
+// ── Coordinate origin ───���──────────────────────────────────────────────────────
 document.getElementById("btn-set-origin").addEventListener("click", () => {
   // Exit other modal modes first
   if (state.dxfAlignMode) {
@@ -1409,7 +306,7 @@ document.getElementById("btn-set-origin").addEventListener("click", () => {
 // ── Session save button ───────────────────────────────────────────────────────
 document.getElementById("btn-save-session").addEventListener("click", saveSession);
 
-// ── Session load file input ───────────────────────────────────────────────────
+// ── Session load file input ────────���──────────────────────────────────────────
 document.getElementById("btn-load-session")?.addEventListener("click", () => {
   document.getElementById("session-file-input").click();
 });
@@ -1425,7 +322,7 @@ document.getElementById("session-file-input").addEventListener("change", e => {
   reader.readAsText(file);
 });
 
-// ── Clear all annotations ─────────────────────────────────────────────────────
+// ── Clear all annotations ───���─────────────────────────────────────────────────
 document.getElementById("btn-clear")?.addEventListener("click", () => {
   if (confirm("Clear all annotations?")) {
     state.annotations = state.annotations.filter(a => a.type === "dxf-overlay");
@@ -1454,10 +351,10 @@ document.getElementById("btn-clear")?.addEventListener("click", () => {
   }
 });
 
-// ── Export PNG ────────────────────────────────────────────────────────────────
+// ── Export PNG ──────��────────────────────────────────��────────────────────────
 document.getElementById("btn-export").addEventListener("click", exportAnnotatedImage);
 
-// ── Export CSV / DXF ──────────────────────────────────────────────────────────
+// ── Export CSV / DXF ────────────────────────────────────��─────────────────────
 document.getElementById("btn-export-csv").addEventListener("click", exportCsv);
 document.getElementById("btn-export-dxf")?.addEventListener("click", exportDxf);
 
@@ -1468,7 +365,7 @@ document.getElementById("btn-crosshair").addEventListener("click", () => {
   redraw();
 });
 
-// ── Grid toggle ───────────────────────────────────────────────────────────────
+// ── Grid toggle ────────────────────────────────────────���──────────────────────
 document.getElementById("btn-grid")?.addEventListener("click", () => {
   state.showGrid = !state.showGrid;
   document.getElementById("btn-grid")?.classList.toggle("active", state.showGrid);
@@ -1479,7 +376,7 @@ document.getElementById("btn-grid")?.addEventListener("click", () => {
 // ── Calibration button ────────────────────────────────────────────────────────
 document.getElementById("btn-calibration").addEventListener("click", () => setTool("calibrate"));
 
-// ── Help dialog ───────────────────────────────────────────────────────────────
+// ── Help dialog ───────────────────────────────────────���───────────────────────
 document.getElementById("btn-help")?.addEventListener("click", () => {
   document.getElementById("help-dialog").hidden = false;
 });
@@ -1487,7 +384,7 @@ document.getElementById("btn-help-close").addEventListener("click", () => {
   document.getElementById("help-dialog").hidden = true;
 });
 
-// ── Settings dialog ───────────────────────────────────────────────────────────
+// ── Settings dialog ────────────────────────────────────��──────────────────────
 const settingsDialog = document.getElementById("settings-dialog");
 const fmtStatusEl = document.getElementById("settings-status");
 
@@ -1603,7 +500,7 @@ document.getElementById("pixel-format-select").addEventListener("change", async 
   }
 });
 
-// ── White balance ─────────────────────────────────────────────────────────────
+// ── White balance ───────────────────────────────────���─────────────────────────
 document.getElementById("btn-wb-auto").addEventListener("click", async () => {
   fmtStatusEl.textContent = "Applying…";
   try {
@@ -1669,7 +566,7 @@ document.getElementById("camera-select").addEventListener("change", async e => {
   }
 });
 
-// ── Event delegation for delete buttons ──────────────────────────────────────
+// ── Event delegation for delete buttons ───���──────────────────────────────────
 document.getElementById("measurement-list").addEventListener("click", e => {
   const btn = e.target.closest(".del-btn");
   if (!btn) return;
@@ -1678,7 +575,7 @@ document.getElementById("measurement-list").addEventListener("click", e => {
   deleteAnnotation(id);
 });
 
-// ── Init ──────────────────────────────────────────────────────────────────────
+// ── Init ──────��───────────────────────────────────��───────────────────────────
 initDxfHandlers();
 initDetectHandlers();
 
