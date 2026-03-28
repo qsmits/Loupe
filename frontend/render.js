@@ -680,6 +680,32 @@ export function drawGuidedResults(ann) {
 
   for (const r of results) {
     if (r.matched && r.fit) {
+      // Hover highlight from inspection table
+      const isHovered = state.inspectionHoverHandle &&
+        (r.handle === state.inspectionHoverHandle ||
+         r.parent_handle === state.inspectionHoverHandle);
+      if (isHovered) {
+        ctx.save();
+        ctx.strokeStyle = "#ffffff";
+        ctx.lineWidth = pw(5);
+        ctx.globalAlpha = 0.4;
+        if (r.fit.type === "line") {
+          ctx.beginPath();
+          ctx.moveTo(r.fit.x1, r.fit.y1);
+          ctx.lineTo(r.fit.x2, r.fit.y2);
+          ctx.stroke();
+        } else if (r.fit.cx != null) {
+          ctx.beginPath();
+          if (r.fit.start_deg != null && r.fit.type === "arc") {
+            ctx.arc(r.fit.cx, r.fit.cy, r.fit.r, r.fit.start_deg * Math.PI / 180, r.fit.end_deg * Math.PI / 180);
+          } else {
+            ctx.arc(r.fit.cx, r.fit.cy, r.fit.r, 0, Math.PI * 2);
+          }
+          ctx.stroke();
+        }
+        ctx.restore();
+      }
+
       const color = _deviationColor(r);
 
       ctx.save();

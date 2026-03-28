@@ -787,6 +787,37 @@ body.no-camera .camera-section { display: none; }
   font-weight: 600;
   margin-left: 4px;
 }
+.insp-group-header td {
+  padding: 4px 6px;
+  font-weight: 600;
+  font-size: 10px;
+  background: var(--surface-3);
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+}
+.insp-group-name {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.insp-chevron {
+  font-size: 8px;
+  color: var(--muted);
+  width: 10px;
+}
+.insp-group-count {
+  color: var(--muted);
+  font-weight: 400;
+}
+.insp-detail-row td {
+  padding-left: 18px;
+}
+.insp-detail-row:hover {
+  background: var(--surface-3);
+}
+.insp-group-header:hover td {
+  background: var(--surface-2);
+}
 
 /* ─── Context menu ───────────────────────────────── */
 #context-menu {

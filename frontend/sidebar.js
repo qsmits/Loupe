@@ -300,78 +300,179 @@ export function renderInspectionTable() {
   }
 
   panel.hidden = false;
-
   const countEl = document.getElementById("inspection-count");
   const tbody = document.getElementById("inspection-tbody");
   if (!tbody) return;
 
+  // Group results
+  const groups = new Map();  // groupKey → []
+  for (const r of state.inspectionResults) {
+    const key = r.parent_handle || r.handle;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(r);
+  }
+
+  // Summary
   const total = state.inspectionResults.length;
   const failed = state.inspectionResults.filter(r => r.pass_fail === "fail").length;
   const warned = state.inspectionResults.filter(r => r.pass_fail === "warn").length;
+  const matched = state.inspectionResults.filter(r => r.matched).length;
   if (countEl) {
     countEl.textContent = failed > 0
-      ? `${total} features — ${failed} FAIL`
+      ? `${matched}/${total} matched — ${failed} FAIL`
       : warned > 0
-        ? `${total} features — ${warned} WARN`
-        : `${total} features — all PASS`;
+        ? `${matched}/${total} matched — ${warned} WARN`
+        : `${matched}/${total} matched — all PASS`;
   }
 
   tbody.innerHTML = "";
-  state.inspectionResults.forEach(r => {
-    const tr = document.createElement("tr");
 
-    const deviationText = r.matched && r.deviation_mm != null
-      ? r.deviation_mm.toFixed(4) + " mm"
-      : "—";
+  for (const [groupKey, results] of groups) {
+    // Determine group name
+    const dxfAnn = state.annotations.find(a => a.type === "dxf-overlay");
+    const entity = dxfAnn?.entities?.find(e => e.handle === groupKey || e.parent_handle === groupKey);
+    const layer = entity?.layer;
+    const defaultName = (layer && layer !== "0") ? layer : groupKey;
+    const groupName = state.featureNames[groupKey] || defaultName;
 
-    const toleranceText = `±${r.tolerance_warn}/${r.tolerance_fail}`;
+    // Worst-case result
+    const worstResult = results.some(r => r.pass_fail === "fail") ? "fail"
+      : results.some(r => r.pass_fail === "warn") ? "warn"
+      : results.some(r => r.matched) ? "pass" : "unmatched";
 
-    let badgeClass, badgeText;
-    if (!r.matched) {
-      badgeClass = "badge-unmatched"; badgeText = "—";
-    } else if (r.pass_fail === "pass") {
-      badgeClass = "badge-pass"; badgeText = "PASS";
-    } else if (r.pass_fail === "warn") {
-      badgeClass = "badge-warn"; badgeText = "WARN";
-    } else {
-      badgeClass = "badge-fail"; badgeText = "FAIL";
-    }
+    const segCount = results.length;
 
-    const sourceText = r.source === "manual" ? "M" : "";
-    const sourceBadge = sourceText ? `<span class="insp-source">${sourceText}</span>` : "";
+    // Group header row
+    const headerTr = document.createElement("tr");
+    headerTr.className = "insp-group-header";
+    const badgeClass = worstResult === "fail" ? "badge-fail"
+      : worstResult === "warn" ? "badge-warn"
+      : worstResult === "pass" ? "badge-pass" : "badge-unmatched";
 
-    tr.innerHTML = `
-      <td class="insp-handle">${r.handle}</td>
-      <td class="insp-type">${r.type}</td>
-      <td class="insp-dev">${deviationText}</td>
-      <td class="insp-tol">${toleranceText}</td>
-      <td><span class="insp-badge ${badgeClass}">${badgeText}</span>${sourceBadge}</td>`;
-    tbody.appendChild(tr);
+    headerTr.innerHTML = `
+      <td colspan="4" class="insp-group-name">
+        <span class="insp-chevron">▾</span>
+        <span class="insp-group-label">${groupName}</span>
+        <span class="insp-group-count">(${segCount})</span>
+      </td>
+      <td><span class="insp-badge ${badgeClass}">${worstResult === "unmatched" ? "—" : worstResult.toUpperCase()}</span></td>`;
 
-    if (!r.matched) {
-      tr.style.cursor = "pointer";
-      tr.title = "Click to measure manually";
-      tr.addEventListener("click", () => {
-        const ann = state.annotations.find(a => a.type === "dxf-overlay");
-        if (!ann) return;
-        const entity = ann.entities.find(e => e.handle === r.handle);
-        if (!entity) return;
-        const ph = entity.parent_handle;
-        if (ph) {
-          state.inspectionPickTarget = ann.entities.filter(e => e.parent_handle === ph);
-        } else {
-          state.inspectionPickTarget = [entity];
-        }
-        state.inspectionPickPoints = [];
-        state.inspectionPickFit = null;
-        const n = state.inspectionPickTarget.length;
-        showStatus(n > 1
-          ? `Compound feature (${n} segments). Click points along the edge. Double-click or Enter to finish.`
-          : "Click points along the edge. Double-click or Enter to finish. Escape to cancel.");
+    // Hover: highlight all handles in group
+    headerTr.addEventListener("mouseenter", () => {
+      state.inspectionHoverHandle = groupKey;
+      redraw();
+    });
+    headerTr.addEventListener("mouseleave", () => {
+      state.inspectionHoverHandle = null;
+      redraw();
+    });
+
+    // Click to collapse/expand
+    let collapsed = false;
+    headerTr.style.cursor = "pointer";
+    headerTr.addEventListener("click", () => {
+      collapsed = !collapsed;
+      headerTr.querySelector(".insp-chevron").textContent = collapsed ? "▸" : "▾";
+      // Toggle visibility of detail rows
+      let sibling = headerTr.nextElementSibling;
+      while (sibling && !sibling.classList.contains("insp-group-header")) {
+        sibling.hidden = collapsed;
+        sibling = sibling.nextElementSibling;
+      }
+    });
+
+    // Double-click to rename
+    headerTr.addEventListener("dblclick", e => {
+      e.stopPropagation();
+      const labelSpan = headerTr.querySelector(".insp-group-label");
+      const input = document.createElement("input");
+      input.type = "text";
+      input.value = state.featureNames[groupKey] || defaultName;
+      input.style.cssText = "width:80px; font-size:10px; padding:0 2px; background:var(--surface-3); color:var(--text); border:1px solid var(--border);";
+      input.addEventListener("blur", () => {
+        const val = input.value.trim();
+        if (val && val !== defaultName) state.featureNames[groupKey] = val;
+        else delete state.featureNames[groupKey];
+        renderInspectionTable();
+      });
+      input.addEventListener("keydown", ev => {
+        if (ev.key === "Enter") input.blur();
+        if (ev.key === "Escape") { delete state.featureNames[groupKey]; renderInspectionTable(); }
+      });
+      labelSpan.replaceWith(input);
+      input.focus();
+      input.select();
+    });
+
+    tbody.appendChild(headerTr);
+
+    // Detail rows for each result in group
+    for (const r of results) {
+      const tr = document.createElement("tr");
+      tr.className = "insp-detail-row";
+
+      const deviationText = r.matched && r.deviation_mm != null
+        ? r.deviation_mm.toFixed(4) + " mm"
+        : "—";
+
+      let badgeClass2, badgeText;
+      if (!r.matched) {
+        badgeClass2 = "badge-unmatched"; badgeText = "—";
+      } else if (r.pass_fail === "pass") {
+        badgeClass2 = "badge-pass"; badgeText = "PASS";
+      } else if (r.pass_fail === "warn") {
+        badgeClass2 = "badge-warn"; badgeText = "WARN";
+      } else {
+        badgeClass2 = "badge-fail"; badgeText = "FAIL";
+      }
+
+      const sourceText = r.source === "manual" ? "M" : "";
+
+      tr.innerHTML = `
+        <td class="insp-handle">${r.handle}</td>
+        <td class="insp-type">${r.type.replace("polyline_", "p_")}</td>
+        <td class="insp-dev">${deviationText}</td>
+        <td class="insp-tol">±${r.tolerance_warn}/${r.tolerance_fail}</td>
+        <td><span class="insp-badge ${badgeClass2}">${badgeText}</span>${sourceText ? `<span class="insp-source">${sourceText}</span>` : ""}</td>`;
+
+      // Hover: highlight just this handle
+      tr.addEventListener("mouseenter", () => {
+        state.inspectionHoverHandle = r.handle;
         redraw();
       });
+      tr.addEventListener("mouseleave", () => {
+        state.inspectionHoverHandle = null;
+        redraw();
+      });
+
+      // Click unmatched to enter point-pick
+      if (!r.matched) {
+        tr.style.cursor = "pointer";
+        tr.title = "Click to measure manually";
+        tr.addEventListener("click", () => {
+          const ann = state.annotations.find(a => a.type === "dxf-overlay");
+          if (!ann) return;
+          const entity = ann.entities.find(e => e.handle === r.handle);
+          if (!entity) return;
+          const ph = entity.parent_handle;
+          if (ph) {
+            state.inspectionPickTarget = ann.entities.filter(e => e.parent_handle === ph);
+          } else {
+            state.inspectionPickTarget = [entity];
+          }
+          state.inspectionPickPoints = [];
+          state.inspectionPickFit = null;
+          const n = state.inspectionPickTarget.length;
+          showStatus(n > 1
+            ? `${n} segments. Click points along edge. Double-click or Enter to finish.`
+            : "Click points along edge. Double-click or Enter to finish.");
+          redraw();
+        });
+      }
+
+      tbody.appendChild(tr);
     }
-  });
+  }
 
   // Wire collapse toggle (idempotent)
   const toggle = document.getElementById("inspection-toggle");
@@ -380,9 +481,27 @@ export function renderInspectionTable() {
   if (toggle && !toggle._m4wired) {
     toggle._m4wired = true;
     toggle.addEventListener("click", () => {
-      const collapsed = wrap.hidden;
-      wrap.hidden = !collapsed;
-      if (chevron) chevron.textContent = collapsed ? "▾" : "▸";
+      const c = wrap.hidden;
+      wrap.hidden = !c;
+      if (chevron) chevron.textContent = c ? "▾" : "▸";
     });
+  }
+
+  // Show selection count in status bar
+  if (state.selected.size > 1) {
+    const detCount = [...state.selected].filter(id => {
+      const a = state.annotations.find(x => x.id === id);
+      return a && DETECTION_TYPES.has(a.type);
+    }).length;
+    const measCount = state.selected.size - detCount;
+    let msg = `${state.selected.size} selected`;
+    if (detCount > 0 && measCount > 0) {
+      msg = `${detCount} detection${detCount > 1 ? "s" : ""}, ${measCount} measurement${measCount > 1 ? "s" : ""} selected`;
+    } else if (detCount > 0) {
+      msg = `${detCount} detection${detCount > 1 ? "s" : ""} selected`;
+    } else if (measCount > 0) {
+      msg = `${measCount} measurement${measCount > 1 ? "s" : ""} selected`;
+    }
+    showStatus(msg);
   }
 }
