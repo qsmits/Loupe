@@ -516,6 +516,7 @@ function drawMinimap() {
 }
 
 export function drawAnnotations() {
+  _labelHitBoxes.length = 0;
   const flashActive = Date.now() < state._flashExpiry;
   state.annotations.forEach(ann => {
     const sel = state.selected.has(ann.id);
@@ -719,7 +720,7 @@ export function drawGuidedResults(ann) {
   const results = ann.guidedResults;
   if (!results || results.length === 0) return;
 
-  _labelHitBoxes.length = 0;
+  // Don't clear _labelHitBoxes here — it's cleared in drawAnnotations
 
   let featureIdx = 0;
   for (const r of results) {

@@ -171,7 +171,13 @@ export function renderSidebar() {
       row.innerHTML = `
         <span class="measurement-number" style="color:var(--muted)">⚬</span>
         <span class="measurement-value" style="color:var(--muted);flex:1">${label}</span>
+        <button class="elevate-btn" data-id="${ann.id}" title="Elevate to measurement">↑</button>
         <button class="del-btn" data-id="${ann.id}">✕</button>`;
+      row.querySelector(".elevate-btn").addEventListener("click", e => {
+        e.stopPropagation();
+        state.selected = new Set([ann.id]);
+        document.dispatchEvent(new CustomEvent("elevate-selected"));
+      });
       row.addEventListener("click", () => {
         state.selected = new Set([ann.id]);
         state._flashExpiry = Date.now() + 400;

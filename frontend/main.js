@@ -1279,6 +1279,9 @@ document.getElementById("file-input").addEventListener("change", async e => {
 document.getElementById("btn-undo")?.addEventListener("click", undo);
 document.getElementById("btn-redo")?.addEventListener("click", redo);
 
+// ── Elevate from sidebar ─────────────────────────────────────────────────────
+document.addEventListener("elevate-selected", () => elevateSelected());
+
 // ── Zoom badge presets ───────────────────────────────────────────────────────
 const zoomBadge = document.getElementById("zoom-badge");
 const zoomPresets = document.getElementById("zoom-presets");

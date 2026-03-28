@@ -817,6 +817,17 @@ body.no-camera .camera-section { display: none; }
 .meas-group-label { color: var(--text); }
 .meas-group-count { color: var(--muted); font-weight: 400; }
 .meas-group-member { padding-left: 12px; }
+.elevate-btn {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 10px;
+  padding: 0 4px;
+  border-radius: 3px;
+  cursor: pointer;
+  margin-right: 2px;
+}
+.elevate-btn:hover { color: var(--text); background: var(--surface-3); }
 .meas-group-end {
   height: 2px;
   background: var(--border);
