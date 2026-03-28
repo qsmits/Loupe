@@ -323,30 +323,22 @@ def align_dxf_edges(
     #   offsetY - y_rot * scale = match_y + th - (y_rot - r_min_y) * scale - padding
     #   offsetY = match_y + th - padding + r_min_y * scale
 
+    # Derivation:
+    # dxfToCanvas for (x,y) with angle a: img_x = offsetX + x_rot * scale
+    #                                      img_y = offsetY - y_rot * scale
+    # Template:  img_x = match_x + (x_rot - r_min_x) * scale + padding
+    #            img_y = match_y + th - (y_rot - r_min_y) * scale - padding
+    # Equating:
+    #   offsetX = match_x - r_min_x * scale + padding
+    #   offsetY = match_y + th + r_min_y * scale - padding
     tx = match_x + (-best_r_min_x) * scale + padding
-    # The frontend Y-flip means higher DXF-Y = lower canvas-Y.
-    # Template row 0 = highest canvas Y = DXF r_max_y.
-    # match_y + 0 = image Y of DXF r_max_y.
-    # Frontend: offsetY - r_max_y * scale = match_y
-    # So: offsetY = match_y + r_max_y * scale
-    # But we need r_max_y from the rotated bounds:
-    pys_rot = []
-    for e in entities:
-        if "x1" in e:
-            for px, py in [(e["x1"], e["y1"]), (e["x2"], e["y2"])]:
-                pys_rot.append(px * sin_a + py * cos_a)
-        elif "cx" in e:
-            r = e.get("radius", 0)
-            pys_rot.append(e["cx"] * sin_a + e["cy"] * cos_a + r)
-            pys_rot.append(e["cx"] * sin_a + e["cy"] * cos_a - r)
-    r_max_y_rot = max(pys_rot) if pys_rot else 0
-    ty = match_y + padding + r_max_y_rot * scale
+    ty = match_y + best_tmpl_shape[0] + best_r_min_y * scale - padding
 
     return {
         "success": True,
         "tx": float(tx),
         "ty": float(ty),
-        "angle_deg": float(-best_angle),  # negate: template rotates +, frontend rotates -
+        "angle_deg": float(best_angle),
         "scale": float(scale),
         "score": float(best_score),
     }
