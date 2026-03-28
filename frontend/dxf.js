@@ -144,9 +144,6 @@ export function initDxfHandlers() {
               // We want: offsetX + cx = img_cx => offsetX = img_cx - cx
               //          offsetY + cy = img_cy => offsetY = img_cy - cy
               ann.angle = result.angle_deg ?? 0;
-              const projected = dxfToCanvas(result.dxf_cx, result.dxf_cy, ann);
-              // projected uses the current offsetX/offsetY, so we need to subtract
-              // the contribution of the DXF center from offset:
               const cosA = Math.cos(ann.angle * Math.PI / 180);
               const sinA = Math.sin(ann.angle * Math.PI / 180);
               const xr = result.dxf_cx * cosA - result.dxf_cy * sinA;
