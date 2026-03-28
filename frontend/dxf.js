@@ -130,11 +130,14 @@ export function initDxfHandlers() {
           });
           if (alignResp.ok) {
             const result = await alignResp.json();
+            console.log("Edge align result:", JSON.stringify(result));
             const ann = state.annotations.find(a => a.type === "dxf-overlay");
             if (ann) {
+              console.log("Before:", { offsetX: ann.offsetX, offsetY: ann.offsetY, scale: ann.scale, angle: ann.angle });
               ann.offsetX = result.tx;
               ann.offsetY = result.ty;
               ann.angle = result.angle_deg ?? 0;
+              console.log("After:", { offsetX: ann.offsetX, offsetY: ann.offsetY, scale: ann.scale, angle: ann.angle });
               showStatus(`DXF auto-aligned (score ${(result.score * 100).toFixed(0)}%)`);
             }
           } else {
