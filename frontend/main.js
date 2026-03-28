@@ -12,7 +12,7 @@ import { fitCircle, fitLine, fitCircleAlgebraic, distPointToSegment } from './ma
 import { exitDxfAlignMode, initDxfHandlers,
          openFeatureTolPopover } from './dxf.js';
 import { doFreeze, initDetectHandlers } from './detect.js';
-import { saveSession, loadSession, exportAnnotatedImage, exportCsv, autoSave, tryAutoRestore } from './session.js';
+import { saveSession, loadSession, exportAnnotatedImage, exportCsv, exportDxf, autoSave, tryAutoRestore } from './session.js';
 import { viewport, screenToImage, clampPan, fitToWindow, zoomOneToOne, setImageSize, imageWidth, imageHeight } from './viewport.js';
 
 // ── Context menu ──────────────────────────────────────────────────────────
@@ -1416,8 +1416,9 @@ document.getElementById("btn-clear")?.addEventListener("click", () => {
 // ── Export PNG ────────────────────────────────────────────────────────────────
 document.getElementById("btn-export").addEventListener("click", exportAnnotatedImage);
 
-// ── Export CSV ────────────────────────────────────────────────────────────────
+// ── Export CSV / DXF ──────────────────────────────────────────────────────────
 document.getElementById("btn-export-csv").addEventListener("click", exportCsv);
+document.getElementById("btn-export-dxf")?.addEventListener("click", exportDxf);
 
 // ── Crosshair toggle ──────────────────────────────────────────────────────────
 document.getElementById("btn-crosshair").addEventListener("click", () => {

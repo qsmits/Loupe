@@ -248,6 +248,27 @@ class AlignEdgesBody(BaseModel):
     smoothing: int = Field(default=2, ge=1, le=3)
 
 
+class ExportDxfBody(BaseModel):
+    annotations: list[dict]
+    pixels_per_mm: float = Field(gt=0)
+    origin_x: float = 0
+    origin_y: float = 0
+
+
+@router.post("/export-dxf")
+def export_dxf_route(body: ExportDxfBody):
+    from .vision.dxf_export import export_annotations_dxf
+    dxf_bytes = export_annotations_dxf(
+        body.annotations, body.pixels_per_mm,
+        body.origin_x, body.origin_y,
+    )
+    return Response(
+        content=dxf_bytes,
+        media_type="application/dxf",
+        headers={"Content-Disposition": "attachment; filename=measurements.dxf"},
+    )
+
+
 def make_router(camera: BaseCamera, frame_store: FrameStore, startup_warning: str | None = None) -> APIRouter:
     router = APIRouter()
     _warning = [startup_warning]   # mutable container for pop semantics

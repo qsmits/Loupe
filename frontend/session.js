@@ -129,6 +129,57 @@ export function exportCsv() {
   URL.revokeObjectURL(url);
 }
 
+
+// ── DXF export (reverse engineering) ─────────────────────────────────────────
+export async function exportDxf() {
+  const cal = state.calibration;
+  if (!cal?.pixelsPerMm) {
+    showStatus("Calibrate first to export DXF with dimensions in mm");
+    return;
+  }
+
+  // Collect exportable measurement annotations
+  const exportTypes = new Set([
+    "distance", "circle", "arc-measure", "center-dist",
+    "perp-dist", "para-dist", "parallelism", "slot-dist", "area",
+  ]);
+  const annotations = state.annotations.filter(a => exportTypes.has(a.type));
+  if (annotations.length === 0) {
+    showStatus("No measurements to export");
+    return;
+  }
+
+  const originX = state.origin?.x ?? 0;
+  const originY = state.origin?.y ?? 0;
+
+  try {
+    const resp = await fetch("/export-dxf", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        annotations: annotations.map(a => ({ ...a })),
+        pixels_per_mm: cal.pixelsPerMm,
+        origin_x: originX,
+        origin_y: originY,
+      }),
+    });
+    if (!resp.ok) {
+      showStatus("DXF export failed");
+      return;
+    }
+    const blob = await resp.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `measurements_${new Date().toISOString().slice(0, 19).replace(/[T:]/g, "-")}.dxf`;
+    a.click();
+    URL.revokeObjectURL(url);
+    showStatus(`Exported ${annotations.length} measurements as DXF`);
+  } catch (err) {
+    showStatus("DXF export error: " + err.message);
+  }
+}
+
 // ── Inspection CSV export ────────────────────────────────────────────────────
 export function exportInspectionCsv() {
   const partName = state.dxfFilename || "";
