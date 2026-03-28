@@ -326,24 +326,34 @@ def align_dxf_edges(
     #   offsetY - y_rot * scale = match_y + th - (y_rot - r_min_y) * scale - padding
     #   offsetY = match_y + th - padding + r_min_y * scale
 
-    # Derivation:
-    # dxfToCanvas for (x,y) with angle a: img_x = offsetX + x_rot * scale
-    #                                      img_y = offsetY - y_rot * scale
-    # Template:  img_x = match_x + (x_rot - r_min_x) * scale + padding
-    #            img_y = match_y + th - (y_rot - r_min_y) * scale - padding
-    # Equating:
-    #   offsetX = match_x - r_min_x * scale + padding
-    #   offsetY = match_y + th + r_min_y * scale - padding
-    tx = match_x + (-best_r_min_x) * scale + padding
-    ty = match_y + best_tmpl_shape[0] + best_r_min_y * scale - padding
-    _log.info(f"  match=({match_x},{match_y}) tmpl={best_tmpl_shape[1]}x{best_tmpl_shape[0]} "
-              f"r_min=({best_r_min_x:.2f},{best_r_min_y:.2f}) pad={padding} "
-              f"-> tx={tx:.1f} ty={ty:.1f} angle={best_angle}")
+    # Instead of computing offsetX/offsetY here (which requires matching the
+    # frontend's dxfToCanvas transform exactly), return the image-space position
+    # of the DXF center. The frontend uses dxfToCanvas to compute the correct
+    # offset from this anchor point.
+    th, tw = best_tmpl_shape
+    dxf_cx = (min(xs) + max(xs)) / 2
+    dxf_cy = (min(ys) + max(ys)) / 2
+
+    # DXF center rotated by best_angle
+    cos_a = math.cos(math.radians(best_angle))
+    sin_a = math.sin(math.radians(best_angle))
+    cx_rot = dxf_cx * cos_a - dxf_cy * sin_a
+    cy_rot = dxf_cx * sin_a + dxf_cy * cos_a
+
+    # DXF center position in template pixel coords
+    tmpl_cx = (cx_rot - best_r_min_x) * scale + padding
+    tmpl_cy = th - ((cy_rot - best_r_min_y) * scale + padding)
+
+    # DXF center position in image pixel coords
+    img_cx = match_x + tmpl_cx
+    img_cy = match_y + tmpl_cy
 
     return {
         "success": True,
-        "tx": float(tx),
-        "ty": float(ty),
+        "img_cx": float(img_cx),
+        "img_cy": float(img_cy),
+        "dxf_cx": float(dxf_cx),
+        "dxf_cy": float(dxf_cy),
         "angle_deg": float(best_angle),
         "scale": float(scale),
         "score": float(best_score),

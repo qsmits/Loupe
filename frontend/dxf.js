@@ -133,11 +133,31 @@ export function initDxfHandlers() {
             console.log("Edge align result:", JSON.stringify(result));
             const ann = state.annotations.find(a => a.type === "dxf-overlay");
             if (ann) {
-              console.log("Before:", { offsetX: ann.offsetX, offsetY: ann.offsetY, scale: ann.scale, angle: ann.angle });
-              ann.offsetX = result.tx;
-              ann.offsetY = result.ty;
+              // The backend returns the image-space position of the DXF center
+              // and the DXF center in DXF space. We compute offsetX/offsetY by
+              // reverse-engineering dxfToCanvas: we know where the DXF center
+              // SHOULD land (img_cx, img_cy), and dxfToCanvas tells us where it
+              // WOULD land for given offset. Solve for offset.
+              //
+              // dxfToCanvas(dxf_cx, dxf_cy) = (offsetX + cx, offsetY + cy)
+              // where cx = xr * scale, cy = -yr * scale
+              // We want: offsetX + cx = img_cx => offsetX = img_cx - cx
+              //          offsetY + cy = img_cy => offsetY = img_cy - cy
               ann.angle = result.angle_deg ?? 0;
-              console.log("After:", { offsetX: ann.offsetX, offsetY: ann.offsetY, scale: ann.scale, angle: ann.angle });
+              const projected = dxfToCanvas(result.dxf_cx, result.dxf_cy, ann);
+              // projected uses the current offsetX/offsetY, so we need to subtract
+              // the contribution of the DXF center from offset:
+              const cosA = Math.cos(ann.angle * Math.PI / 180);
+              const sinA = Math.sin(ann.angle * Math.PI / 180);
+              const xr = result.dxf_cx * cosA - result.dxf_cy * sinA;
+              const yr = result.dxf_cx * sinA + result.dxf_cy * cosA;
+              const cx = xr * ann.scale;
+              const cy = -yr * ann.scale;
+              ann.offsetX = result.img_cx - cx;
+              ann.offsetY = result.img_cy - cy;
+              console.log("Align:", { img_cx: result.img_cx, img_cy: result.img_cy,
+                                      dxf_cx: result.dxf_cx, dxf_cy: result.dxf_cy,
+                                      cx, cy, offsetX: ann.offsetX, offsetY: ann.offsetY });
               showStatus(`DXF auto-aligned (score ${(result.score * 100).toFixed(0)}%)`);
             }
           } else {
@@ -322,12 +342,24 @@ export function initDxfHandlers() {
       }
 
       pushUndo();
-      ann.offsetX = result.tx;
-      ann.offsetY = result.ty;
       ann.angle = result.angle_deg ?? 0;
       ann.scale = result.scale ?? cal.pixelsPerMm;
       if (result.flip_h != null) ann.flipH = result.flip_h;
       if (result.flip_v != null) ann.flipV = result.flip_v;
+
+      if (result.img_cx != null) {
+        // Edge-based alignment: compute offset from anchor point
+        const cosA = Math.cos(ann.angle * Math.PI / 180);
+        const sinA = Math.sin(ann.angle * Math.PI / 180);
+        const xr = result.dxf_cx * cosA - result.dxf_cy * sinA;
+        const yr = result.dxf_cx * sinA + result.dxf_cy * cosA;
+        ann.offsetX = result.img_cx - xr * ann.scale;
+        ann.offsetY = result.img_cy - (-yr * ann.scale);
+      } else {
+        // Circle-based alignment: tx/ty are offsetX/offsetY directly
+        ann.offsetX = result.tx;
+        ann.offsetY = result.ty;
+      }
       updateDxfControlsVisibility();
 
       state.showDeviations = true;
