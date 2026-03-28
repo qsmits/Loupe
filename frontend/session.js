@@ -279,6 +279,7 @@ export function exportInspectionPdf() {
   yPos += rowH;
   doc.setFont(undefined, "normal");
 
+  let featureNum = 0;
   for (const [groupKey, results] of groups) {
     if (yPos + rowH > pageH - margin) { doc.addPage(); yPos = margin; }
 
@@ -320,9 +321,10 @@ export function exportInspectionPdf() {
       const resultText = r.matched ? r.pass_fail.toUpperCase() : "—";
       const typeName = r.type.replace("polyline_", "p_");
 
+      featureNum++;
       xPos = margin;
-      // Indent the handle
-      doc.text("  " + r.handle, xPos + 1, yPos + rowH - 1.5);
+      // Feature number + handle
+      doc.text(`  ${featureNum}. ${r.handle}`, xPos + 1, yPos + rowH - 1.5);
       doc.rect(xPos, yPos, colWidths[0], rowH); xPos += colWidths[0];
 
       doc.text(typeName, xPos + 1, yPos + rowH - 1.5);

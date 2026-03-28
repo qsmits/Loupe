@@ -672,13 +672,36 @@ function _deviationColor(r) {
   return magnitude <= tol_f ? "#ff9f0a" : "#ff453a";
 }
 
+function _drawFeatureNumber(x, y, num, color) {
+  /** Draw a small circled number at a feature location for cross-referencing with reports. */
+  const r = pw(7);
+  const fontSize = pw(9);
+  ctx.save();
+  ctx.fillStyle = color;
+  ctx.globalAlpha = 0.85;
+  ctx.beginPath();
+  ctx.arc(x, y, r, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = "#000";
+  ctx.font = `bold ${fontSize}px ui-monospace, monospace`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(String(num), x, y);
+  ctx.textAlign = "start";
+  ctx.textBaseline = "alphabetic";
+  ctx.restore();
+}
+
 export function drawGuidedResults(ann) {
   const results = ann.guidedResults;
   if (!results || results.length === 0) return;
 
   _labelHitBoxes.length = 0;
 
+  let featureIdx = 0;
   for (const r of results) {
+    featureIdx++;
     if (r.matched && r.fit) {
       // Hover highlight from inspection table
       const isHovered = state.inspectionHoverHandle &&
@@ -717,9 +740,11 @@ export function drawGuidedResults(ann) {
         ctx.moveTo(r.fit.x1, r.fit.y1);
         ctx.lineTo(r.fit.x2, r.fit.y2);
         ctx.stroke();
-        // Position label perpendicular to the line, offset outward
         const mx = (r.fit.x1 + r.fit.x2) / 2;
         const my = (r.fit.y1 + r.fit.y2) / 2;
+        // Feature number marker
+        _drawFeatureNumber(mx, my, featureIdx, color);
+        // Position label perpendicular to the line, offset outward
         const ldx = r.fit.x2 - r.fit.x1, ldy = r.fit.y2 - r.fit.y1;
         const ll = Math.hypot(ldx, ldy) || 1;
         // Normal vector (perpendicular to line direction)
@@ -766,6 +791,8 @@ export function drawGuidedResults(ann) {
           ctx.arc(r.fit.cx, r.fit.cy, r.fit.r, 0, Math.PI * 2);
         }
         ctx.stroke();
+        // Feature number marker at arc center
+        _drawFeatureNumber(r.fit.cx, r.fit.cy, featureIdx, color);
         // Position label at the arc's midpoint angle (not always right side)
         let labelAngle = 0;
         if (r.fit.start_deg != null && r.fit.end_deg != null) {
