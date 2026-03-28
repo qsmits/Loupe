@@ -612,14 +612,15 @@ export function drawArcMeasure(ann, sel) {
   // If p2's angle (relative to p1) is between 0 and p3's angle, then CW arc
   // from a1→a3 passes through p2. Otherwise we need CCW.
   const ccw = !(norm2 < norm3);
+  const arcColor = _annColor(ann, sel, "#bf5af2");
   ctx.save();
-  ctx.strokeStyle = sel ? "#60a5fa" : "#bf5af2";  // lighter blue when selected
+  ctx.strokeStyle = arcColor;
   ctx.lineWidth = sel ? pw(2) : pw(1.5);
   ctx.beginPath();
   ctx.arc(ann.cx, ann.cy, ann.r, a1, a3, ccw);
   ctx.stroke();
   // Draw center marker
-  ctx.fillStyle = sel ? "#60a5fa" : "#bf5af2";
+  ctx.fillStyle = arcColor;
   ctx.beginPath();
   ctx.arc(ann.cx, ann.cy, 3, 0, 2 * Math.PI);
   ctx.fill();
@@ -849,16 +850,25 @@ export function drawLabel(text, x, y) {
   ctx.fillText(text, x, y);
 }
 
+const GROUP_COLOR = "#38bdf8";  // sky blue for grouped measurements
+
+function _annColor(ann, sel, defaultColor) {
+  if (sel) return "#60a5fa";
+  if (state.measurementGroups[ann.id]) return GROUP_COLOR;
+  return defaultColor;
+}
+
 export function drawDistance(ann, sel) {
-  drawLine(ann.a, ann.b, sel ? "#60a5fa" : "#facc15", sel ? 2 : 1.5);
+  drawLine(ann.a, ann.b, _annColor(ann, sel, "#facc15"), sel ? 2 : 1.5);
   if (sel) { drawHandle(ann.a, "#60a5fa"); drawHandle(ann.b, "#60a5fa"); }
   const mx = (ann.a.x + ann.b.x) / 2, my = (ann.a.y + ann.b.y) / 2;
   drawLabel(measurementLabel(ann), mx + 5, my - 5);
 }
 
 export function drawAngle(ann, sel) {
-  drawLine(ann.p1, ann.vertex, sel ? "#60a5fa" : "#a78bfa", sel ? 2 : 1.5);
-  drawLine(ann.vertex, ann.p3, sel ? "#60a5fa" : "#a78bfa", sel ? 2 : 1.5);
+  const c = _annColor(ann, sel, "#a78bfa");
+  drawLine(ann.p1, ann.vertex, c, sel ? 2 : 1.5);
+  drawLine(ann.vertex, ann.p3, c, sel ? 2 : 1.5);
   if (sel) { [ann.p1, ann.vertex, ann.p3].forEach(p => drawHandle(p, "#60a5fa")); }
   drawLabel(measurementLabel(ann), ann.vertex.x + 8, ann.vertex.y - 8);
 }
@@ -866,7 +876,8 @@ export function drawAngle(ann, sel) {
 export function drawCircle(ann, sel) {
   ctx.beginPath();
   ctx.arc(ann.cx, ann.cy, ann.r, 0, Math.PI * 2);
-  ctx.strokeStyle = sel ? "#60a5fa" : "#34d399";
+  const circColor = _annColor(ann, sel, "#34d399");
+  ctx.strokeStyle = circColor;
   ctx.lineWidth = sel ? pw(2) : pw(1.5);
   ctx.stroke();
   if (sel) {
