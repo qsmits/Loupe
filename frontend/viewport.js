@@ -17,21 +17,20 @@ export function setImageSize(w, h) {
   imageHeight = h;
 }
 
-/** Image-space → screen-space (for rendering outside viewport transform) */
-export function imageToScreen(x, y) {
-  return {
-    x: (x - viewport.panX) * viewport.zoom,
-    y: (y - viewport.panY) * viewport.zoom,
-  };
+/** Pure version — takes viewport as parameter (for testing) */
+export function imageToScreenPure(x, y, vp) {
+  return { x: (x - vp.panX) * vp.zoom, y: (y - vp.panY) * vp.zoom };
 }
 
-/** Screen-space → image-space (for mouse events) */
-export function screenToImage(x, y) {
-  return {
-    x: x / viewport.zoom + viewport.panX,
-    y: y / viewport.zoom + viewport.panY,
-  };
+export function screenToImagePure(x, y, vp) {
+  return { x: x / vp.zoom + vp.panX, y: y / vp.zoom + vp.panY };
 }
+
+/** Image-space → screen-space (for rendering outside viewport transform) */
+export function imageToScreen(x, y) { return imageToScreenPure(x, y, viewport); }
+
+/** Screen-space → image-space (for mouse events) */
+export function screenToImage(x, y) { return screenToImagePure(x, y, viewport); }
 
 /** Reset viewport to fit the full image in the canvas */
 export function fitToWindow(canvasWidth, canvasHeight) {
