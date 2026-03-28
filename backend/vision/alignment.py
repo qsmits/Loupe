@@ -235,6 +235,7 @@ def align_dxf_edges(
         return {"success": False, "reason": "No geometry in DXF"}
 
     best_score = -1
+    best_raw_score = 0
     best_angle = 0.0
     best_loc = (0, 0)
     best_r_min_x = 0
@@ -274,13 +275,19 @@ def align_dxf_edges(
 
         _, max_val, _, max_loc = cv2.minMaxLoc(result)
 
-        if max_val > best_score:
-            best_score = max_val
+        # Penalize rotation slightly — textured surfaces (3D prints) can bias
+        # the score toward non-zero angles due to directional layer patterns.
+        # A 1° rotation costs ~5% of the score.
+        adjusted_score = max_val * (1.0 - 0.05 * abs(angle_deg))
+
+        if adjusted_score > best_score:
+            best_score = adjusted_score
             best_angle = angle_deg
             best_loc = max_loc
             best_r_min_x = r_min_x
             best_r_min_y = r_min_y
             best_tmpl_shape = (th, tw)
+            best_raw_score = max_val
 
     if best_score < 0:
         return {"success": False, "reason": "DXF template too large for image at this scale. Try lower calibration or smaller DXF."}
@@ -307,13 +314,15 @@ def align_dxf_edges(
             mask[vys:vye, vxs:vxe] = 1
             result = result * mask
         _, max_val, _, max_loc = cv2.minMaxLoc(result)
-        if max_val > best_score:
-            best_score = max_val
+        adjusted = max_val * (1.0 - 0.05 * abs(angle_deg))
+        if adjusted > best_score:
+            best_score = adjusted
             best_angle = angle_deg
             best_loc = max_loc
             best_r_min_x = r_min_x
             best_r_min_y = r_min_y
             best_tmpl_shape = (th, tw)
+            best_raw_score = max_val
 
     # Convert template match to DXF overlay (offsetX, offsetY).
     #
@@ -406,7 +415,7 @@ def align_dxf_edges(
         "dxf_cy": float(dxf_cy),
         "angle_deg": float(best_angle),
         "scale": float(scale),
-        "score": float(best_score),
+        "score": float(best_raw_score),
     }
 
 
