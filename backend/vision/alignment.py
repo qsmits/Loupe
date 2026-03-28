@@ -350,6 +350,12 @@ def align_dxf_edges(
 
     return {
         "success": True,
+        "frame_w": w,
+        "frame_h": h,
+        "match_x": int(match_x),
+        "match_y": int(match_y),
+        "tmpl_w": int(tw),
+        "tmpl_h": int(th),
         "img_cx": float(img_cx),
         "img_cy": float(img_cy),
         "dxf_cx": float(dxf_cx),
