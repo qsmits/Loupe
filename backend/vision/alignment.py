@@ -346,7 +346,7 @@ def align_dxf_edges(
         "success": True,
         "tx": float(tx),
         "ty": float(ty),
-        "angle_deg": float(best_angle),
+        "angle_deg": float(-best_angle),  # negate: template rotates +, frontend rotates -
         "scale": float(scale),
         "score": float(best_score),
     }
