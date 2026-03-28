@@ -268,17 +268,79 @@ def align_dxf_edges(
     if best_score < 0.01:
         return {"success": False, "reason": "No good match found"}
 
-    # Convert template position to DXF overlay transform (offsetX, offsetY)
-    # DXF (0,0) in the rotated template is at pixel:
+    # Convert template match to DXF overlay (offsetX, offsetY).
+    #
+    # The template renders DXF with Y flipped (Y-up → Y-down). The DXF overlay
+    # frontend also flips Y via ctx.scale(s, -s). So the template Y-flip is
+    # already accounted for by the frontend — we must NOT double-flip.
+    #
+    # Template pixel for DXF point (x, y) at angle a:
+    #   tmpl_x = (x*cos-y*sin - r_min_x) * scale + padding
+    #   tmpl_y = th - ((x*sin+y*cos - r_min_y) * scale + padding)  [Y-flip in template]
+    #
+    # Frontend dxfToCanvas for DXF point (x, y):
+    #   cx = (x*cos-y*sin) * scale
+    #   cy = -(x*sin+y*cos) * scale  [Y-flip in frontend]
+    #   result = (offsetX + cx, offsetY + cy)
+    #
+    # For the template match position to be correct, we need:
+    #   offsetX + cx = match_x + tmpl_x  =>  offsetX = match_x + r_min_x*scale + padding
+    #   offsetY + cy = match_y + tmpl_y
+    #
+    # Expanding for DXF (0,0):
+    #   offsetX = match_x + (-r_min_x * scale + padding)  [tmpl_x for (0,0)]
+    #   offsetY + 0 = match_y + (th - ((-r_min_y) * scale + padding))  [tmpl_y for (0,0)]
+    #
+    # But the frontend cy for (0,0) is 0, so offsetY = match_y + tmpl_y.
+    # However, the frontend Y-flip means: for DXF point (0, r_min_y),
+    #   cy_frontend = -r_min_y * scale
+    #   Should equal: match_y + padding  (top of template, since r_min_y is bottom in DXF)
+    # So: offsetY - r_min_y*scale = match_y + padding
+    #     offsetY = match_y + padding + r_min_y*scale
+    #
     cos_a = math.cos(math.radians(best_angle))
     sin_a = math.sin(math.radians(best_angle))
-    th, tw = best_tmpl_shape
-    origin_tmpl_x = (0 - best_r_min_x) * scale + padding
-    origin_tmpl_y = th - ((0 - best_r_min_y) * scale + padding)
 
-    # Subtract the edge image padding to get coordinates in original image space
-    tx = best_loc[0] + origin_tmpl_x - pad_x
-    ty = best_loc[1] + origin_tmpl_y - pad_y
+    # Template top-left in original image coords
+    match_x = best_loc[0] - pad_x
+    match_y = best_loc[1] - pad_y
+
+    th, tw = best_tmpl_shape
+
+    # The template renders DXF Y-up → image Y-down. For each DXF point (x, y)
+    # rotated by best_angle:
+    #   tmpl_col = (x_rot - r_min_x) * scale + padding
+    #   tmpl_row = th - ((y_rot - r_min_y) * scale + padding)
+    #
+    # The frontend dxfToCanvas (no flip, no origin rotation) for (x, y):
+    #   canvas_x = offsetX + (x*cos-y*sin) * scale
+    #   canvas_y = offsetY - (x*sin+y*cos) * scale
+    #
+    # For these to match, we need for any point (x, y):
+    #   offsetX + x_rot * scale = match_x + (x_rot - r_min_x) * scale + padding
+    #   offsetX = match_x - r_min_x * scale + padding
+    #
+    #   offsetY - y_rot * scale = match_y + th - (y_rot - r_min_y) * scale - padding
+    #   offsetY = match_y + th - padding + r_min_y * scale
+
+    tx = match_x + (-best_r_min_x) * scale + padding
+    # The frontend Y-flip means higher DXF-Y = lower canvas-Y.
+    # Template row 0 = highest canvas Y = DXF r_max_y.
+    # match_y + 0 = image Y of DXF r_max_y.
+    # Frontend: offsetY - r_max_y * scale = match_y
+    # So: offsetY = match_y + r_max_y * scale
+    # But we need r_max_y from the rotated bounds:
+    pys_rot = []
+    for e in entities:
+        if "x1" in e:
+            for px, py in [(e["x1"], e["y1"]), (e["x2"], e["y2"])]:
+                pys_rot.append(px * sin_a + py * cos_a)
+        elif "cx" in e:
+            r = e.get("radius", 0)
+            pys_rot.append(e["cx"] * sin_a + e["cy"] * cos_a + r)
+            pys_rot.append(e["cx"] * sin_a + e["cy"] * cos_a - r)
+    r_max_y_rot = max(pys_rot) if pys_rot else 0
+    ty = match_y + padding + r_max_y_rot * scale
 
     return {
         "success": True,
