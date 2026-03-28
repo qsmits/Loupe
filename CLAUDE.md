@@ -68,13 +68,15 @@ Priority order at startup:
 - **14 measurement tools**: Select, Distance, Angle, Circle, Fit Arc, Arc Measure, Center Dist, Para Dist, Perp Dist, Area, Pt-Circle Dist, Line Intersect, Slot Distance, Pan.
 - **Multi-select**: Set-based selection, Shift+click, rectangle drag-select, bulk delete/elevate.
 - **Detection elevation**: Promote auto-detected features to editable measurements. Merge multiple line segments into one.
-- **Right-click context menu**: Elevate, delete, rename, merge lines, convert arc→circle, Punch/Die toggle, clear operations.
+- **Right-click context menu**: Elevate, delete, rename, merge lines, group, convert arc→circle, Punch/Die toggle, clear operations.
+- **Measurement grouping**: Named groups with uniform color, collapsible sidebar sections.
 - **Zoom & pan**: Scroll-wheel zoom (frozen mode only), Pan tool (H key), middle-mouse pan, zoom badge with preset dropdown, minimap, measurement grid.
 - **DXF auto-alignment**: Edge-based template matching (no circles required), with angle refinement and rotation bias penalty. Also supports circle-based RANSAC alignment.
 - **DXF-guided inspection**: Corridor-based per-feature edge detection, manual point-pick with compound features, RANSAC inlier filtering, shadow-aware edge selection, Punch/Die tolerance tagging.
 - **Draggable labels**: Deviation labels can be repositioned with leader lines. Hover tooltips with full feature detail.
 - **Grouped inspection results**: Sidebar groups results by compound feature with collapsible headers, worst-case badges, Punch/Die indicators, numbered cross-references to canvas and PDF.
 - **Session persistence**: Auto-save to localStorage (30s), restore prompt, beforeunload warning. Manual save/load as JSON (v2 format).
+- **Sidebar**: Detections separated from measurements with elevate ↑ button, grouped inspection results with Punch/Die badges, resizable.
 - **Export**: Annotated PNG, measurement CSV, inspection CSV, inspection PDF (jsPDF), **DXF export** (reverse engineering — measurements to DXF in mm).
 
 ### Testing

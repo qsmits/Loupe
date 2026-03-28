@@ -400,12 +400,16 @@ of nominal the actual edge falls on relative to the DXF feature direction.
 ✅ Done:   DXF export (reverse eng.)    — 2026-03-28  — measurements → DXF file in mm
 ✅ Done:   Grouped inspection sidebar   — 2026-03-28  — collapsible groups, Punch/Die badges, numbered features, resizable sidebar
 ✅ Done:   Improved PDF report          — 2026-03-28  — grouped table, annotated image, numbered cross-references
+✅ Done:   Measurement grouping         — 2026-03-28  — select + right-click → Group, uniform color, collapsible headers
+✅ Done:   Draggable labels (all)       — 2026-03-28  — extended to all measurement types, not just guided results
+✅ Done:   Sidebar cleanup              — 2026-03-28  — detections separated, elevate ↑ button, group boundaries
+✅ Done:   Aspect ratio fix             — 2026-03-28  — canvas preserves image aspect in all window sizes
 
-Then:      Phase 5 (reporting)          — 1-2 weeks   — unified measurement export, part history
+Next:      Phase 5 (reporting)          — 1-2 weeks   — unified measurement export, part history
 Then:      Phase 3 (detection tuning)   — 1-2 weeks   — accurate (once microscope arrives)
 Then:      Phase 7 (batch inspection)   — 2-3 weeks   — production use case
 Ongoing:   Phase 6 (tech foundation)    — sprinkle in as you go
-Later:     Phase 4 (measurement UX)     — 1-2 weeks   — groups, templates, snap-to-detected, comparison
+Later:     Phase 4 (remaining)          — 1 week      — templates, snap-to-detected, comparison
 Future:    Phase 8 (gears)              — 3-4 weeks   — when gear machine is running
 Future:    Phase 9 (Nikon XY stage)     — TBD         — hybrid encoder + camera measurement
 ```
@@ -440,6 +444,13 @@ Future:    Phase 9 (Nikon XY stage)     — TBD         — hybrid encoder + cam
 - Resizable sidebar
 - Improved PDF report (grouped, numbered, annotated image)
 - DXF export for reverse engineering (measurements → DXF in mm)
+- Connected entity auto-discovery (V-shapes, outlines)
+- Measurement grouping with uniform sky blue color
+- Draggable labels extended to all measurement types
+- Detections separated in sidebar with elevate ↑ button
+- Group boundaries in sidebar
+- Image aspect ratio fix
+- NullCamera graceful shutdown fix (uvicorn timeout + signal handler)
 - Connected entity auto-discovery (V-shapes, outlines)
 - NullCamera shutdown fix (MJPEG generator stops on shutdown)
 - Various alignment coordinate fixes

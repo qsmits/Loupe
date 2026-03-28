@@ -21,8 +21,10 @@ Precision measurement and inspection tool for video microscopes. Streams live vi
 - **Multi-select**: Shift+click, rectangle drag-select
 - **Elevation**: Promote auto-detected features to editable measurements
 - **Merge lines**: Combine multiple line segments into one measurement
-- **Draggable labels**: Click and drag deviation labels to reposition, with leader lines
-- **Right-click context menu**: Elevate, delete, rename, merge, convert arc→circle, Punch/Die toggle, clear operations
+- **Measurement grouping**: Select multiple → right-click → "Group as..." with uniform color rendering
+- **Draggable labels**: Click and drag any measurement or deviation label to reposition, with leader lines
+- **Right-click context menu**: Elevate, delete, rename, merge, group, convert arc→circle, Punch/Die toggle, clear operations
+- **Sidebar**: Detections separated from measurements with elevate ↑ button, collapsible groups
 - **Clear menu**: Separate clearing of detections, measurements, DXF overlay, or all
 
 ### Zoom & Pan
