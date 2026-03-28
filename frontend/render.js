@@ -1,6 +1,8 @@
 import { state, _deviationHitBoxes, _labelHitBoxes } from './state.js';
 import { fitCircleAlgebraic, polygonArea } from './math.js';
 import { viewport, imageWidth, imageHeight, setImageSize } from './viewport.js';
+import { measurementLabel as _measurementLabel, getLineEndpoints, lineAngleDeg } from './format.js';
+export { getLineEndpoints, lineAngleDeg } from './format.js';
 
 /** Pixel width compensated for zoom — keeps screen size constant */
 function pw(px) { return px / viewport.zoom; }
@@ -61,211 +63,15 @@ export function resizeCanvas() {
 }
 
 export function measurementLabel(ann) {
-  const cal = state.calibration && state.calibration.pixelsPerMm > 0 ? state.calibration : null;
-  if (ann.type === "distance") {
-    const px = Math.hypot(ann.b.x - ann.a.x, ann.b.y - ann.a.y);
-    if (!cal) return `${px.toFixed(1)} px`;
-    const mm = px / cal.pixelsPerMm;
-    return cal.displayUnit === "µm"
-      ? `${(mm * 1000).toFixed(2)} µm`
-      : `${mm.toFixed(3)} mm`;
-  }
-  if (ann.type === "center-dist") {
-    const px = Math.hypot(ann.b.x - ann.a.x, ann.b.y - ann.a.y);
-    if (!cal) return `${px.toFixed(1)} px`;
-    const mm = px / cal.pixelsPerMm;
-    return cal.displayUnit === "µm"
-      ? `${(mm * 1000).toFixed(2)} µm`
-      : `${mm.toFixed(3)} mm`;
-  }
-  if (ann.type === "angle") {
-    const v1 = { x: ann.p1.x - ann.vertex.x, y: ann.p1.y - ann.vertex.y };
-    const v2 = { x: ann.p3.x - ann.vertex.x, y: ann.p3.y - ann.vertex.y };
-    const dot = v1.x*v2.x + v1.y*v2.y;
-    const mag = Math.hypot(v1.x,v1.y) * Math.hypot(v2.x,v2.y);
-    const deg = mag < 1e-10 ? 0 : Math.acos(Math.max(-1,Math.min(1,dot/mag))) * 180/Math.PI;
-    return `${deg.toFixed(2)}°`;
-  }
-  if (ann.type === "circle") {
-    if (!cal) return `⌀ ${(ann.r * 2).toFixed(1)} px`;
-    const mm = (ann.r * 2) / cal.pixelsPerMm;
-    return cal.displayUnit === "µm"
-      ? `⌀ ${(mm * 1000).toFixed(2)} µm`
-      : `⌀ ${mm.toFixed(3)} mm`;
-  }
-  if (ann.type === "detected-circle") {
-    const sx = imageWidth / ann.frameWidth;
-    const r = ann.radius * sx;
-    if (!cal) return `⌀ ${(r * 2).toFixed(1)} px`;
-    const mm = (r * 2) / cal.pixelsPerMm;
-    return cal.displayUnit === "µm"
-      ? `⌀ ${(mm * 1000).toFixed(2)} µm`
-      : `⌀ ${mm.toFixed(3)} mm`;
-  }
-  if (ann.type === "detected-line") {
-    const sx = imageWidth / ann.frameWidth;
-    const lenPx = ann.length * sx;
-    if (!cal) return `${lenPx.toFixed(1)} px`;
-    const mm = lenPx / cal.pixelsPerMm;
-    return cal.displayUnit === "µm"
-      ? `${(mm * 1000).toFixed(2)} µm`
-      : `${mm.toFixed(3)} mm`;
-  }
-  if (ann.type === "detected-line-merged") {
-    const sx = ann.frameWidth ? imageWidth / ann.frameWidth : 1;
-    const lenPx = Math.hypot((ann.x2 - ann.x1) * sx, (ann.y2 - ann.y1) * sx);
-    if (!cal) return `${lenPx.toFixed(1)} px`;
-    const mm = lenPx / cal.pixelsPerMm;
-    return cal.displayUnit === "µm"
-      ? `${(mm * 1000).toFixed(2)} µm`
-      : `${mm.toFixed(3)} mm`;
-  }
-  if (ann.type === "detected-arc-partial") {
-    const sx = ann.frameWidth ? imageWidth / ann.frameWidth : 1;
-    const rPx = ann.r * sx;
-    const spanDeg = ann.end_deg >= ann.start_deg
-      ? ann.end_deg - ann.start_deg
-      : 360 - (ann.start_deg - ann.end_deg);
-    if (!cal) return `r ${rPx.toFixed(1)} px  ${spanDeg.toFixed(0)}°`;
-    const mm = rPx / cal.pixelsPerMm;
-    return cal.displayUnit === "µm"
-      ? `r ${(mm * 1000).toFixed(2)} µm  ${spanDeg.toFixed(0)}°`
-      : `r ${mm.toFixed(3)} mm  ${spanDeg.toFixed(0)}°`;
-  }
-  if (ann.type === "arc-measure") {
-    const rPx = ann.r;
-    const spanDeg = ann.span_deg ?? 0;
-    if (!cal) return `r ${rPx.toFixed(1)} px  ${spanDeg.toFixed(0)}°`;
-    const mm = rPx / cal.pixelsPerMm;
-    return cal.displayUnit === "µm"
-      ? `r ${(mm * 1000).toFixed(2)} µm  ${spanDeg.toFixed(0)}°`
-      : `r ${mm.toFixed(3)} mm  ${spanDeg.toFixed(0)}°`;
-  }
-  if (ann.type === "calibration") {
-    const prefix = ann.x1 !== undefined ? "⟷" : "⌀";
-    return `${prefix} ${ann.knownValue} ${ann.unit}`;
-  }
-  if (ann.type === "perp-dist") {
-    const px = Math.hypot(ann.b.x - ann.a.x, ann.b.y - ann.a.y);
-    if (!cal) return `⊥ ${px.toFixed(1)} px`;
-    const mm = px / cal.pixelsPerMm;
-    return cal.displayUnit === "µm" ? `⊥ ${(mm * 1000).toFixed(2)} µm`
-                                    : `⊥ ${mm.toFixed(3)} mm`;
-  }
-  if (ann.type === "para-dist") {
-    const px = Math.hypot(ann.b.x - ann.a.x, ann.b.y - ann.a.y);
-    if (!cal) return `∥ ${px.toFixed(1)} px`;
-    const mm = px / cal.pixelsPerMm;
-    return cal.displayUnit === "µm" ? `∥ ${(mm * 1000).toFixed(2)} µm`
-                                    : `∥ ${mm.toFixed(3)} mm`;
-  }
-  if (ann.type === "parallelism") {
-    return `∥ ${ann.angleDeg.toFixed(2)}°`;
-  }
-  if (ann.type === "area") {
-    const px2 = polygonArea(ann.points);
-    if (!cal) return `□ ${px2.toFixed(1)} px²`;
-    const mm2 = px2 / (cal.pixelsPerMm * cal.pixelsPerMm);
-    return cal.displayUnit === "µm"
-      ? `□ ${(mm2 * 1e6).toFixed(2)} µm²`
-      : `□ ${mm2.toFixed(4)} mm²`;
-  }
-  if (ann.type === "origin") return "";
-  if (ann.type === "pt-circle-dist") {
-    const circle = state.annotations.find(a => a.id === ann.circleId);
-    if (!circle) return "⊙ ref deleted";
-    let cx, cy, r;
-    if (circle.type === "circle") {
-      cx = circle.cx; cy = circle.cy; r = circle.r;
-    } else {
-      const sx = canvas.width / circle.frameWidth;
-      const sy = canvas.height / circle.frameHeight;
-      cx = circle.x * sx; cy = circle.y * sy; r = circle.radius * sx;
-    }
-    const dist = Math.hypot(ann.px - cx, ann.py - cy);
-    const gapPx = dist - r;
-    const cal = state.calibration;
-    if (!cal) return `⊙ ${gapPx.toFixed(1)} px`;
-    const mm = gapPx / cal.pixelsPerMm;
-    return cal.displayUnit === "µm"
-      ? `⊙ ${(mm * 1000).toFixed(2)} µm`
-      : `⊙ ${mm.toFixed(3)} mm`;
-  }
-  if (ann.type === "intersect") {
-    const annA = state.annotations.find(a => a.id === ann.lineAId);
-    const annB = state.annotations.find(a => a.id === ann.lineBId);
-    if (!annA || !annB) return "⊕ ref deleted";
-    const epA = getLineEndpoints(annA);
-    const epB = getLineEndpoints(annB);
-    const dA = lineAngleDeg(annA), dB = lineAngleDeg(annB);
-    let diff = Math.abs(dA - dB) % 180;
-    if (diff > 90) diff = 180 - diff;
-    if (diff < 1) return "∥ no intersection";
-    const dx_a = epA.b.x - epA.a.x, dy_a = epA.b.y - epA.a.y;
-    const dx_b = epB.b.x - epB.a.x, dy_b = epB.b.y - epB.a.y;
-    const denom = dx_a * dy_b - dy_a * dx_b;
-    if (Math.abs(denom) < 1e-10) return "∥ no intersection";
-    const t = ((epB.a.x - epA.a.x) * dy_b - (epB.a.y - epA.a.y) * dx_b) / denom;
-    const ix = epA.a.x + t * dx_a;
-    const iy = epA.a.y + t * dy_a;
-    const margin = Math.max(canvas.width, canvas.height);
-    const offScreen = ix < -margin || ix > canvas.width + margin ||
-                      iy < -margin || iy > canvas.height + margin;
-    const cal = state.calibration;
-    const org = state.origin;
-    if (org) {
-      const cosA = Math.cos(-(org.angle ?? 0)), sinA = Math.sin(-(org.angle ?? 0));
-      const rx = ix - org.x, ry = iy - org.y;
-      const ux = rx * cosA - ry * sinA;
-      const uy = rx * sinA + ry * cosA;
-      if (cal) {
-        const xVal = ux / cal.pixelsPerMm;
-        const yVal = uy / cal.pixelsPerMm;
-        const unit = cal.displayUnit === "µm" ? "µm" : "mm";
-        const scale = cal.displayUnit === "µm" ? 1000 : 1;
-        const xStr = (xVal * scale).toFixed(cal.displayUnit === "µm" ? 2 : 3);
-        const yStr = (yVal * scale).toFixed(cal.displayUnit === "µm" ? 2 : 3);
-        return offScreen
-          ? `⊕ off-screen  X: ${xStr} ${unit}  Y: ${yStr} ${unit}`
-          : `⊕ X: ${xStr} ${unit}  Y: ${yStr} ${unit}`;
-      }
-      return offScreen
-        ? `⊕ off-screen  X: ${ux.toFixed(1)} px  Y: ${uy.toFixed(1)} px`
-        : `⊕ X: ${ux.toFixed(1)} px  Y: ${uy.toFixed(1)} px`;
-    }
-    return offScreen
-      ? `⊕ off-screen  (${ix.toFixed(1)}, ${iy.toFixed(1)}) px`
-      : `⊕ (${ix.toFixed(1)}, ${iy.toFixed(1)}) px`;
-  }
-  if (ann.type === "slot-dist") {
-    const annA = state.annotations.find(a => a.id === ann.lineAId);
-    const annB = state.annotations.find(a => a.id === ann.lineBId);
-    if (!annA || !annB) return "⟺ ref deleted";
-    const epA = getLineEndpoints(annA);
-    const epB = getLineEndpoints(annB);
-    const midA = {
-      x: (epA.a.x + epA.b.x) / 2,
-      y: (epA.a.y + epA.b.y) / 2,
-    };
-    const dx_b = epB.b.x - epB.a.x, dy_b = epB.b.y - epB.a.y;
-    const lenSqB = dx_b * dx_b + dy_b * dy_b;
-    if (lenSqB < 1e-10) return "⟺ 0 px";
-    const t = ((midA.x - epB.a.x) * dx_b + (midA.y - epB.a.y) * dy_b) / lenSqB;
-    const projA = { x: epB.a.x + t * dx_b, y: epB.a.y + t * dy_b };
-    const gapPx = Math.hypot(midA.x - projA.x, midA.y - projA.y);
-    const dA = lineAngleDeg(annA), dB = lineAngleDeg(annB);
-    let angleDiff = Math.abs(dA - dB) % 180;
-    if (angleDiff > 90) angleDiff = 180 - angleDiff;
-    const angSuffix = angleDiff > 2 ? ` (±${angleDiff.toFixed(1)}°)` : "";
-    const cal = state.calibration;
-    if (!cal) return `⟺ ${gapPx.toFixed(1)} px${angSuffix}`;
-    const mm = gapPx / cal.pixelsPerMm;
-    const valStr = cal.displayUnit === "µm"
-      ? `${(mm * 1000).toFixed(2)} µm`
-      : `${mm.toFixed(3)} mm`;
-    return `⟺ ${valStr}${angSuffix}`;
-  }
-  return "";
+  return _measurementLabel(ann, {
+    calibration: state.calibration,
+    annotations: state.annotations,
+    origin: state.origin,
+    imageWidth,
+    imageHeight,
+    canvasWidth: canvas.width,
+    canvasHeight: canvas.height,
+  });
 }
 
 function drawGrid() {
@@ -1197,10 +1003,11 @@ export function drawIntersect(ann, sel) {
   const annB = state.annotations.find(a => a.id === ann.lineBId);
   if (!annA || !annB) return;
 
-  const epA = getLineEndpoints(annA);
-  const epB = getLineEndpoints(annB);
+  const _fctx = { canvasWidth: canvas.width, canvasHeight: canvas.height, imageHeight };
+  const epA = getLineEndpoints(annA, _fctx);
+  const epB = getLineEndpoints(annB, _fctx);
 
-  const dA = lineAngleDeg(annA), dB = lineAngleDeg(annB);
+  const dA = lineAngleDeg(annA, _fctx), dB = lineAngleDeg(annB, _fctx);
   let diff = Math.abs(dA - dB) % 180;
   if (diff > 90) diff = 180 - diff;
   if (diff < 1) return;
@@ -1234,8 +1041,9 @@ export function drawSlotDist(ann, sel) {
   const annB = state.annotations.find(a => a.id === ann.lineBId);
   if (!annA || !annB) return;
 
-  const epA = getLineEndpoints(annA);
-  const epB = getLineEndpoints(annB);
+  const _fctx = { canvasWidth: canvas.width, canvasHeight: canvas.height, imageHeight };
+  const epA = getLineEndpoints(annA, _fctx);
+  const epB = getLineEndpoints(annB, _fctx);
 
   const midA = {
     x: (epA.a.x + epA.b.x) / 2,
@@ -1359,30 +1167,6 @@ export function drawCrosshair() {
   ctx.beginPath(); ctx.moveTo(cx, 0); ctx.lineTo(cx, canvas.height); ctx.stroke();
   ctx.beginPath(); ctx.moveTo(0, cy); ctx.lineTo(canvas.width, cy); ctx.stroke();
   ctx.setLineDash([]);
-}
-
-export function getLineEndpoints(ann) {
-  if (ann.type === "distance" || ann.type === "perp-dist" ||
-      ann.type === "para-dist" || ann.type === "parallelism") {
-    return { a: ann.a, b: ann.b };
-  }
-  if (ann.type === "calibration" && ann.x1 !== undefined) {
-    return { a: { x: ann.x1, y: ann.y1 }, b: { x: ann.x2, y: ann.y2 } };
-  }
-  if (ann.type === "detected-line") {
-    const sx = canvas.width  / ann.frameWidth;
-    const sy = imageHeight / ann.frameHeight;
-    return { a: { x: ann.x1 * sx, y: ann.y1 * sy },
-             b: { x: ann.x2 * sx, y: ann.y2 * sy } };
-  }
-  return null;
-}
-
-// Returns the angle of a line annotation in degrees (-180..180).
-// Uses atan2(dy, dx) on the ep.a→ep.b vector.
-export function lineAngleDeg(ann) {
-  const ep = getLineEndpoints(ann);
-  return Math.atan2(ep.b.y - ep.a.y, ep.b.x - ep.a.x) * 180 / Math.PI;
 }
 
 export function deviationColor(delta_mm, handle = null) {

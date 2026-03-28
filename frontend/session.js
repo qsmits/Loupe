@@ -1,86 +1,19 @@
 import { state, TRANSIENT_TYPES } from './state.js';
-import { redraw, canvas, img, showStatus, measurementLabel } from './render.js';
+import { redraw, canvas, img, showStatus } from './render.js';
 import { renderSidebar, renderInspectionTable } from './sidebar.js';
 import { addAnnotation } from './annotations.js';
 import { polygonArea } from './math.js';
 import { imageWidth, imageHeight } from './viewport.js';
+import { measurementLabel, formatCsvValue } from './format.js';
 
-// ── CSV value helper ────────────────────────────────────────────────────────
-function formatCsvValue(ann) {
-  const cal = state.calibration;
-
-  function distResult(px) {
-    if (!cal) return { value: px.toFixed(1), unit: "px" };
-    const mm = px / cal.pixelsPerMm;
-    if (cal.displayUnit === "µm") return { value: (mm * 1000).toFixed(1), unit: "µm" };
-    return { value: mm.toFixed(3), unit: "mm" };
-  }
-
-  function areaResult(px2) {
-    if (!cal) return { value: px2.toFixed(1), unit: "px²" };
-    const mm2 = px2 / (cal.pixelsPerMm * cal.pixelsPerMm);
-    if (cal.displayUnit === "µm") return { value: (mm2 * 1e6).toFixed(1), unit: "µm²" };
-    return { value: mm2.toFixed(4), unit: "mm²" };
-  }
-
-  if (ann.type === "distance" || ann.type === "perp-dist" || ann.type === "para-dist") {
-    return distResult(Math.hypot(ann.b.x - ann.a.x, ann.b.y - ann.a.y));
-  }
-  if (ann.type === "center-dist") {
-    return distResult(Math.hypot(ann.b.x - ann.a.x, ann.b.y - ann.a.y));
-  }
-  if (ann.type === "angle") {
-    const v1 = { x: ann.p1.x - ann.vertex.x, y: ann.p1.y - ann.vertex.y };
-    const v2 = { x: ann.p3.x - ann.vertex.x, y: ann.p3.y - ann.vertex.y };
-    const dot = v1.x * v2.x + v1.y * v2.y;
-    const mag = Math.hypot(v1.x, v1.y) * Math.hypot(v2.x, v2.y);
-    const deg = mag < 1e-10 ? 0 : Math.acos(Math.max(-1, Math.min(1, dot / mag))) * 180 / Math.PI;
-    return { value: deg.toFixed(2), unit: "°" };
-  }
-  if (ann.type === "circle") {
-    return distResult(ann.r * 2);
-  }
-  if (ann.type === "arc-fit") {
-    return distResult(ann.r * 2);
-  }
-  if (ann.type === "arc-measure") {
-    const ppm = cal ? cal.pixelsPerMm : 1;
-    const r_mm = ann.r / ppm;
-    const chord_mm = ann.chord_px / ppm;
-    const cx_mm = ann.cx / ppm;
-    const cy_mm = ann.cy / ppm;
-    const rStr = cal
-      ? (cal.displayUnit === "µm" ? `${(r_mm * 1000).toFixed(2)} µm` : `${r_mm.toFixed(3)} mm`)
-      : `${ann.r.toFixed(1)} px`;
-    const chordStr = cal
-      ? (cal.displayUnit === "µm" ? `${(chord_mm * 1000).toFixed(2)} µm` : `${chord_mm.toFixed(3)} mm`)
-      : `${ann.chord_px.toFixed(1)} px`;
-    const centerStr = cal
-      ? `(${cx_mm.toFixed(3)}, ${cy_mm.toFixed(3)}) mm`
-      : `(${ann.cx.toFixed(1)}, ${ann.cy.toFixed(1)}) px`;
-    return `center=${centerStr}  r=${rStr}  span ${ann.span_deg.toFixed(1)}°  chord=${chordStr}`;
-  }
-  if (ann.type === "detected-circle") {
-    const sx = imageWidth / ann.frameWidth;
-    return distResult((ann.radius * sx) * 2);
-  }
-  if (ann.type === "area") {
-    return areaResult(polygonArea(ann.points));
-  }
-  if (ann.type === "parallelism") {
-    return { value: ann.angleDeg.toFixed(2), unit: "°" };
-  }
-  if (ann.type === "calibration") {
-    let px;
-    if (ann.x1 !== undefined) {
-      px = Math.hypot(ann.x2 - ann.x1, ann.y2 - ann.y1);
-    } else {
-      px = ann.r * 2;
-    }
-    return distResult(px);
-  }
-  return { value: "", unit: "" };
-}
+const _mctx = () => ({
+  calibration: state.calibration,
+  annotations: state.annotations,
+  origin: state.origin,
+  imageWidth, imageHeight,
+  canvasWidth: canvas.width,
+  canvasHeight: canvas.height,
+});
 
 // ── Annotated export ───────────────────────────────────────────────────────
 export function exportAnnotatedImage() {
@@ -112,9 +45,9 @@ export function exportCsv() {
   const rows = [["#", "Name", "Value", "Unit", "type", "label"]];
   let i = 1;
   state.annotations.forEach(ann => {
-    const label = measurementLabel(ann);
+    const label = measurementLabel(ann, _mctx());
     if (!label) return;  // skip origin / overlays
-    const { value, unit } = formatCsvValue(ann);
+    const { value, unit } = formatCsvValue(ann, state.calibration, imageWidth);
     rows.push([i++, ann.name || "", value, unit, ann.type, label]);
   });
   const csv = rows

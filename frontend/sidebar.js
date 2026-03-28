@@ -1,5 +1,16 @@
 import { state, DETECTION_TYPES } from './state.js';
-import { redraw, showStatus, getStatus, measurementLabel, listEl, cameraInfoEl } from './render.js';
+import { redraw, showStatus, getStatus, canvas, listEl, cameraInfoEl } from './render.js';
+import { measurementLabel } from './format.js';
+import { imageWidth, imageHeight } from './viewport.js';
+
+const _mctx = () => ({
+  calibration: state.calibration,
+  annotations: state.annotations,
+  origin: state.origin,
+  imageWidth, imageHeight,
+  canvasWidth: canvas.width,
+  canvasHeight: canvas.height,
+});
 
 // ── Sidebar rendering ──────────────────────────────────────────────────────────
 function _createMeasurementRow(ann, number) {
@@ -9,7 +20,7 @@ function _createMeasurementRow(ann, number) {
   row.innerHTML = `
     <span class="measurement-number">${number}</span>
     <input class="measurement-name" type="text" placeholder="Label…">
-    <span class="measurement-value">${measurementLabel(ann)}</span>
+    <span class="measurement-value">${measurementLabel(ann, _mctx())}</span>
     <button class="del-btn" data-id="${ann.id}">✕</button>`;
   row.querySelector(".measurement-name").value = ann.name || "";
   row.querySelector(".measurement-name").addEventListener("input", e => { ann.name = e.target.value; });
@@ -21,7 +32,7 @@ function _createMeasurementRow(ann, number) {
     renderSidebar();
     redraw();
     if (wasSelected) {
-      const label = measurementLabel(ann);
+      const label = measurementLabel(ann, _mctx());
       if (!label) return;
       const text = ann.name ? `${ann.name}: ${label}` : label;
       navigator.clipboard.writeText(text).then(() => {
@@ -167,7 +178,7 @@ export function renderSidebar() {
       row.dataset.id = ann.id;
       if (state.selected.has(ann.id)) row.classList.add("selected");
       const typeName = ann.type.replace("detected-", "").replace("-merged", "").replace("-partial", "");
-      const label = measurementLabel(ann) || typeName;
+      const label = measurementLabel(ann, _mctx()) || typeName;
       row.innerHTML = `
         <span class="measurement-number" style="color:var(--muted)">⚬</span>
         <span class="measurement-value" style="color:var(--muted);flex:1">${label}</span>
