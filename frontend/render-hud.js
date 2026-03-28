@@ -1,0 +1,127 @@
+/**
+ * render-hud.js — HUD elements: minimap, grid, crosshair, pending points.
+ * Extracted from render.js (Task 7).
+ */
+import { state } from './state.js';
+import { viewport, imageWidth, imageHeight } from './viewport.js';
+import { ctx, canvas, pw, drawHandle } from './render.js';
+
+export function drawGrid() {
+  if (!state.showGrid) return;
+  const cal = state.calibration;
+
+  let spacingPx;
+  if (cal && cal.pixelsPerMm > 0) {
+    const targetScreenPx = 40;
+    const mmPerScreenPx = 1 / (cal.pixelsPerMm * viewport.zoom);
+    const targetMm = targetScreenPx * mmPerScreenPx;
+    const niceIntervals = [0.01, 0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 25, 50];
+    let spacing_mm = niceIntervals[0];
+    for (const n of niceIntervals) {
+      if (n >= targetMm) { spacing_mm = n; break; }
+    }
+    spacingPx = spacing_mm * cal.pixelsPerMm;
+  } else {
+    spacingPx = 50;
+  }
+
+  ctx.save();
+  ctx.strokeStyle = "rgba(255, 255, 255, 0.08)";
+  ctx.lineWidth = pw(0.5);
+  ctx.setLineDash([]);
+
+  const x0 = viewport.panX;
+  const y0 = viewport.panY;
+  const x1 = x0 + (canvas.clientWidth / viewport.zoom);
+  const y1 = y0 + (canvas.clientHeight / viewport.zoom);
+
+  const startX = Math.floor(x0 / spacingPx) * spacingPx;
+  const startY = Math.floor(y0 / spacingPx) * spacingPx;
+
+  for (let x = startX; x <= x1; x += spacingPx) {
+    ctx.beginPath();
+    ctx.moveTo(x, y0);
+    ctx.lineTo(x, y1);
+    ctx.stroke();
+  }
+  for (let y = startY; y <= y1; y += spacingPx) {
+    ctx.beginPath();
+    ctx.moveTo(x0, y);
+    ctx.lineTo(x1, y);
+    ctx.stroke();
+  }
+
+  ctx.restore();
+}
+
+export function drawMinimap() {
+  if (!state.frozenBackground || imageWidth === 0) return;
+  const fitZoom = Math.min(canvas.clientWidth / imageWidth, canvas.clientHeight / imageHeight);
+  if (viewport.zoom <= fitZoom * 1.05) return;
+
+  const padding = 8;
+  const maxW = 180;
+  const maxH = 120;
+
+  const aspect = imageWidth / imageHeight;
+  let mmW, mmH;
+  if (aspect > maxW / maxH) {
+    mmW = maxW;
+    mmH = maxW / aspect;
+  } else {
+    mmH = maxH;
+    mmW = maxH * aspect;
+  }
+
+  const mmX = padding;
+  const mmY = canvas.clientHeight - mmH - padding;
+
+  const dpr = canvas.width / canvas.clientWidth;
+  const x = mmX * dpr, y = mmY * dpr, w = mmW * dpr, h = mmH * dpr;
+
+  ctx.save();
+
+  ctx.fillStyle = "rgba(0, 0, 0, 0.6)";
+  ctx.fillRect(x - 1, y - 1, w + 2, h + 2);
+
+  ctx.drawImage(state.frozenBackground, x, y, w, h);
+
+  const visibleW = canvas.clientWidth / viewport.zoom;
+  const visibleH = canvas.clientHeight / viewport.zoom;
+
+  const rectX = x + (viewport.panX / imageWidth) * w;
+  const rectY = y + (viewport.panY / imageHeight) * h;
+  const rectW = (visibleW / imageWidth) * w;
+  const rectH = (visibleH / imageHeight) * h;
+
+  ctx.strokeStyle = "#60a5fa";
+  ctx.lineWidth = 1.5 * dpr;
+  ctx.setLineDash([]);
+  ctx.strokeRect(rectX, rectY, rectW, rectH);
+
+  ctx.fillStyle = "rgba(96, 165, 250, 0.1)";
+  ctx.fillRect(rectX, rectY, rectW, rectH);
+
+  ctx.restore();
+}
+
+export function drawPendingPoints() {
+  state.pendingPoints.forEach(pt => drawHandle(pt, "#fb923c"));
+}
+
+export function drawCrosshair() {
+  if (!state.crosshair) return;
+  const { crosshairOpacity } = state.settings;
+  const rawColor = state.settings.crosshairColor;
+  const safeColor = /^#[0-9a-fA-F]{6}$/.test(rawColor) ? rawColor : "#ffffff";
+  const r = parseInt(safeColor.slice(1, 3), 16);
+  const g = parseInt(safeColor.slice(3, 5), 16);
+  const b = parseInt(safeColor.slice(5, 7), 16);
+  const cx = canvas.width / 2, cy = canvas.height / 2;
+  ctx.strokeStyle = `rgba(${r},${g},${b},${crosshairOpacity})`;
+  ctx.lineWidth = 1;
+  ctx.setLineDash([4, 4]);
+  ctx.beginPath(); ctx.moveTo(cx, 0); ctx.lineTo(cx, canvas.height); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(0, cy); ctx.lineTo(canvas.width, cy); ctx.stroke();
+  ctx.setLineDash([]);
+}
