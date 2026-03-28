@@ -413,7 +413,7 @@ def align_dxf_edges(
         "img_cy": float(img_cy),
         "dxf_cx": float(dxf_cx),
         "dxf_cy": float(dxf_cy),
-        "angle_deg": float(best_angle),
+        "angle_deg": float(-best_angle),  # negate: template +angle = CCW in DXF Y-up, but frontend Y-flip makes it CW
         "scale": float(scale),
         "score": float(best_raw_score),
     }
