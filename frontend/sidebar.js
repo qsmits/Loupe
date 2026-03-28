@@ -40,10 +40,14 @@ export function renderSidebar() {
   const skip = new Set(["edges-overlay", "preprocessed-overlay", "dxf-overlay"]);
   const visible = state.annotations.filter(a => !skip.has(a.type));
 
-  // Build groups from state.measurementGroups
+  // Separate detections from measurements
+  const detections = visible.filter(a => DETECTION_TYPES.has(a.type));
+  const measurements = visible.filter(a => !DETECTION_TYPES.has(a.type));
+
+  // Build groups from state.measurementGroups (measurements only)
   const groupMap = new Map();  // groupName → [ann, ...]
   const ungrouped = [];
-  for (const ann of visible) {
+  for (const ann of measurements) {
     const groupName = state.measurementGroups[ann.id];
     if (groupName) {
       if (!groupMap.has(groupName)) groupMap.set(groupName, []);
@@ -105,6 +109,10 @@ export function renderSidebar() {
       row.classList.add("meas-group-member");
       listEl.appendChild(row);
     }
+    // Group end divider
+    const divider = document.createElement("div");
+    divider.className = "meas-group-end";
+    listEl.appendChild(divider);
   }
 
   // Render ungrouped annotations
@@ -129,6 +137,49 @@ export function renderSidebar() {
     const number = String.fromCodePoint(9312 + i);
     i++;
     listEl.appendChild(_createMeasurementRow(ann, number));
+  }
+
+  // Render detections (non-elevated) in a separate section
+  if (detections.length > 0) {
+    const detHeader = document.createElement("div");
+    detHeader.className = "meas-group-header";
+    detHeader.style.color = "var(--muted)";
+    detHeader.innerHTML = `
+      <span class="meas-group-chevron">▾</span>
+      <span class="meas-group-label">Detections</span>
+      <span class="meas-group-count">(${detections.length})</span>`;
+    detHeader.style.cursor = "pointer";
+    let detCollapsed = false;
+    detHeader.addEventListener("click", () => {
+      detCollapsed = !detCollapsed;
+      detHeader.querySelector(".meas-group-chevron").textContent = detCollapsed ? "▸" : "▾";
+      let sib = detHeader.nextElementSibling;
+      while (sib && !sib.classList.contains("meas-group-header")) {
+        if (sib.classList.contains("det-row")) sib.hidden = detCollapsed;
+        sib = sib.nextElementSibling;
+      }
+    });
+    listEl.appendChild(detHeader);
+
+    for (const ann of detections) {
+      const row = document.createElement("div");
+      row.className = "measurement-item det-row";
+      row.dataset.id = ann.id;
+      if (state.selected.has(ann.id)) row.classList.add("selected");
+      const typeName = ann.type.replace("detected-", "").replace("-merged", "").replace("-partial", "");
+      const label = measurementLabel(ann) || typeName;
+      row.innerHTML = `
+        <span class="measurement-number" style="color:var(--muted)">⚬</span>
+        <span class="measurement-value" style="color:var(--muted);flex:1">${label}</span>
+        <button class="del-btn" data-id="${ann.id}">✕</button>`;
+      row.addEventListener("click", () => {
+        state.selected = new Set([ann.id]);
+        state._flashExpiry = Date.now() + 400;
+        renderSidebar();
+        redraw();
+      });
+      listEl.appendChild(row);
+    }
   }
 
   // Show selection count in status bar when multiple selected

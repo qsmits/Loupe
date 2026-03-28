@@ -817,6 +817,11 @@ body.no-camera .camera-section { display: none; }
 .meas-group-label { color: var(--text); }
 .meas-group-count { color: var(--muted); font-weight: 400; }
 .meas-group-member { padding-left: 12px; }
+.meas-group-end {
+  height: 2px;
+  background: var(--border);
+  margin: 2px 8px;
+}
 
 /* ─── Inspection group headers ─────────────────────────── */
 .insp-group-header td {
