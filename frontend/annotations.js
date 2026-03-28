@@ -1,6 +1,6 @@
 import { state, pushUndo, DETECTION_TYPES } from './state.js';
 import { canvas, showStatus, redraw } from './render.js';
-import { renderSidebar, updateCameraInfo, updateCalibrationButton } from './sidebar.js';
+import { renderSidebar, updateCameraInfo, updateCalibrationButton, renderInspectionTable } from './sidebar.js';
 import { imageWidth, imageHeight } from './viewport.js';
 
 // ── Annotations management ──────────────────────────────────────────────────────
@@ -237,10 +237,13 @@ export function clearDxfOverlay() {
   state.inspectionResults = [];
   state.inspectionFrame = null;
   state.dxfFilename = null;
+  state.featureModes = {};
+  state.featureNames = {};
   const p = document.getElementById("dxf-panel");
   if (p) p.style.display = "none";
   state.selected = new Set();
   renderSidebar();
+  renderInspectionTable();
   redraw();
   showStatus("Cleared DXF overlay");
 }
@@ -254,10 +257,13 @@ export function clearAll() {
   state.inspectionResults = [];
   state.inspectionFrame = null;
   state.dxfFilename = null;
+  state.featureModes = {};
+  state.featureNames = {};
   const p = document.getElementById("dxf-panel");
   if (p) p.style.display = "none";
   state.selected = new Set();
   renderSidebar();
+  renderInspectionTable();
   redraw();
   showStatus("Cleared all annotations");
 }
