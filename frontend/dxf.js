@@ -381,6 +381,9 @@ export function initDxfHandlers() {
     state.dxfDragMode = !state.dxfDragMode;
     state.dxfDragOrigin = null;
     document.getElementById("btn-dxf-move")?.classList.toggle("active", state.dxfDragMode);
+    // Close the dropdown menu
+    const dropdown = document.getElementById("btn-dxf-move")?.closest(".dropdown");
+    if (dropdown) dropdown.hidden = true;
     showStatus(state.dxfDragMode ? "Drag to reposition DXF overlay" : (state.frozen ? "Frozen" : "Live"));
   });
 

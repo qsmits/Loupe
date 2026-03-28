@@ -614,7 +614,7 @@ canvas.addEventListener("mousemove", e => {
       const dxfAnn = state.annotations.find(a => a.type === "dxf-overlay");
       const r = dxfAnn?.guidedResults?.find(res => res.handle === hoveredBox.handle);
       if (r) {
-        const mode = state.featureModes[r.handle] || "die";
+        const mode = state.featureModes[r.handle] || state.featureModes[r.parent_handle] || "die";
         const lines = [];
         lines.push(`Feature: ${r.handle} (${r.type})`);
         if (r.parent_handle) lines.push(`Group: ${r.parent_handle}`);
@@ -813,6 +813,50 @@ canvas.addEventListener("contextmenu", e => {
           redraw();
         }});
       }
+      showContextMenu(e.clientX, e.clientY, items);
+      return;
+    }
+  }
+
+  // Right-click on a DXF entity (for Punch/Die setting, even without inspection)
+  if (dxfAnn) {
+    const dxfEntity = hitTestDxfEntity(pt, dxfAnn);
+    if (dxfEntity) {
+      const handle = dxfEntity.parent_handle || dxfEntity.handle;
+      const currentMode = state.featureModes[handle] || "die";
+      // Get all handles in the group to set them all at once
+      const groupHandles = dxfEntity.parent_handle
+        ? dxfAnn.entities.filter(e => e.parent_handle === dxfEntity.parent_handle).map(e => e.handle)
+        : [dxfEntity.handle];
+
+      const items = [
+        {
+          label: currentMode === "die" ? `Set as Punch (${handle})` : `Set as Die (${handle})`,
+          action: () => {
+            const newMode = currentMode === "die" ? "punch" : "die";
+            // Set mode for all handles in the group
+            for (const h of groupHandles) state.featureModes[h] = newMode;
+            // Also set on parent handle for easy lookup
+            if (dxfEntity.parent_handle) state.featureModes[dxfEntity.parent_handle] = newMode;
+            redraw();
+            showStatus(`Feature ${handle}: ${newMode}`);
+          }
+        },
+        { label: "Measure manually", action: () => {
+          if (dxfEntity.parent_handle) {
+            state.inspectionPickTarget = dxfAnn.entities.filter(e => e.parent_handle === dxfEntity.parent_handle);
+          } else {
+            state.inspectionPickTarget = [dxfEntity];
+          }
+          state.inspectionPickPoints = [];
+          state.inspectionPickFit = null;
+          const n = state.inspectionPickTarget.length;
+          showStatus(n > 1
+            ? `${n} segments. Click points along edge. Double-click or Enter to finish.`
+            : "Click points along edge. Double-click or Enter to finish.");
+          redraw();
+        }},
+      ];
       showContextMenu(e.clientX, e.clientY, items);
       return;
     }

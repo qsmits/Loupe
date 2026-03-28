@@ -658,7 +658,7 @@ function _deviationColor(r) {
 
   if (magnitude <= tol_w) return "#32d74b";  // green — pass
 
-  const mode = state.featureModes[r.handle] || "die";
+  const mode = state.featureModes[r.handle] || state.featureModes[r.parent_handle] || "die";
   const radiusDev = r.radius_dev_mm;
 
   if (radiusDev != null && magnitude > tol_w) {
