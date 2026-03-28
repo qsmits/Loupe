@@ -12,22 +12,26 @@ Precision measurement and inspection tool for video microscopes. Streams live vi
 
 ### Detection & Inspection
 - **Auto-detection**: Circle detection (Hough), contour-based line detection, partial arc detection — with adjustable Canny thresholds, smoothing, and NMS parameters
-- **DXF-guided inspection**: Load a DXF drawing, align to the part, run corridor-based per-feature edge detection. Each DXF feature is matched against detected edges within a ±15px search corridor.
-- **Manual point-pick**: Click any DXF feature to measure it by placing points along the actual edge. Supports compound features (slots, outlines) — points auto-assign to the nearest sub-segment.
-- **Deviation reporting**: Per-feature pass/warn/fail with configurable tolerances. Inspection results table in sidebar. CSV and PDF export.
+- **DXF-guided inspection**: Load a DXF drawing, auto-align to the part (edge-based template matching), run corridor-based per-feature edge detection with RANSAC inlier filtering and shadow-aware edge selection
+- **Manual point-pick**: Click any DXF feature to measure it by placing points along the actual edge. Supports compound features (slots, outlines) and connected standalone entities — points auto-assign to the nearest sub-segment
+- **Punch/Die tolerance tagging**: Mark features as Punch (outer) or Die (cavity) for directional deviation coloring — green (pass), amber (reworkable), red (scrap)
+- **Deviation reporting**: Grouped inspection results by feature, hover tooltips with full detail, numbered feature markers matching PDF table. CSV and PDF export with grouped results
 
 ### Annotation Management
 - **Multi-select**: Shift+click, rectangle drag-select
 - **Elevation**: Promote auto-detected features to editable measurements
 - **Merge lines**: Combine multiple line segments into one measurement
-- **Right-click context menu**: Elevate, delete, rename, merge, convert arc→circle, clear operations
+- **Draggable labels**: Click and drag deviation labels to reposition, with leader lines
+- **Right-click context menu**: Elevate, delete, rename, merge, convert arc→circle, Punch/Die toggle, clear operations
 - **Clear menu**: Separate clearing of detections, measurements, DXF overlay, or all
 
 ### Zoom & Pan
 - Scroll-wheel zoom centered on cursor (frozen mode, up to 10x)
 - Pan tool (`H` key) and middle-mouse-button pan
 - Zoom presets: `0` = fit to window, `1` = 1:1 pixel mapping
-- Zoom indicator badge
+- Zoom indicator badge with clickable preset dropdown (Fit, 50%–800%)
+- Minimap overview when zoomed in (click to jump)
+- Measurement grid overlay with adaptive spacing
 
 ### Camera & Session
 - Live MJPEG stream from industrial cameras (Baumer/Aravis, OpenCV fallback)
@@ -37,6 +41,7 @@ Precision measurement and inspection tool for video microscopes. Streams live vi
 - Auto-save to localStorage every 30 seconds with restore prompt
 - Snapshot capture and image load
 - Annotated image export (PNG), measurement CSV, inspection PDF
+- **DXF export** for reverse engineering — export measurements as a DXF file (lines, circles, arcs, polylines in mm)
 
 ## Requirements
 
@@ -122,6 +127,8 @@ backend/
     guided_inspection.py  DXF-guided corridor inspection + manual fitting
     line_arc_matching.py  DXF↔detected feature matching, shared transforms
     dxf_parser.py    DXF → JSON (LINE, CIRCLE, ARC, LWPOLYLINE with bulge)
+    dxf_export.py    Measurements → DXF (reverse engineering export)
+    alignment.py     Circle-based and edge-based DXF auto-alignment
     calibration.py   Pixel↔mm math
   api.py             REST endpoints
   main.py            App factory and camera selection
@@ -137,7 +144,7 @@ frontend/
   dxf.js             DXF overlay, alignment, guided inspection handler
   detect.js          Detection button handlers with busy indicators
   annotations.js     Add/delete/elevate/merge/clear annotations
-  session.js         Save/load, CSV/PDF export, auto-save
+  session.js         Save/load, CSV/PDF/DXF export, auto-save
   sidebar.js         Sidebar, inspection table, camera controls
   math.js            fitCircle, fitLine, fitCircleAlgebraic, geometry helpers
   calibration.js     Calibration dialog
@@ -163,6 +170,7 @@ snapshots/           Saved test images
 | `U` | Elevate selected detections |
 | `0` | Fit zoom to window |
 | `1` | 1:1 pixel zoom |
+| `` ` `` | Toggle measurement grid |
 | `Escape` | Cancel / exit mode / deselect |
 | `Delete` | Delete selected |
 | `Ctrl+Z` | Undo |

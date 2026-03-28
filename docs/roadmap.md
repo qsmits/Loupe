@@ -394,13 +394,18 @@ of nominal the actual edge falls on relative to the DXF feature direction.
 ✅ Done:   Phase 1.5 (zoom/pan)         — 2026-03-25  — scroll zoom, pan, minimap, grid, zoom presets
 ✅ Done:   Phase 2 (guided inspection)  — 2026-03-25  — corridor detection, manual point-pick, compound features
 ✅ Done:   Misc polish                  — 2026-03-26  — camera shutdown, merge lines, audit fixes, mode fixes
+✅ Done:   Phase 2.5 (tolerances)       — 2026-03-26  — Punch/Die tagging, amber/red coloring, draggable labels, tooltips
+✅ Done:   Phase 4.5+4.6 (label UX)    — 2026-03-26  — draggable labels with leader lines, hover tooltips
+✅ Done:   Edge-based auto-alignment    — 2026-03-28  — template matching, no circles required, auto-align on DXF import
+✅ Done:   DXF export (reverse eng.)    — 2026-03-28  — measurements → DXF file in mm
+✅ Done:   Grouped inspection sidebar   — 2026-03-28  — collapsible groups, Punch/Die badges, numbered features, resizable sidebar
+✅ Done:   Improved PDF report          — 2026-03-28  — grouped table, annotated image, numbered cross-references
 
-Next:      Phase 2.5 (tolerances)       — 1 week      — Punch/Die tagging, green/amber/red bands
-Then:      Phase 5 (reporting)          — 1-2 weeks   — useful output
+Then:      Phase 5 (reporting)          — 1-2 weeks   — unified measurement export, part history
 Then:      Phase 3 (detection tuning)   — 1-2 weeks   — accurate (once microscope arrives)
 Then:      Phase 7 (batch inspection)   — 2-3 weeks   — production use case
 Ongoing:   Phase 6 (tech foundation)    — sprinkle in as you go
-Later:     Phase 4 (measurement UX)     — 1-2 weeks   — groups, templates, draggable labels, tooltips
+Later:     Phase 4 (measurement UX)     — 1-2 weeks   — groups, templates, snap-to-detected, comparison
 Future:    Phase 8 (gears)              — 3-4 weeks   — when gear machine is running
 Future:    Phase 9 (Nikon XY stage)     — TBD         — hybrid encoder + camera measurement
 ```
@@ -425,6 +430,16 @@ Future:    Phase 9 (Nikon XY stage)     — TBD         — hybrid encoder + cam
 - Dropdown stays open while adjusting sliders
 - Zoom-out clamped to fit-to-window
 
-Phase 1 makes it trustworthy. Phase 1.5 makes it precise. Phase 2 makes it fast.
-Phase 5 produces useful output. Phase 3 makes it accurate. Phase 7 makes it a
-production tool.
+**What was accomplished 2026-03-28:**
+- Edge-based DXF auto-alignment (template matching, works without circles)
+- Auto-align on DXF import when calibrated
+- Punch/Die tolerance tagging with amber/red coloring
+- Draggable deviation labels with leader lines
+- Hover tooltips on deviation labels with full feature detail
+- Grouped inspection sidebar (collapsible, P/D badges, numbered features)
+- Resizable sidebar
+- Improved PDF report (grouped, numbered, annotated image)
+- DXF export for reverse engineering (measurements → DXF in mm)
+- Connected entity auto-discovery (V-shapes, outlines)
+- NullCamera shutdown fix (MJPEG generator stops on shutdown)
+- Various alignment coordinate fixes

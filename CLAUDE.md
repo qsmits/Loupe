@@ -43,8 +43,10 @@ Priority order at startup:
 - `backend/vision/guided_inspection.py` — DXF-guided corridor inspection: per-feature edge detection within ±15px corridors, RANSAC-like inlier filtering, shadow-aware edge selection, line/arc fitting with deviation computation.
 - `backend/vision/line_arc_matching.py` — Legacy DXF↔detected feature matching (nearest-neighbor). Shared utility functions: `dxf_to_image_px` (coordinate projection), `perp_dist_point_to_line`.
 - `backend/vision/calibration.py` — Pixel↔mm conversion math.
-- `backend/vision/dxf_parser.py` — DXF → JSON geometry. Supports LINE, CIRCLE, ARC, LWPOLYLINE (decomposed into `polyline_line`/`polyline_arc` with bulge handling).
-- `backend/api.py` — REST endpoints: `/stream` (MJPEG), `/freeze`, `/snapshot`, `/detect-*`, `/load-dxf`, `/cameras`, `/inspect-guided`, `/fit-feature`, `/match-dxf-lines`, `/match-dxf-arcs`.
+- `backend/vision/dxf_parser.py` — DXF → JSON geometry with layer names. Supports LINE, CIRCLE, ARC, LWPOLYLINE (decomposed into `polyline_line`/`polyline_arc` with bulge handling).
+- `backend/vision/dxf_export.py` — Measurements → DXF export for reverse engineering. Converts pixel annotations to mm-space DXF entities.
+- `backend/vision/alignment.py` — Circle-based (RANSAC) and edge-based (template matching) DXF auto-alignment.
+- `backend/api.py` — REST endpoints: `/stream` (MJPEG), `/freeze`, `/snapshot`, `/detect-*`, `/load-dxf`, `/export-dxf`, `/align-dxf`, `/align-dxf-edges`, `/cameras`, `/inspect-guided`, `/fit-feature`.
 - `backend/frame_store.py` — Thread-safe single-frame store for the "freeze" feature.
 - `backend/config.py` — Atomic JSON config load/save with version-aware migration.
 
@@ -57,20 +59,23 @@ Priority order at startup:
 - `frontend/dxf.js` — DXF load/align/flip/rotate, "Run Inspection" handler (calls `/inspect-guided`), per-feature tolerance popover, drag-to-translate.
 - `frontend/detect.js` — Detection button handlers with busy indicators, auto-freeze, arc deduplication, slider wiring.
 - `frontend/annotations.js` — Add/delete/elevate annotations, merge lines, clear operations (detections/measurements/DXF/all), `deleteSelected`.
-- `frontend/session.js` — Save/load sessions (v2 format with inspection results), CSV/PDF export, auto-save to localStorage.
+- `frontend/session.js` — Save/load sessions (v2 format with inspection results), CSV/PDF/DXF export, auto-save to localStorage.
 - `frontend/sidebar.js` — Sidebar rendering, inspection result table, camera controls, tolerance config.
 - `frontend/math.js` — Geometric helpers: `fitCircle`, `fitCircleAlgebraic`, `fitLine`, `polygonArea`, `distPointToSegment`.
 - `frontend/calibration.js` — Calibration dialog flow.
 
 ### Key Features
-- **12 measurement tools**: Select, Distance, Angle, Circle, Fit Arc, Arc Measure, Center Dist, Para Dist, Perp Dist, Area, Pt-Circle Dist, Line Intersect, Slot Distance, Pan.
+- **14 measurement tools**: Select, Distance, Angle, Circle, Fit Arc, Arc Measure, Center Dist, Para Dist, Perp Dist, Area, Pt-Circle Dist, Line Intersect, Slot Distance, Pan.
 - **Multi-select**: Set-based selection, Shift+click, rectangle drag-select, bulk delete/elevate.
 - **Detection elevation**: Promote auto-detected features to editable measurements. Merge multiple line segments into one.
-- **Right-click context menu**: Elevate, delete, rename, merge lines, convert arc→circle, clear operations.
-- **Zoom & pan**: Scroll-wheel zoom (0.5x–10x, frozen mode only), Pan tool (H key), middle-mouse pan, zoom badge, fit-to-window (0), 1:1 (1).
-- **DXF-guided inspection**: Corridor-based per-feature edge detection, manual point-pick fallback with live preview, compound feature support (Shift+click to build groups), RANSAC inlier filtering, shadow-aware edge selection.
+- **Right-click context menu**: Elevate, delete, rename, merge lines, convert arc→circle, Punch/Die toggle, clear operations.
+- **Zoom & pan**: Scroll-wheel zoom (frozen mode only), Pan tool (H key), middle-mouse pan, zoom badge with preset dropdown, minimap, measurement grid.
+- **DXF auto-alignment**: Edge-based template matching (no circles required), with angle refinement and rotation bias penalty. Also supports circle-based RANSAC alignment.
+- **DXF-guided inspection**: Corridor-based per-feature edge detection, manual point-pick with compound features, RANSAC inlier filtering, shadow-aware edge selection, Punch/Die tolerance tagging.
+- **Draggable labels**: Deviation labels can be repositioned with leader lines. Hover tooltips with full feature detail.
+- **Grouped inspection results**: Sidebar groups results by compound feature with collapsible headers, worst-case badges, Punch/Die indicators, numbered cross-references to canvas and PDF.
 - **Session persistence**: Auto-save to localStorage (30s), restore prompt, beforeunload warning. Manual save/load as JSON (v2 format).
-- **Export**: Annotated PNG, measurement CSV, inspection CSV, inspection PDF (jsPDF).
+- **Export**: Annotated PNG, measurement CSV, inspection CSV, inspection PDF (jsPDF), **DXF export** (reverse engineering — measurements to DXF in mm).
 
 ### Testing
 - `tests/conftest.py` provides a `FakeCamera` fixture used across all API tests.
