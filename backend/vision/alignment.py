@@ -205,6 +205,9 @@ def align_dxf_edges(
     """
     h, w = frame.shape[:2]
     scale = pixels_per_mm
+    import logging
+    _log = logging.getLogger(__name__)
+    _log.info(f"align_dxf_edges: frame={frame.shape[1]}x{frame.shape[0]} scale={scale:.3f} angle_range={angle_range}")
 
     gray = preprocess(frame, smoothing=smoothing)
     edges = cv2.Canny(gray, canny_low, canny_high)
@@ -333,6 +336,9 @@ def align_dxf_edges(
     #   offsetY = match_y + th + r_min_y * scale - padding
     tx = match_x + (-best_r_min_x) * scale + padding
     ty = match_y + best_tmpl_shape[0] + best_r_min_y * scale - padding
+    _log.info(f"  match=({match_x},{match_y}) tmpl={best_tmpl_shape[1]}x{best_tmpl_shape[0]} "
+              f"r_min=({best_r_min_x:.2f},{best_r_min_y:.2f}) pad={padding} "
+              f"-> tx={tx:.1f} ty={ty:.1f} angle={best_angle}")
 
     return {
         "success": True,
