@@ -848,6 +848,7 @@ canvas.addEventListener("contextmenu", e => {
         label: currentMode === "die" ? "Set as Punch" : "Set as Die",
         action: () => {
           state.featureModes[hitResult.handle] = currentMode === "die" ? "punch" : "die";
+          renderInspectionTable();
           redraw();
           showStatus(`Feature ${hitResult.handle}: ${state.featureModes[hitResult.handle]}`);
         }
@@ -882,6 +883,7 @@ canvas.addEventListener("contextmenu", e => {
             const newMode = currentMode === "die" ? "punch" : "die";
             for (const h of groupHandles) state.featureModes[h] = newMode;
             if (dxfEntity.parent_handle) state.featureModes[dxfEntity.parent_handle] = newMode;
+            renderInspectionTable();
             redraw();
             showStatus(`Feature ${handle}: ${newMode}`);
           }
