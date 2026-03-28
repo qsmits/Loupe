@@ -130,7 +130,6 @@ export function initDxfHandlers() {
           });
           if (alignResp.ok) {
             const result = await alignResp.json();
-            console.log("Edge align result:", JSON.stringify(result));
             const ann = state.annotations.find(a => a.type === "dxf-overlay");
             if (ann) {
               // The backend returns the image-space position of the DXF center
@@ -152,9 +151,6 @@ export function initDxfHandlers() {
               const cy = -yr * ann.scale;
               ann.offsetX = result.img_cx - cx;
               ann.offsetY = result.img_cy - cy;
-              console.log("Align:", { img_cx: result.img_cx, img_cy: result.img_cy,
-                                      dxf_cx: result.dxf_cx, dxf_cy: result.dxf_cy,
-                                      cx, cy, offsetX: ann.offsetX, offsetY: ann.offsetY });
               showStatus(`DXF auto-aligned (score ${(result.score * 100).toFixed(0)}%)`);
             }
           } else {

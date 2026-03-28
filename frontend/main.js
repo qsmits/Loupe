@@ -528,15 +528,13 @@ async function _finalizePickInspection() {
           tolerance_fail: state.tolerances.fail,
         }),
       });
-      if (!resp.ok) { console.warn("fit-feature failed:", resp.status); continue; }
+      if (!resp.ok) continue;
       const result = await resp.json();
-      console.log("fit-feature result:", JSON.stringify(result).slice(0, 200));
       result.source = "manual";
 
       // Replace or add to guided results
       if (!ann.guidedResults) ann.guidedResults = [];
       const grIdx = ann.guidedResults.findIndex(r => r.handle === entity.handle);
-      console.log(`fit-feature: handle=${entity.handle} matched=${result.matched} grIdx=${grIdx} total=${ann.guidedResults.length}`);
       if (grIdx >= 0) ann.guidedResults[grIdx] = result;
       else ann.guidedResults.push(result);
 

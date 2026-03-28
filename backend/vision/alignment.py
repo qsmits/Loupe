@@ -205,9 +205,6 @@ def align_dxf_edges(
     """
     h, w = frame.shape[:2]
     scale = pixels_per_mm
-    import logging
-    _log = logging.getLogger(__name__)
-    _log.info(f"align_dxf_edges: frame={frame.shape[1]}x{frame.shape[0]} scale={scale:.3f} angle_range={angle_range}")
 
     gray = preprocess(frame, smoothing=smoothing)
     edges = cv2.Canny(gray, canny_low, canny_high)
@@ -403,12 +400,6 @@ def align_dxf_edges(
 
     return {
         "success": True,
-        "frame_w": w,
-        "frame_h": h,
-        "match_x": int(match_x),
-        "match_y": int(match_y),
-        "tmpl_w": int(tw),
-        "tmpl_h": int(th),
         "img_cx": float(img_cx),
         "img_cy": float(img_cy),
         "dxf_cx": float(dxf_cx),
@@ -421,8 +412,6 @@ def align_dxf_edges(
 
 def _render_dxf_template(entities, scale, angle_deg=0, padding=5):
     """Render DXF entities to a binary template at the given scale and angle."""
-    import logging
-    log = logging.getLogger(__name__)
     cos_a = math.cos(math.radians(angle_deg))
     sin_a = math.sin(math.radians(angle_deg))
 
