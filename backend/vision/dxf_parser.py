@@ -47,6 +47,7 @@ def parse_dxf(content: bytes) -> list[dict]:
         t = entity.dxftype()
         try:
             handle = getattr(entity.dxf, "handle", None)
+            layer = getattr(entity.dxf, "layer", "0")
             if t == "LINE":
                 s, e = entity.dxf.start, entity.dxf.end
                 entities.append({
@@ -54,6 +55,7 @@ def parse_dxf(content: bytes) -> list[dict]:
                     "x1": float(s.x), "y1": float(s.y),
                     "x2": float(e.x), "y2": float(e.y),
                     "handle": handle,
+                    "layer": layer,
                 })
             elif t == "CIRCLE":
                 c = entity.dxf.center
@@ -62,6 +64,7 @@ def parse_dxf(content: bytes) -> list[dict]:
                     "cx": float(c.x), "cy": float(c.y),
                     "radius": float(entity.dxf.radius),
                     "handle": handle,
+                    "layer": layer,
                 })
             elif t == "ARC":
                 c = entity.dxf.center
@@ -72,6 +75,7 @@ def parse_dxf(content: bytes) -> list[dict]:
                     "start_angle": float(entity.dxf.start_angle),
                     "end_angle": float(entity.dxf.end_angle),
                     "handle": handle,
+                    "layer": layer,
                 })
             elif t == "LWPOLYLINE":
                 pts = list(entity.get_points("xyb"))
@@ -92,6 +96,7 @@ def parse_dxf(content: bytes) -> list[dict]:
                             "handle": seg_handle,
                             "parent_handle": handle,
                             "segment_index": i,
+                            "layer": layer,
                         })
                     else:
                         arc = _bulge_to_arc(float(x1), float(y1), float(x2), float(y2), float(bulge))
@@ -105,6 +110,7 @@ def parse_dxf(content: bytes) -> list[dict]:
                             "handle": seg_handle,
                             "parent_handle": handle,
                             "segment_index": i,
+                            "layer": layer,
                         })
         except Exception:
             continue  # skip malformed entities silently
