@@ -230,15 +230,16 @@ def align_dxf_edges(
     best_r_min_y = 0
     best_tmpl_shape = (0, 0)
 
-    padding = 15
+    padding = 5  # small padding to maximize template fit in image
     angles = np.arange(-angle_range, angle_range + angle_step * 0.5, angle_step)
 
     for angle_deg in angles:
-        tmpl, r_min_x, r_min_y = _render_dxf_template(
+        render_result = _render_dxf_template(
             entities, scale, angle_deg, padding
         )
-        if tmpl is None:
+        if render_result is None or render_result[0] is None:
             continue
+        tmpl, r_min_x, r_min_y = render_result
         th, tw = tmpl.shape
         if tw >= w or th >= h:
             continue
@@ -254,6 +255,8 @@ def align_dxf_edges(
             best_r_min_y = r_min_y
             best_tmpl_shape = (th, tw)
 
+    if best_score < 0:
+        return {"success": False, "reason": "DXF template too large for image at this scale. Try lower calibration or smaller DXF."}
     if best_score < 0.01:
         return {"success": False, "reason": "No good match found"}
 
