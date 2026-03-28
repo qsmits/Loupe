@@ -290,8 +290,10 @@ def align_dxf_edges(
     }
 
 
-def _render_dxf_template(entities, scale, angle_deg=0, padding=15):
+def _render_dxf_template(entities, scale, angle_deg=0, padding=5):
     """Render DXF entities to a binary template at the given scale and angle."""
+    import logging
+    log = logging.getLogger(__name__)
     cos_a = math.cos(math.radians(angle_deg))
     sin_a = math.sin(math.radians(angle_deg))
 
@@ -353,3 +355,5 @@ def _render_dxf_template(entities, scale, angle_deg=0, padding=15):
             if r < 1:
                 continue
             cv2.circle(tmpl, (pcx, pcy), r, 255, 2)
+
+    return tmpl, r_min_x, r_min_y
