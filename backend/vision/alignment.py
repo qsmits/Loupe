@@ -211,6 +211,14 @@ def align_dxf_edges(
     kernel = np.ones((3, 3), np.uint8)
     edges_thick = cv2.dilate(edges, kernel, iterations=1)
 
+    # Pad the edge image so template matching works even when the part
+    # fills the entire frame (template must be smaller than search image)
+    pad_x = int(w * 0.3)
+    pad_y = int(h * 0.3)
+    edges_thick = cv2.copyMakeBorder(edges_thick, pad_y, pad_y, pad_x, pad_x,
+                                      cv2.BORDER_CONSTANT, value=0)
+    h_padded, w_padded = edges_thick.shape
+
     # DXF coordinate bounds
     xs, ys = [], []
     for e in entities:
@@ -241,7 +249,7 @@ def align_dxf_edges(
             continue
         tmpl, r_min_x, r_min_y = render_result
         th, tw = tmpl.shape
-        if tw >= w or th >= h:
+        if tw >= w_padded or th >= h_padded:
             continue
 
         result = cv2.matchTemplate(edges_thick, tmpl, cv2.TM_CCORR_NORMED)
@@ -268,8 +276,9 @@ def align_dxf_edges(
     origin_tmpl_x = (0 - best_r_min_x) * scale + padding
     origin_tmpl_y = th - ((0 - best_r_min_y) * scale + padding)
 
-    tx = best_loc[0] + origin_tmpl_x
-    ty = best_loc[1] + origin_tmpl_y
+    # Subtract the edge image padding to get coordinates in original image space
+    tx = best_loc[0] + origin_tmpl_x - pad_x
+    ty = best_loc[1] + origin_tmpl_y - pad_y
 
     return {
         "success": True,
