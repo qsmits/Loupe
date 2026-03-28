@@ -218,57 +218,138 @@ export function exportInspectionPdf() {
 
   let yPos = margin + 18;
 
-  // ── Annotated image ──
-  if (state.inspectionFrame) {
-    const imgAreaH = pageH * 0.55;
-    const imgAreaW = pageW - margin * 2;
-    doc.addImage(state.inspectionFrame, "JPEG", margin, yPos, imgAreaW, imgAreaH);
-    yPos += imgAreaH + 5;
+  // ── Annotated image (capture current canvas with annotations) ──
+  try {
+    const canvas = document.getElementById("overlay-canvas");
+    const imgEl = document.getElementById("stream-img");
+    if (canvas && state.frozenBackground) {
+      // Composite: frozen background + canvas overlay (has all annotations)
+      const offscreen = document.createElement("canvas");
+      offscreen.width = canvas.width;
+      offscreen.height = canvas.height;
+      const octx = offscreen.getContext("2d");
+      octx.drawImage(state.frozenBackground, 0, 0, offscreen.width, offscreen.height);
+      octx.drawImage(canvas, 0, 0);
+      const dataUrl = offscreen.toDataURL("image/jpeg", 0.90);
+
+      // Preserve aspect ratio
+      const imgAspect = offscreen.width / offscreen.height;
+      const maxImgW = pageW - margin * 2;
+      const maxImgH = pageH * 0.50;
+      let imgW, imgH;
+      if (imgAspect > maxImgW / maxImgH) {
+        imgW = maxImgW;
+        imgH = maxImgW / imgAspect;
+      } else {
+        imgH = maxImgH;
+        imgW = maxImgH * imgAspect;
+      }
+      // Center horizontally
+      const imgX = margin + (maxImgW - imgW) / 2;
+      doc.addImage(dataUrl, "JPEG", imgX, yPos, imgW, imgH);
+      yPos += imgH + 5;
+    }
+  } catch (_) {
+    // Image capture failed — continue without image
   }
 
-  // ── Result table (manual cell rendering) ──
-  const colWidths = [30, 28, 28, 28, 20];
-  const colHeaders = ["Feature ID", "Type", "Deviation", "Tolerance", "Result"];
-  const rowH = 7;
-  const fontSize = 8;
+  // ── Grouped result table ──
+  const rowH = 6;
+  const fontSize = 7;
+  const colWidths = [40, 22, 28, 28, 15, 8];  // Group/ID, Type, Deviation, Tolerance, Result, P/D
+  const colHeaders = ["Feature", "Type", "Deviation", "Tolerance", "Result", ""];
 
+  // Group results (same logic as sidebar)
+  const groups = new Map();
+  for (const r of state.inspectionResults) {
+    const key = r.parent_handle || r.handle;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(r);
+  }
+
+  // Table header
   doc.setFontSize(fontSize);
   doc.setFont(undefined, "bold");
   let xPos = margin;
   colHeaders.forEach((h, i) => {
-    doc.text(h, xPos + 1, yPos + rowH - 2);
+    doc.text(h, xPos + 1, yPos + rowH - 1.5);
     doc.rect(xPos, yPos, colWidths[i], rowH);
     xPos += colWidths[i];
   });
   yPos += rowH;
   doc.setFont(undefined, "normal");
 
-  state.inspectionResults.forEach(r => {
-    if (yPos + rowH > pageH - margin) {
-      doc.addPage();
-      yPos = margin;
-    }
-    const deviationText = r.matched && r.deviation_mm != null
-      ? r.deviation_mm.toFixed(4) + " mm" : "—";
-    const toleranceText = `±${r.tolerance_warn}/${r.tolerance_fail}`;
-    const resultText = r.matched ? r.pass_fail.toUpperCase() : "—";
+  for (const [groupKey, results] of groups) {
+    if (yPos + rowH > pageH - margin) { doc.addPage(); yPos = margin; }
 
-    const cells = [r.handle, r.type, deviationText, toleranceText, resultText];
-    xPos = margin;
-    cells.forEach((cell, i) => {
-      if (i === 4) {
-        if (r.pass_fail === "pass") doc.setTextColor(0, 150, 0);
-        else if (r.pass_fail === "warn") doc.setTextColor(200, 120, 0);
-        else if (r.pass_fail === "fail") doc.setTextColor(200, 0, 0);
-        else doc.setTextColor(100);
-      }
-      doc.text(String(cell), xPos + 1, yPos + rowH - 2);
-      doc.setTextColor(0);
-      doc.rect(xPos, yPos, colWidths[i], rowH);
-      xPos += colWidths[i];
-    });
+    // Group header row
+    const groupName = state.featureNames[groupKey] || groupKey;
+    const mode = state.featureModes[groupKey] || "die";
+    const worstResult = results.some(r => r.pass_fail === "fail") ? "fail"
+      : results.some(r => r.pass_fail === "warn") ? "warn"
+      : results.some(r => r.matched) ? "pass" : "—";
+
+    doc.setFont(undefined, "bold");
+    doc.setFillColor(240, 240, 240);
+    doc.rect(margin, yPos, colWidths.reduce((a, b) => a + b, 0), rowH, "F");
+    doc.rect(margin, yPos, colWidths.reduce((a, b) => a + b, 0), rowH);
+    doc.text(`${groupName} (${results.length})`, margin + 1, yPos + rowH - 1.5);
+
+    // Worst result color
+    if (worstResult === "pass") doc.setTextColor(0, 150, 0);
+    else if (worstResult === "warn") doc.setTextColor(200, 120, 0);
+    else if (worstResult === "fail") doc.setTextColor(200, 0, 0);
+    else doc.setTextColor(100);
+    const totalW = colWidths.reduce((a, b) => a + b, 0);
+    doc.text(worstResult.toUpperCase(), margin + totalW - 25, yPos + rowH - 1.5);
+    doc.setTextColor(0);
+
+    // Mode badge
+    doc.text(mode === "punch" ? "P" : "D", margin + totalW - 7, yPos + rowH - 1.5);
+
+    doc.setFont(undefined, "normal");
     yPos += rowH;
-  });
+
+    // Detail rows
+    for (const r of results) {
+      if (yPos + rowH > pageH - margin) { doc.addPage(); yPos = margin; }
+
+      const deviationText = r.matched && r.deviation_mm != null
+        ? r.deviation_mm.toFixed(4) + " mm" : "—";
+      const toleranceText = `±${r.tolerance_warn}/${r.tolerance_fail}`;
+      const resultText = r.matched ? r.pass_fail.toUpperCase() : "—";
+      const typeName = r.type.replace("polyline_", "p_");
+
+      xPos = margin;
+      // Indent the handle
+      doc.text("  " + r.handle, xPos + 1, yPos + rowH - 1.5);
+      doc.rect(xPos, yPos, colWidths[0], rowH); xPos += colWidths[0];
+
+      doc.text(typeName, xPos + 1, yPos + rowH - 1.5);
+      doc.rect(xPos, yPos, colWidths[1], rowH); xPos += colWidths[1];
+
+      doc.text(deviationText, xPos + 1, yPos + rowH - 1.5);
+      doc.rect(xPos, yPos, colWidths[2], rowH); xPos += colWidths[2];
+
+      doc.text(toleranceText, xPos + 1, yPos + rowH - 1.5);
+      doc.rect(xPos, yPos, colWidths[3], rowH); xPos += colWidths[3];
+
+      // Result with color
+      if (r.pass_fail === "pass") doc.setTextColor(0, 150, 0);
+      else if (r.pass_fail === "warn") doc.setTextColor(200, 120, 0);
+      else if (r.pass_fail === "fail") doc.setTextColor(200, 0, 0);
+      else doc.setTextColor(100);
+      doc.text(resultText, xPos + 1, yPos + rowH - 1.5);
+      doc.setTextColor(0);
+      doc.rect(xPos, yPos, colWidths[4], rowH); xPos += colWidths[4];
+
+      // Source
+      doc.text(r.source === "manual" ? "M" : "", xPos + 1, yPos + rowH - 1.5);
+      doc.rect(xPos, yPos, colWidths[5], rowH);
+
+      yPos += rowH;
+    }
+  }
 
   // ── Arc-measure section ──
   const arcMeasures = state.annotations.filter(a => a.type === "arc-measure");
