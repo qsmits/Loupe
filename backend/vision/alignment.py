@@ -256,6 +256,22 @@ def align_dxf_edges(
             continue
 
         result = cv2.matchTemplate(edges_thick, tmpl, cv2.TM_CCORR_NORMED)
+
+        # Mask: only consider positions where the template overlaps the original
+        # image (not the black padding). The template top-left must be within
+        # [0, pad_x] to [w + pad_x - tw, h + pad_y - th] in the padded image,
+        # which means the original-image match_x must be in [0, w - tw] and
+        # match_y in [0, h - th]. In padded coords that's [pad_x, pad_x + w - tw].
+        # Set scores outside this range to 0.
+        mask = np.zeros_like(result)
+        valid_x_start = pad_x
+        valid_x_end = min(result.shape[1], pad_x + w - tw)
+        valid_y_start = pad_y
+        valid_y_end = min(result.shape[0], pad_y + h - th)
+        if valid_x_end > valid_x_start and valid_y_end > valid_y_start:
+            mask[valid_y_start:valid_y_end, valid_x_start:valid_x_end] = 1
+            result = result * mask
+
         _, max_val, _, max_loc = cv2.minMaxLoc(result)
 
         if max_val > best_score:
