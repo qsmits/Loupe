@@ -26,15 +26,36 @@ export function getStatus() {
 export function resizeCanvas() {
   const r = img.getBoundingClientRect();
   const vr = img.parentElement.getBoundingClientRect();
-  canvas.style.left   = (r.left - vr.left) + "px";
-  canvas.style.top    = (r.top  - vr.top)  + "px";
-  canvas.style.width  = r.width  + "px";
-  canvas.style.height = r.height + "px";
-  // Internal resolution scales with zoom (capped at image resolution)
+
+  // Compute the actual displayed image size preserving aspect ratio
+  // (object-fit: contain may leave letterbox bars in the img element)
+  let displayW = r.width;
+  let displayH = r.height;
   const iw = imageWidth || Math.round(r.width);
   const ih = imageHeight || Math.round(r.height);
-  canvas.width  = Math.min(iw, Math.round(r.width * viewport.zoom));
-  canvas.height = Math.min(ih, Math.round(r.height * viewport.zoom));
+  if (iw > 0 && ih > 0) {
+    const imgAspect = iw / ih;
+    const elemAspect = r.width / r.height;
+    if (elemAspect > imgAspect) {
+      // Wider than image: letterbox left/right
+      displayW = r.height * imgAspect;
+    } else {
+      // Taller than image: letterbox top/bottom
+      displayH = r.width / imgAspect;
+    }
+  }
+
+  // Center the canvas over the actual rendered image area
+  const offsetLeft = (r.width - displayW) / 2;
+  const offsetTop = (r.height - displayH) / 2;
+  canvas.style.left   = (r.left - vr.left + offsetLeft) + "px";
+  canvas.style.top    = (r.top  - vr.top + offsetTop) + "px";
+  canvas.style.width  = displayW  + "px";
+  canvas.style.height = displayH + "px";
+
+  // Internal resolution scales with zoom (capped at image resolution)
+  canvas.width  = Math.min(iw, Math.round(displayW * viewport.zoom));
+  canvas.height = Math.min(ih, Math.round(displayH * viewport.zoom));
   if (!imageWidth) setImageSize(canvas.width, canvas.height);
   redraw();
 }
