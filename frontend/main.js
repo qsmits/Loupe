@@ -13,7 +13,7 @@ import { exitDxfAlignMode, initDxfHandlers,
          openFeatureTolPopover } from './dxf.js';
 import { doFreeze, initDetectHandlers } from './detect.js';
 import { saveSession, loadSession, exportAnnotatedImage, exportCsv, autoSave, tryAutoRestore } from './session.js';
-import { viewport, screenToImage, clampPan, fitToWindow, zoomOneToOne, imageWidth, imageHeight } from './viewport.js';
+import { viewport, screenToImage, clampPan, fitToWindow, zoomOneToOne, setImageSize, imageWidth, imageHeight } from './viewport.js';
 
 // ── Context menu ──────────────────────────────────────────────────────────
 const ctxMenu = document.getElementById("context-menu");
@@ -1177,6 +1177,11 @@ document.getElementById("file-input").addEventListener("change", async e => {
   if (!r.ok) { alert("Could not load image"); return; }
   const { width, height } = await r.json();
   state.frozenSize = { w: width, h: height };
+  setImageSize(width, height);
+  // Reset viewport for new image
+  viewport.zoom = 1;
+  viewport.panX = 0;
+  viewport.panY = 0;
 
   const url = URL.createObjectURL(file);
   const loadedImg = new Image();
@@ -1185,8 +1190,8 @@ document.getElementById("file-input").addEventListener("change", async e => {
     img.style.opacity = "0";
     state.frozen = true;
     updateFreezeUI();
+    resizeCanvas();
     showStatus("Loaded image");
-    redraw();
   };
   loadedImg.src = url;
   e.target.value = "";
@@ -1257,6 +1262,10 @@ viewerEl.addEventListener("drop", async e => {
   if (!r.ok) { alert("Could not load image"); return; }
   const { width, height } = await r.json();
   state.frozenSize = { w: width, h: height };
+  setImageSize(width, height);
+  viewport.zoom = 1;
+  viewport.panX = 0;
+  viewport.panY = 0;
 
   const url = URL.createObjectURL(file);
   const loadedImg = new Image();
@@ -1265,8 +1274,8 @@ viewerEl.addEventListener("drop", async e => {
     img.style.opacity = "0";
     state.frozen = true;
     updateFreezeUI();
+    resizeCanvas();
     showStatus("Loaded image");
-    redraw();
   };
   loadedImg.src = url;
 });
