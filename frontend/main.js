@@ -266,14 +266,15 @@ function onMouseDown(e) {
     if (dxfAnn) {
       const entity = hitTestDxfEntity(pt, dxfAnn);
       if (entity) {
-        // Normal click: start new pick with this entity (or its compound group)
+        // Normal click: start new pick with this entity (or its compound/connected group)
         // (Shift+click to add is handled above, before point-placement)
         const parentHandle = entity.parent_handle;
         if (parentHandle) {
           const group = dxfAnn.entities.filter(en => en.parent_handle === parentHandle);
           state.inspectionPickTarget = group;
         } else {
-          state.inspectionPickTarget = [entity];
+          // Auto-discover connected standalone entities via shared endpoints
+          state.inspectionPickTarget = _findConnectedEntities(entity, dxfAnn.entities);
         }
         state.inspectionPickPoints = [];
         state.inspectionPickFit = null;
@@ -306,6 +307,50 @@ function _hitTestGuidedResult(pt, dxfAnn) {
     if (dist < bestDist) { bestDist = dist; best = r; }
   }
   return best;
+}
+
+function _entityEndpoints(en) {
+  /** Get the endpoints of a DXF entity in DXF space. */
+  if (en.type === "line" || en.type === "polyline_line") {
+    return [{ x: en.x1, y: en.y1 }, { x: en.x2, y: en.y2 }];
+  }
+  if (en.type === "arc" || en.type === "polyline_arc") {
+    const sr = en.start_angle * Math.PI / 180;
+    const er = en.end_angle * Math.PI / 180;
+    return [
+      { x: en.cx + en.radius * Math.cos(sr), y: en.cy + en.radius * Math.sin(sr) },
+      { x: en.cx + en.radius * Math.cos(er), y: en.cy + en.radius * Math.sin(er) },
+    ];
+  }
+  return [];
+}
+
+function _findConnectedEntities(startEntity, allEntities) {
+  /** Find all standalone entities connected to startEntity via shared endpoints. */
+  const TOL = 0.01;  // mm tolerance for endpoint matching in DXF space
+  const standalone = allEntities.filter(e => !e.parent_handle && e.type !== "circle");
+  const connected = new Set([startEntity.handle]);
+  const queue = [startEntity];
+
+  while (queue.length > 0) {
+    const current = queue.shift();
+    const endpoints = _entityEndpoints(current);
+    for (const en of standalone) {
+      if (connected.has(en.handle)) continue;
+      const enPoints = _entityEndpoints(en);
+      // Check if any endpoint of en matches any endpoint of current
+      for (const ep of endpoints) {
+        for (const cp of enPoints) {
+          if (Math.abs(ep.x - cp.x) < TOL && Math.abs(ep.y - cp.y) < TOL) {
+            connected.add(en.handle);
+            queue.push(en);
+          }
+        }
+      }
+    }
+  }
+
+  return allEntities.filter(e => connected.has(e.handle));
 }
 
 function _annotationPrimaryPoint(ann) {
@@ -822,32 +867,27 @@ canvas.addEventListener("contextmenu", e => {
   if (dxfAnn) {
     const dxfEntity = hitTestDxfEntity(pt, dxfAnn);
     if (dxfEntity) {
+      // Find the group: parent_handle group OR connected standalone entities
+      const connectedGroup = dxfEntity.parent_handle
+        ? dxfAnn.entities.filter(e => e.parent_handle === dxfEntity.parent_handle)
+        : _findConnectedEntities(dxfEntity, dxfAnn.entities);
       const handle = dxfEntity.parent_handle || dxfEntity.handle;
       const currentMode = state.featureModes[handle] || "die";
-      // Get all handles in the group to set them all at once
-      const groupHandles = dxfEntity.parent_handle
-        ? dxfAnn.entities.filter(e => e.parent_handle === dxfEntity.parent_handle).map(e => e.handle)
-        : [dxfEntity.handle];
+      const groupHandles = connectedGroup.map(e => e.handle);
 
       const items = [
         {
-          label: currentMode === "die" ? `Set as Punch (${handle})` : `Set as Die (${handle})`,
+          label: currentMode === "die" ? `Set as Punch (${groupHandles.length} seg)` : `Set as Die (${groupHandles.length} seg)`,
           action: () => {
             const newMode = currentMode === "die" ? "punch" : "die";
-            // Set mode for all handles in the group
             for (const h of groupHandles) state.featureModes[h] = newMode;
-            // Also set on parent handle for easy lookup
             if (dxfEntity.parent_handle) state.featureModes[dxfEntity.parent_handle] = newMode;
             redraw();
             showStatus(`Feature ${handle}: ${newMode}`);
           }
         },
         { label: "Measure manually", action: () => {
-          if (dxfEntity.parent_handle) {
-            state.inspectionPickTarget = dxfAnn.entities.filter(e => e.parent_handle === dxfEntity.parent_handle);
-          } else {
-            state.inspectionPickTarget = [dxfEntity];
-          }
+          state.inspectionPickTarget = connectedGroup;
           state.inspectionPickPoints = [];
           state.inspectionPickFit = null;
           const n = state.inspectionPickTarget.length;
@@ -1230,6 +1270,30 @@ if (zoomBadge && zoomPresets) {
       resizeCanvas();
       zoomPresets.hidden = true;
     });
+  });
+}
+
+// ── Sidebar resize ───────────────────────────────────────────────────────────
+const sidebarResize = document.getElementById("sidebar-resize");
+const sidebar = document.getElementById("sidebar");
+if (sidebarResize && sidebar) {
+  let resizing = false;
+  sidebarResize.addEventListener("mousedown", e => {
+    e.preventDefault();
+    resizing = true;
+    document.body.style.cursor = "col-resize";
+  });
+  document.addEventListener("mousemove", e => {
+    if (!resizing) return;
+    const newWidth = document.body.clientWidth - e.clientX;
+    sidebar.style.width = Math.max(140, Math.min(500, newWidth)) + "px";
+    resizeCanvas();
+  });
+  document.addEventListener("mouseup", () => {
+    if (resizing) {
+      resizing = false;
+      document.body.style.cursor = "";
+    }
   });
 }
 

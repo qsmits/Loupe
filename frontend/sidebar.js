@@ -349,9 +349,14 @@ export function renderInspectionTable() {
       : worstResult === "warn" ? "badge-warn"
       : worstResult === "pass" ? "badge-pass" : "badge-unmatched";
 
+    const mode = state.featureModes[groupKey] || "die";
+    const modeLabel = mode === "punch" ? "P" : "D";
+    const modeClass = mode === "punch" ? "mode-punch" : "mode-die";
+
     headerTr.innerHTML = `
       <td colspan="4" class="insp-group-name">
         <span class="insp-chevron">▾</span>
+        <span class="insp-mode ${modeClass}" title="${mode === 'punch' ? 'Punch (outer)' : 'Die (cavity)'}">${modeLabel}</span>
         <span class="insp-group-label">${groupName}</span>
         <span class="insp-group-count">(${segCount})</span>
       </td>

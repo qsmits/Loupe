@@ -350,10 +350,22 @@ body.no-camera #stream-img {
 /* ─── Sidebar ───────────────────────────────────────────────── */
 #sidebar {
   width: 200px;
+  min-width: 140px;
+  max-width: 500px;
   background: var(--surface);
   border-left: 1px solid var(--border);
   display: flex;
   flex-direction: column;
+  position: relative;
+}
+#sidebar-resize {
+  position: absolute;
+  left: -3px;
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  cursor: col-resize;
+  z-index: 20;
   overflow: hidden;
   flex-shrink: 0;
 }
@@ -809,6 +821,15 @@ body.no-camera .camera-section { display: none; }
   color: var(--muted);
   font-weight: 400;
 }
+.insp-mode {
+  font-size: 8px;
+  font-weight: 700;
+  padding: 1px 3px;
+  border-radius: 2px;
+  letter-spacing: 0.5px;
+}
+.mode-punch { background: rgba(251, 146, 60, 0.3); color: #fb923c; }
+.mode-die { background: rgba(96, 165, 250, 0.2); color: #60a5fa; }
 .insp-detail-row td {
   padding-left: 18px;
 }
