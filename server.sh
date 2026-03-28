@@ -15,6 +15,7 @@ start() {
     fi
     echo "Starting server on port $PORT..."
     nohup "$PYTHON" -m uvicorn backend.main:app --host 0.0.0.0 --port "$PORT" \
+        --timeout-graceful-shutdown 3 \
         > "$LOGFILE" 2>&1 &
     echo $! > "$PIDFILE"
     echo "Started (PID $!). Logs: $LOGFILE"

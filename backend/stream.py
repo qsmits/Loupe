@@ -173,19 +173,22 @@ async def mjpeg_generator(camera: BaseCamera, fps: int = 30):
     interval = 1.0 / fps
     loop = asyncio.get_running_loop()
 
-    while not (hasattr(camera, '_stop') and camera._stop.is_set()):
-        start = loop.time()
+    try:
+        while not (hasattr(camera, '_stop') and camera._stop.is_set()):
+            start = loop.time()
 
-        frame = camera.get_frame()
-        ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
-        if ok:
-            data = buf.tobytes()
-            yield (
-                b"--" + BOUNDARY + b"\r\n"
-                b"Content-Type: image/jpeg\r\n"
-                b"Content-Length: " + str(len(data)).encode() + b"\r\n"
-                b"\r\n" + data + b"\r\n"
-            )
+            frame = camera.get_frame()
+            ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
+            if ok:
+                data = buf.tobytes()
+                yield (
+                    b"--" + BOUNDARY + b"\r\n"
+                    b"Content-Type: image/jpeg\r\n"
+                    b"Content-Length: " + str(len(data)).encode() + b"\r\n"
+                    b"\r\n" + data + b"\r\n"
+                )
 
-        elapsed = loop.time() - start
-        await asyncio.sleep(max(0.0, interval - elapsed))
+            elapsed = loop.time() - start
+            await asyncio.sleep(max(0.0, interval - elapsed))
+    except (asyncio.CancelledError, GeneratorExit):
+        return
