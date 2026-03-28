@@ -206,68 +206,94 @@ export function initDxfHandlers() {
       statusEl2.hidden = !msg;
     }
 
-    // Ensure we have detected circles
-    let circles = getDetectedCirclesForAlignment();
-    if (circles.length === 0) {
-      // Auto-freeze and detect
-      if (!state.frozen) {
-        await fetch("/freeze", { method: "POST" });
-        state.frozen = true;
-        updateFreezeUI();
-      }
+    const cal = state.calibration;
+    if (!cal?.pixelsPerMm) { setStatus("Calibration required for alignment", true); return; }
+
+    if (!state.frozen) {
+      await ensureFrozen();
+    }
+
+    // Check if DXF has circles for circle-based alignment
+    const dxfHasCircles = ann.entities.some(e => e.type === "circle");
+    let circles = dxfHasCircles ? getDetectedCirclesForAlignment() : [];
+
+    if (dxfHasCircles && circles.length === 0) {
       setStatus("Running circle detection…");
-      const r = await fetch("/detect-circles", {
+      const detectResp = await fetch("/detect-circles", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ min_radius: 8, max_radius: 500 }),
       });
-      if (!r.ok) { setStatus("Detection failed", true); return; }
-      const detected = await r.json();
-      if (detected.length === 0) {
-        setStatus("No circles detected — run detection manually first", true);
-        return;
+      if (detectResp.ok) {
+        const detected = await detectResp.json();
+        if (detected.length > 0) {
+          const fw = state.frozenSize?.w || canvas.width;
+          const fh = state.frozenSize?.h || canvas.height;
+          pushUndo();
+          state.annotations = state.annotations.filter(a => a.type !== "detected-circle");
+          detected.forEach(c => addAnnotation({
+            type: "detected-circle", x: c.x, y: c.y, radius: c.radius,
+            frameWidth: fw, frameHeight: fh,
+          }));
+          circles = getDetectedCirclesForAlignment();
+          redraw();
+        }
       }
-      // Store detected circles as annotations
-      const info = await fetch("/camera/info").then(r => r.json());
-      pushUndo();
-      state.annotations = state.annotations.filter(a => a.type !== "detected-circle");
-      detected.forEach(c => addAnnotation({
-        type: "detected-circle", x: c.x, y: c.y, radius: c.radius,
-        frameWidth: info.width, frameHeight: info.height,
-      }));
-      circles = getDetectedCirclesForAlignment();
-      redraw();
     }
 
-    const cal = state.calibration;
-    if (!cal?.pixelsPerMm) { setStatus("Calibration required for alignment", true); return; }
-
+    // Try circle-based alignment first, fall back to edge-based
     setStatus("Aligning…");
     try {
-      const r = await fetch("/align-dxf", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          entities: ann.entities,
-          circles,
-          pixels_per_mm: cal.pixelsPerMm,
-        }),
-      });
-      if (!r.ok) {
-        const err = await r.json();
-        setStatus(err.detail ?? "Alignment failed", true);
-        return;
+      let result;
+      let usedEdges = false;
+
+      if (circles.length >= 2 && dxfHasCircles) {
+        // Circle-based alignment
+        const r = await fetch("/align-dxf", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            entities: ann.entities,
+            circles,
+            pixels_per_mm: cal.pixelsPerMm,
+          }),
+        });
+        if (r.ok) {
+          result = await r.json();
+          if (result.confidence === "failed") result = null;
+        }
       }
-      const result = await r.json();
+
+      if (!result) {
+        // Edge-based alignment (works without circles)
+        usedEdges = true;
+        const smoothing = parseInt(document.getElementById("adv-smoothing")?.value || "2");
+        const r = await fetch("/align-dxf-edges", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            entities: ann.entities,
+            pixels_per_mm: cal.pixelsPerMm,
+            smoothing,
+          }),
+        });
+        if (!r.ok) {
+          const err = await r.json().catch(() => ({}));
+          setStatus(err.detail ?? "Alignment failed", true);
+          return;
+        }
+        result = await r.json();
+      }
+
       pushUndo();
       ann.offsetX = result.tx;
       ann.offsetY = result.ty;
-      ann.angle = result.angle_deg;
-      ann.flipH = result.flip_h;
-      ann.flipV = result.flip_v;
+      ann.angle = result.angle_deg ?? 0;
+      ann.scale = result.scale ?? cal.pixelsPerMm;
+      if (result.flip_h != null) ann.flipH = result.flip_h;
+      if (result.flip_v != null) ann.flipV = result.flip_v;
       updateDxfControlsVisibility();
 
-      // Auto-show deviation callouts now that alignment is complete
       state.showDeviations = true;
       const devBtn = document.getElementById("btn-show-deviations");
       if (devBtn) {
@@ -275,12 +301,14 @@ export function initDxfHandlers() {
         devBtn.textContent = "Deviations: on";
       }
 
-      if (result.confidence === "high") {
-        setStatus(`Aligned — ${result.inlier_count}/${result.total_dxf_circles} features matched`);
+      if (usedEdges) {
+        setStatus(`Aligned (edge matching, score ${(result.score * 100).toFixed(0)}%)`);
+      } else if (result.confidence === "high") {
+        setStatus(`Aligned — ${result.inlier_count}/${result.total_dxf_circles} circles matched`);
       } else if (result.confidence === "low") {
         setStatus(`⚠ Low confidence — only ${result.inlier_count}/${result.total_dxf_circles} matched`, true);
       } else {
-        setStatus("⚠ Alignment failed — result unreliable", true);
+        setStatus("⚠ Alignment failed", true);
       }
       redraw();
     } catch (err) {

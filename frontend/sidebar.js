@@ -271,11 +271,10 @@ export function updateDxfControlsVisibility() {
     const fV = document.getElementById("btn-dxf-flip-v");
     if (fV) fV.classList.toggle("active", ann.flipV ?? false);
   }
-  const dxfCircleCount = ann?.entities?.filter(e => e.type === "circle").length ?? 0;
   const autoAlignBtn = document.getElementById("btn-auto-align");
   if (autoAlignBtn) {
-    autoAlignBtn.disabled = dxfCircleCount < 2;
-    autoAlignBtn.title = dxfCircleCount < 2 ? "At least 2 DXF circles required" : "";
+    autoAlignBtn.disabled = !ann;
+    autoAlignBtn.title = !ann ? "Load a DXF first" : "Auto-align DXF to image (edge or circle matching)";
   }
   const inspBtn = document.getElementById("btn-run-inspection");
   if (inspBtn) {

@@ -1,6 +1,8 @@
 # backend/vision/alignment.py
 import math
+import cv2
 import numpy as np
+from .detection import preprocess
 
 
 def extract_dxf_circles(entities):
@@ -183,3 +185,159 @@ def align_circles(dxf_circles, detected_circles, pixels_per_mm):
         "total_dxf_circles": len(dxf_circles),
         "confidence": confidence,
     }
+
+
+# ── Edge-based alignment (no circles required) ──────────────────────────────
+
+def align_dxf_edges(
+    frame: np.ndarray,
+    entities: list[dict],
+    pixels_per_mm: float,
+    angle_range: float = 5.0,
+    angle_step: float = 0.5,
+    smoothing: int = 2,
+    canny_low: int = 60,
+    canny_high: int = 150,
+) -> dict:
+    """
+    Align a DXF to an image using edge template matching.
+    Requires calibration (known px/mm) — searches position and rotation only.
+    """
+    h, w = frame.shape[:2]
+    scale = pixels_per_mm
+
+    gray = preprocess(frame, smoothing=smoothing)
+    edges = cv2.Canny(gray, canny_low, canny_high)
+    kernel = np.ones((3, 3), np.uint8)
+    edges_thick = cv2.dilate(edges, kernel, iterations=1)
+
+    # DXF coordinate bounds
+    xs, ys = [], []
+    for e in entities:
+        if "x1" in e:
+            xs.extend([e["x1"], e["x2"]])
+            ys.extend([e["y1"], e["y2"]])
+        elif "cx" in e:
+            xs.append(e["cx"])
+            ys.append(e["cy"])
+    if not xs:
+        return {"success": False, "reason": "No geometry in DXF"}
+
+    best_score = -1
+    best_angle = 0.0
+    best_loc = (0, 0)
+    best_r_min_x = 0
+    best_r_min_y = 0
+    best_tmpl_shape = (0, 0)
+
+    padding = 15
+    angles = np.arange(-angle_range, angle_range + angle_step * 0.5, angle_step)
+
+    for angle_deg in angles:
+        tmpl, r_min_x, r_min_y = _render_dxf_template(
+            entities, scale, angle_deg, padding
+        )
+        if tmpl is None:
+            continue
+        th, tw = tmpl.shape
+        if tw >= w or th >= h:
+            continue
+
+        result = cv2.matchTemplate(edges_thick, tmpl, cv2.TM_CCORR_NORMED)
+        _, max_val, _, max_loc = cv2.minMaxLoc(result)
+
+        if max_val > best_score:
+            best_score = max_val
+            best_angle = angle_deg
+            best_loc = max_loc
+            best_r_min_x = r_min_x
+            best_r_min_y = r_min_y
+            best_tmpl_shape = (th, tw)
+
+    if best_score < 0.01:
+        return {"success": False, "reason": "No good match found"}
+
+    # Convert template position to DXF overlay transform (offsetX, offsetY)
+    # DXF (0,0) in the rotated template is at pixel:
+    cos_a = math.cos(math.radians(best_angle))
+    sin_a = math.sin(math.radians(best_angle))
+    th, tw = best_tmpl_shape
+    origin_tmpl_x = (0 - best_r_min_x) * scale + padding
+    origin_tmpl_y = th - ((0 - best_r_min_y) * scale + padding)
+
+    tx = best_loc[0] + origin_tmpl_x
+    ty = best_loc[1] + origin_tmpl_y
+
+    return {
+        "success": True,
+        "tx": float(tx),
+        "ty": float(ty),
+        "angle_deg": float(best_angle),
+        "scale": float(scale),
+        "score": float(best_score),
+    }
+
+
+def _render_dxf_template(entities, scale, angle_deg=0, padding=15):
+    """Render DXF entities to a binary template at the given scale and angle."""
+    cos_a = math.cos(math.radians(angle_deg))
+    sin_a = math.sin(math.radians(angle_deg))
+
+    pts = []
+    for e in entities:
+        coords = []
+        if "x1" in e:
+            coords = [(e["x1"], e["y1"]), (e["x2"], e["y2"])]
+        elif "cx" in e:
+            r = e.get("radius", 0)
+            coords = [(e["cx"] - r, e["cy"] - r), (e["cx"] + r, e["cy"] + r)]
+        for px, py in coords:
+            pts.append((px * cos_a - py * sin_a, px * sin_a + py * cos_a))
+
+    if not pts:
+        return None, 0, 0
+
+    pxs = [p[0] for p in pts]
+    pys = [p[1] for p in pts]
+    r_min_x, r_min_y = min(pxs), min(pys)
+    r_max_x, r_max_y = max(pxs), max(pys)
+
+    tw = int((r_max_x - r_min_x) * scale) + 2 * padding
+    th = int((r_max_y - r_min_y) * scale) + 2 * padding
+    if tw < 10 or th < 10 or tw > 4000 or th > 4000:
+        return None, 0, 0
+
+    tmpl = np.zeros((th, tw), dtype=np.uint8)
+
+    for e in entities:
+        etype = e.get("type", "")
+        if etype in ("line", "polyline_line"):
+            x1r = e["x1"] * cos_a - e["y1"] * sin_a
+            y1r = e["x1"] * sin_a + e["y1"] * cos_a
+            x2r = e["x2"] * cos_a - e["y2"] * sin_a
+            y2r = e["x2"] * sin_a + e["y2"] * cos_a
+            px1 = int((x1r - r_min_x) * scale) + padding
+            py1 = th - (int((y1r - r_min_y) * scale) + padding)
+            px2 = int((x2r - r_min_x) * scale) + padding
+            py2 = th - (int((y2r - r_min_y) * scale) + padding)
+            cv2.line(tmpl, (px1, py1), (px2, py2), 255, 2)
+        elif etype in ("arc", "polyline_arc"):
+            cxr = e["cx"] * cos_a - e["cy"] * sin_a
+            cyr = e["cx"] * sin_a + e["cy"] * cos_a
+            pcx = int((cxr - r_min_x) * scale) + padding
+            pcy = th - (int((cyr - r_min_y) * scale) + padding)
+            r = int(e["radius"] * scale)
+            if r < 1:
+                continue
+            s_deg = -(e.get("end_angle", 0) + angle_deg)
+            e_deg = -(e.get("start_angle", 360) + angle_deg)
+            cv2.ellipse(tmpl, (pcx, pcy), (r, r), 0, s_deg, e_deg, 255, 2)
+        elif etype == "circle":
+            cxr = e["cx"] * cos_a - e["cy"] * sin_a
+            cyr = e["cx"] * sin_a + e["cy"] * cos_a
+            pcx = int((cxr - r_min_x) * scale) + padding
+            pcy = th - (int((cyr - r_min_y) * scale) + padding)
+            r = int(e["radius"] * scale)
+            if r < 1:
+                continue
+            cv2.circle(tmpl, (pcx, pcy), r, 255, 2)
