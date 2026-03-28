@@ -326,6 +326,7 @@ export function renderInspectionTable() {
   }
 
   tbody.innerHTML = "";
+  let featureNum = 0;
 
   for (const [groupKey, results] of groups) {
     // Determine group name
@@ -413,6 +414,7 @@ export function renderInspectionTable() {
 
     // Detail rows for each result in group
     for (const r of results) {
+      featureNum++;
       const tr = document.createElement("tr");
       tr.className = "insp-detail-row";
 
@@ -434,7 +436,7 @@ export function renderInspectionTable() {
       const sourceText = r.source === "manual" ? "M" : "";
 
       tr.innerHTML = `
-        <td class="insp-handle">${r.handle}</td>
+        <td class="insp-handle"><span class="insp-num">${featureNum}</span>${r.handle}</td>
         <td class="insp-type">${r.type.replace("polyline_", "p_")}</td>
         <td class="insp-dev">${deviationText}</td>
         <td class="insp-tol">±${r.tolerance_warn}/${r.tolerance_fail}</td>

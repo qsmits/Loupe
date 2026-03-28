@@ -830,6 +830,15 @@ body.no-camera .camera-section { display: none; }
 }
 .mode-punch { background: rgba(251, 146, 60, 0.3); color: #fb923c; }
 .mode-die { background: rgba(96, 165, 250, 0.2); color: #60a5fa; }
+.insp-num {
+  display: inline-block;
+  min-width: 14px;
+  text-align: center;
+  font-size: 8px;
+  font-weight: 700;
+  color: var(--text-secondary);
+  margin-right: 3px;
+}
 .insp-detail-row td {
   padding-left: 18px;
 }
