@@ -209,7 +209,7 @@ function onMouseDown(e) {
       }
     }
   }
-  // Label drag
+  // Label drag (guided results + regular measurements)
   if (state.tool === "select" && !e.shiftKey && _labelHitBoxes.length > 0) {
     const rect = canvas.getBoundingClientRect();
     const dpr = canvas.width / rect.width;
@@ -217,13 +217,26 @@ function onMouseDown(e) {
     const screenY = (e.clientY - rect.top) * dpr;
     for (const box of _labelHitBoxes) {
       if (screenX >= box.x && screenX <= box.x + box.w && screenY >= box.y && screenY <= box.y + box.h) {
-        const dxfAnn = state.annotations.find(a => a.type === "dxf-overlay");
-        const result = dxfAnn?.guidedResults?.find(r => r.handle === box.handle);
-        if (result) {
-          const offset = result.labelOffset || { dx: 0, dy: 0 };
-          state._labelDrag = { handle: box.handle, startX: pt.x, startY: pt.y,
-                               origDx: offset.dx, origDy: offset.dy };
-          return;
+        // Check guided result first
+        if (box.handle) {
+          const dxfAnn = state.annotations.find(a => a.type === "dxf-overlay");
+          const result = dxfAnn?.guidedResults?.find(r => r.handle === box.handle);
+          if (result) {
+            const offset = result.labelOffset || { dx: 0, dy: 0 };
+            state._labelDrag = { handle: box.handle, startX: pt.x, startY: pt.y,
+                                 origDx: offset.dx, origDy: offset.dy };
+            return;
+          }
+        }
+        // Check regular measurement annotation
+        if (box.annId) {
+          const ann = state.annotations.find(a => a.id === box.annId);
+          if (ann) {
+            const offset = ann.labelOffset || { dx: 0, dy: 0 };
+            state._labelDrag = { annId: box.annId, startX: pt.x, startY: pt.y,
+                                 origDx: offset.dx, origDy: offset.dy };
+            return;
+          }
         }
       }
     }
@@ -598,15 +611,19 @@ canvas.addEventListener("mousemove", e => {
     return;
   }
   if (state._labelDrag) {
-    const dxfAnn = state.annotations.find(a => a.type === "dxf-overlay");
-    const result = dxfAnn?.guidedResults?.find(r => r.handle === state._labelDrag.handle);
-    if (result) {
-      result.labelOffset = {
-        dx: state._labelDrag.origDx + (pt.x - state._labelDrag.startX),
-        dy: state._labelDrag.origDy + (pt.y - state._labelDrag.startY),
-      };
-      redraw();
+    const newOffset = {
+      dx: state._labelDrag.origDx + (pt.x - state._labelDrag.startX),
+      dy: state._labelDrag.origDy + (pt.y - state._labelDrag.startY),
+    };
+    if (state._labelDrag.handle) {
+      const dxfAnn = state.annotations.find(a => a.type === "dxf-overlay");
+      const result = dxfAnn?.guidedResults?.find(r => r.handle === state._labelDrag.handle);
+      if (result) result.labelOffset = newOffset;
+    } else if (state._labelDrag.annId) {
+      const ann = state.annotations.find(a => a.id === state._labelDrag.annId);
+      if (ann) ann.labelOffset = newOffset;
     }
+    redraw();
     return;
   }
   if (state.dxfAlignMode) {

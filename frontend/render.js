@@ -651,7 +651,7 @@ export function drawArcMeasure(ann, sel) {
     drawHandle(ann.p3, "#60a5fa");
   }
   ctx.restore();
-  drawLabel(measurementLabel(ann), ann.cx + 5, ann.cy - ann.r - 5);
+  drawMeasurementLabel(ann, measurementLabel(ann), ann.cx + 5, ann.cy - ann.r - 5, ann.cx, ann.cy);
 }
 
 export function drawLine(a, b, color, width) {
@@ -871,6 +871,39 @@ export function drawLabel(text, x, y) {
   ctx.fillText(text, x, y);
 }
 
+/** Draw a measurement label with optional drag offset and leader line. Records hitbox. */
+function drawMeasurementLabel(ann, text, defaultX, defaultY, refX, refY) {
+  const offset = ann.labelOffset || { dx: 0, dy: 0 };
+  const lx = defaultX + offset.dx;
+  const ly = defaultY + offset.dy;
+
+  // Leader line if offset
+  if (offset.dx !== 0 || offset.dy !== 0) {
+    ctx.save();
+    ctx.strokeStyle = "rgba(150, 150, 150, 0.5)";
+    ctx.lineWidth = pw(0.5);
+    ctx.beginPath();
+    ctx.moveTo(lx, ly);
+    ctx.lineTo(refX ?? defaultX, refY ?? defaultY);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  drawLabel(text, lx, ly);
+
+  // Record hitbox for dragging
+  const fontSize = pw(12);
+  ctx.font = `bold ${fontSize}px ui-monospace, monospace`;
+  const textW = ctx.measureText(text).width;
+  _labelHitBoxes.push({
+    annId: ann.id,
+    handle: null,  // null = regular measurement (not guided result)
+    x: lx - pw(2), y: ly - pw(13),
+    w: textW + pw(4), h: pw(16),
+    refX: refX ?? defaultX, refY: refY ?? defaultY,
+  });
+}
+
 const GROUP_COLOR = "#38bdf8";  // sky blue for grouped measurements
 
 function _annColor(ann, sel, defaultColor) {
@@ -883,7 +916,7 @@ export function drawDistance(ann, sel) {
   drawLine(ann.a, ann.b, _annColor(ann, sel, "#facc15"), sel ? 2 : 1.5);
   if (sel) { drawHandle(ann.a, "#60a5fa"); drawHandle(ann.b, "#60a5fa"); }
   const mx = (ann.a.x + ann.b.x) / 2, my = (ann.a.y + ann.b.y) / 2;
-  drawLabel(measurementLabel(ann), mx + 5, my - 5);
+  drawMeasurementLabel(ann, measurementLabel(ann), mx + 5, my - 5, mx, my);
 }
 
 export function drawAngle(ann, sel) {
@@ -891,7 +924,7 @@ export function drawAngle(ann, sel) {
   drawLine(ann.p1, ann.vertex, c, sel ? 2 : 1.5);
   drawLine(ann.vertex, ann.p3, c, sel ? 2 : 1.5);
   if (sel) { [ann.p1, ann.vertex, ann.p3].forEach(p => drawHandle(p, "#60a5fa")); }
-  drawLabel(measurementLabel(ann), ann.vertex.x + 8, ann.vertex.y - 8);
+  drawMeasurementLabel(ann, measurementLabel(ann), ann.vertex.x + 8, ann.vertex.y - 8, ann.vertex.x, ann.vertex.y);
 }
 
 export function drawCircle(ann, sel) {
@@ -905,7 +938,7 @@ export function drawCircle(ann, sel) {
     drawHandle({ x: ann.cx, y: ann.cy }, "#60a5fa");
     drawHandle({ x: ann.cx + ann.r, y: ann.cy }, "#60a5fa");
   }
-  drawLabel(measurementLabel(ann), ann.cx + 5, ann.cy - ann.r - 5);
+  drawMeasurementLabel(ann, measurementLabel(ann), ann.cx + 5, ann.cy - ann.r - 5, ann.cx, ann.cy);
 }
 
 export function drawEdgesOverlay(ann) {
