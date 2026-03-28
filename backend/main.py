@@ -86,6 +86,16 @@ def create_app(camera: BaseCamera | None = None, no_camera: bool = False) -> Fas
         finally:
             reader.close()
 
+    # Signal handler to stop the MJPEG generator before uvicorn drains connections.
+    # Without this, uvicorn waits for the streaming response to end, but the generator
+    # only stops when reader._stop is set — which happens in lifespan cleanup, which
+    # runs AFTER uvicorn finishes draining. Deadlock.
+    import signal
+    def _on_shutdown(signum, frame):
+        reader._stop.set()  # breaks the MJPEG generator loop
+    signal.signal(signal.SIGTERM, _on_shutdown)
+    signal.signal(signal.SIGINT, _on_shutdown)
+
     app = FastAPI(title="Video Microscope", lifespan=lifespan)
 
     app.add_middleware(
