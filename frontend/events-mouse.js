@@ -121,14 +121,10 @@ function onMouseDown(e) {
     return;
   }
   // Hit-test deviation labels — open per-feature tolerance popover if clicked
+  // Hit boxes are in image space (recorded inside viewport transform)
   if (state.showDeviations && _deviationHitBoxes.length) {
-    const rect = canvas.getBoundingClientRect();
-    const scaleX = canvas.width / rect.width;
-    const scaleY = canvas.height / rect.height;
-    const cx = (e.clientX - rect.left) * scaleX;
-    const cy = (e.clientY - rect.top)  * scaleY;
     for (const box of _deviationHitBoxes) {
-      if (box.handle && cx >= box.x && cx <= box.x + box.w && cy >= box.y && cy <= box.y + box.h) {
+      if (box.handle && pt.x >= box.x && pt.x <= box.x + box.w && pt.y >= box.y && pt.y <= box.y + box.h) {
         openFeatureTolPopover(box.handle, e.clientX, e.clientY);
         e.stopPropagation();
         return;
@@ -136,13 +132,11 @@ function onMouseDown(e) {
     }
   }
   // Label drag (guided results + regular measurements)
+  // Hit boxes are recorded in image space (inside viewport transform),
+  // so compare against pt (image-space mouse position), not screen pixels.
   if (state.tool === "select" && !e.shiftKey && _labelHitBoxes.length > 0) {
-    const rect = canvas.getBoundingClientRect();
-    const dpr = canvas.width / rect.width;
-    const screenX = (e.clientX - rect.left) * dpr;
-    const screenY = (e.clientY - rect.top) * dpr;
     for (const box of _labelHitBoxes) {
-      if (screenX >= box.x && screenX <= box.x + box.w && screenY >= box.y && screenY <= box.y + box.h) {
+      if (pt.x >= box.x && pt.x <= box.x + box.w && pt.y >= box.y && pt.y <= box.y + box.h) {
         // Check guided result first
         if (box.handle) {
           const dxfAnn = state.annotations.find(a => a.type === "dxf-overlay");
@@ -352,16 +346,12 @@ export function initMouseHandlers() {
     }
     if (state.dragState) { handleDrag(pt); return; }
 
-    // Label tooltip on hover
+    // Label tooltip on hover (hit boxes are in image space)
     const tooltip = document.getElementById("label-tooltip");
     if (tooltip) {
-      const rect = canvas.getBoundingClientRect();
-      const dpr = canvas.width / rect.width;
-      const screenX = (e.clientX - rect.left) * dpr;
-      const screenY = (e.clientY - rect.top) * dpr;
       let hoveredBox = null;
       for (const box of _labelHitBoxes) {
-        if (screenX >= box.x && screenX <= box.x + box.w && screenY >= box.y && screenY <= box.y + box.h) {
+        if (pt.x >= box.x && pt.x <= box.x + box.w && pt.y >= box.y && pt.y <= box.y + box.h) {
           hoveredBox = box;
           break;
         }
