@@ -17,6 +17,15 @@ import { showContextMenu, hideContextMenu } from './events-context-menu.js';
 import { _hitTestGuidedResult, _findConnectedEntities, _annotationPrimaryPoint,
          _nearestSegmentDist, _updatePickFit, _finalizePickInspection } from './events-inspection.js';
 
+/** Run a drawing callback inside the viewport transform (for preview overlays after redraw) */
+function withViewport(fn) {
+  ctx.save();
+  ctx.scale(viewport.zoom, viewport.zoom);
+  ctx.translate(-viewport.panX, -viewport.panY);
+  fn();
+  ctx.restore();
+}
+
 function onMouseDown(e) {
   if (e.button !== 0 && e.button !== 1) return;
   document.getElementById("label-tooltip")?.setAttribute("hidden", "");
@@ -403,47 +412,46 @@ export function initMouseHandlers() {
       state.snapTarget = (snapped && !e.altKey) ? snappedPt : null;
       redraw();
       const last = state.pendingPoints[state.pendingPoints.length - 1];
-      if (state.tool === "circle" && state.pendingPoints.length === 2) {
-        try {
-          const preview = fitCircle(state.pendingPoints[0], state.pendingPoints[1], snappedPt);
-          ctx.save();
-          ctx.beginPath();
-          ctx.arc(preview.cx, preview.cy, preview.r, 0, Math.PI * 2);
-          ctx.strokeStyle = "rgba(251,146,60,0.6)";
-          ctx.lineWidth = 1.5;
-          ctx.setLineDash([5, 4]);
-          ctx.stroke();
-          ctx.setLineDash([]);
-          ctx.restore();
-        } catch {
-          // collinear — no preview
+      withViewport(() => {
+        const pw = px => px / viewport.zoom;
+        if (state.tool === "circle" && state.pendingPoints.length === 2) {
+          try {
+            const preview = fitCircle(state.pendingPoints[0], state.pendingPoints[1], snappedPt);
+            ctx.beginPath();
+            ctx.arc(preview.cx, preview.cy, preview.r, 0, Math.PI * 2);
+            ctx.strokeStyle = "rgba(251,146,60,0.6)";
+            ctx.lineWidth = pw(1.5);
+            ctx.setLineDash([pw(5), pw(4)]);
+            ctx.stroke();
+            ctx.setLineDash([]);
+          } catch {
+            // collinear — no preview
+          }
+        } else if (state.tool === "arc-measure" && state.pendingPoints.length === 2) {
+          const [p1, p2] = state.pendingPoints;
+          const p3 = snappedPt;
+          const ax = p2.x - p1.x, ay = p2.y - p1.y;
+          const bx = p3.x - p1.x, by = p3.y - p1.y;
+          const D = 2 * (ax * by - ay * bx);
+          if (Math.abs(D) >= 1e-6) {
+            const ux = (by * (ax*ax + ay*ay) - ay * (bx*bx + by*by)) / D;
+            const uy = (ax * (bx*bx + by*by) - bx * (ax*ax + ay*ay)) / D;
+            const pcx = p1.x + ux, pcy = p1.y + uy;
+            const pr  = Math.hypot(ux, uy);
+            const pa1 = Math.atan2(p1.y - pcy, p1.x - pcx);
+            const pa3 = Math.atan2(p3.y - pcy, p3.x - pcx);
+            ctx.beginPath();
+            ctx.arc(pcx, pcy, pr, pa1, pa3);
+            ctx.strokeStyle = "rgba(191,90,242,0.6)";
+            ctx.lineWidth = pw(1.5);
+            ctx.setLineDash([pw(5), pw(4)]);
+            ctx.stroke();
+            ctx.setLineDash([]);
+          }
+        } else {
+          drawLine(last, snappedPt, "rgba(251,146,60,0.5)", 1);
         }
-      } else if (state.tool === "arc-measure" && state.pendingPoints.length === 2) {
-        const [p1, p2] = state.pendingPoints;
-        const p3 = snappedPt;
-        const ax = p2.x - p1.x, ay = p2.y - p1.y;
-        const bx = p3.x - p1.x, by = p3.y - p1.y;
-        const D = 2 * (ax * by - ay * bx);
-        if (Math.abs(D) >= 1e-6) {
-          const ux = (by * (ax*ax + ay*ay) - ay * (bx*bx + by*by)) / D;
-          const uy = (ax * (bx*bx + by*by) - bx * (ax*ax + ay*ay)) / D;
-          const pcx = p1.x + ux, pcy = p1.y + uy;
-          const pr  = Math.hypot(ux, uy);
-          const pa1 = Math.atan2(p1.y - pcy, p1.x - pcx);
-          const pa3 = Math.atan2(p3.y - pcy, p3.x - pcx);
-          ctx.save();
-          ctx.beginPath();
-          ctx.arc(pcx, pcy, pr, pa1, pa3);
-          ctx.strokeStyle = "rgba(191,90,242,0.6)";
-          ctx.lineWidth = 1.5;
-          ctx.setLineDash([5, 4]);
-          ctx.stroke();
-          ctx.setLineDash([]);
-          ctx.restore();
-        }
-      } else {
-        drawLine(last, snappedPt, "rgba(251,146,60,0.5)", 1);
-      }
+      });
     }
 
     // Constrained rubber-band for perp-dist and para-dist
@@ -452,9 +460,11 @@ export function initMouseHandlers() {
       const { pt: snappedPt, snapped } = snapPoint(rawPt, e.altKey);
       state.snapTarget = (snapped && !e.altKey) ? snappedPt : null;
       redraw();
-      const b = projectConstrained(snappedPt, state.pendingPoints[0], state.pendingRefLine,
-                                   state.tool === "perp-dist");
-      drawLine(state.pendingPoints[0], b, "rgba(251,146,60,0.5)", 1);
+      withViewport(() => {
+        const b = projectConstrained(snappedPt, state.pendingPoints[0], state.pendingRefLine,
+                                     state.tool === "perp-dist");
+        drawLine(state.pendingPoints[0], b, "rgba(251,146,60,0.5)", 1);
+      });
     }
 
     // Area polygon preview
@@ -462,7 +472,9 @@ export function initMouseHandlers() {
       const { pt: snappedPt, snapped } = snapPoint(rawPt, e.altKey);
       state.snapTarget = (snapped && !e.altKey) ? snappedPt : null;
       redraw();
-      drawAreaPreview(state.pendingPoints, snappedPt);
+      withViewport(() => {
+        drawAreaPreview(state.pendingPoints, snappedPt);
+      });
     }
 
     // Coordinate readout HUD
