@@ -510,13 +510,31 @@ document.getElementById("btn-wb-auto").addEventListener("click", async () => {
     ["red", "green", "blue"].forEach(ch => {
       const slider = document.getElementById(`wb-${ch}-slider`);
       const display = document.getElementById(`wb-${ch}-value`);
-      if (slider) { slider.value = ratios[ch]; display.textContent = ratios[ch].toFixed(2); }
+      if (slider) slider.value = ratios[ch];
+      if (display) display.textContent = ratios[ch].toFixed(2);
     });
     fmtStatusEl.textContent = "Done";
     setTimeout(() => { fmtStatusEl.textContent = ""; }, 2000);
   } catch (err) {
     fmtStatusEl.textContent = `Error: ${err.message}`;
   }
+});
+
+// ── Exposure / Gain sliders ──────────────────────────────────────────────────
+document.getElementById("exp-slider").addEventListener("input", async e => {
+  const v = parseFloat(e.target.value);
+  document.getElementById("exp-value").textContent = `${v} µs`;
+  try {
+    await fetch("/camera/exposure", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ value: v }) });
+  } catch (err) { console.error("Failed to set exposure:", err); }
+});
+
+document.getElementById("gain-slider").addEventListener("input", async e => {
+  const v = parseFloat(e.target.value);
+  document.getElementById("gain-value").textContent = `${v} dB`;
+  try {
+    await fetch("/camera/gain", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ value: v }) });
+  } catch (err) { console.error("Failed to set gain:", err); }
 });
 
 let _wbDebounce = {};
