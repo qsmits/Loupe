@@ -127,11 +127,12 @@ document.getElementById("btn-freeze").addEventListener("click", async () => {
     img.style.opacity = "1";
     state.frozen = false;
     state.frozenBackground = null;
-    viewport.zoom = 1;
-    viewport.panX = 0;
-    viewport.panY = 0;
+    // Restore fit-to-window zoom (not zoom=1, which would show a 1:1 crop
+    // when camera resolution exceeds display size)
+    const rect = canvas.getBoundingClientRect();
+    fitToWindow(rect.width, rect.height);
     updateFreezeUI();
-    redraw();
+    resizeCanvas();
   } else {
     await doFreeze();
   }
