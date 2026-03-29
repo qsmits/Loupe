@@ -30,6 +30,17 @@ export async function ensureFrozen() {
 }
 
 export async function doFreeze() {
+  // If we already have a frozen background (e.g., from a loaded image), just
+  // mark as frozen without re-capturing from the camera. In no-camera mode,
+  // /freeze would overwrite the loaded image with a blank NullCamera frame.
+  if (state.frozenBackground) {
+    img.style.opacity = "0";
+    state.frozen = true;
+    updateFreezeUI();
+    resizeCanvas();
+    return;
+  }
+
   const r = await fetch("/freeze", { method: "POST" });
   if (!r.ok) return;
   const { width, height } = await r.json();
