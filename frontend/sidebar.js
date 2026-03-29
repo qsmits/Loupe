@@ -1,7 +1,7 @@
 import { state, DETECTION_TYPES } from './state.js';
 import { redraw, showStatus, getStatus, canvas, listEl, cameraInfoEl } from './render.js';
 import { measurementLabel } from './format.js';
-import { imageWidth, imageHeight } from './viewport.js';
+import { imageWidth, imageHeight, setImageSize, fitToWindow } from './viewport.js';
 
 const _mctx = () => ({
   calibration: state.calibration,
@@ -269,6 +269,17 @@ export async function loadCameraInfo() {
   try {
     const r = await fetch("/camera/info");
     const d = await r.json();
+    // Set image dimensions from camera resolution so annotations are always
+    // in camera-pixel coordinates, even before freeze. This prevents the
+    // coordinate shift that occurs when doFreeze sets imageWidth/imageHeight.
+    if (d.width > 0 && d.height > 0 && !imageWidth) {
+      setImageSize(d.width, d.height);
+      // Start at fit-to-window zoom so the full camera frame is visible.
+      // Without this, zoom=1 would show only a top-left crop since
+      // camera resolution (e.g. 2592) >> display width (e.g. 800).
+      const rect = canvas.getBoundingClientRect();
+      if (rect.width > 0) fitToWindow(rect.width, rect.height);
+    }
     cameraInfoEl.innerHTML =
       `<div>${d.model}</div>` +
       `<div style="color:var(--muted)">${d.width}×${d.height}</div>` +
