@@ -272,7 +272,7 @@ export async function loadCameraInfo() {
     // Set image dimensions from camera resolution so annotations are always
     // in camera-pixel coordinates, even before freeze. This prevents the
     // coordinate shift that occurs when doFreeze sets imageWidth/imageHeight.
-    if (d.width > 0 && d.height > 0 && !imageWidth) {
+    if (d.width > 0 && d.height > 0 && d.width !== imageWidth) {
       setImageSize(d.width, d.height);
       // Start at fit-to-window zoom so the full camera frame is visible.
       // Without this, zoom=1 would show only a top-left crop since

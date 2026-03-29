@@ -2,7 +2,7 @@ import { state } from './state.js';
 import { redraw, showStatus, img, canvas, resizeCanvas } from './render.js';
 import { addAnnotation } from './annotations.js';
 import { updateFreezeUI } from './sidebar.js';
-import { setImageSize } from './viewport.js';
+import { setImageSize, imageWidth, imageHeight } from './viewport.js';
 
 // ── Detection busy indicator ──────────────────────────────────────────────
 function withBusy(btn, label, fn) {
@@ -45,7 +45,11 @@ export async function doFreeze() {
   if (!r.ok) return;
   const { width, height } = await r.json();
   state.frozenSize = { w: width, h: height };
-  setImageSize(width, height);
+  // Only update image dimensions if they actually changed — loadCameraInfo
+  // already sets them at startup for real cameras.
+  if (width !== imageWidth || height !== imageHeight) {
+    setImageSize(width, height);
+  }
 
   // Fetch the frozen frame as a real JPEG — drawing the MJPEG stream <img>
   // element to a canvas is unreliable (blank result on most browsers).
