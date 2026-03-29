@@ -19,7 +19,7 @@ def test_freeze(client):
 
 
 def test_snapshot_saves_file(client, tmp_path, monkeypatch):
-    monkeypatch.setattr("backend.api.SNAPSHOTS_DIR", tmp_path)
+    monkeypatch.setattr("backend.api_camera.SNAPSHOTS_DIR", tmp_path)
     r = client.post("/snapshot")
     assert r.status_code == 200
     filename = r.json()["filename"]
@@ -152,21 +152,21 @@ def test_select_camera_aravis_unavailable(client):
 
 
 def test_list_snapshots_dir_not_exist(client, tmp_path, monkeypatch):
-    monkeypatch.setattr("backend.api.SNAPSHOTS_DIR", tmp_path / "nonexistent")
+    monkeypatch.setattr("backend.api_camera.SNAPSHOTS_DIR", tmp_path / "nonexistent")
     r = client.get("/snapshots")
     assert r.status_code == 200
     assert r.json() == []
 
 
 def test_list_snapshots_empty(client, tmp_path, monkeypatch):
-    monkeypatch.setattr("backend.api.SNAPSHOTS_DIR", tmp_path)
+    monkeypatch.setattr("backend.api_camera.SNAPSHOTS_DIR", tmp_path)
     r = client.get("/snapshots")
     assert r.status_code == 200
     assert r.json() == []
 
 
 def test_list_snapshots_returns_files(client, tmp_path, monkeypatch):
-    monkeypatch.setattr("backend.api.SNAPSHOTS_DIR", tmp_path)
+    monkeypatch.setattr("backend.api_camera.SNAPSHOTS_DIR", tmp_path)
     import numpy as np, cv2
     for name in ["20260101_120000.jpg", "20260102_130000.jpg"]:
         cv2.imwrite(str(tmp_path / name), np.full((10, 10, 3), 128, dtype=np.uint8))
@@ -178,7 +178,7 @@ def test_list_snapshots_returns_files(client, tmp_path, monkeypatch):
 
 
 def test_load_snapshot(client, tmp_path, monkeypatch):
-    monkeypatch.setattr("backend.api.SNAPSHOTS_DIR", tmp_path)
+    monkeypatch.setattr("backend.api_camera.SNAPSHOTS_DIR", tmp_path)
     import numpy as np, cv2
     cv2.imwrite(str(tmp_path / "test.jpg"), np.full((100, 100, 3), 128, dtype=np.uint8))
     r = client.post("/load-snapshot", json={"filename": "test.jpg"})
@@ -194,7 +194,7 @@ def test_load_snapshot_path_traversal(client):
 
 
 def test_load_snapshot_not_found(client, tmp_path, monkeypatch):
-    monkeypatch.setattr("backend.api.SNAPSHOTS_DIR", tmp_path)
+    monkeypatch.setattr("backend.api_camera.SNAPSHOTS_DIR", tmp_path)
     r = client.post("/load-snapshot", json={"filename": "nonexistent.jpg"})
     assert r.status_code == 404
 
