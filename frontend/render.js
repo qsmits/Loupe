@@ -154,8 +154,8 @@ export function resizeCanvas() {
   canvas.style.width  = displayW  + "px";
   canvas.style.height = displayH + "px";
 
-  canvas.width  = Math.min(iw, Math.round(displayW * viewport.zoom));
-  canvas.height = Math.min(ih, Math.round(displayH * viewport.zoom));
+  canvas.width  = Math.round(displayW);
+  canvas.height = Math.round(displayH);
   if (!imageWidth) setImageSize(canvas.width, canvas.height);
   redraw();
 }
