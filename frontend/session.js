@@ -1,4 +1,4 @@
-import { state, TRANSIENT_TYPES } from './state.js';
+import { state, TRANSIENT_TYPES, DETECTION_TYPES } from './state.js';
 import { redraw, canvas, img, showStatus } from './render.js';
 import { renderSidebar, renderInspectionTable } from './sidebar.js';
 import { addAnnotation } from './annotations.js';
@@ -337,27 +337,59 @@ export function exportInspectionPdf() {
     }
   }
 
-  // ── Arc-measure section ──
-  const arcMeasures = state.annotations.filter(a => a.type === "arc-measure");
-  if (arcMeasures.length > 0) {
+  // ── Measurements section ──
+  const SKIP_TYPES = new Set([...DETECTION_TYPES, "origin", "calibration"]);
+  const measurements = state.annotations.filter(a => !SKIP_TYPES.has(a.type));
+  if (measurements.length > 0) {
     yPos += 4;
     if (yPos + rowH > pageH - margin) { doc.addPage(); yPos = margin; }
     doc.setFontSize(fontSize);
     doc.setFont(undefined, "bold");
-    doc.text("Arc Measurements", margin, yPos + rowH - 2);
+    doc.text("Measurements", margin, yPos + rowH - 2);
     yPos += rowH;
     doc.setFont(undefined, "normal");
 
-    const ppm = state.calibration ? state.calibration.pixelsPerMm : 1;
-    arcMeasures.forEach(ann => {
+    // Group by measurementGroups
+    const grouped = new Map();  // groupName → [ann]
+    const ungrouped = [];
+    for (const ann of measurements) {
+      const group = state.measurementGroups[ann.id];
+      if (group) {
+        if (!grouped.has(group)) grouped.set(group, []);
+        grouped.get(group).push(ann);
+      } else {
+        ungrouped.push(ann);
+      }
+    }
+
+    const TYPE_LABELS = {
+      "distance": "Distance", "angle": "Angle", "circle": "Circle",
+      "arc-measure": "Arc", "fit-arc": "Arc", "center-dist": "Center Dist",
+      "perp-dist": "Perp Dist", "para-dist": "Para Dist",
+      "area": "Area", "pt-circle-dist": "Pt-Circle", "intersect": "Intersect",
+      "slot-dist": "Slot Dist",
+    };
+
+    const printMeasurement = (ann) => {
       if (yPos + rowH > pageH - margin) { doc.addPage(); yPos = margin; }
-      const r_mm = (ann.r / ppm).toFixed(3);
-      const chord_mm = (ann.chord_px / ppm).toFixed(3);
-      const label = ann.name || String(ann.id);
-      const line = `${label}:  r=${r_mm} mm  span=${ann.span_deg.toFixed(1)}°  chord=${chord_mm} mm`;
-      doc.text(line, margin, yPos + rowH - 2);
+      const name = ann.name || TYPE_LABELS[ann.type] || ann.type;
+      const value = measurementLabel(ann, _mctx());
+      doc.text(`${name}:  ${value}`, margin + 2, yPos + rowH - 2);
       yPos += rowH;
-    });
+    };
+
+    // Print grouped measurements
+    for (const [groupName, anns] of grouped) {
+      if (yPos + rowH > pageH - margin) { doc.addPage(); yPos = margin; }
+      doc.setFont(undefined, "bold");
+      doc.text(groupName, margin, yPos + rowH - 2);
+      doc.setFont(undefined, "normal");
+      yPos += rowH;
+      anns.forEach(printMeasurement);
+    }
+
+    // Print ungrouped measurements
+    ungrouped.forEach(printMeasurement);
   }
 
   const ts = new Date().toISOString().slice(0, 19).replace(/[T:]/g, "-");
