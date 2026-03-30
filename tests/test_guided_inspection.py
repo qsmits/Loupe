@@ -302,3 +302,101 @@ class TestFitManualPointsCircle:
 
         assert result["matched"] is False
         assert "at least" in result["reason"]
+
+
+def _draw_horizontal_line(frame, y, x1, x2, color=255, thickness=2):
+    frame = frame.copy()
+    cv2.line(frame, (x1, y), (x2, y), (color, color, color), thickness)
+    return frame
+
+
+class TestTruePosition:
+    def test_circle_has_tp_dev_mm(self):
+        """Circle inspection results should include tp_dev_mm = 2 * center_dev_mm."""
+        frame = _make_blank_frame(color=0)
+        frame = _draw_circle(frame, cx=300, cy=240, r=80)
+
+        entity = {
+            "handle": "TP1",
+            "type": "circle",
+            "parent_handle": None,
+            "cx": 0, "cy": 0,
+            "radius": 80,
+        }
+
+        results = inspect_features(
+            frame, [entity],
+            pixels_per_mm=1.0,
+            tx=300, ty=240,
+            angle_deg=0.0,
+            corridor_px=15,
+            canny_low=30, canny_high=100,
+        )
+
+        assert len(results) == 1
+        r = results[0]
+        assert r["matched"] is True
+        assert r["tp_dev_mm"] is not None
+        assert r["center_dev_mm"] is not None
+        # Allow small rounding tolerance since both values are independently rounded
+        assert abs(r["tp_dev_mm"] - 2.0 * r["center_dev_mm"]) < 0.001
+
+    def test_circle_has_dx_dy_px(self):
+        """Circle results should include raw pixel deviations dx_px, dy_px."""
+        frame = _make_blank_frame(color=0)
+        frame = _draw_circle(frame, cx=300, cy=240, r=80)
+
+        entity = {
+            "handle": "TP2",
+            "type": "circle",
+            "parent_handle": None,
+            "cx": 0, "cy": 0,
+            "radius": 80,
+        }
+
+        results = inspect_features(
+            frame, [entity],
+            pixels_per_mm=1.0,
+            tx=300, ty=240,
+            angle_deg=0.0,
+            corridor_px=15,
+            canny_low=30, canny_high=100,
+        )
+
+        assert len(results) == 1
+        r = results[0]
+        assert r["matched"] is True
+        assert r["dx_px"] is not None
+        assert r["dy_px"] is not None
+        # With ppm=1, sqrt(dx_px^2 + dy_px^2) should equal center_dev_mm
+        computed = math.sqrt(r["dx_px"] ** 2 + r["dy_px"] ** 2)
+        assert abs(computed - r["center_dev_mm"]) < 0.1
+
+    def test_line_has_no_tp(self):
+        """Line inspection results should have tp_dev_mm = None."""
+        frame = _make_blank_frame(color=0)
+        frame = _draw_horizontal_line(frame, y=240, x1=50, x2=590)
+
+        entity = {
+            "handle": "TP3",
+            "type": "line",
+            "parent_handle": None,
+            "x1": -270, "y1": 0,
+            "x2": 270, "y2": 0,
+        }
+
+        results = inspect_features(
+            frame, [entity],
+            pixels_per_mm=1.0,
+            tx=320, ty=240,
+            angle_deg=0.0,
+            corridor_px=15,
+            canny_low=30, canny_high=100,
+        )
+
+        assert len(results) == 1
+        r = results[0]
+        assert r["matched"] is True
+        assert r["tp_dev_mm"] is None
+        assert r["dx_px"] is None
+        assert r["dy_px"] is None
