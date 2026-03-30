@@ -21,10 +21,6 @@ FRONTEND_DIR = pathlib.Path(__file__).parent.parent / "frontend"
 
 
 def create_app(camera: BaseCamera | None = None, no_camera: bool = False) -> FastAPI:
-    frame_store = SessionFrameStore(
-        max_sessions=int(os.environ.get("MAX_SESSIONS", "50")),
-        ttl_seconds=int(os.environ.get("SESSION_TTL", "1800")),
-    )
     startup_warning: str | None = None
 
     # Determine whether to run in no-camera mode
@@ -41,6 +37,11 @@ def create_app(camera: BaseCamera | None = None, no_camera: bool = False) -> Fas
         cfg = {}
 
     hosted = os.environ.get("HOSTED", "").lower() in ("1", "true") or cfg.get("hosted", False)
+
+    # Session frame store — env vars override config file settings
+    max_sessions = int(os.environ.get("MAX_SESSIONS", cfg.get("max_sessions", 50)))
+    session_ttl = int(os.environ.get("SESSION_TTL", cfg.get("session_ttl", 1800)))
+    frame_store = SessionFrameStore(max_sessions=max_sessions, ttl_seconds=session_ttl)
 
     if _no_camera:
         camera = NullCamera()
@@ -126,6 +127,10 @@ def create_app(camera: BaseCamera | None = None, no_camera: bool = False) -> Fas
             allow_methods=["*"],
             allow_headers=["*"],
         )
+
+    # Rate limiting in hosted mode (must be added AFTER CORS middleware)
+    from .rate_limit import RateLimitMiddleware
+    app.add_middleware(RateLimitMiddleware, hosted=hosted)
 
     app.include_router(make_router(reader, frame_store, startup_warning=startup_warning))
     app.include_router(ui_router)
