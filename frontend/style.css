@@ -184,7 +184,8 @@ input[type=range] { cursor: pointer; accent-color: var(--accent); }
 .detect-btn:hover { background: var(--border); }
 
 /* ─── Camera panel dropdown ─────────────────────────────────── */
-.camera-panel { width: 280px; }
+.camera-panel { width: 280px; overflow: hidden; }
+.camera-panel .detect-val { min-width: 60px; text-align: right; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .camera-panel-header { padding: 8px 10px; border-bottom: 1px solid var(--border); }
 .camera-select-dropdown { width: 100%; background: var(--bg); color: var(--fg); border: 1px solid var(--border); border-radius: 4px; padding: 4px; font-size: 12px; }
 .pixel-format-dropdown { background: var(--bg); color: var(--fg); border: 1px solid var(--border); border-radius: 3px; padding: 1px 4px; font-size: 11px; }
@@ -616,11 +617,13 @@ body.no-camera .camera-section { display: none; }
 
 .settings-panel {
   display: none;
+  flex-direction: column;
   padding: 14px 16px;
   overflow-y: auto;
   min-height: 300px;
 }
-.settings-panel.active { display: block; }
+.settings-panel.active { display: flex; }
+.settings-panel-spacer { flex: 1; }
 
 .settings-row {
   display: flex;
