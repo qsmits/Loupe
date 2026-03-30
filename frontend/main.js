@@ -424,8 +424,6 @@ const fmtStatusEl = document.getElementById("settings-status");
 
 document.getElementById("btn-settings").addEventListener("click", () => {
   settingsDialog.hidden = false;
-  loadCameraInfo();
-  loadCameraList();
 });
 
 document.getElementById("btn-settings-close").addEventListener("click", () => {
@@ -542,47 +540,6 @@ document.getElementById("crosshair-opacity").addEventListener("input", e => {
   redraw();
 });
 
-// Pixel format select
-document.getElementById("pixel-format-select").addEventListener("change", async e => {
-  const fmt = e.target.value;
-  const prev = state.settings.pixelFormat;
-  fmtStatusEl.textContent = "Applying…";
-  try {
-    const r = await fetch("/camera/pixel-format", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ pixel_format: fmt }),
-    });
-    if (!r.ok) throw new Error(await r.text());
-    state.settings.pixelFormat = fmt;
-    fmtStatusEl.textContent = "Done";
-    setTimeout(() => { fmtStatusEl.textContent = ""; }, 2000);
-  } catch (err) {
-    fmtStatusEl.textContent = `Error: ${err.message}`;
-    e.target.value = prev;  // revert dropdown
-  }
-});
-
-// ── White balance ───────────────────────────────────���─────────────────────────
-document.getElementById("btn-wb-auto").addEventListener("click", async () => {
-  fmtStatusEl.textContent = "Applying…";
-  try {
-    const r = await fetch("/camera/white-balance/auto", { method: "POST" });
-    if (!r.ok) throw new Error(await r.text());
-    const ratios = await r.json();
-    ["red", "green", "blue"].forEach(ch => {
-      const slider = document.getElementById(`wb-${ch}-slider`);
-      const display = document.getElementById(`wb-${ch}-value`);
-      if (slider) slider.value = ratios[ch];
-      if (display) display.textContent = ratios[ch].toFixed(2);
-    });
-    fmtStatusEl.textContent = "Done";
-    setTimeout(() => { fmtStatusEl.textContent = ""; }, 2000);
-  } catch (err) {
-    fmtStatusEl.textContent = `Error: ${err.message}`;
-  }
-});
-
 // ── Exposure / Gain sliders ──────────────────────────────────────────────────
 document.getElementById("exp-slider").addEventListener("input", async e => {
   const v = parseFloat(e.target.value);
@@ -599,54 +556,6 @@ document.getElementById("gain-slider").addEventListener("input", async e => {
     await fetch("/camera/gain", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ value: v }) });
   } catch (err) { console.error("Failed to set gain:", err); }
 });
-
-let _wbDebounce = {};
-["red", "green", "blue"].forEach(ch => {
-  document.getElementById(`wb-${ch}-slider`).addEventListener("input", e => {
-    const val = parseFloat(e.target.value);
-    document.getElementById(`wb-${ch}-value`).textContent = val.toFixed(2);
-    clearTimeout(_wbDebounce[ch]);
-    _wbDebounce[ch] = setTimeout(async () => {
-      try {
-        await fetch("/camera/white-balance/ratio", {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            channel: ch.charAt(0).toUpperCase() + ch.slice(1),
-            value: val,
-          }),
-        });
-      } catch (err) {
-        console.error("WB ratio update failed:", err);
-      }
-    }, 150);
-  });
-});
-
-// ── Camera selection ──────────────────────────────────────────────────────────
-document.getElementById("camera-select").addEventListener("change", async e => {
-  const camera_id = e.target.value;
-  if (!camera_id) return;
-  const sel = e.target;
-  sel.disabled = true;
-  fmtStatusEl.textContent = "Switching…";
-  try {
-    const r = await fetch("/camera/select", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ camera_id }),
-    });
-    if (!r.ok) throw new Error(await r.text());
-    await loadCameraInfo();
-    await loadCameraList();
-    fmtStatusEl.textContent = "Done";
-    setTimeout(() => { fmtStatusEl.textContent = ""; }, 2000);
-  } catch (err) {
-    fmtStatusEl.textContent = `Error: ${err.message}`;
-    await loadCameraList();
-  }
-});
-
 // ── Camera dropdown controls ────────────────────────────────────────────────
 // Exposure slider (top bar)
 document.getElementById("exp-slider-top")?.addEventListener("input", async e => {
@@ -759,9 +668,6 @@ document.getElementById("pixel-format-top")?.addEventListener("change", async e 
     });
     if (!r.ok) throw new Error(await r.text());
     state.settings.pixelFormat = fmt;
-    // Sync settings dialog dropdown
-    const fmtSelect = document.getElementById("pixel-format-select");
-    if (fmtSelect) fmtSelect.value = fmt;
   } catch (err) {
     console.error("Pixel format change failed:", err);
     await loadCameraInfo(); // revert

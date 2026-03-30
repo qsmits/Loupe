@@ -618,6 +618,7 @@ body.no-camera .camera-section { display: none; }
   display: none;
   padding: 14px 16px;
   overflow-y: auto;
+  min-height: 300px;
 }
 .settings-panel.active { display: block; }
 

@@ -374,9 +374,8 @@
       </div>
       <div class="dialog-tabs">
         <button class="settings-tab active" data-tab="general">General</button>
-        <button class="settings-tab" data-tab="camera">Camera</button>
         <button class="settings-tab" data-tab="display">Display</button>
-        <button class="settings-tab" data-tab="tolerances">Tolerances</button>
+        <button class="settings-tab" data-tab="measurement">Measurement</button>
       </div>
 
       <div class="settings-panel active" id="settings-general-panel">
@@ -390,58 +389,7 @@
             <option value="macos-dark">macOS Dark</option>
           </select>
         </div>
-        <div class="settings-row">
-          <label class="settings-label">Sub-pixel method</label>
-          <select id="subpixel-method-select" class="settings-select">
-            <option value="none">None (pixel-level)</option>
-            <option value="parabola" selected>Parabola (default)</option>
-          </select>
-        </div>
-        <div class="settings-row">
-          <label class="settings-label" title="Search radius for edge snap (pixels at 1x zoom). Scales inversely with digital zoom.">Snap radius (px)</label>
-          <input type="range" id="subpixel-radius-slider" min="3" max="25" value="10" style="width:100px" />
-          <span id="subpixel-radius-value" style="min-width:24px;text-align:right">10</span>
-        </div>
         <button class="settings-save-btn" id="btn-save-general">Save</button>
-      </div>
-
-      <div class="settings-panel" id="settings-camera-panel">
-        <div class="settings-row">
-          <label class="settings-label">Model</label>
-          <span id="settings-model" class="settings-value">—</span>
-        </div>
-        <div class="settings-row">
-          <label class="settings-label">Serial</label>
-          <span id="settings-serial" class="settings-value">—</span>
-        </div>
-        <div class="settings-row">
-          <label class="settings-label">Camera</label>
-          <select id="camera-select" class="settings-select"></select>
-        </div>
-        <div class="settings-row">
-          <label class="settings-label">Pixel format</label>
-          <select id="pixel-format-select" class="settings-select">
-            <option value="BayerRG8">BayerRG8</option>
-            <option value="BayerRG12">BayerRG12</option>
-            <option value="Mono8">Mono8</option>
-          </select>
-        </div>
-        <div class="settings-row">
-          <label class="settings-label">White balance</label>
-          <button id="btn-wb-auto" class="settings-btn">Auto</button>
-        </div>
-        <div class="settings-row">
-          <label class="settings-label">R</label>
-          <input type="range" id="wb-red-slider" min="0.5" max="2.5" step="0.01" value="1.0" />
-        </div>
-        <div class="settings-row">
-          <label class="settings-label">G</label>
-          <input type="range" id="wb-green-slider" min="0.5" max="2.5" step="0.01" value="1.0" />
-        </div>
-        <div class="settings-row">
-          <label class="settings-label">B</label>
-          <input type="range" id="wb-blue-slider" min="0.5" max="2.5" step="0.01" value="1.0" />
-        </div>
       </div>
 
       <div class="settings-panel" id="settings-display-panel">
@@ -462,7 +410,7 @@
         </div>
       </div>
 
-      <div class="settings-panel" id="settings-tolerances-panel">
+      <div class="settings-panel" id="settings-measurement-panel">
         <div class="settings-row">
           <label class="settings-label" for="tol-warn-input">Warn above (mm)</label>
           <input type="number" id="tol-warn-input" class="settings-input" step="0.01" min="0.001" value="0.10" />
@@ -470,6 +418,18 @@
         <div class="settings-row">
           <label class="settings-label" for="tol-fail-input">Fail above (mm)</label>
           <input type="number" id="tol-fail-input" class="settings-input" step="0.01" min="0.001" value="0.25" />
+        </div>
+        <div class="settings-row">
+          <label class="settings-label">Sub-pixel method</label>
+          <select id="subpixel-method-select" class="settings-select">
+            <option value="none">None (pixel-level)</option>
+            <option value="parabola" selected>Parabola (default)</option>
+          </select>
+        </div>
+        <div class="settings-row">
+          <label class="settings-label" title="Search radius for edge snap (pixels at 1x zoom). Scales inversely with digital zoom.">Snap radius (px)</label>
+          <input type="range" id="subpixel-radius-slider" min="3" max="25" value="10" style="width:100px" />
+          <span id="subpixel-radius-value" style="min-width:24px;text-align:right">10</span>
         </div>
         <button class="settings-save-btn" id="btn-save-tolerances">Save</button>
         <div id="tolerances-status" class="settings-status"></div>
