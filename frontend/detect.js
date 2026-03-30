@@ -36,7 +36,8 @@ export async function doFreeze() {
   // /freeze would overwrite the loaded image with a blank NullCamera frame.
   if (state.frozenBackground) {
     img.style.opacity = "0";
-    img.src = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";  // stop MJPEG stream (1px transparent GIF)
+    // Stream continues in background (browser keeps MJPEG connection open
+  // regardless of src changes; setting src breaks canvas sizing)
     state.frozen = true;
     updateFreezeUI();
     resizeCanvas();
@@ -75,7 +76,7 @@ export async function doFreeze() {
   }
 
   img.style.opacity = "0";   // hide stream
-  img.src = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";  // stop MJPEG stream
+  // Stream continues in background (see note above)
   state.frozen = true;
   updateFreezeUI();
   resizeCanvas();  // re-read img rect after opacity change to guarantee pixel-perfect alignment
