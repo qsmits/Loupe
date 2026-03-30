@@ -87,22 +87,26 @@ def refine_single_point(
     if roi.size == 0:
         return (float(point[0]), float(point[1]), 0.0)
 
-    # Find the nearest strong-gradient pixel to the click, not the strongest.
-    # This avoids jumping to the opposite edge of a thin line.
-    # "Strong" = above 30% of the max gradient in the window.
-    roi_max = roi.max()
+    # Score each pixel by edge strength weighted against distance from click.
+    # score = magnitude / (distance + 1) — strong nearby edges beat weak nearby
+    # ones and strong distant ones. The +1 prevents division by zero at the
+    # click position itself.
+    roi_max = float(roi.max())
     if roi_max < 1.0:
         return (float(point[0]), float(point[1]), 0.0)
-    threshold = roi_max * 0.3
 
-    # Get all above-threshold pixels, sorted by distance to click
-    ys, xs = np.where(roi >= threshold)
+    # Only consider pixels with meaningful gradient (above 15% of max)
+    ys, xs = np.where(roi >= roi_max * 0.15)
+    if len(xs) == 0:
+        return (float(point[0]), float(point[1]), 0.0)
     abs_xs = x0 + xs
     abs_ys = y0 + ys
+    mags = mag[abs_ys, abs_xs]
     dists = np.sqrt((abs_xs - point[0]) ** 2 + (abs_ys - point[1]) ** 2)
-    nearest_idx = np.argmin(dists)
-    best_x = int(abs_xs[nearest_idx])
-    best_y = int(abs_ys[nearest_idx])
+    scores = mags / (dists + 1.0)
+    best_idx = np.argmax(scores)
+    best_x = int(abs_xs[best_idx])
+    best_y = int(abs_ys[best_idx])
     best_mag = float(mag[best_y, best_x])
 
     # Refine that single point
