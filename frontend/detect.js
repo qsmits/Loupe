@@ -1,3 +1,4 @@
+import { apiFetch } from './api.js';
 import { state } from './state.js';
 import { redraw, showStatus, img, canvas, resizeCanvas } from './render.js';
 import { addAnnotation } from './annotations.js';
@@ -41,7 +42,7 @@ export async function doFreeze() {
     return;
   }
 
-  const r = await fetch("/freeze", { method: "POST" });
+  const r = await apiFetch("/freeze", { method: "POST" });
   if (!r.ok) return;
   const { width, height } = await r.json();
   state.frozenSize = { w: width, h: height };
@@ -54,7 +55,7 @@ export async function doFreeze() {
   // Fetch the frozen frame as a real JPEG — drawing the MJPEG stream <img>
   // element to a canvas is unreliable (blank result on most browsers).
   try {
-    const frameResp = await fetch("/frame");
+    const frameResp = await apiFetch("/frame");
     if (!frameResp.ok) throw new Error("Failed to fetch frame");
     const frameBlob = await frameResp.blob();
     const frameUrl = URL.createObjectURL(frameBlob);
@@ -96,7 +97,7 @@ export function initDetectHandlers() {
     await ensureFrozen();
     const t1 = parseInt(document.getElementById("canny-low").value);
     const t2 = parseInt(document.getElementById("canny-high").value);
-    const r = await fetch("/detect-edges", {
+    const r = await apiFetch("/detect-edges", {
       method: "POST",
       headers: {"Content-Type": "application/json"},
       body: JSON.stringify({ threshold1: t1, threshold2: t2 }),
@@ -119,7 +120,7 @@ export function initDetectHandlers() {
   const btnPreproc = document.getElementById("btn-show-preprocessed");
   btnPreproc.addEventListener("click", withBusy(btnPreproc, "Preprocessing", async () => {
     await ensureFrozen();
-    const r = await fetch("/preprocessed-view", { method: "POST" });
+    const r = await apiFetch("/preprocessed-view", { method: "POST" });
     if (!r.ok) { alert(await r.text()); return; }
     const blob = await r.blob();
     const url = URL.createObjectURL(blob);
@@ -143,7 +144,7 @@ export function initDetectHandlers() {
     const maxR = parseInt(document.getElementById("circle-max-r").value);
     const subpixel = document.getElementById("detect-subpixel")?.checked
       ? state.settings.subpixelMethod : "none";
-    const resp = await fetch("/detect-circles", {
+    const resp = await apiFetch("/detect-circles", {
       method: "POST",
       headers: {"Content-Type": "application/json"},
       body: JSON.stringify({ dp:1.2, min_dist:50, param1:100, param2:p2, min_radius:minR, max_radius:maxR, subpixel }),
@@ -168,7 +169,7 @@ export function initDetectHandlers() {
     await ensureFrozen();
     const sensitivity = parseInt(document.getElementById("line-sensitivity").value);
     const minLength   = parseInt(document.getElementById("line-min-length").value);
-    const resp = await fetch("/detect-lines", {
+    const resp = await apiFetch("/detect-lines", {
       method: "POST",
       headers: {"Content-Type": "application/json"},
       body: JSON.stringify({ threshold1: 50, threshold2: 130, hough_threshold: sensitivity, min_length: minLength, max_gap: 8 }),
@@ -199,7 +200,7 @@ export function initDetectHandlers() {
     const nmsDist = parseInt(document.getElementById("adv-nms-dist").value);
     const subpixel = document.getElementById("detect-subpixel")?.checked
       ? state.settings.subpixelMethod : "none";
-    const r = await fetch("/detect-lines-merged", { method: "POST",
+    const r = await apiFetch("/detect-lines-merged", { method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ threshold1: t1, threshold2: t2, min_length: minLen, nms_dist: nmsDist, smoothing, subpixel }) });
     if (!r.ok) { const d = await r.json().catch(() => null); showStatus(d?.detail || "Line detection failed (HTTP " + r.status + ")"); return; }
@@ -223,7 +224,7 @@ export function initDetectHandlers() {
     const minSpan = parseInt(document.getElementById("adv-min-span").value);
     const subpixel = document.getElementById("detect-subpixel")?.checked
       ? state.settings.subpixelMethod : "none";
-    const r = await fetch("/detect-arcs-partial", { method: "POST",
+    const r = await apiFetch("/detect-arcs-partial", { method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ threshold1: t1, threshold2: t2, min_span_deg: minSpan, smoothing, subpixel }) });
     if (!r.ok) { const d = await r.json().catch(() => null); showStatus(d?.detail || "Arc detection failed (HTTP " + r.status + ")"); return; }

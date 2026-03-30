@@ -1,3 +1,4 @@
+import { apiFetch } from './api.js';
 import { state, TOOL_STATUS } from './state.js';
 import { redraw, canvas, showStatus, getLineEndpoints, lineAngleDeg, listEl } from './render.js';
 import { dxfToCanvas } from './render-dxf.js';
@@ -116,7 +117,7 @@ export async function handleToolClick(rawPt, e = {}) {
     const zoomScale = Math.max(1, viewport.zoom);
     const searchRadius = Math.max(2, Math.round(baseRadius / zoomScale));
     try {
-      const resp = await fetch("/refine-point", {
+      const resp = await apiFetch("/refine-point", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

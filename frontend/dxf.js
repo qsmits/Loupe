@@ -1,3 +1,4 @@
+import { apiFetch } from './api.js';
 import { state, pushUndo } from './state.js';
 import { redraw, canvas, img, showStatus } from './render.js';
 import { addAnnotation } from './annotations.js';
@@ -83,7 +84,7 @@ export function initDxfHandlers() {
     const formData = new FormData();
     formData.append("file", file);
     try {
-      const r = await fetch("/load-dxf", { method: "POST", body: formData });
+      const r = await apiFetch("/load-dxf", { method: "POST", body: formData });
       if (!r.ok) { alert("Could not load DXF: " + await r.text()); e.target.value = ""; return; }
       const entities = await r.json();
       // Default scale: use calibration (px/mm) if available, otherwise 1 px/unit
@@ -119,7 +120,7 @@ export function initDxfHandlers() {
         showStatus("Auto-aligning DXF…");
         try {
           const smoothing = parseInt(document.getElementById("adv-smoothing")?.value || "2");
-          const alignResp = await fetch("/align-dxf-edges", {
+          const alignResp = await apiFetch("/align-dxf-edges", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -268,7 +269,7 @@ export function initDxfHandlers() {
 
     if (dxfHasCircles && circles.length === 0) {
       setStatus("Running circle detection…");
-      const detectResp = await fetch("/detect-circles", {
+      const detectResp = await apiFetch("/detect-circles", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ min_radius: 8, max_radius: 500 }),
@@ -298,7 +299,7 @@ export function initDxfHandlers() {
 
       if (circles.length >= 2 && dxfHasCircles) {
         // Circle-based alignment
-        const r = await fetch("/align-dxf", {
+        const r = await apiFetch("/align-dxf", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -317,7 +318,7 @@ export function initDxfHandlers() {
         // Edge-based alignment (works without circles)
         usedEdges = true;
         const smoothing = parseInt(document.getElementById("adv-smoothing")?.value || "2");
-        const r = await fetch("/align-dxf-edges", {
+        const r = await apiFetch("/align-dxf-edges", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -392,7 +393,7 @@ export function initDxfHandlers() {
 
     try {
       const inspectableTypes = ["line", "polyline_line", "arc", "polyline_arc", "circle"];
-      const resp = await fetch("/inspect-guided", {
+      const resp = await apiFetch("/inspect-guided", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

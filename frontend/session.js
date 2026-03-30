@@ -1,3 +1,4 @@
+import { apiFetch } from './api.js';
 import { state, TRANSIENT_TYPES, DETECTION_TYPES } from './state.js';
 import { redraw, canvas, img, showStatus } from './render.js';
 import { renderSidebar, renderInspectionTable } from './sidebar.js';
@@ -86,7 +87,7 @@ export async function exportDxf() {
   const originY = state.origin?.y ?? 0;
 
   try {
-    const resp = await fetch("/export-dxf", {
+    const resp = await apiFetch("/export-dxf", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({

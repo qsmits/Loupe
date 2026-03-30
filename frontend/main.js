@@ -1,3 +1,4 @@
+import { apiFetch } from './api.js';
 import { state, TRANSIENT_TYPES } from './state.js';
 import { canvas, ctx, img, showStatus, redraw, resizeCanvas } from './render.js';
 import { renderSidebar, loadCameraInfo, loadUiConfig, loadTolerances,
@@ -150,7 +151,7 @@ document.getElementById("file-input").addEventListener("change", async e => {
 
   const formData = new FormData();
   formData.append("file", file);
-  const r = await fetch("/load-image", { method: "POST", body: formData });
+  const r = await apiFetch("/load-image", { method: "POST", body: formData });
   if (!r.ok) { alert("Could not load image"); return; }
   const { width, height } = await r.json();
   state.frozenSize = { w: width, h: height };
@@ -262,7 +263,7 @@ viewerEl.addEventListener("drop", async e => {
 
   const formData = new FormData();
   formData.append("file", file);
-  const r = await fetch("/load-image", { method: "POST", body: formData });
+  const r = await apiFetch("/load-image", { method: "POST", body: formData });
   if (!r.ok) { alert("Could not load image"); return; }
   const { width, height } = await r.json();
   state.frozenSize = { w: width, h: height };
@@ -380,7 +381,7 @@ document.getElementById("btn-gradient-overlay")?.addEventListener("change", asyn
   state.showGradientOverlay = e.target.checked;
   if (e.target.checked && state.frozen && !state._gradientOverlayImg) {
     try {
-      const resp = await fetch("/gradient-overlay", { method: "POST" });
+      const resp = await apiFetch("/gradient-overlay", { method: "POST" });
       if (resp.ok) {
         const blob = await resp.blob();
         const url = URL.createObjectURL(blob);
@@ -440,7 +441,7 @@ document.getElementById("btn-save-general").addEventListener("click", async () =
   const appName = document.getElementById("app-name-input").value.trim() || "Microscope";
   const theme   = document.getElementById("theme-select").value;
   try {
-    await fetch("/config/ui", {
+    await apiFetch("/config/ui", {
       method:  "POST",
       headers: { "Content-Type": "application/json" },
       body:    JSON.stringify({ app_name: appName, theme }),
@@ -465,7 +466,7 @@ document.getElementById("btn-save-tolerances")?.addEventListener("click", async 
     return;
   }
   try {
-    const r = await fetch("/config/tolerances", {
+    const r = await apiFetch("/config/tolerances", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ tolerance_warn: warn, tolerance_fail: fail }),
@@ -486,7 +487,7 @@ document.getElementById("btn-save-tolerances")?.addEventListener("click", async 
 // Sub-pixel method dropdown
 const subpixelSelect = document.getElementById("subpixel-method-select");
 if (subpixelSelect) {
-  fetch("/subpixel-methods").then(r => r.json()).then(methods => {
+  apiFetch("/subpixel-methods").then(r => r.json()).then(methods => {
     subpixelSelect.innerHTML = methods.map(m =>
       `<option value="${m}"${m === state.settings.subpixelMethod ? " selected" : ""}>${
         m === "none" ? "None (pixel-level)" :
@@ -536,7 +537,7 @@ document.getElementById("exp-slider-top")?.addEventListener("input", async e => 
   const v = parseFloat(e.target.value);
   document.getElementById("exp-value-top").textContent = `${v} µs`;
   try {
-    await fetch("/camera/exposure", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ value: v }) });
+    await apiFetch("/camera/exposure", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ value: v }) });
   } catch (err) { console.error("Failed to set exposure:", err); }
 });
 
@@ -545,7 +546,7 @@ document.getElementById("gain-slider-top")?.addEventListener("input", async e =>
   const v = parseFloat(e.target.value);
   document.getElementById("gain-value-top").textContent = `${v} dB`;
   try {
-    await fetch("/camera/gain", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ value: v }) });
+    await apiFetch("/camera/gain", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ value: v }) });
   } catch (err) { console.error("Failed to set gain:", err); }
 });
 
@@ -557,7 +558,7 @@ document.getElementById("gamma-slider")?.addEventListener("input", e => {
   clearTimeout(_gammaDebounce);
   _gammaDebounce = setTimeout(async () => {
     try {
-      await fetch("/camera/gamma", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ value: v }) });
+      await apiFetch("/camera/gamma", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ value: v }) });
     } catch (err) { console.error("Failed to set gamma:", err); }
   }, 200);
 });
@@ -565,7 +566,7 @@ document.getElementById("gamma-slider")?.addEventListener("input", e => {
 // Auto Exposure
 document.getElementById("btn-auto-exposure")?.addEventListener("click", async () => {
   try {
-    const r = await fetch("/camera/auto-exposure", { method: "POST" });
+    const r = await apiFetch("/camera/auto-exposure", { method: "POST" });
     if (!r.ok) throw new Error(await r.text());
     const data = await r.json();
     if (data.exposure != null) {
@@ -578,7 +579,7 @@ document.getElementById("btn-auto-exposure")?.addEventListener("click", async ()
 // Auto WB (top bar)
 document.getElementById("btn-wb-auto-top")?.addEventListener("click", async () => {
   try {
-    const r = await fetch("/camera/white-balance/auto", { method: "POST" });
+    const r = await apiFetch("/camera/white-balance/auto", { method: "POST" });
     if (!r.ok) throw new Error(await r.text());
     const ratios = await r.json();
     ["red", "green", "blue"].forEach(ch => {
@@ -610,7 +611,7 @@ let _wbTopDebounce = {};
     clearTimeout(_wbTopDebounce[ch]);
     _wbTopDebounce[ch] = setTimeout(async () => {
       try {
-        await fetch("/camera/white-balance/ratio", {
+        await apiFetch("/camera/white-balance/ratio", {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -627,7 +628,7 @@ let _wbTopDebounce = {};
 document.getElementById("pixel-format-top")?.addEventListener("change", async e => {
   const fmt = e.target.value;
   try {
-    const r = await fetch("/camera/pixel-format", {
+    const r = await apiFetch("/camera/pixel-format", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ pixel_format: fmt }),
@@ -646,7 +647,7 @@ document.getElementById("camera-select-top")?.addEventListener("change", async e
   if (!camera_id) return;
   e.target.disabled = true;
   try {
-    const r = await fetch("/camera/select", {
+    const r = await apiFetch("/camera/select", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ camera_id }),
@@ -688,7 +689,7 @@ document.getElementById("btn-roi-set")?.addEventListener("click", async () => {
 
   showStatus("Setting ROI...");
   try {
-    const resp = await fetch("/camera/roi", {
+    const resp = await apiFetch("/camera/roi", {
       method: "PUT", headers: {"Content-Type": "application/json"},
       body: JSON.stringify({ offset_x: ox, offset_y: oy, width: w, height: h }),
     });
@@ -709,7 +710,7 @@ document.getElementById("btn-roi-set")?.addEventListener("click", async () => {
 document.getElementById("btn-roi-reset")?.addEventListener("click", async () => {
   showStatus("Resetting ROI...");
   try {
-    const resp = await fetch("/camera/roi/reset", { method: "POST" });
+    const resp = await apiFetch("/camera/roi/reset", { method: "POST" });
     if (resp.ok) {
       showStatus("ROI reset to full frame");
       img.src = "/stream?" + Date.now();

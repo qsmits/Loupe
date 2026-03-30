@@ -1,4 +1,5 @@
 // ── Canvas mouse events ──────────────────────────────────────────────────────
+import { apiFetch } from './api.js';
 import { state, _deviationHitBoxes, _labelHitBoxes, pushUndo } from './state.js';
 import { canvas, ctx, img, showStatus, redraw, resizeCanvas,
          drawLine, drawOrigin, drawAreaPreview, dxfToCanvas } from './render.js';
@@ -37,7 +38,7 @@ function _updateSubpixelPreview(pt) {
     const zoomScale = Math.max(1, viewport.zoom);
     const searchRadius = Math.max(2, Math.round(baseRadius / zoomScale));
     try {
-      const resp = await fetch("/refine-point", {
+      const resp = await apiFetch("/refine-point", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

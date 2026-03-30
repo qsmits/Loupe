@@ -1,3 +1,4 @@
+import { apiFetch } from './api.js';
 import { state, DETECTION_TYPES } from './state.js';
 import { redraw, resizeCanvas, showStatus, getStatus, canvas, listEl } from './render.js';
 import { measurementLabel } from './format.js';
@@ -221,7 +222,7 @@ export function renderSidebar() {
 // ── Tolerances config ──────────────────────────────────────────────────────────
 export async function loadTolerances() {
   try {
-    const r = await fetch("/config/tolerances");
+    const r = await apiFetch("/config/tolerances");
     if (!r.ok) return;
     const cfg = await r.json();
     state.tolerances.warn = cfg.tolerance_warn;
@@ -236,7 +237,7 @@ export async function loadTolerances() {
 // ── UI config & calibration button ─────────────────────────────────────────────
 export async function loadUiConfig() {
   try {
-    const data = await fetch("/config/ui").then(r => r.json());
+    const data = await apiFetch("/config/ui").then(r => r.json());
     document.getElementById("app-title").textContent = data.app_name || "Microscope";
     document.title = data.app_name || "Microscope";
     document.documentElement.className = `theme-${data.theme || "macos-dark"}`;
@@ -272,7 +273,7 @@ export function updateCalibrationButton() {
 // ── Camera info ────────────────────────────────────────────────────────────────
 export async function loadCameraInfo() {
   try {
-    const r = await fetch("/camera/info");
+    const r = await apiFetch("/camera/info");
     const d = await r.json();
     // Set image dimensions from camera resolution so annotations are always
     // in camera-pixel coordinates, even before freeze. This prevents the
@@ -406,7 +407,7 @@ export function updateFreezeUI() {
 // ── Startup warning ────────────────────────────────────────────────────────────
 export async function checkStartupWarning() {
   try {
-    const r = await fetch("/camera/startup-warning");
+    const r = await apiFetch("/camera/startup-warning");
     const d = await r.json();
     if (d.warning) {
       const prev = { text: getStatus() };
@@ -425,8 +426,8 @@ export async function loadCameraList() {
   const selTop = document.getElementById("camera-select-top");
   try {
     const [camerasResp, infoResp] = await Promise.all([
-      fetch("/cameras"),
-      fetch("/camera/info"),
+      apiFetch("/cameras"),
+      apiFetch("/camera/info"),
     ]);
     const cameras = await camerasResp.json();
     const info = await infoResp.json();
