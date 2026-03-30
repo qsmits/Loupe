@@ -218,13 +218,14 @@ Unchanged from original assessment:
 ✅ Done:   Phase 5.1 (PDF/CSV reports)   — 2026-03-28
 ✅ Done:   Phase 6 (tests + module splits)— 2026-03-29
 ✅ Done:   Viewport coordinate fixes     — 2026-03-29
+✅ Done:   Sub-pixel edge refinement     — 2026-03-30  — parabola + gaussian algorithms, edge snap, gradient overlay
 
-Next:      Sub-pixel edge refinement     — accuracy from ~5µm to ~1µm
+Next:      Measurement templates         — repeatable inspection programs
 Then:      Measurement templates         — repeatable inspection programs
 Then:      GD&T: True Position           — hole pattern inspection
+Then:      Detection presets             — EDM/Lathe/Print surface modes
 Then:      Run storage (SQLite)          — foundational for SPC
 Then:      Basic SPC (Cpk + charts)      — quality system credibility
-Ongoing:   Detection presets             — EDM/Lathe/Print surface modes
 Later:     Report templates              — customer-specific FAI forms
 Later:     Batch inspection              — multi-part production use case
 Future:    Gear inspection               — when gear machine is running
