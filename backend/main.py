@@ -13,7 +13,7 @@ from .cameras.base import BaseCamera
 from .cameras.aravis import AravisCamera, ARAVIS_AVAILABLE, list_aravis_cameras
 from .cameras.null import NullCamera
 from .cameras.opencv import OpenCVCamera
-from .frame_store import FrameStore
+from .session_store import SessionFrameStore
 from .stream import CameraReader
 from .api import make_router, router as ui_router
 
@@ -21,7 +21,10 @@ FRONTEND_DIR = pathlib.Path(__file__).parent.parent / "frontend"
 
 
 def create_app(camera: BaseCamera | None = None, no_camera: bool = False) -> FastAPI:
-    frame_store = FrameStore()
+    frame_store = SessionFrameStore(
+        max_sessions=int(os.environ.get("MAX_SESSIONS", "50")),
+        ttl_seconds=int(os.environ.get("SESSION_TTL", "1800")),
+    )
     startup_warning: str | None = None
 
     # Determine whether to run in no-camera mode
@@ -36,6 +39,8 @@ def create_app(camera: BaseCamera | None = None, no_camera: bool = False) -> Fas
         _no_camera = _no_camera or cfg.get("no_camera", False)
     else:
         cfg = {}
+
+    hosted = os.environ.get("HOSTED", "").lower() in ("1", "true") or cfg.get("hosted", False)
 
     if _no_camera:
         camera = NullCamera()
@@ -94,6 +99,7 @@ def create_app(camera: BaseCamera | None = None, no_camera: bool = False) -> Fas
             reader.close()
 
     app = FastAPI(title="Video Microscope", lifespan=lifespan)
+    app.state.hosted = hosted
 
     # Expose reader._stop on app so the MJPEG generator can check it.
     # The lifespan sets _stop in the finally block, but the generator needs

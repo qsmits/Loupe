@@ -1,4 +1,4 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field, model_validator
 
 from .cameras.base import BaseCamera
@@ -40,7 +40,9 @@ def get_ui_config():
 
 
 @router.post("/config/ui")
-def post_ui_config(body: UiConfig):
+def post_ui_config(body: UiConfig, request: Request):
+    if getattr(request.app.state, "hosted", False):
+        raise HTTPException(403, detail="Read-only in hosted mode")
     save_config({"app_name": body.app_name, "theme": body.theme, "subpixel_method": body.subpixel_method})
     return {"app_name": body.app_name, "theme": body.theme, "subpixel_method": body.subpixel_method}
 
@@ -55,7 +57,9 @@ def get_tolerances():
 
 
 @router.post("/config/tolerances")
-def post_tolerances(body: TolerancesConfig):
+def post_tolerances(body: TolerancesConfig, request: Request):
+    if getattr(request.app.state, "hosted", False):
+        raise HTTPException(403, detail="Read-only in hosted mode")
     save_config({"tolerance_warn": body.tolerance_warn, "tolerance_fail": body.tolerance_fail})
     return {"tolerance_warn": body.tolerance_warn, "tolerance_fail": body.tolerance_fail}
 

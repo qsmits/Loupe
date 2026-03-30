@@ -36,14 +36,20 @@ class SessionFrameStore:
         self._max_sessions = max_sessions
         self._ttl = ttl_seconds
 
-    def store(self, session_id: str, frame: np.ndarray) -> None:
+    def store(self, frame_or_sid, frame: np.ndarray | None = None) -> None:
+        # Backward-compatible: store(frame) or store(session_id, frame)
+        if frame is None:
+            frame = frame_or_sid
+            session_id = DEFAULT_SESSION_ID
+        else:
+            session_id = frame_or_sid
         with self._lock:
             self._evict_expired()
             if len(self._frames) >= self._max_sessions and session_id not in self._frames:
                 raise RuntimeError("Too many active sessions")
             self._frames[session_id] = (frame.copy(), time.monotonic())
 
-    def get(self, session_id: str) -> np.ndarray | None:
+    def get(self, session_id: str = DEFAULT_SESSION_ID) -> np.ndarray | None:
         with self._lock:
             self._evict_expired()
             entry = self._frames.get(session_id)
@@ -53,11 +59,11 @@ class SessionFrameStore:
             self._frames[session_id] = (frame, time.monotonic())
             return frame.copy()
 
-    def clear(self, session_id: str) -> None:
+    def clear(self, session_id: str = DEFAULT_SESSION_ID) -> None:
         with self._lock:
             self._frames.pop(session_id, None)
 
-    def has_frame(self, session_id: str) -> bool:
+    def has_frame(self, session_id: str = DEFAULT_SESSION_ID) -> bool:
         with self._lock:
             return session_id in self._frames
 
