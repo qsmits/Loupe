@@ -117,6 +117,7 @@ def detect_circles(
     param2: int = 50,
     min_radius: int = 8,
     max_radius: int = 500,
+    subpixel: str = "none",
 ) -> list[dict]:
     """
     Contour-based circle detection.
@@ -130,6 +131,11 @@ def detect_circles(
     gray = preprocess(frame)
     k_small = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (_CLOSE_KERNEL_SMALL,) * 2)
     k_large = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (_CLOSE_KERNEL_LARGE,) * 2)
+
+    raw_gray = None
+    if subpixel != "none":
+        raw_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        from .subpixel import refine_subpixel
 
     closed: list[tuple] = []
     arcs:   list[tuple] = []
@@ -157,6 +163,9 @@ def detect_circles(
 
         if not (min_radius <= enc_r <= max_radius):
             return
+        if subpixel != "none":
+            pts_f64 = refine_subpixel(pts.astype(np.float64), raw_gray, method=subpixel)
+            pts = pts_f64.astype(np.float32)
         try:
             fcx, fcy, fr = fit_circle_algebraic(pts)
         except (np.linalg.LinAlgError, ValueError):
@@ -342,6 +351,7 @@ def detect_lines_contour(
     close_kernel: int = _CONTOUR_CLOSE_KERNEL,
     min_edge_density: float = _CONTOUR_MIN_EDGE_DENSITY,
     smoothing: int = 1,
+    subpixel: str = "none",
 ) -> list[dict]:
     """
     Detect straight segments via Douglas-Peucker contour approximation.
@@ -359,16 +369,56 @@ def detect_lines_contour(
     contours, _ = cv2.findContours(edges_closed, cv2.RETR_LIST, cv2.CHAIN_APPROX_NONE)
     h, w = edges.shape
 
+    raw_gray = None
+    if subpixel != "none":
+        raw_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        from .subpixel import refine_subpixel
+
     candidates = []
     for cnt in contours:
         arc_len = cv2.arcLength(cnt, closed=False)
         if arc_len < min_length_px:
             continue
         approx = cv2.approxPolyDP(cnt, epsilon=dp_epsilon * arc_len, closed=False)
-        pts = approx[:, 0, :]
+        # Map each approx vertex back to the nearest index in the original contour
+        cnt_pts = cnt[:, 0, :]  # (N, 2)
+        approx_pts = approx[:, 0, :]  # (M, 2)
+        if subpixel != "none":
+            # Find contour index for each Douglas-Peucker vertex
+            approx_indices = []
+            for ap in approx_pts:
+                dists = np.sum((cnt_pts - ap) ** 2, axis=1)
+                approx_indices.append(int(np.argmin(dists)))
+        pts = approx_pts
         for i in range(len(pts) - 1):
-            x1, y1 = int(pts[i][0]), int(pts[i][1])
-            x2, y2 = int(pts[i+1][0]), int(pts[i+1][1])
+            if subpixel != "none":
+                # Extract the contour slice for this segment and refine
+                idx_a, idx_b = approx_indices[i], approx_indices[i + 1]
+                if idx_a <= idx_b:
+                    seg_pts = cnt_pts[idx_a:idx_b + 1].astype(np.float64)
+                else:
+                    seg_pts = np.concatenate([cnt_pts[idx_a:], cnt_pts[:idx_b + 1]]).astype(np.float64)
+                if len(seg_pts) >= 2:
+                    seg_pts = refine_subpixel(seg_pts, raw_gray, method=subpixel)
+                    # Fit line to refined points to get endpoints
+                    if len(seg_pts) >= 2:
+                        # Project onto principal direction to find extremes
+                        vx, vy, x0, y0 = cv2.fitLine(
+                            seg_pts.astype(np.float32).reshape(-1, 1, 2),
+                            cv2.DIST_L2, 0, 0.01, 0.01).flatten()
+                        t = (seg_pts[:, 0] - x0) * vx + (seg_pts[:, 1] - y0) * vy
+                        t_min_idx, t_max_idx = int(np.argmin(t)), int(np.argmax(t))
+                        x1, y1 = int(round(seg_pts[t_min_idx][0])), int(round(seg_pts[t_min_idx][1]))
+                        x2, y2 = int(round(seg_pts[t_max_idx][0])), int(round(seg_pts[t_max_idx][1]))
+                    else:
+                        x1, y1 = int(pts[i][0]), int(pts[i][1])
+                        x2, y2 = int(pts[i+1][0]), int(pts[i+1][1])
+                else:
+                    x1, y1 = int(pts[i][0]), int(pts[i][1])
+                    x2, y2 = int(pts[i+1][0]), int(pts[i+1][1])
+            else:
+                x1, y1 = int(pts[i][0]), int(pts[i][1])
+                x2, y2 = int(pts[i+1][0]), int(pts[i+1][1])
             length = float(np.hypot(x2-x1, y2-y1))
             if length < min_length_px:
                 continue
@@ -422,6 +472,7 @@ def detect_partial_arcs(
     max_aspect: float = _ARC_PARTIAL_MAX_ASPECT,
     line_ratio: float = _ARC_PARTIAL_LINE_RATIO,
     smoothing: int = 1,
+    subpixel: str = "none",
 ) -> list[dict]:
     """
     Detect partial arcs (arc segments subtending >= min_span_deg degrees).
@@ -435,11 +486,19 @@ def detect_partial_arcs(
     edges = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, k)
     contours, _ = cv2.findContours(edges, cv2.RETR_LIST, cv2.CHAIN_APPROX_NONE)
 
+    raw_gray = None
+    if subpixel != "none":
+        raw_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        from .subpixel import refine_subpixel
+
     candidates = []  # (coverage, cx, cy, r, start_deg, end_deg)
     for cnt in contours:
         pts = cnt[:, 0, :].astype(np.float32)
         if len(pts) < min_points:
             continue
+        if subpixel != "none":
+            pts_f64 = refine_subpixel(pts.astype(np.float64), raw_gray, method=subpixel)
+            pts = pts_f64.astype(np.float32)
         try:
             fcx, fcy, fr = fit_circle_algebraic(pts)
         except (np.linalg.LinAlgError, ValueError):

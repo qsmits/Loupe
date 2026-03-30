@@ -115,7 +115,8 @@ def make_detection_router(frame_store: FrameStore) -> APIRouter:
             raise HTTPException(status_code=400, detail="No frame stored. Call /freeze first.")
         circles = detection.detect_circles(
             frame, params.dp, params.min_dist, params.param1,
-            params.param2, params.min_radius, params.max_radius
+            params.param2, params.min_radius, params.max_radius,
+            subpixel=params.subpixel,
         )
         return circles
 
@@ -139,7 +140,7 @@ def make_detection_router(frame_store: FrameStore) -> APIRouter:
             frame, params.threshold1, params.threshold2,
             dp_epsilon=params.dp_epsilon, min_length_px=params.min_length,
             nms_dist_px=params.nms_dist, nms_angle_deg=params.nms_angle,
-            smoothing=params.smoothing)
+            smoothing=params.smoothing, subpixel=params.subpixel)
 
     @router.post("/detect-arcs-partial")
     async def detect_arcs_partial_route(params: DetectArcsParams):
@@ -150,7 +151,7 @@ def make_detection_router(frame_store: FrameStore) -> APIRouter:
             frame, params.threshold1, params.threshold2,
             min_radius=params.min_radius, max_radius=params.max_radius,
             min_span_deg=params.min_span_deg, residual_tol=params.residual_tol,
-            smoothing=params.smoothing)
+            smoothing=params.smoothing, subpixel=params.subpixel)
 
     @router.post("/preprocessed-view")
     async def preprocessed_view_route():
