@@ -234,17 +234,21 @@ A histogram is rectangles. A Cpk gauge is an arc. All trivial with Canvas 2D.
 
 ### 7. In hosted mode
 
-Run storage works in hosted mode but is shared across all users (one SQLite
-database). This is acceptable for a demo/evaluation scenario. For production
-hosted use with user isolation, add a `session_id` column to the `parts`
-table later.
+**Run storage is disabled when `HOSTED=1`.** The hosted version's principle
+is "no server-side file persistence." SPC is a production workflow — users
+run it on their own machine where data is permanent and backed up.
 
-The database file is server-side state — it persists across server restarts
-(unlike the in-memory frame stores). This is the one piece of server-side
-persistence in hosted mode.
+When hosted, the "Save Run" button and SPC dashboard are hidden. The API
+endpoints return 403. This matches how snapshots are already disabled in
+hosted mode.
 
-**Disk usage:** Each run is ~1-2KB (metadata + 20-50 feature results). 1000
-runs ≈ 1-2MB. SQLite handles this easily.
+**Future option:** Enable hosted SPC with session isolation by adding a
+`session_id` column to the `parts` table. Each user sees only their own
+data. The SQLite file persists across page reloads (unlike the in-memory
+frame store). This could serve a paid/premium tier.
+
+**Local mode disk usage:** Each run is ~1-2KB (metadata + 20-50 feature
+results). 1000 runs ≈ 1-2MB. SQLite handles this easily.
 
 ## Known limitations
 
