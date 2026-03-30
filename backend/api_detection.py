@@ -18,6 +18,7 @@ class CircleParams(BaseModel):
     param2: int = 50
     min_radius: int = 10
     max_radius: int = 500
+    subpixel: str = Field(default="none")
 
 
 class LineParams(BaseModel):
@@ -44,6 +45,7 @@ class DetectLinesParams(BaseModel):
     nms_dist: float = 20.0
     nms_angle: float = 10.0
     smoothing: int = 1
+    subpixel: str = Field(default="none")
 
 
 class DetectArcsParams(BaseModel):
@@ -54,6 +56,7 @@ class DetectArcsParams(BaseModel):
     max_radius: int = 500
     residual_tol: float = 0.05
     smoothing: int = 1
+    subpixel: str = Field(default="none")
 
 
 class MatchDxfLinesBody(BaseModel):

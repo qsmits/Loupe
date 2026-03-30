@@ -12,6 +12,7 @@ from .api_inspection import make_inspection_router, router as inspection_router
 class UiConfig(BaseModel):
     app_name: str = Field(min_length=1, max_length=100)
     theme: str = Field(max_length=50, pattern=r"^[a-z0-9-]+$")
+    subpixel_method: str = Field(default="parabola")
 
 
 class TolerancesConfig(BaseModel):
@@ -32,15 +33,16 @@ router = APIRouter()
 def get_ui_config():
     cfg = load_config()
     return {
-        "app_name": cfg.get("app_name", "Microscope"),
-        "theme":    cfg.get("theme",    "macos-dark"),
+        "app_name":        cfg.get("app_name", "Microscope"),
+        "theme":           cfg.get("theme",    "macos-dark"),
+        "subpixel_method": cfg.get("subpixel_method", "parabola"),
     }
 
 
 @router.post("/config/ui")
 def post_ui_config(body: UiConfig):
-    save_config({"app_name": body.app_name, "theme": body.theme})
-    return {"app_name": body.app_name, "theme": body.theme}
+    save_config({"app_name": body.app_name, "theme": body.theme, "subpixel_method": body.subpixel_method})
+    return {"app_name": body.app_name, "theme": body.theme, "subpixel_method": body.subpixel_method}
 
 
 @router.get("/config/tolerances")

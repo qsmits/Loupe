@@ -47,6 +47,7 @@ class InspectGuidedBody(BaseModel):
     smoothing: int = Field(default=1, ge=1, le=3)
     canny_low: int = Field(default=50, ge=0, le=255)
     canny_high: int = Field(default=130, ge=0, le=255)
+    subpixel: str = Field(default="parabola")
 
 
 class FitFeatureBody(BaseModel):
@@ -60,6 +61,14 @@ class FitFeatureBody(BaseModel):
     flip_v: bool = False
     tolerance_warn: float = Field(default=0.10, gt=0)
     tolerance_fail: float = Field(default=0.25, gt=0)
+    subpixel: str = Field(default="parabola")
+
+
+class RefinePointBody(BaseModel):
+    x: float
+    y: float
+    search_radius: int = Field(default=10, ge=1, le=50)
+    subpixel: str = Field(default="parabola")
 
 
 # Module-level router for endpoints that don't need frame_store or camera
@@ -147,5 +156,23 @@ def make_inspection_router(frame_store: FrameStore) -> APIRouter:
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
         return entities
+
+    @insp_router.post("/refine-point")
+    async def refine_point(body: RefinePointBody):
+        frame = frame_store.get()
+        if frame is None:
+            raise HTTPException(status_code=404, detail="No frame stored")
+        import cv2
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        from .vision.subpixel import refine_single_point
+        x, y, magnitude = refine_single_point(
+            (body.x, body.y), gray,
+            search_radius=body.search_radius, method=body.subpixel)
+        return {"x": x, "y": y, "magnitude": magnitude}
+
+    @insp_router.get("/subpixel-methods")
+    async def get_subpixel_methods():
+        from .vision.subpixel import available_methods
+        return available_methods()
 
     return insp_router
