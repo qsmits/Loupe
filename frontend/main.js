@@ -664,7 +664,14 @@ document.getElementById("camera-select-top")?.addEventListener("change", async e
 // ROI Set from view
 document.getElementById("btn-roi-set")?.addEventListener("click", async () => {
   const info = state._cameraInfo;
-  if (!info) return;
+  if (!info) { showStatus("Camera info not loaded"); return; }
+
+  // ROI from current viewport: freeze first, zoom into the area you want, then click
+  if (viewport.zoom <= 1.05) {
+    showStatus("Zoom into the area of interest first (freeze → zoom → Set from view)");
+    return;
+  }
+
   const currentRoi = info.roi || { offset_x: 0, offset_y: 0 };
   const wInc = info.roi_width_inc || 4;
   const hInc = info.roi_height_inc || 4;
@@ -678,19 +685,37 @@ document.getElementById("btn-roi-set")?.addEventListener("click", async () => {
   oy = Math.round(oy / hInc) * hInc;
   ox = Math.min(ox, info.sensor_width - w);
   oy = Math.min(oy, info.sensor_height - h);
-  const resp = await fetch("/camera/roi", {
-    method: "PUT", headers: {"Content-Type": "application/json"},
-    body: JSON.stringify({ offset_x: ox, offset_y: oy, width: w, height: h }),
-  });
-  if (resp.ok) await loadCameraInfo();
+
+  showStatus("Setting ROI...");
+  try {
+    const resp = await fetch("/camera/roi", {
+      method: "PUT", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({ offset_x: ox, offset_y: oy, width: w, height: h }),
+    });
+    if (resp.ok) {
+      const result = await resp.json();
+      showStatus(`ROI set: ${result.width}×${result.height} at (${result.offset_x}, ${result.offset_y})`);
+      await loadCameraInfo();
+    } else {
+      const err = await resp.text();
+      showStatus(`ROI failed: ${err}`);
+    }
+  } catch (err) { showStatus(`ROI failed: ${err.message}`); }
 });
 
 // ROI Reset
 document.getElementById("btn-roi-reset")?.addEventListener("click", async () => {
+  showStatus("Resetting ROI...");
   try {
-    const r = await fetch("/camera/roi/reset", { method: "POST" });
-    if (r.ok) await loadCameraInfo();
-  } catch (err) { console.error("ROI reset failed:", err); }
+    const resp = await fetch("/camera/roi/reset", { method: "POST" });
+    if (resp.ok) {
+      showStatus("ROI reset to full frame");
+      await loadCameraInfo();
+    } else {
+      const err = await resp.text();
+      showStatus(`ROI reset failed: ${err}`);
+    }
+  } catch (err) { showStatus(`ROI reset failed: ${err.message}`); }
 });
 
 // ── Event delegation for delete buttons ───���──────────────────────────────────
