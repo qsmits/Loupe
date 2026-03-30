@@ -301,6 +301,8 @@ class AravisCamera(BaseCamera):
     def set_roi(self, offset_x: int, offset_y: int, width: int, height: int) -> None:
         if self._cam is None:
             raise RuntimeError("Camera not open")
+        import logging
+        _log = logging.getLogger(__name__)
         device = self._cam.get_device()
         self._cam.stop_acquisition()
         try:
@@ -311,6 +313,17 @@ class AravisCamera(BaseCamera):
             device.set_integer_feature_value("Height", height)
             device.set_integer_feature_value("OffsetX", offset_x)
             device.set_integer_feature_value("OffsetY", offset_y)
+            # Verify the camera actually accepted the values
+            actual_w = int(device.get_integer_feature_value("Width"))
+            actual_h = int(device.get_integer_feature_value("Height"))
+            actual_ox = int(device.get_integer_feature_value("OffsetX"))
+            actual_oy = int(device.get_integer_feature_value("OffsetY"))
+            _log.info("ROI set: requested %dx%d+%d+%d, actual %dx%d+%d+%d",
+                       width, height, offset_x, offset_y,
+                       actual_w, actual_h, actual_ox, actual_oy)
+            if actual_w != width or actual_h != height:
+                _log.warning("Camera did not accept ROI dimensions (requested %dx%d, got %dx%d)",
+                             width, height, actual_w, actual_h)
             # Reallocate stream buffers for new payload size
             payload = self._cam.get_payload()
             while self._stream.try_pop_buffer() is not None:
