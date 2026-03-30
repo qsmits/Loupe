@@ -299,42 +299,51 @@ class AravisCamera(BaseCamera):
         return float(self._cam.get_exposure_time())
 
     def set_roi(self, offset_x: int, offset_y: int, width: int, height: int) -> None:
+        """Set camera ROI. Destroys and recreates the stream to ensure buffers
+        match the new payload size — simply reallocating buffers on the existing
+        stream does not work reliably on all cameras."""
         if self._cam is None:
             raise RuntimeError("Camera not open")
-        import logging
+        import logging, gc
         _log = logging.getLogger(__name__)
         device = self._cam.get_device()
+
+        # 1. Stop acquisition and destroy existing stream
         self._cam.stop_acquisition()
-        try:
-            # Reset offsets first to avoid constraint violations
-            device.set_integer_feature_value("OffsetX", 0)
-            device.set_integer_feature_value("OffsetY", 0)
-            device.set_integer_feature_value("Width", width)
-            device.set_integer_feature_value("Height", height)
-            device.set_integer_feature_value("OffsetX", offset_x)
-            device.set_integer_feature_value("OffsetY", offset_y)
-            # Verify the camera actually accepted the values
-            actual_w = int(device.get_integer_feature_value("Width"))
-            actual_h = int(device.get_integer_feature_value("Height"))
-            actual_ox = int(device.get_integer_feature_value("OffsetX"))
-            actual_oy = int(device.get_integer_feature_value("OffsetY"))
-            _log.info("ROI set: requested %dx%d+%d+%d, actual %dx%d+%d+%d",
-                       width, height, offset_x, offset_y,
-                       actual_w, actual_h, actual_ox, actual_oy)
-            if actual_w != width or actual_h != height:
-                _log.warning("Camera did not accept ROI dimensions (requested %dx%d, got %dx%d)",
-                             width, height, actual_w, actual_h)
-            # Reallocate stream buffers for new payload size
-            payload = self._cam.get_payload()
-            while self._stream.try_pop_buffer() is not None:
-                pass  # drain old buffers
-            for _ in range(10):
-                self._stream.push_buffer(Aravis.Buffer.new_allocate(payload))
-        finally:
-            self._cam.start_acquisition()
-            # Wait for the camera to produce frames at the new ROI size.
-            # Without this, the reader thread may get bad/empty frames immediately.
-            time.sleep(0.5)
+        while self._stream.try_pop_buffer() is not None:
+            pass
+        del self._stream
+        self._stream = None
+        gc.collect()
+        time.sleep(0.2)
+
+        # 2. Set ROI dimensions
+        device.set_integer_feature_value("OffsetX", 0)
+        device.set_integer_feature_value("OffsetY", 0)
+        device.set_integer_feature_value("Width", width)
+        device.set_integer_feature_value("Height", height)
+        device.set_integer_feature_value("OffsetX", offset_x)
+        device.set_integer_feature_value("OffsetY", offset_y)
+
+        # Verify
+        actual_w = int(device.get_integer_feature_value("Width"))
+        actual_h = int(device.get_integer_feature_value("Height"))
+        _log.info("ROI set: requested %dx%d+%d+%d, actual %dx%d+%d+%d",
+                   width, height, offset_x, offset_y,
+                   actual_w, actual_h,
+                   int(device.get_integer_feature_value("OffsetX")),
+                   int(device.get_integer_feature_value("OffsetY")))
+        if actual_w != width or actual_h != height:
+            _log.warning("Camera did not accept ROI (requested %dx%d, got %dx%d)",
+                         width, height, actual_w, actual_h)
+
+        # 3. Create fresh stream with correctly-sized buffers
+        self._stream = self._cam.create_stream(None, None)
+        payload = self._cam.get_payload()
+        for _ in range(10):
+            self._stream.push_buffer(Aravis.Buffer.new_allocate(payload))
+        self._cam.start_acquisition()
+        time.sleep(0.3)  # let camera produce first frames
 
     def reset_roi(self) -> None:
         if self._cam is None:

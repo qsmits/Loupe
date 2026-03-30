@@ -81,6 +81,13 @@ def create_app(camera: BaseCamera | None = None, no_camera: bool = False) -> Fas
             # thread was started. _thread is None, no lock is needed.
             reader._camera = NullCamera()
             reader.open()
+        # Reset ROI to full sensor on startup so camera always starts at full frame
+        if not reader.is_null:
+            try:
+                reader.reset_roi()
+                log.info("Camera ROI reset to full sensor on startup.")
+            except Exception as e:
+                log.warning("Failed to reset ROI on startup: %s", e)
         try:
             yield
         finally:
