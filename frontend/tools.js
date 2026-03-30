@@ -98,10 +98,34 @@ export function snapPoint(rawPt, bypass = false) {
 }
 
 // ── Tool click handler ─────────────────────────────────────────────────────
-export function handleToolClick(rawPt, e = {}) {
-  const { pt } = (state.tool !== "calibrate" && state.tool !== "center-dist")
+export async function handleToolClick(rawPt, e = {}) {
+  const { pt: snappedPt } = (state.tool !== "calibrate" && state.tool !== "center-dist")
     ? snapPoint(rawPt, e.altKey ?? false)
     : { pt: rawPt };
+  let pt = snappedPt;
+
+  // Sub-pixel edge snap
+  if (state.frozen && !e.altKey &&
+      state.settings.subpixelMethod !== "none" &&
+      state.tool !== "select" && state.tool !== "pan") {
+    try {
+      const resp = await fetch("/refine-point", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          x: pt.x, y: pt.y, search_radius: 10,
+          subpixel: state.settings.subpixelMethod,
+        }),
+      });
+      if (resp.ok) {
+        const refined = await resp.json();
+        if (refined.magnitude > 20) {
+          pt = { x: refined.x, y: refined.y, snapped: true };
+        }
+      }
+    } catch { /* network error — use unrefined point */ }
+  }
+
   const tool = state.tool;
 
   if (tool === "calibrate") {

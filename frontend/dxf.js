@@ -410,6 +410,7 @@ export function initDxfHandlers() {
           tolerance_warn: state.tolerances.warn,
           tolerance_fail: state.tolerances.fail,
           feature_tolerances: state.featureTolerances,
+          subpixel: state.settings.subpixelMethod,
         }),
       });
 

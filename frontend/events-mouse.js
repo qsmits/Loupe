@@ -26,7 +26,7 @@ function withViewport(fn) {
   ctx.restore();
 }
 
-function onMouseDown(e) {
+async function onMouseDown(e) {
   if (e.button !== 0 && e.button !== 1) return;
   document.getElementById("label-tooltip")?.setAttribute("hidden", "");
 
@@ -223,7 +223,7 @@ function onMouseDown(e) {
     handleSelectDown(pt, e);
     return;
   }
-  handleToolClick(pt, e);
+  await handleToolClick(pt, e);
 }
 
 function onMouseUp() {

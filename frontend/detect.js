@@ -141,10 +141,12 @@ export function initDetectHandlers() {
     const p2   = parseInt(document.getElementById("hough-p2").value);
     const minR = parseInt(document.getElementById("circle-min-r").value);
     const maxR = parseInt(document.getElementById("circle-max-r").value);
+    const subpixel = document.getElementById("detect-subpixel")?.checked
+      ? state.settings.subpixelMethod : "none";
     const resp = await fetch("/detect-circles", {
       method: "POST",
       headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({ dp:1.2, min_dist:50, param1:100, param2:p2, min_radius:minR, max_radius:maxR }),
+      body: JSON.stringify({ dp:1.2, min_dist:50, param1:100, param2:p2, min_radius:minR, max_radius:maxR, subpixel }),
     });
     if (!resp.ok) { alert(await resp.text()); return; }
     const circles = await resp.json();
@@ -195,9 +197,11 @@ export function initDetectHandlers() {
     const smoothing = parseInt(document.getElementById("adv-smoothing").value);
     const minLen = parseInt(document.getElementById("adv-min-length").value);
     const nmsDist = parseInt(document.getElementById("adv-nms-dist").value);
+    const subpixel = document.getElementById("detect-subpixel")?.checked
+      ? state.settings.subpixelMethod : "none";
     const r = await fetch("/detect-lines-merged", { method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ threshold1: t1, threshold2: t2, min_length: minLen, nms_dist: nmsDist, smoothing }) });
+      body: JSON.stringify({ threshold1: t1, threshold2: t2, min_length: minLen, nms_dist: nmsDist, smoothing, subpixel }) });
     if (!r.ok) { const d = await r.json().catch(() => null); showStatus(d?.detail || "Line detection failed (HTTP " + r.status + ")"); return; }
     const lines = await r.json();
     const fw = state.frozenSize?.w || canvas.width;
@@ -217,9 +221,11 @@ export function initDetectHandlers() {
     const t2 = parseInt(document.getElementById("canny-high").value);
     const smoothing = parseInt(document.getElementById("adv-smoothing").value);
     const minSpan = parseInt(document.getElementById("adv-min-span").value);
+    const subpixel = document.getElementById("detect-subpixel")?.checked
+      ? state.settings.subpixelMethod : "none";
     const r = await fetch("/detect-arcs-partial", { method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ threshold1: t1, threshold2: t2, min_span_deg: minSpan, smoothing }) });
+      body: JSON.stringify({ threshold1: t1, threshold2: t2, min_span_deg: minSpan, smoothing, subpixel }) });
     if (!r.ok) { const d = await r.json().catch(() => null); showStatus(d?.detail || "Arc detection failed (HTTP " + r.status + ")"); return; }
     const arcs = await r.json();
     const fw = state.frozenSize?.w || canvas.width;

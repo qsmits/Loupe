@@ -462,6 +462,23 @@ document.getElementById("btn-save-tolerances")?.addEventListener("click", async 
   }
 });
 
+// Sub-pixel method dropdown
+const subpixelSelect = document.getElementById("subpixel-method-select");
+if (subpixelSelect) {
+  fetch("/subpixel-methods").then(r => r.json()).then(methods => {
+    subpixelSelect.innerHTML = methods.map(m =>
+      `<option value="${m}"${m === state.settings.subpixelMethod ? " selected" : ""}>${
+        m === "none" ? "None (pixel-level)" :
+        m === "parabola" ? "Parabola (default)" :
+        m === "gaussian" ? "Gaussian (soft edges)" : m
+      }</option>`
+    ).join("");
+  });
+  subpixelSelect.addEventListener("change", () => {
+    state.settings.subpixelMethod = subpixelSelect.value;
+  });
+}
+
 // Crosshair swatches
 document.querySelectorAll(".swatch").forEach(swatch => {
   swatch.addEventListener("click", () => {

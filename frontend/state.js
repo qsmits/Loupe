@@ -41,6 +41,7 @@ export const state = {
     crosshairColor: "#ffffff",
     crosshairOpacity: 0.4,
     pixelFormat: "BayerRG8",
+    subpixelMethod: "parabola",
   },
   _originMode: false,       // was let _originMode (line 2539 in app.js)
   _dxfOriginMode: false,    // was let _dxfOriginMode (line 2547)

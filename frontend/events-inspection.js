@@ -197,6 +197,7 @@ export async function _finalizePickInspection() {
           flip_h: ann.flipH ?? false, flip_v: ann.flipV ?? false,
           tolerance_warn: state.tolerances.warn,
           tolerance_fail: state.tolerances.fail,
+          subpixel: state.settings.subpixelMethod,
         }),
       });
       if (!resp.ok) continue;

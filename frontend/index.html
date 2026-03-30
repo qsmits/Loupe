@@ -110,6 +110,10 @@
             <input type="range" id="adv-min-span" min="10" max="180" value="50" />
             <span class="detect-val" id="adv-min-span-val">50</span>
           </div>
+          <div class="detect-row">
+            <label class="detect-label" title="Refine edge positions to sub-pixel accuracy before fitting">Sub-pixel</label>
+            <input type="checkbox" id="detect-subpixel" />
+          </div>
           <div class="detect-actions">
             <button id="btn-detect-lines-merged" class="detect-btn">Detect lines (merged)</button>
             <button id="btn-detect-arcs-partial" class="detect-btn">Detect partial arcs</button>
@@ -317,6 +321,13 @@
           <label class="settings-label" for="theme-select">Theme</label>
           <select id="theme-select" class="settings-select">
             <option value="macos-dark">macOS Dark</option>
+          </select>
+        </div>
+        <div class="settings-row">
+          <label class="settings-label">Sub-pixel method</label>
+          <select id="subpixel-method-select" class="settings-select">
+            <option value="none">None (pixel-level)</option>
+            <option value="parabola" selected>Parabola (default)</option>
           </select>
         </div>
         <button class="settings-save-btn" id="btn-save-general">Save</button>

@@ -244,6 +244,11 @@ export async function loadUiConfig() {
     if (nameInput) nameInput.value = data.app_name || "Microscope";
     const themeSelect = document.getElementById("theme-select");
     if (themeSelect) themeSelect.value = data.theme || "macos-dark";
+    if (data.subpixel_method) {
+      state.settings.subpixelMethod = data.subpixel_method;
+      const sel = document.getElementById("subpixel-method-select");
+      if (sel) sel.value = data.subpixel_method;
+    }
   } catch (_) {
     // non-fatal: default theme class is already on <html>
   }
