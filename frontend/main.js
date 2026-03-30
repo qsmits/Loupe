@@ -695,6 +695,8 @@ document.getElementById("btn-roi-set")?.addEventListener("click", async () => {
     if (resp.ok) {
       const result = await resp.json();
       showStatus(`ROI set: ${result.width}×${result.height} at (${result.offset_x}, ${result.offset_y})`);
+      // Reconnect MJPEG stream (connection drops during ROI change)
+      img.src = "/stream?" + Date.now();
       await loadCameraInfo();
     } else {
       const err = await resp.text();
@@ -710,6 +712,7 @@ document.getElementById("btn-roi-reset")?.addEventListener("click", async () => 
     const resp = await fetch("/camera/roi/reset", { method: "POST" });
     if (resp.ok) {
       showStatus("ROI reset to full frame");
+      img.src = "/stream?" + Date.now();
       await loadCameraInfo();
     } else {
       const err = await resp.text();
