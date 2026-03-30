@@ -1,4 +1,4 @@
-import { apiFetch } from './api.js';
+import { apiFetch, getSessionId } from './api.js';
 import { state, TRANSIENT_TYPES } from './state.js';
 import { canvas, ctx, img, showStatus, redraw, resizeCanvas } from './render.js';
 import { renderSidebar, loadCameraInfo, loadUiConfig, loadTolerances,
@@ -441,16 +441,26 @@ document.getElementById("btn-save-general").addEventListener("click", async () =
   const appName = document.getElementById("app-name-input").value.trim() || "Microscope";
   const theme   = document.getElementById("theme-select").value;
   try {
-    await apiFetch("/config/ui", {
+    const resp = await apiFetch("/config/ui", {
       method:  "POST",
       headers: { "Content-Type": "application/json" },
       body:    JSON.stringify({ app_name: appName, theme }),
     });
-    document.getElementById("app-title").textContent = appName;
-    document.title = appName;
-    document.documentElement.className = `theme-${theme}`;
-    document.getElementById("settings-status").textContent = "Saved.";
-    setTimeout(() => { document.getElementById("settings-status").textContent = ""; }, 2000);
+    if (resp.status === 403) {
+      // Hosted mode — apply locally only
+      document.getElementById("app-title").textContent = appName;
+      document.title = appName;
+      document.documentElement.className = `theme-${theme}`;
+      document.getElementById("settings-status").textContent = "Applied (local only)";
+    } else if (resp.ok) {
+      document.getElementById("app-title").textContent = appName;
+      document.title = appName;
+      document.documentElement.className = `theme-${theme}`;
+      document.getElementById("settings-status").textContent = "Saved.";
+      setTimeout(() => { document.getElementById("settings-status").textContent = ""; }, 2000);
+    } else {
+      document.getElementById("settings-status").textContent = "Failed to save";
+    }
   } catch (_) {
     document.getElementById("settings-status").textContent = "Save failed.";
   }
@@ -471,7 +481,13 @@ document.getElementById("btn-save-tolerances")?.addEventListener("click", async 
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ tolerance_warn: warn, tolerance_fail: fail }),
     });
-    if (r.ok) {
+    if (r.status === 403) {
+      // Apply locally
+      state.tolerances.warn = warn;
+      state.tolerances.fail = fail;
+      if (statusEl3) { statusEl3.textContent = "Applied (local only)"; statusEl3.style.color = "var(--success)"; }
+      if (state.showDeviations) redraw();
+    } else if (r.ok) {
       state.tolerances.warn = warn;
       state.tolerances.fail = fail;
       if (statusEl3) { statusEl3.textContent = "Saved"; statusEl3.style.color = "var(--success)"; }
@@ -759,6 +775,19 @@ tryAutoRestore();
 
 // Warn before closing if unsaved
 window.addEventListener("beforeunload", e => {
+  // Best-effort session cleanup (frees server memory)
+  try {
+    fetch("/session", {
+      method: "DELETE",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Session-ID": getSessionId(),
+      },
+      keepalive: true,
+    });
+  } catch { /* ignore */ }
+
+  // Existing dirty-state warning
   if (!state._savedManually && state.annotations.some(a => !TRANSIENT_TYPES.has(a.type))) {
     e.preventDefault();
     e.returnValue = "";
