@@ -104,10 +104,13 @@ export async function handleToolClick(rawPt, e = {}) {
     : { pt: rawPt };
   let pt = snappedPt;
 
-  // Sub-pixel edge snap
+  // Sub-pixel edge snap — skip for calibration (user needs precise control
+  // over which edge of a thin graduation line to click), center-dist (clicks
+  // on circle centers, not edges), and select/pan (not placing points).
   if (state.frozen && !e.altKey &&
       state.settings.subpixelMethod !== "none" &&
-      state.tool !== "select" && state.tool !== "pan") {
+      state.tool !== "select" && state.tool !== "pan" &&
+      state.tool !== "calibrate" && state.tool !== "center-dist") {
     try {
       const resp = await fetch("/refine-point", {
         method: "POST",
