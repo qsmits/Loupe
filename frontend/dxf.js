@@ -5,6 +5,25 @@ import { addAnnotation } from './annotations.js';
 import { renderSidebar, updateDxfControlsVisibility, updateFreezeUI, renderInspectionTable } from './sidebar.js';
 import { exportInspectionCsv, exportInspectionPdf } from './session.js';
 
+// ── Shared alignment helper ───────────────────────────────────────────────
+
+/**
+ * Apply alignment result from /align-dxf-edges to a DXF overlay annotation.
+ * Computes the correct offset from the anchor point.
+ */
+export function applyAlignmentResult(ann, result) {
+  ann.scale = result.scale ?? ann.scale;
+  ann.angle = result.angle_deg ?? 0;
+  const cosA = Math.cos(ann.angle * Math.PI / 180);
+  const sinA = Math.sin(ann.angle * Math.PI / 180);
+  const xr = result.dxf_cx * cosA - result.dxf_cy * sinA;
+  const yr = result.dxf_cx * sinA + result.dxf_cy * cosA;
+  const cx = xr * ann.scale;
+  const cy = -yr * ann.scale;
+  ann.offsetX = result.img_cx - cx;
+  ann.offsetY = result.img_cy - cy;
+}
+
 // ── Per-feature tolerance popover ──────────────────────────────────────────
 let _ftolActiveHandle = null;
 
@@ -96,6 +115,8 @@ export function initDxfHandlers() {
       state.annotations = state.annotations.filter(a => a.type !== "dxf-overlay");
       state.inspectionResults = [];
       state.inspectionFrame = null;
+      state._templateLoaded = false;
+      state._templateName = null;
       state.dxfFilename = file.name.replace(/\.dxf$/i, "");
       renderInspectionTable();
       updateExportButtons();
@@ -133,25 +154,7 @@ export function initDxfHandlers() {
             const result = await alignResp.json();
             const ann = state.annotations.find(a => a.type === "dxf-overlay");
             if (ann) {
-              // The backend returns the image-space position of the DXF center
-              // and the DXF center in DXF space. We compute offsetX/offsetY by
-              // reverse-engineering dxfToCanvas: we know where the DXF center
-              // SHOULD land (img_cx, img_cy), and dxfToCanvas tells us where it
-              // WOULD land for given offset. Solve for offset.
-              //
-              // dxfToCanvas(dxf_cx, dxf_cy) = (offsetX + cx, offsetY + cy)
-              // where cx = xr * scale, cy = -yr * scale
-              // We want: offsetX + cx = img_cx => offsetX = img_cx - cx
-              //          offsetY + cy = img_cy => offsetY = img_cy - cy
-              ann.angle = result.angle_deg ?? 0;
-              const cosA = Math.cos(ann.angle * Math.PI / 180);
-              const sinA = Math.sin(ann.angle * Math.PI / 180);
-              const xr = result.dxf_cx * cosA - result.dxf_cy * sinA;
-              const yr = result.dxf_cx * sinA + result.dxf_cy * cosA;
-              const cx = xr * ann.scale;
-              const cy = -yr * ann.scale;
-              ann.offsetX = result.img_cx - cx;
-              ann.offsetY = result.img_cy - cy;
+              applyAlignmentResult(ann, result);
               showStatus(`DXF auto-aligned (score ${(result.score * 100).toFixed(0)}%)`);
             }
           } else {
@@ -197,6 +200,8 @@ export function initDxfHandlers() {
     state.inspectionResults = [];
     state.inspectionFrame = null;
     state.dxfFilename = null;
+    state._templateLoaded = false;
+    state._templateName = null;
     renderInspectionTable();
     updateExportButtons();
     const dxfPanelEl2 = document.getElementById("dxf-panel");
@@ -336,21 +341,16 @@ export function initDxfHandlers() {
       }
 
       pushUndo();
-      ann.angle = result.angle_deg ?? 0;
-      ann.scale = result.scale ?? cal.pixelsPerMm;
       if (result.flip_h != null) ann.flipH = result.flip_h;
       if (result.flip_v != null) ann.flipV = result.flip_v;
 
       if (result.img_cx != null) {
-        // Edge-based alignment: compute offset from anchor point
-        const cosA = Math.cos(ann.angle * Math.PI / 180);
-        const sinA = Math.sin(ann.angle * Math.PI / 180);
-        const xr = result.dxf_cx * cosA - result.dxf_cy * sinA;
-        const yr = result.dxf_cx * sinA + result.dxf_cy * cosA;
-        ann.offsetX = result.img_cx - xr * ann.scale;
-        ann.offsetY = result.img_cy - (-yr * ann.scale);
+        // Edge-based alignment: use shared helper
+        applyAlignmentResult(ann, result);
       } else {
         // Circle-based alignment: tx/ty are offsetX/offsetY directly
+        ann.angle = result.angle_deg ?? 0;
+        ann.scale = result.scale ?? cal.pixelsPerMm;
         ann.offsetX = result.tx;
         ann.offsetY = result.ty;
       }
@@ -392,6 +392,33 @@ export function initDxfHandlers() {
     canvas.style.cursor = "progress";
 
     try {
+      // If template is loaded, auto-align before inspecting
+      if (state._templateLoaded && state.frozen) {
+        showStatus("Auto-aligning DXF...");
+        const smoothing = parseInt(document.getElementById("adv-smoothing")?.value || "2");
+        try {
+          const alignResp = await apiFetch("/align-dxf-edges", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              entities: ann.entities,
+              pixels_per_mm: state.calibration.pixelsPerMm,
+              smoothing,
+            }),
+          });
+          if (alignResp.ok) {
+            const alignResult = await alignResp.json();
+            applyAlignmentResult(ann, alignResult);
+            redraw();
+            showStatus("Aligned. Running inspection...");
+          } else {
+            showStatus("Auto-align failed, running inspection on current position...");
+          }
+        } catch (err) {
+          showStatus("Auto-align error, running inspection on current position...");
+        }
+      }
+
       const inspectableTypes = ["line", "polyline_line", "arc", "polyline_arc", "circle"];
       const resp = await apiFetch("/inspect-guided", {
         method: "POST",

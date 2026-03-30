@@ -237,6 +237,8 @@ export function clearDxfOverlay() {
   state.inspectionResults = [];
   state.inspectionFrame = null;
   state.dxfFilename = null;
+  state._templateLoaded = false;
+  state._templateName = null;
   state.featureModes = {};
   state.featureNames = {};
   const p = document.getElementById("dxf-panel");
