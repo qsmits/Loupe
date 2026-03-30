@@ -32,6 +32,11 @@ class NullCamera(BaseCamera):
             "wb_blue": 1.0,
             "wb_manual_supported": False,
             "no_camera": True,
+            "supports": {"wb_manual": False, "wb_auto": False, "auto_exposure": False, "gamma": False, "roi": False},
+            "gamma": 1.0, "gamma_min": 0.5, "gamma_max": 2.0,
+            "roi": {"offset_x": 0, "offset_y": 0, "width": 640, "height": 480},
+            "sensor_width": 640, "sensor_height": 480,
+            "roi_width_inc": 4, "roi_height_inc": 4,
         }
 
     @property

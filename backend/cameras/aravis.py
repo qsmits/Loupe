@@ -148,6 +148,61 @@ class AravisCamera(BaseCamera):
         except Exception:
             wb = {"red": 1.0, "green": 1.0, "blue": 1.0}
             wb_manual = False
+
+        def _probe(fn):
+            try:
+                fn()
+                return True
+            except Exception:
+                return False
+
+        supports = {
+            "wb_manual": wb_manual,
+            "wb_auto": _probe(lambda: device.get_string_feature_value("BalanceWhiteAuto")),
+            "auto_exposure": _probe(lambda: device.get_string_feature_value("ExposureAuto")),
+            "gamma": _probe(lambda: device.get_float_feature_value("Gamma")),
+            "roi": _probe(lambda: device.get_integer_feature_value("OffsetX")),
+        }
+
+        # Gamma info
+        gamma = self.get_gamma()
+        try:
+            gamma_min, gamma_max = device.get_float_feature_bounds("Gamma")
+        except Exception:
+            gamma_min, gamma_max = 0.5, 2.0
+
+        # ROI / sensor info
+        try:
+            sensor_width = int(device.get_integer_feature_value("SensorWidth"))
+        except Exception:
+            sensor_width = width
+        try:
+            sensor_height = int(device.get_integer_feature_value("SensorHeight"))
+        except Exception:
+            sensor_height = height
+        try:
+            offset_x = int(device.get_integer_feature_value("OffsetX"))
+        except Exception:
+            offset_x = 0
+        try:
+            offset_y = int(device.get_integer_feature_value("OffsetY"))
+        except Exception:
+            offset_y = 0
+        try:
+            roi_width_inc = int(device.get_integer_feature_value("WidthIncrement"))
+        except Exception:
+            try:
+                _, _, roi_width_inc = device.get_integer_feature_bounds("Width")
+            except Exception:
+                roi_width_inc = 4
+        try:
+            roi_height_inc = int(device.get_integer_feature_value("HeightIncrement"))
+        except Exception:
+            try:
+                _, _, roi_height_inc = device.get_integer_feature_bounds("Height")
+            except Exception:
+                roi_height_inc = 4
+
         return {
             "model": model,
             "serial": serial,
@@ -161,6 +216,15 @@ class AravisCamera(BaseCamera):
             "wb_green": wb["green"],
             "wb_blue": wb["blue"],
             "wb_manual_supported": wb_manual,
+            "supports": supports,
+            "gamma": float(gamma),
+            "gamma_min": float(gamma_min),
+            "gamma_max": float(gamma_max),
+            "roi": {"offset_x": offset_x, "offset_y": offset_y, "width": width, "height": height},
+            "sensor_width": sensor_width,
+            "sensor_height": sensor_height,
+            "roi_width_inc": int(roi_width_inc),
+            "roi_height_inc": int(roi_height_inc),
         }
 
     def get_white_balance(self) -> dict[str, float]:
@@ -198,6 +262,71 @@ class AravisCamera(BaseCamera):
         device = self._cam.get_device()
         device.set_string_feature_value("BalanceRatioSelector", channel)
         device.set_float_feature_value("BalanceRatio", value)
+
+    def set_gamma(self, value: float) -> None:
+        if self._cam is None:
+            raise RuntimeError("Camera not open")
+        self._cam.get_device().set_float_feature_value("Gamma", value)
+
+    def get_gamma(self) -> float:
+        if self._cam is None:
+            raise RuntimeError("Camera not open")
+        try:
+            return float(self._cam.get_device().get_float_feature_value("Gamma"))
+        except Exception:
+            return 1.0
+
+    def set_auto_exposure(self) -> float:
+        if self._cam is None:
+            raise RuntimeError("Camera not open")
+        import logging
+        device = self._cam.get_device()
+        device.set_string_feature_value("ExposureAuto", "Once")
+        prev_exposure = 0.0
+        for _ in range(40):  # up to 2s at 50ms intervals
+            time.sleep(0.05)
+            mode = device.get_string_feature_value("ExposureAuto")
+            cur_exposure = self._cam.get_exposure_time()
+            if mode == "Off":
+                break
+            if cur_exposure == prev_exposure and prev_exposure != 0.0:
+                break
+            prev_exposure = cur_exposure
+        else:
+            logging.getLogger(__name__).warning(
+                "ExposureAuto did not converge within 2 s"
+            )
+        return float(self._cam.get_exposure_time())
+
+    def set_roi(self, offset_x: int, offset_y: int, width: int, height: int) -> None:
+        if self._cam is None:
+            raise RuntimeError("Camera not open")
+        device = self._cam.get_device()
+        self._cam.stop_acquisition()
+        try:
+            # Reset offsets first to avoid constraint violations
+            device.set_integer_feature_value("OffsetX", 0)
+            device.set_integer_feature_value("OffsetY", 0)
+            device.set_integer_feature_value("Width", width)
+            device.set_integer_feature_value("Height", height)
+            device.set_integer_feature_value("OffsetX", offset_x)
+            device.set_integer_feature_value("OffsetY", offset_y)
+            # Reallocate stream buffers for new payload size
+            payload = self._cam.get_payload()
+            while self._stream.try_pop_buffer() is not None:
+                pass  # drain old buffers
+            for _ in range(10):
+                self._stream.push_buffer(Aravis.Buffer.new_allocate(payload))
+        finally:
+            self._cam.start_acquisition()
+
+    def reset_roi(self) -> None:
+        if self._cam is None:
+            raise RuntimeError("Camera not open")
+        device = self._cam.get_device()
+        sw = int(device.get_integer_feature_value("SensorWidth"))
+        sh = int(device.get_integer_feature_value("SensorHeight"))
+        self.set_roi(0, 0, sw, sh)
 
 
 def list_aravis_cameras() -> list[dict]:

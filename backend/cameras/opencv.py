@@ -66,6 +66,11 @@ class OpenCVCamera(BaseCamera):
             "wb_green": 1.0,
             "wb_blue": 1.0,
             "wb_manual_supported": False,
+            "supports": {"wb_manual": False, "wb_auto": False, "auto_exposure": False, "gamma": False, "roi": False},
+            "gamma": 1.0, "gamma_min": 0.5, "gamma_max": 2.0,
+            "roi": {"offset_x": 0, "offset_y": 0, "width": width, "height": height},
+            "sensor_width": width, "sensor_height": height,
+            "roi_width_inc": 4, "roi_height_inc": 4,
         }
 
     def set_pixel_format(self, fmt: str) -> None:
