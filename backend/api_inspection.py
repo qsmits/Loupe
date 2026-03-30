@@ -1,8 +1,8 @@
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, File
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
-from .session_store import SessionFrameStore, get_session_id_dep
+from .session_store import SessionFrameStore, get_session_id_dep, safe_error_detail
 from .vision.alignment import extract_dxf_circles, align_circles
 
 
@@ -13,62 +13,62 @@ class DetectedCircle(BaseModel):
 
 
 class AlignDxfBody(BaseModel):
-    entities: list[dict]
-    circles: list[DetectedCircle]
-    pixels_per_mm: float = Field(gt=0)
+    entities: list[dict] = Field(max_length=10000)
+    circles: list[DetectedCircle] = Field(max_length=1000)
+    pixels_per_mm: float = Field(gt=0, le=100000)
 
 
 class AlignEdgesBody(BaseModel):
-    entities: list[dict]
-    pixels_per_mm: float = Field(gt=0)
+    entities: list[dict] = Field(max_length=10000)
+    pixels_per_mm: float = Field(gt=0, le=100000)
     angle_range: float = Field(default=5.0, ge=0, le=30)
-    smoothing: int = Field(default=2, ge=1, le=3)
+    smoothing: int = Field(default=2, ge=1, le=5)
 
 
 class ExportDxfBody(BaseModel):
-    annotations: list[dict]
-    pixels_per_mm: float = Field(gt=0)
-    origin_x: float = 0
-    origin_y: float = 0
+    annotations: list[dict] = Field(max_length=10000)
+    pixels_per_mm: float = Field(gt=0, le=100000)
+    origin_x: float = Field(default=0, ge=-1e6, le=1e6)
+    origin_y: float = Field(default=0, ge=-1e6, le=1e6)
 
 
 class InspectGuidedBody(BaseModel):
-    entities: list[dict]
-    pixels_per_mm: float = Field(gt=0)
-    tx: float = 0.0
-    ty: float = 0.0
-    angle_deg: float = 0.0
+    entities: list[dict] = Field(max_length=10000)
+    pixels_per_mm: float = Field(gt=0, le=100000)
+    tx: float = Field(default=0.0, ge=-1e6, le=1e6)
+    ty: float = Field(default=0.0, ge=-1e6, le=1e6)
+    angle_deg: float = Field(default=0.0, ge=-360, le=360)
     flip_h: bool = False
     flip_v: bool = False
-    corridor_px: float = Field(default=15.0, gt=0)
-    tolerance_warn: float = Field(default=0.10, gt=0)
-    tolerance_fail: float = Field(default=0.25, gt=0)
+    corridor_px: float = Field(default=15.0, gt=0, le=200)
+    tolerance_warn: float = Field(default=0.10, gt=0, le=100)
+    tolerance_fail: float = Field(default=0.25, gt=0, le=100)
     feature_tolerances: dict = Field(default_factory=dict)
-    smoothing: int = Field(default=1, ge=1, le=3)
+    smoothing: int = Field(default=1, ge=1, le=5)
     canny_low: int = Field(default=50, ge=0, le=255)
     canny_high: int = Field(default=130, ge=0, le=255)
-    subpixel: str = Field(default="parabola")
+    subpixel: str = Field(default="parabola", max_length=20)
 
 
 class FitFeatureBody(BaseModel):
     entity: dict
-    points: list[list[float]]
-    pixels_per_mm: float = Field(gt=0)
-    tx: float = 0.0
-    ty: float = 0.0
-    angle_deg: float = 0.0
+    points: list[list[float]] = Field(max_length=1000)
+    pixels_per_mm: float = Field(gt=0, le=100000)
+    tx: float = Field(default=0.0, ge=-1e6, le=1e6)
+    ty: float = Field(default=0.0, ge=-1e6, le=1e6)
+    angle_deg: float = Field(default=0.0, ge=-360, le=360)
     flip_h: bool = False
     flip_v: bool = False
-    tolerance_warn: float = Field(default=0.10, gt=0)
-    tolerance_fail: float = Field(default=0.25, gt=0)
-    subpixel: str = Field(default="parabola")
+    tolerance_warn: float = Field(default=0.10, gt=0, le=100)
+    tolerance_fail: float = Field(default=0.25, gt=0, le=100)
+    subpixel: str = Field(default="parabola", max_length=20)
 
 
 class RefinePointBody(BaseModel):
-    x: float
-    y: float
+    x: float = Field(ge=-1e6, le=1e6)
+    y: float = Field(ge=-1e6, le=1e6)
     search_radius: int = Field(default=10, ge=1, le=50)
-    subpixel: str = Field(default="parabola")
+    subpixel: str = Field(default="parabola", max_length=20)
 
 
 # Module-level router for endpoints that don't need frame_store or camera
@@ -149,13 +149,16 @@ def make_inspection_router(frame_store: SessionFrameStore) -> APIRouter:
         )
 
     @insp_router.post("/load-dxf")
-    async def load_dxf_route(file: UploadFile = File(...)):
-        content = await file.read()
+    async def load_dxf_route(file: UploadFile = File(...), request: Request = None):
+        # Limit DXF file size (text-based, can be huge)
+        content = await file.read(10 * 1024 * 1024 + 1)
+        if len(content) > 10 * 1024 * 1024:
+            raise HTTPException(413, detail="DXF file too large (max 10MB)")
         try:
             from .vision.dxf_parser import parse_dxf
             entities = parse_dxf(content)
         except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc))
+            raise HTTPException(status_code=400, detail=safe_error_detail(request, exc, "Invalid DXF file"))
         return entities
 
     @insp_router.post("/refine-point")

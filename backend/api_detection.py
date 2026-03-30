@@ -7,26 +7,26 @@ from .vision import detection
 
 
 class EdgeParams(BaseModel):
-    threshold1: int = 50
-    threshold2: int = 150
+    threshold1: int = Field(default=50, ge=0, le=255)
+    threshold2: int = Field(default=150, ge=0, le=255)
 
 
 class CircleParams(BaseModel):
-    dp: float = 1.2
-    min_dist: int = 50
-    param1: int = 100
-    param2: int = 50
-    min_radius: int = 10
-    max_radius: int = 500
-    subpixel: str = Field(default="none")
+    dp: float = Field(default=1.2, ge=0.5, le=10.0)
+    min_dist: int = Field(default=50, ge=1, le=5000)
+    param1: int = Field(default=100, ge=1, le=500)
+    param2: int = Field(default=50, ge=1, le=500)
+    min_radius: int = Field(default=10, ge=1, le=5000)
+    max_radius: int = Field(default=500, ge=1, le=5000)
+    subpixel: str = Field(default="none", max_length=20)
 
 
 class LineParams(BaseModel):
-    threshold1: int = 50
-    threshold2: int = 130
-    hough_threshold: int = 30
-    min_length: int = 20
-    max_gap: int = 8
+    threshold1: int = Field(default=50, ge=0, le=255)
+    threshold2: int = Field(default=130, ge=0, le=255)
+    hough_threshold: int = Field(default=30, ge=1, le=500)
+    min_length: int = Field(default=20, ge=1, le=5000)
+    max_gap: int = Field(default=8, ge=1, le=500)
 
 
 class DetectedLine(BaseModel):
@@ -38,38 +38,38 @@ class DetectedArc(BaseModel):
 
 
 class DetectLinesParams(BaseModel):
-    threshold1: int = 50
-    threshold2: int = 130
-    min_length: int = 80
-    dp_epsilon: float = 0.012
-    nms_dist: float = 20.0
-    nms_angle: float = 10.0
-    smoothing: int = 1
-    subpixel: str = Field(default="none")
+    threshold1: int = Field(default=50, ge=0, le=255)
+    threshold2: int = Field(default=130, ge=0, le=255)
+    min_length: int = Field(default=80, ge=1, le=5000)
+    dp_epsilon: float = Field(default=0.012, ge=0.001, le=1.0)
+    nms_dist: float = Field(default=20.0, ge=1.0, le=500.0)
+    nms_angle: float = Field(default=10.0, ge=0.5, le=90.0)
+    smoothing: int = Field(default=1, ge=1, le=5)
+    subpixel: str = Field(default="none", max_length=20)
 
 
 class DetectArcsParams(BaseModel):
-    threshold1: int = 50
-    threshold2: int = 130
-    min_span_deg: float = 50.0
-    min_radius: int = 10
-    max_radius: int = 500
-    residual_tol: float = 0.05
-    smoothing: int = 1
-    subpixel: str = Field(default="none")
+    threshold1: int = Field(default=50, ge=0, le=255)
+    threshold2: int = Field(default=130, ge=0, le=255)
+    min_span_deg: float = Field(default=50.0, ge=5.0, le=360.0)
+    min_radius: int = Field(default=10, ge=1, le=5000)
+    max_radius: int = Field(default=500, ge=1, le=5000)
+    residual_tol: float = Field(default=0.05, ge=0.001, le=1.0)
+    smoothing: int = Field(default=1, ge=1, le=5)
+    subpixel: str = Field(default="none", max_length=20)
 
 
 class MatchDxfLinesBody(BaseModel):
-    entities: list[dict]
-    lines: list[DetectedLine]
-    pixels_per_mm: float = Field(gt=0)
-    tx: float = 0.0
-    ty: float = 0.0
-    angle_deg: float = 0.0
+    entities: list[dict] = Field(max_length=10000)
+    lines: list[DetectedLine] = Field(max_length=10000)
+    pixels_per_mm: float = Field(gt=0, le=100000)
+    tx: float = Field(default=0.0, ge=-1e6, le=1e6)
+    ty: float = Field(default=0.0, ge=-1e6, le=1e6)
+    angle_deg: float = Field(default=0.0, ge=-360, le=360)
     flip_h: bool = False
     flip_v: bool = False
-    tolerance_warn: float = Field(default=0.10, gt=0)
-    tolerance_fail: float = Field(default=0.25, gt=0)
+    tolerance_warn: float = Field(default=0.10, gt=0, le=100)
+    tolerance_fail: float = Field(default=0.25, gt=0, le=100)
 
     @model_validator(mode="after")
     def warn_lt_fail(self) -> "MatchDxfLinesBody":
@@ -79,16 +79,16 @@ class MatchDxfLinesBody(BaseModel):
 
 
 class MatchDxfArcsBody(BaseModel):
-    entities: list[dict]
-    arcs: list[DetectedArc]
-    pixels_per_mm: float = Field(gt=0)
-    tx: float = 0.0
-    ty: float = 0.0
-    angle_deg: float = 0.0
+    entities: list[dict] = Field(max_length=10000)
+    arcs: list[DetectedArc] = Field(max_length=10000)
+    pixels_per_mm: float = Field(gt=0, le=100000)
+    tx: float = Field(default=0.0, ge=-1e6, le=1e6)
+    ty: float = Field(default=0.0, ge=-1e6, le=1e6)
+    angle_deg: float = Field(default=0.0, ge=-360, le=360)
     flip_h: bool = False
     flip_v: bool = False
-    tolerance_warn: float = Field(default=0.10, gt=0)
-    tolerance_fail: float = Field(default=0.25, gt=0)
+    tolerance_warn: float = Field(default=0.10, gt=0, le=100)
+    tolerance_fail: float = Field(default=0.25, gt=0, le=100)
 
     @model_validator(mode="after")
     def warn_lt_fail(self) -> "MatchDxfArcsBody":

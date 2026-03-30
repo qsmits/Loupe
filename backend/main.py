@@ -108,12 +108,24 @@ def create_app(camera: BaseCamera | None = None, no_camera: bool = False) -> Fas
     def on_shutdown():
         reader._stop.set()  # breaks MJPEG generator loop immediately
 
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=["*"],
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
+    # CORS: in hosted mode, restrict to explicit origin list.
+    # Set CORS_ORIGINS env var to comma-separated domains (e.g., "https://example.com").
+    # In local mode, allow everything for development convenience.
+    cors_env = os.environ.get("CORS_ORIGINS", "")
+    if cors_env:
+        cors_origins = [o.strip() for o in cors_env.split(",") if o.strip()]
+    elif hosted:
+        cors_origins = []  # same-origin only (no CORS at all)
+    else:
+        cors_origins = ["*"]  # local dev: allow everything
+
+    if cors_origins:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=cors_origins,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
 
     app.include_router(make_router(reader, frame_store, startup_warning=startup_warning))
     app.include_router(ui_router)

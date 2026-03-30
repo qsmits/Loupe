@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 
 from .cameras.base import BaseCamera
 from .config import save_config
+from .session_store import safe_error_detail
 from .session_store import SessionFrameStore, get_session_id_dep
 from .stream import mjpeg_generator, BOUNDARY
 
@@ -183,17 +184,17 @@ def make_camera_router(camera: BaseCamera, frame_store: SessionFrameStore, start
         return {"ok": True}
 
     @router.post("/camera/white-balance/auto")
-    async def auto_white_balance():
+    async def auto_white_balance(request: Request):
         if camera.is_null:
             raise HTTPException(503, detail="No camera")
         try:
             ratios = await asyncio.to_thread(camera.set_white_balance_auto)
         except Exception as e:
-            raise HTTPException(status_code=400, detail=str(e))
+            raise HTTPException(400, detail=safe_error_detail(request, e, "White balance failed"))
         return ratios
 
     @router.put("/camera/white-balance/ratio")
-    async def set_wb_ratio(body: WhiteBalanceRatioBody):
+    async def set_wb_ratio(body: WhiteBalanceRatioBody, request: Request):
         if camera.is_null:
             raise HTTPException(503, detail="No camera")
         if body.channel not in _VALID_WB_CHANNELS:
@@ -205,7 +206,7 @@ def make_camera_router(camera: BaseCamera, frame_store: SessionFrameStore, start
         try:
             camera.set_white_balance_ratio(body.channel, body.value)
         except Exception as e:
-            raise HTTPException(status_code=400, detail=str(e))
+            raise HTTPException(400, detail=safe_error_detail(request, e, "White balance ratio failed"))
         return {"ok": True}
 
     @router.get("/cameras")
@@ -220,7 +221,7 @@ def make_camera_router(camera: BaseCamera, frame_store: SessionFrameStore, start
         return cameras
 
     @router.post("/camera/select")
-    async def select_camera(body: CameraSelectBody):
+    async def select_camera(body: CameraSelectBody, request: Request):
         if camera.is_null:
             raise HTTPException(503, detail="No camera")
         if body.camera_id == "opencv-0":
@@ -231,7 +232,7 @@ def make_camera_router(camera: BaseCamera, frame_store: SessionFrameStore, start
             new_cam = AravisCamera(device_id=body.camera_id)
             await asyncio.to_thread(camera.switch_camera, new_cam)
         except Exception as e:
-            raise HTTPException(status_code=400, detail=str(e))
+            raise HTTPException(400, detail=safe_error_detail(request, e, "Camera switch failed"))
         await asyncio.to_thread(save_config, {"camera_id": body.camera_id})
         return {"ok": True}
 

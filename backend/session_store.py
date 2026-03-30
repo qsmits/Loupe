@@ -10,6 +10,16 @@ _UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f
 DEFAULT_SESSION_ID = "_default"
 
 
+def safe_error_detail(request: Request, exc: Exception, fallback: str = "Operation failed") -> str:
+    """Return exception detail for HTTP responses. In hosted mode, scrub internal
+    details (camera errors, file paths, GStreamer messages) to prevent info leaks."""
+    if getattr(request.app.state, "hosted", False):
+        import logging
+        logging.getLogger(__name__).warning("Scrubbed error in hosted mode: %s", exc)
+        return fallback
+    return str(exc)
+
+
 def validate_session_id(session_id: str) -> bool:
     return session_id == DEFAULT_SESSION_ID or bool(_UUID_RE.match(session_id))
 
