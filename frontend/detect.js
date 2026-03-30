@@ -36,6 +36,7 @@ export async function doFreeze() {
   // /freeze would overwrite the loaded image with a blank NullCamera frame.
   if (state.frozenBackground) {
     img.style.opacity = "0";
+    img.src = "";  // stop MJPEG download
     state.frozen = true;
     updateFreezeUI();
     resizeCanvas();
