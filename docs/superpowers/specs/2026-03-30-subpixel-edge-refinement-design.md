@@ -274,9 +274,41 @@ so existing installations get the default on first load.
 2. **Known distance:** Calibrate on 0-10mm, measure 1mm and 5mm gaps.
 3. **Line straightness:** Detect a graduation line, check RMS deviation.
 
+### 8. Gradient visualization overlay (ships with Gaussian algorithm)
+
+A diagnostic overlay toggled from the Overlay menu (alongside the existing
+measurement grid). Implemented as part of the Gaussian algorithm work since
+the gradient data is already computed.
+
+**Gradient magnitude heatmap:**
+- Semi-transparent color overlay on the frozen frame
+- Color encodes gradient strength: transparent (flat) → green (weak edge) →
+  yellow (strong edge). Uses the same Sobel gradient computed for sub-pixel.
+- Backend endpoint: `POST /gradient-overlay` — returns a JPEG/PNG heatmap
+  image at the frozen frame resolution. Frontend composites it as a canvas
+  layer (same approach as the existing edges-overlay annotation type).
+
+**Sub-pixel shift visualization:**
+- When enabled, draw small arrows at each refined edge point showing the
+  direction and magnitude of the sub-pixel correction (from integer pixel
+  to refined position). Only visible when zoomed in (arrows are ~1-2px long).
+- Rendered client-side from guided inspection results that already include
+  the fitted geometry.
+
+**Use cases:**
+- Diagnosing why detection fails: "the edge is too soft here"
+- Understanding reflections and false edges
+- Verifying sub-pixel refinement is working correctly
+- Tuning Canny thresholds visually
+
+**UI:** Toggle checkbox in the Overlay dropdown menu: "Gradient overlay."
+Only available when frozen (gradient is computed from the frozen frame).
+
+---
+
 ## What this does NOT include
 
-- Lens distortion correction (separate feature, not needed for single-mag)
+- Lens distortion correction (not needed for telecentric microscope
+  objectives — residual distortion is typically <0.05%)
 - New edge detection algorithms (still Canny — sub-pixel refines its output)
 - Changes to DXF alignment (alignment uses template matching, not edge points)
-- UI for visualizing gradient magnitude or edge direction
