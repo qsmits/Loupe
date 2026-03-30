@@ -65,6 +65,23 @@ export function drawHandle(pt, color) {
   ctx.stroke();
 }
 
+export function drawDiamondHandle(pt, color) {
+  const s = pw(4);
+  ctx.save();
+  ctx.fillStyle = color;
+  ctx.strokeStyle = "#fff";
+  ctx.lineWidth = pw(1);
+  ctx.beginPath();
+  ctx.moveTo(pt.x, pt.y - s);
+  ctx.lineTo(pt.x + s, pt.y);
+  ctx.lineTo(pt.x, pt.y + s);
+  ctx.lineTo(pt.x - s, pt.y);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+  ctx.restore();
+}
+
 export function drawLabel(text, x, y) {
   const fontSize = pw(12);
   ctx.font = `bold ${fontSize}px ui-monospace, monospace`;

@@ -6,13 +6,16 @@ import { state, _labelHitBoxes } from './state.js';
 import { getLineEndpoints, lineAngleDeg } from './format.js';
 import { viewport, imageWidth, imageHeight } from './viewport.js';
 import {
-  ctx, canvas, pw, drawLine, drawHandle, drawLabel,
+  ctx, canvas, pw, drawLine, drawHandle, drawDiamondHandle, drawLabel,
   drawMeasurementLabel, _annColor, measurementLabel,
 } from './render.js';
 
 export function drawDistance(ann, sel) {
   drawLine(ann.a, ann.b, _annColor(ann, sel, "#facc15"), sel ? 2 : 1.5);
-  if (sel) { drawHandle(ann.a, "#60a5fa"); drawHandle(ann.b, "#60a5fa"); }
+  if (sel) {
+    (ann.a.snapped ? drawDiamondHandle : drawHandle)(ann.a, "#60a5fa");
+    (ann.b.snapped ? drawDiamondHandle : drawHandle)(ann.b, "#60a5fa");
+  }
   const mx = (ann.a.x + ann.b.x) / 2, my = (ann.a.y + ann.b.y) / 2;
   drawMeasurementLabel(ann, measurementLabel(ann), mx + 5, my - 5, mx, my);
 }
@@ -21,7 +24,7 @@ export function drawAngle(ann, sel) {
   const c = _annColor(ann, sel, "#a78bfa");
   drawLine(ann.p1, ann.vertex, c, sel ? 2 : 1.5);
   drawLine(ann.vertex, ann.p3, c, sel ? 2 : 1.5);
-  if (sel) { [ann.p1, ann.vertex, ann.p3].forEach(p => drawHandle(p, "#60a5fa")); }
+  if (sel) { [ann.p1, ann.vertex, ann.p3].forEach(p => (p.snapped ? drawDiamondHandle : drawHandle)(p, "#60a5fa")); }
   drawMeasurementLabel(ann, measurementLabel(ann), ann.vertex.x + 8, ann.vertex.y - 8, ann.vertex.x, ann.vertex.y);
 }
 
@@ -157,7 +160,10 @@ export function drawParallelism(ann, sel) {
   drawLine(ann.a, ann.b, sel ? "#60a5fa" : "#facc15", sel ? 2 : 1.5);
   ctx.setLineDash([]);
   ctx.restore();
-  if (sel) { drawHandle(ann.a, "#60a5fa"); drawHandle(ann.b, "#60a5fa"); }
+  if (sel) {
+    (ann.a.snapped ? drawDiamondHandle : drawHandle)(ann.a, "#60a5fa");
+    (ann.b.snapped ? drawDiamondHandle : drawHandle)(ann.b, "#60a5fa");
+  }
   const mx = (ann.a.x + ann.b.x) / 2, my = (ann.a.y + ann.b.y) / 2;
   drawLabel(measurementLabel(ann), mx + 5, my - 5);
 }
