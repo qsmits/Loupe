@@ -359,6 +359,52 @@ document.getElementById("btn-clear")?.addEventListener("click", () => {
   }
 });
 
+// ── Save Run ──────────────────────────────────────────────────────────────────
+document.getElementById("btn-save-run")?.addEventListener("click", async () => {
+  if (state.inspectionResults.length === 0) return;
+
+  const partName = prompt("Part name:", state._templateName || state.dxfFilename || "");
+  if (!partName) return;
+
+  document.body.style.cursor = "progress";
+  try {
+    // Create or get part
+    const partResp = await apiFetch("/parts", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: partName,
+        dxf_filename: state.dxfFilename || "",
+        template_name: state._templateName || "",
+      }),
+    });
+    if (partResp.status === 403) {
+      showStatus("Run storage not available in hosted mode");
+      return;
+    }
+    if (!partResp.ok) throw new Error(await partResp.text());
+    const part = await partResp.json();
+
+    // Save the run
+    const runResp = await apiFetch(`/parts/${part.id}/runs`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        results: state.inspectionResults,
+        operator: "",
+      }),
+    });
+    if (!runResp.ok) throw new Error(await runResp.text());
+    const run = await runResp.json();
+
+    showStatus(`Run #${run.run_id} saved for "${partName}"`);
+  } catch (err) {
+    showStatus("Failed to save run: " + err.message);
+  } finally {
+    document.body.style.cursor = "";
+  }
+});
+
 // ── Export PNG ──────��────────────────────────────────��────────────────────────
 document.getElementById("btn-export").addEventListener("click", exportAnnotatedImage);
 

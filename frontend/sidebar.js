@@ -716,6 +716,10 @@ export function renderInspectionTable() {
     }
   }
 
+  // Show/hide Save Run button
+  const saveRunBtn = document.getElementById("btn-save-run");
+  if (saveRunBtn) saveRunBtn.hidden = state.inspectionResults.length === 0;
+
   // Wire collapse toggle (idempotent)
   const toggle = document.getElementById("inspection-toggle");
   const wrap = document.getElementById("inspection-table-wrap");
