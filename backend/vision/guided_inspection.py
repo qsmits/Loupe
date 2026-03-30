@@ -72,7 +72,8 @@ def _pass_fail(dev_mm: float, tol_warn: float, tol_fail: float) -> str:
 
 
 def _inspect_line(entity, edge_xy, ppm, tx, ty, angle_rad,
-                  corridor_px, flip_h, flip_v, tol_warn, tol_fail):
+                  corridor_px, flip_h, flip_v, tol_warn, tol_fail,
+                  subpixel="none", raw_gray=None):
     """Inspect a line/polyline_line entity against corridor-filtered edge pixels."""
     # Project endpoints to image space
     x1_px, y1_px = dxf_to_image_px(entity["x1"], entity["y1"], ppm, tx, ty,
@@ -105,6 +106,10 @@ def _inspect_line(entity, edge_xy, ppm, tx, ty, angle_rad,
         (np.abs(perp) <= corridor_px)
     )
     corridor_pts = edge_xy[mask]
+
+    if subpixel != "none" and raw_gray is not None and len(corridor_pts) >= _MIN_POINTS_LINE:
+        from .subpixel import refine_subpixel
+        corridor_pts = refine_subpixel(corridor_pts, raw_gray, method=subpixel)
 
     if len(corridor_pts) < _MIN_POINTS_LINE:
         return _unmatched(entity, f"too few edge points ({len(corridor_pts)})")
@@ -208,7 +213,8 @@ def _inspect_line(entity, edge_xy, ppm, tx, ty, angle_rad,
 
 
 def _inspect_arc_circle(entity, edge_xy, ppm, tx, ty, angle_rad,
-                        corridor_px, flip_h, flip_v, tol_warn, tol_fail):
+                        corridor_px, flip_h, flip_v, tol_warn, tol_fail,
+                        subpixel="none", raw_gray=None):
     """Inspect an arc/polyline_arc/circle entity against corridor-filtered edge pixels."""
     # Project center to image space, scale radius
     cx_px, cy_px = dxf_to_image_px(entity["cx"], entity["cy"], ppm, tx, ty,
@@ -264,6 +270,10 @@ def _inspect_arc_circle(entity, edge_xy, ppm, tx, ty, angle_rad,
         mask = radial_mask
 
     corridor_pts = edge_xy[mask]
+
+    if subpixel != "none" and raw_gray is not None and len(corridor_pts) >= _MIN_POINTS_ARC:
+        from .subpixel import refine_subpixel
+        corridor_pts = refine_subpixel(corridor_pts, raw_gray, method=subpixel)
 
     if len(corridor_pts) < _MIN_POINTS_ARC:
         return _unmatched(entity, f"too few edge points ({len(corridor_pts)})")
@@ -386,6 +396,7 @@ def inspect_features(
     tolerance_fail: float = 0.25,
     feature_tolerances: dict | None = None,
     smoothing: int = 1,
+    subpixel: str = "parabola",
 ) -> list[dict]:
     """
     Main entry point: preprocess frame, run Canny once, then inspect each entity.
@@ -409,6 +420,7 @@ def inspect_features(
     List of result dicts, one per entity.
     """
     gray = preprocess(frame, smoothing=smoothing)
+    raw_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) if subpixel != "none" else None
     edges = cv2.Canny(gray, canny_low, canny_high)
 
     # Collect all edge pixel coordinates as (x, y) — note argwhere returns (row, col)
@@ -432,11 +444,13 @@ def inspect_features(
         if etype in ("line", "polyline_line"):
             result = _inspect_line(entity, edge_xy, pixels_per_mm, tx, ty,
                                    angle_rad, corridor_px, flip_h, flip_v,
-                                   tol_w, tol_f)
+                                   tol_w, tol_f,
+                                   subpixel=subpixel, raw_gray=raw_gray)
         elif etype in ("arc", "polyline_arc", "circle"):
             result = _inspect_arc_circle(entity, edge_xy, pixels_per_mm, tx, ty,
                                          angle_rad, corridor_px, flip_h, flip_v,
-                                         tol_w, tol_f)
+                                         tol_w, tol_f,
+                                         subpixel=subpixel, raw_gray=raw_gray)
         else:
             result = _unmatched(entity, f"unsupported entity type: {etype}")
 

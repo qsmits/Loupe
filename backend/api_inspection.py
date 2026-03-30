@@ -136,6 +136,7 @@ def make_inspection_router(frame_store: FrameStore) -> APIRouter:
             smoothing=body.smoothing,
             canny_low=body.canny_low,
             canny_high=body.canny_high,
+            subpixel=body.subpixel,
         )
 
     @insp_router.post("/fit-feature")
