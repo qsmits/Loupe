@@ -183,3 +183,36 @@ class TestAvailableMethods:
         assert isinstance(methods, list)
         assert "none" in methods
         assert "parabola" in methods
+
+
+# ---------------------------------------------------------------------------
+# TestRefineSubpixelGaussian
+# ---------------------------------------------------------------------------
+
+class TestRefineSubpixelGaussian:
+    def test_vertical_edge_accuracy(self):
+        true_x = 50.3
+        gray = _make_vertical_edge(edge_x=true_x)
+        edge_xy = _get_canny_points(gray)
+        refined = refine_subpixel(edge_xy, gray, method="gaussian")
+        mean_refined_x = refined[:, 0].mean()
+        assert abs(mean_refined_x - true_x) < 0.2
+
+    def test_soft_edge(self):
+        """Gaussian should handle soft/blurred edges."""
+        true_x = 50.3
+        img = np.zeros((100, 100), dtype=np.uint8)
+        for x in range(100):
+            val = 30 + 190 / (1 + np.exp(-(x - true_x) * 0.8))  # shallow slope
+            img[:, x] = int(np.clip(val, 0, 255))
+        edge_xy = _get_canny_points(img, low=20, high=60)
+        if len(edge_xy) < 5:
+            pytest.skip("Not enough edge points on soft edge")
+        refined = refine_subpixel(edge_xy, img, method="gaussian")
+        # Should produce valid results (not NaN, within clamp)
+        assert not np.any(np.isnan(refined))
+        diff = np.abs(refined - edge_xy)
+        assert diff.max() <= 1.0 + 1e-6
+
+    def test_available_methods_includes_gaussian(self):
+        assert "gaussian" in available_methods()

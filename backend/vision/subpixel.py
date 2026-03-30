@@ -195,3 +195,81 @@ def _refine_parabola(edge_xy: np.ndarray, gray: np.ndarray) -> np.ndarray:
         ys + t_peak * sin_th,
     ])
     return refined.astype(np.float64)
+
+
+@_register("gaussian")
+def _refine_gaussian(edge_xy: np.ndarray, gray: np.ndarray) -> np.ndarray:
+    """Gaussian (second-derivative zero-crossing) sub-pixel refinement.
+
+    Samples 7 intensity values along the gradient direction and locates the
+    zero-crossing of the second derivative (inflection point of the intensity
+    profile), which corresponds to the true edge position.
+    """
+    gx = cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize=5)
+    gy = cv2.Sobel(gray, cv2.CV_64F, 0, 1, ksize=5)
+    theta = np.arctan2(gy, gx)  # (h, w)
+
+    xs = edge_xy[:, 0]
+    ys = edge_xy[:, 1]
+
+    h, w = gray.shape[:2]
+    xi = np.clip(np.round(xs).astype(np.intp), 0, w - 1)
+    yi = np.clip(np.round(ys).astype(np.intp), 0, h - 1)
+
+    th = theta[yi, xi]
+    cos_th = np.cos(th)
+    sin_th = np.sin(th)
+
+    # Sample 7 intensity points at offsets -3,-2,-1,0,+1,+2,+3
+    offsets = np.array([-3.0, -2.0, -1.0, 0.0, 1.0, 2.0, 3.0])
+    n = len(xs)
+    samples = np.empty((7, n), dtype=np.float64)
+    for i, off in enumerate(offsets):
+        sx = xs + off * cos_th
+        sy = ys + off * sin_th
+        samples[i] = _bilinear_sample(gray, sx, sy)
+
+    # Second derivative via finite differences: d2[i] = s[i+2] - 2*s[i+1] + s[i]
+    # for i in 0..4, giving values at offsets -2,-1,0,+1,+2
+    d2 = np.empty((5, n), dtype=np.float64)
+    for i in range(5):
+        d2[i] = samples[i + 2] - 2.0 * samples[i + 1] + samples[i]
+
+    # d2 has indices 0..4, corresponding to offsets -2,-1,0,+1,+2.
+    # Adjacent pairs (left_idx, right_idx) and their offset spans:
+    #   pair 0: indices (0,1) → offsets (-2,-1), midpoint -1.5
+    #   pair 1: indices (1,2) → offsets (-1, 0), midpoint -0.5
+    #   pair 2: indices (2,3) → offsets ( 0,+1), midpoint +0.5
+    #   pair 3: indices (3,4) → offsets (+1,+2), midpoint +1.5
+    # Prefer pairs whose midpoint is closest to center (0):
+    #   |midpoint|: pair1=0.5, pair2=0.5, pair0=1.5, pair3=1.5
+    pair_order = [1, 2, 0, 3]  # left-element indices, ordered by midpoint closeness to 0
+
+    t_peak = np.zeros(n, dtype=np.float64)
+    found = np.zeros(n, dtype=bool)
+
+    for k in pair_order:
+        # Pair spans offsets (k-2) and (k-1)
+        left_off = float(k - 2)
+        right_off = float(k - 1)
+        a = d2[k]
+        b = d2[k + 1]
+        sign_change = (a * b) < 0.0
+        candidates = sign_change & ~found
+        if not np.any(candidates):
+            continue
+        # Linear interpolation for zero crossing
+        denom = b - a
+        safe = np.abs(denom) > 1e-12
+        t = np.where(safe, left_off + (-a / np.where(safe, denom, 1.0)), (left_off + right_off) / 2.0)
+        t_peak = np.where(candidates, t, t_peak)
+        found = found | candidates
+
+    # Clamp to ±1.0
+    t_peak = np.clip(t_peak, -1.0, 1.0)
+
+    refined = np.column_stack([
+        xs + t_peak * cos_th,
+        ys + t_peak * sin_th,
+    ])
+    return refined.astype(np.float64)
