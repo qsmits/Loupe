@@ -12,9 +12,9 @@ def _capturing_make_router(captured: dict):
     """Return a make_router wrapper that captures the startup_warning in `captured`."""
     from backend.api import make_router as real_make_router
 
-    def wrapper(reader, frame_store, startup_warning=None):
+    def wrapper(reader, frame_store, startup_warning=None, run_store=None):
         captured["warning"] = startup_warning
-        return real_make_router(reader, frame_store, startup_warning=startup_warning)
+        return real_make_router(reader, frame_store, startup_warning=startup_warning, run_store=run_store)
 
     return wrapper
 

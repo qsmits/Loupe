@@ -16,6 +16,7 @@ from .cameras.opencv import OpenCVCamera
 from .session_store import SessionFrameStore
 from .stream import CameraReader
 from .api import make_router, router as ui_router
+from .run_store import RunStore
 
 FRONTEND_DIR = pathlib.Path(__file__).parent.parent / "frontend"
 
@@ -132,7 +133,8 @@ def create_app(camera: BaseCamera | None = None, no_camera: bool = False) -> Fas
     from .rate_limit import RateLimitMiddleware
     app.add_middleware(RateLimitMiddleware, hosted=hosted)
 
-    app.include_router(make_router(reader, frame_store, startup_warning=startup_warning))
+    run_store = RunStore(db_path=os.path.join(os.path.dirname(__file__), "..", "data", "runs.db"))
+    app.include_router(make_router(reader, frame_store, startup_warning=startup_warning, run_store=run_store))
     app.include_router(ui_router)
 
     if FRONTEND_DIR.exists():
