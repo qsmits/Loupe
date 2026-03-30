@@ -39,6 +39,17 @@ class WhiteBalanceRatioBody(BaseModel):
     value: float
 
 
+class GammaBody(BaseModel):
+    value: float = Field(ge=0.1, le=4.0)
+
+
+class RoiBody(BaseModel):
+    offset_x: int = Field(ge=0)
+    offset_y: int = Field(ge=0)
+    width: int = Field(gt=0)
+    height: int = Field(gt=0)
+
+
 class CameraSelectBody(BaseModel):
     camera_id: str = Field(..., min_length=1)
 
@@ -213,6 +224,46 @@ def make_camera_router(camera: BaseCamera, frame_store: FrameStore, startup_warn
         except Exception as e:
             raise HTTPException(status_code=400, detail=str(e))
         await asyncio.to_thread(save_config, {"camera_id": body.camera_id})
+        return {"ok": True}
+
+    @router.put("/camera/gamma")
+    async def set_gamma(body: GammaBody):
+        if camera.is_null:
+            raise HTTPException(503, detail="No camera")
+        await asyncio.to_thread(camera.set_gamma, body.value)
+        return {"ok": True}
+
+    @router.post("/camera/auto-exposure")
+    async def auto_exposure():
+        if camera.is_null:
+            raise HTTPException(503, detail="No camera")
+        exposure = await asyncio.to_thread(camera.set_auto_exposure)
+        return {"exposure": exposure}
+
+    @router.put("/camera/roi")
+    async def set_roi(body: RoiBody):
+        if camera.is_null:
+            raise HTTPException(503, detail="No camera")
+        # Snap to valid increments
+        info = camera.get_info()
+        w_inc = info.get("roi_width_inc", 4)
+        h_inc = info.get("roi_height_inc", 4)
+        width = max(w_inc, round(body.width / w_inc) * w_inc)
+        height = max(h_inc, round(body.height / h_inc) * h_inc)
+        offset_x = round(body.offset_x / w_inc) * w_inc
+        offset_y = round(body.offset_y / h_inc) * h_inc
+        sw = info.get("sensor_width", info["width"])
+        sh = info.get("sensor_height", info["height"])
+        offset_x = min(offset_x, max(0, sw - width))
+        offset_y = min(offset_y, max(0, sh - height))
+        await asyncio.to_thread(camera.set_roi, offset_x, offset_y, width, height)
+        return {"offset_x": offset_x, "offset_y": offset_y, "width": width, "height": height}
+
+    @router.post("/camera/roi/reset")
+    async def reset_roi():
+        if camera.is_null:
+            raise HTTPException(503, detail="No camera")
+        await asyncio.to_thread(camera.reset_roi)
         return {"ok": True}
 
     return router

@@ -145,6 +145,44 @@ class CameraReader(BaseCamera):
         with self._wb_lock:
             return self._camera.set_white_balance_ratio(channel, value)
 
+    def set_gamma(self, value: float) -> None:
+        self._camera.set_gamma(value)
+
+    def get_gamma(self) -> float:
+        return self._camera.get_gamma()
+
+    def set_auto_exposure(self) -> float:
+        # Blocking (polls for up to ~2s) — call via asyncio.to_thread in API
+        return self._camera.set_auto_exposure()
+
+    def set_roi(self, offset_x, offset_y, width, height):
+        with self._format_lock:
+            if self._thread is None:
+                raise RuntimeError("CameraReader is not open")
+            self._stop.set()
+            if self._thread is not None:
+                self._thread.join(timeout=2)
+                if self._thread.is_alive():
+                    raise RuntimeError("Reader thread did not stop within 2 s; aborting ROI change.")
+            self._camera.set_roi(offset_x, offset_y, width, height)
+            self._stop.clear()
+            self._thread = threading.Thread(target=self._run, daemon=True)
+            self._thread.start()
+
+    def reset_roi(self):
+        with self._format_lock:
+            if self._thread is None:
+                raise RuntimeError("CameraReader is not open")
+            self._stop.set()
+            if self._thread is not None:
+                self._thread.join(timeout=2)
+                if self._thread.is_alive():
+                    raise RuntimeError("Reader thread did not stop within 2 s; aborting ROI reset.")
+            self._camera.reset_roi()
+            self._stop.clear()
+            self._thread = threading.Thread(target=self._run, daemon=True)
+            self._thread.start()
+
     @property
     def is_null(self) -> bool:
         return self._camera.is_null
