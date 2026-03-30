@@ -204,7 +204,7 @@ These are real features but not near-term priorities given the current use case.
 |---------|-------------|
 | Gear inspection (involute profiles, tooth spacing) | Separate domain. Wait for gear machine. |
 | Nikon SC-102 XY stage integration | Hardware-dependent. Separate project. |
-| STEP/IGES import | High effort. DXF covers 2D inspection well. |
+| STEP/IGES import with PMI | High effort. Would auto-import GD&T tolerances from 3D model (no manual tolerance entry). Needs pythonocc/OpenCascade. DXF covers 2D geometry well but can't carry tolerances. |
 | Pattern matching / golden template | Interesting for incoming inspection but niche. |
 | Full GD&T (runout, concentricity, profile of surface) | Revisit when a compliance requirement drives it. |
 | Height map / focus stacking | Requires motorized Z-axis. Separate project. |
