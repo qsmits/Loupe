@@ -217,6 +217,22 @@ export function renderSidebar() {
     }
     showStatus(msg);
   }
+
+  updateTemplateDisplay();
+}
+
+// ── Template display ───────────────────────────────────────────────────────────
+export function updateTemplateDisplay() {
+  const el = document.getElementById("template-info");
+  const nameEl = document.getElementById("template-name-display");
+  if (el && nameEl) {
+    if (state._templateLoaded && state._templateName) {
+      nameEl.textContent = state._templateName;
+      el.hidden = false;
+    } else {
+      el.hidden = true;
+    }
+  }
 }
 
 // ── Tolerances config ──────────────────────────────────────────────────────────

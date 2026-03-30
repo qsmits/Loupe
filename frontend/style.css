@@ -380,6 +380,18 @@ body.no-camera #stream-img {
   flex-shrink: 0;
 }
 
+.template-info {
+  padding: 4px 10px;
+  font-size: 11px;
+  color: var(--accent);
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.template-badge { font-weight: 600; white-space: nowrap; }
+
 .sidebar-section {
   border-bottom: 1px solid var(--border);
   padding: 10px 12px;

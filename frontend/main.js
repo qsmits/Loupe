@@ -3,7 +3,7 @@ import { state, TRANSIENT_TYPES } from './state.js';
 import { canvas, ctx, img, showStatus, redraw, resizeCanvas } from './render.js';
 import { renderSidebar, loadCameraInfo, loadUiConfig, loadTolerances,
          updateCalibrationButton, checkStartupWarning, updateFreezeUI,
-         loadCameraList, renderInspectionTable } from './sidebar.js';
+         loadCameraList, renderInspectionTable, updateTemplateDisplay } from './sidebar.js';
 import { deleteAnnotation, addAnnotation, elevateSelected, clearDetections, clearMeasurements, clearDxfOverlay, clearAll } from './annotations.js';
 import { assembleTemplate, downloadTemplate, readTemplateFile } from './template.js';
 import { setTool } from './tools.js';
@@ -758,7 +758,10 @@ function updateTemplateButtons() {
   btn.style.display = (hasDxf && hasCal) ? "" : "none";
 }
 
-document.addEventListener("dxf-state-changed", updateTemplateButtons);
+document.addEventListener("dxf-state-changed", () => {
+  updateTemplateButtons();
+  updateTemplateDisplay();
+});
 updateTemplateButtons();
 
 document.getElementById("btn-save-template")?.addEventListener("click", () => {
@@ -880,6 +883,7 @@ document.getElementById("template-input")?.addEventListener("change", async (e) 
     // Set template state
     state._templateLoaded = true;
     state._templateName = tmpl.name;
+    updateTemplateDisplay();
 
     // Update DXF panel visibility
     const dxfPanel = document.getElementById("dxf-controls-group");
