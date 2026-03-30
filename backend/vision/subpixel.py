@@ -87,10 +87,22 @@ def refine_single_point(
     if roi.size == 0:
         return (float(point[0]), float(point[1]), 0.0)
 
-    # Strongest pixel in window
-    local_idx = np.unravel_index(np.argmax(roi), roi.shape)
-    best_y = y0 + local_idx[0]
-    best_x = x0 + local_idx[1]
+    # Find the nearest strong-gradient pixel to the click, not the strongest.
+    # This avoids jumping to the opposite edge of a thin line.
+    # "Strong" = above 30% of the max gradient in the window.
+    roi_max = roi.max()
+    if roi_max < 1.0:
+        return (float(point[0]), float(point[1]), 0.0)
+    threshold = roi_max * 0.3
+
+    # Get all above-threshold pixels, sorted by distance to click
+    ys, xs = np.where(roi >= threshold)
+    abs_xs = x0 + xs
+    abs_ys = y0 + ys
+    dists = np.sqrt((abs_xs - point[0]) ** 2 + (abs_ys - point[1]) ** 2)
+    nearest_idx = np.argmin(dists)
+    best_x = int(abs_xs[nearest_idx])
+    best_y = int(abs_ys[nearest_idx])
     best_mag = float(mag[best_y, best_x])
 
     # Refine that single point
