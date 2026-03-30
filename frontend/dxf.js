@@ -134,6 +134,7 @@ export function initDxfHandlers() {
       const dxfPanelEl = document.getElementById("dxf-panel");
       if (dxfPanelEl) dxfPanelEl.style.display = "";
       updateDxfControlsVisibility();
+      document.dispatchEvent(new CustomEvent("dxf-state-changed"));
       redraw();
 
       // Auto-align if calibrated and frozen

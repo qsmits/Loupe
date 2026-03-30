@@ -247,6 +247,7 @@ export function clearDxfOverlay() {
   renderSidebar();
   renderInspectionTable();
   redraw();
+  document.dispatchEvent(new CustomEvent("dxf-state-changed"));
   showStatus("Cleared DXF overlay");
 }
 
@@ -293,4 +294,5 @@ export function applyCalibration(ann) {
   addAnnotation(ann);
   updateCameraInfo(); // refresh the scale display in the sidebar
   updateCalibrationButton();
+  document.dispatchEvent(new CustomEvent("dxf-state-changed"));
 }
