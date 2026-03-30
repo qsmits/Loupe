@@ -3,7 +3,8 @@ import { state, TRANSIENT_TYPES } from './state.js';
 import { canvas, ctx, img, showStatus, redraw, resizeCanvas } from './render.js';
 import { renderSidebar, loadCameraInfo, loadUiConfig, loadTolerances,
          updateCalibrationButton, checkStartupWarning, updateFreezeUI,
-         loadCameraList, renderInspectionTable, updateTemplateDisplay } from './sidebar.js';
+         loadCameraList, renderInspectionTable, updateTemplateDisplay,
+         updateDxfControlsVisibility } from './sidebar.js';
 import { deleteAnnotation, addAnnotation, elevateSelected, clearDetections, clearMeasurements, clearDxfOverlay, clearAll } from './annotations.js';
 import { assembleTemplate, downloadTemplate, readTemplateFile } from './template.js';
 import { setTool } from './tools.js';
@@ -121,7 +122,8 @@ document.addEventListener("click", e => {
 // ─��� Freeze button ───���───────────────────────────────��─────────────────────────
 document.getElementById("btn-freeze").addEventListener("click", async () => {
   if (state.frozen) {
-    // Unfreeze
+    // Unfreeze — restart MJPEG stream
+    img.src = "/stream?" + Date.now();
     img.style.opacity = "1";
     state.frozen = false;
     state.frozenBackground = null;
@@ -167,6 +169,7 @@ document.getElementById("file-input").addEventListener("change", async e => {
   loadedImg.onload = async () => {
     state.frozenBackground = loadedImg;
     img.style.opacity = "0";
+    img.src = "";  // stop MJPEG download
     state.frozen = true;
     updateFreezeUI();
     resizeCanvas();
@@ -278,6 +281,7 @@ viewerEl.addEventListener("drop", async e => {
   loadedImg.onload = () => {
     state.frozenBackground = loadedImg;
     img.style.opacity = "0";
+    img.src = "";  // stop MJPEG download
     state.frozen = true;
     updateFreezeUI();
     resizeCanvas();
@@ -893,8 +897,9 @@ document.getElementById("template-input")?.addEventListener("change", async (e) 
     const scaleInput = document.getElementById("dxf-scale");
     if (scaleInput) scaleInput.value = tmpl.calibration.pixelsPerMm.toFixed(3);
 
-    // Update calibration button
+    // Update calibration button and DXF controls (enables Run Inspection button)
     updateCalibrationButton();
+    updateDxfControlsVisibility();
 
     // Dispatch dxf-state-changed to update template button visibility
     document.dispatchEvent(new CustomEvent("dxf-state-changed"));

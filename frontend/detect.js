@@ -74,6 +74,7 @@ export async function doFreeze() {
   }
 
   img.style.opacity = "0";   // hide stream
+  img.src = "";              // stop MJPEG download (saves bandwidth while frozen)
   state.frozen = true;
   updateFreezeUI();
   resizeCanvas();  // re-read img rect after opacity change to guarantee pixel-perfect alignment
