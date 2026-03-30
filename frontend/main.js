@@ -127,6 +127,10 @@ document.getElementById("btn-freeze").addEventListener("click", async () => {
     img.style.opacity = "1";
     state.frozen = false;
     state.frozenBackground = null;
+    state._gradientOverlayImg = null;
+    state.showGradientOverlay = false;
+    const gradChk = document.getElementById("btn-gradient-overlay");
+    if (gradChk) gradChk.checked = false;
     // Restore fit-to-window zoom (not zoom=1, which would show a 1:1 crop
     // when camera resolution exceeds display size)
     const rect = canvas.getBoundingClientRect();
@@ -371,6 +375,28 @@ document.getElementById("btn-grid")?.addEventListener("click", () => {
   state.showGrid = !state.showGrid;
   document.getElementById("btn-grid")?.classList.toggle("active", state.showGrid);
   showStatus(state.showGrid ? "Grid on" : "Grid off");
+  redraw();
+});
+
+// ── Gradient overlay toggle ──────────────────────────────────────────────────
+document.getElementById("btn-gradient-overlay")?.addEventListener("change", async (e) => {
+  state.showGradientOverlay = e.target.checked;
+  if (e.target.checked && state.frozen && !state._gradientOverlayImg) {
+    try {
+      const resp = await fetch("/gradient-overlay", { method: "POST" });
+      if (resp.ok) {
+        const blob = await resp.blob();
+        const url = URL.createObjectURL(blob);
+        const img2 = new Image();
+        img2.onload = () => {
+          state._gradientOverlayImg = img2;
+          URL.revokeObjectURL(url);
+          redraw();
+        };
+        img2.src = url;
+      }
+    } catch (err) { console.error("Gradient overlay failed:", err); }
+  }
   redraw();
 });
 

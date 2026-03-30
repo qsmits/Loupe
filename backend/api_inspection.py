@@ -176,4 +176,22 @@ def make_inspection_router(frame_store: FrameStore) -> APIRouter:
         from .vision.subpixel import available_methods
         return available_methods()
 
+    @insp_router.post("/gradient-overlay")
+    async def gradient_overlay():
+        import numpy as np
+        import cv2
+        frame = frame_store.get()
+        if frame is None:
+            raise HTTPException(status_code=404, detail="No frame stored")
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        gx = cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize=5)
+        gy = cv2.Sobel(gray, cv2.CV_64F, 0, 1, ksize=5)
+        mag = np.sqrt(gx * gx + gy * gy)
+        mag_norm = cv2.normalize(mag, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+        colored = cv2.applyColorMap(mag_norm, cv2.COLORMAP_VIRIDIS)
+        ok, buf = cv2.imencode(".jpg", colored, [cv2.IMWRITE_JPEG_QUALITY, 85])
+        if not ok:
+            raise HTTPException(500, detail="Failed to encode gradient overlay")
+        return Response(content=buf.tobytes(), media_type="image/jpeg")
+
     return insp_router

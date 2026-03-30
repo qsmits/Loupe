@@ -198,6 +198,12 @@ export function redraw() {
   if (state.frozenBackground) {
     ctx.drawImage(state.frozenBackground, 0, 0, imageWidth || canvas.width, imageHeight || canvas.height);
   }
+  if (state.showGradientOverlay && state._gradientOverlayImg) {
+    ctx.save();
+    ctx.globalAlpha = 0.5;
+    ctx.drawImage(state._gradientOverlayImg, 0, 0, imageWidth || canvas.width, imageHeight || canvas.height);
+    ctx.restore();
+  }
   drawGrid();
   drawAnnotations(redraw, _dxfFns);
   drawPendingPoints();

@@ -6,6 +6,8 @@ export const state = {
   frozenSize: null,          // { w, h } set by doFreeze()
   crosshair: false,
   showGrid: false,
+  showGradientOverlay: false,
+  _gradientOverlayImg: null,
   calibration: null,
   annotations: [],
   selected: new Set(),  // Set of annotation IDs; do NOT include in JSON.stringify
