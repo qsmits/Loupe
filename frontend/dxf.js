@@ -464,6 +464,11 @@ export function initDxfHandlers() {
         tolerance_fail: r.tolerance_fail ?? state.tolerances.fail,
         pass_fail: r.pass_fail,
         source: "auto",
+        tp_dev_mm: r.tp_dev_mm ?? null,
+        dx_px: r.dx_px ?? null,
+        dy_px: r.dy_px ?? null,
+        center_dev_mm: r.center_dev_mm ?? null,
+        radius_dev_mm: r.radius_dev_mm ?? null,
       }));
 
       // Capture inspection frame

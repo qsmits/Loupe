@@ -218,6 +218,11 @@ export async function _finalizePickInspection() {
         angle_error_deg: result.angle_error_deg,
         tolerance_warn: result.tolerance_warn, tolerance_fail: result.tolerance_fail,
         pass_fail: result.pass_fail, source: "manual",
+        tp_dev_mm: result.tp_dev_mm ?? null,
+        dx_px: result.dx_px ?? null,
+        dy_px: result.dy_px ?? null,
+        center_dev_mm: result.center_dev_mm ?? null,
+        radius_dev_mm: result.radius_dev_mm ?? null,
       };
       const sIdx = state.inspectionResults.findIndex(r => r.handle === entity.handle);
       if (sIdx >= 0) state.inspectionResults[sIdx] = sr;

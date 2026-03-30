@@ -120,7 +120,7 @@ export function exportInspectionCsv() {
   const timestamp = new Date().toISOString();
   const headers = [
     "part_name", "timestamp", "feature_id", "feature_type",
-    "deviation_mm", "angle_error_deg", "tolerance_warn", "tolerance_fail", "result", "notes"
+    "deviation_mm", "tp_dev_mm", "angle_error_deg", "tolerance_warn", "tolerance_fail", "result", "notes"
   ];
 
   const rows = [headers];
@@ -133,6 +133,7 @@ export function exportInspectionCsv() {
       r.handle,
       r.type,
       r.matched && r.deviation_mm != null ? r.deviation_mm.toFixed(4) : "",
+      r.tp_dev_mm != null ? r.tp_dev_mm.toFixed(4) : "",
       r.angle_error_deg != null ? r.angle_error_deg.toFixed(2) : "",
       r.tolerance_warn,
       r.tolerance_fail,
@@ -300,8 +301,11 @@ export function exportInspectionPdf() {
     for (const r of results) {
       if (yPos + rowH > pageH - margin) { doc.addPage(); yPos = margin; }
 
-      const deviationText = r.matched && r.deviation_mm != null
+      let deviationText = r.matched && r.deviation_mm != null
         ? r.deviation_mm.toFixed(4) + " mm" : "—";
+      if (r.tp_dev_mm != null) {
+        deviationText += `  TP \u2300${r.tp_dev_mm.toFixed(4)}`;
+      }
       const toleranceText = `±${r.tolerance_warn}/${r.tolerance_fail}`;
       const resultText = r.matched ? r.pass_fail.toUpperCase() : "—";
       const typeName = r.type.replace("polyline_", "p_");

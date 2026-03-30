@@ -635,9 +635,27 @@ export function renderInspectionTable() {
       const tr = document.createElement("tr");
       tr.className = "insp-detail-row";
 
-      const deviationText = r.matched && r.deviation_mm != null
-        ? r.deviation_mm.toFixed(4) + " mm"
-        : "—";
+      let deviationText = "—";
+      if (r.matched && r.deviation_mm != null) {
+          deviationText = r.deviation_mm.toFixed(4) + " mm";
+          if (r.tp_dev_mm != null) {
+              deviationText += `  TP \u2300${r.tp_dev_mm.toFixed(4)}`;
+          }
+      }
+
+      let deviationTitle = "";
+      if (r.tp_dev_mm != null && r.dx_px != null) {
+          const angle = state.origin?.angle ?? 0;
+          const cosA = Math.cos(-angle);
+          const sinA = Math.sin(-angle);
+          const ppm = state.calibration?.pixelsPerMm || 1;
+          const datumDx = (r.dx_px * cosA - r.dy_px * sinA) / ppm;
+          const datumDy = -(r.dx_px * sinA + r.dy_px * cosA) / ppm;  // Y-flip: image Y-down → drawing Y-up
+          deviationTitle = `True Position: \u2300${r.tp_dev_mm.toFixed(4)} mm\n` +
+              `Center: ${r.deviation_mm.toFixed(4)} mm\n` +
+              `Datum X: ${datumDx >= 0 ? "+" : ""}${datumDx.toFixed(4)} mm\n` +
+              `Datum Y: ${datumDy >= 0 ? "+" : ""}${datumDy.toFixed(4)} mm`;
+      }
 
       let badgeClass2, badgeText;
       if (!r.matched) {
@@ -655,7 +673,7 @@ export function renderInspectionTable() {
       tr.innerHTML = `
         <td class="insp-handle"><span class="insp-num">${featureNum}</span>${r.handle}</td>
         <td class="insp-type">${r.type.replace("polyline_", "p_")}</td>
-        <td class="insp-dev">${deviationText}</td>
+        <td class="insp-dev" title="${deviationTitle}">${deviationText}</td>
         <td class="insp-tol">±${r.tolerance_warn}/${r.tolerance_fail}</td>
         <td><span class="insp-badge ${badgeClass2}">${badgeText}</span>${sourceText ? `<span class="insp-source">${sourceText}</span>` : ""}</td>`;
 
