@@ -129,6 +129,7 @@ document.getElementById("btn-freeze").addEventListener("click", async () => {
     state.frozenBackground = null;
     state._gradientOverlayImg = null;
     state.showGradientOverlay = false;
+    state._subpixelSnapTarget = null;
     const gradChk = document.getElementById("btn-gradient-overlay");
     if (gradChk) gradChk.checked = false;
     // Restore fit-to-window zoom (not zoom=1, which would show a 1:1 crop

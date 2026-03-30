@@ -207,7 +207,7 @@ export function redraw() {
   drawGrid();
   drawAnnotations(redraw, _dxfFns);
   drawPendingPoints();
-  // Snap indicator
+  // Snap indicator (annotation snap — blue circle)
   if (state.snapTarget && state.tool !== "select") {
     ctx.save();
     ctx.beginPath();
@@ -215,6 +215,24 @@ export function redraw() {
     ctx.strokeStyle = "#60a5fa";
     ctx.lineWidth = pw(1.5);
     ctx.stroke();
+    ctx.restore();
+  }
+  // Sub-pixel edge snap preview (orange crosshair)
+  if (state._subpixelSnapTarget) {
+    const sp = state._subpixelSnapTarget;
+    const s = pw(6);
+    ctx.save();
+    ctx.strokeStyle = "#fb923c";
+    ctx.lineWidth = pw(1.5);
+    ctx.beginPath();
+    ctx.moveTo(sp.x - s, sp.y); ctx.lineTo(sp.x + s, sp.y);
+    ctx.moveTo(sp.x, sp.y - s); ctx.lineTo(sp.x, sp.y + s);
+    ctx.stroke();
+    // Small dot at center
+    ctx.fillStyle = "#fb923c";
+    ctx.beginPath();
+    ctx.arc(sp.x, sp.y, pw(1.5), 0, Math.PI * 2);
+    ctx.fill();
     ctx.restore();
   }
   // Arc-fit preview: show current best-fit circle while collecting points

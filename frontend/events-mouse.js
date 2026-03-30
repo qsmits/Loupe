@@ -17,6 +17,43 @@ import { showContextMenu, hideContextMenu } from './events-context-menu.js';
 import { _hitTestGuidedResult, _findConnectedEntities, _annotationPrimaryPoint,
          _nearestSegmentDist, _updatePickFit, _finalizePickInspection } from './events-inspection.js';
 
+// ── Sub-pixel snap preview (debounced) ────────────────────────────────────────
+let _subpixelDebounce = null;
+const _SNAP_PREVIEW_TOOLS = new Set([
+  "distance", "angle", "circle", "arc-fit", "arc-measure",
+  "perp-dist", "para-dist", "area", "calibrate",
+]);
+
+function _updateSubpixelPreview(pt) {
+  // Only show preview when frozen, tool is a measurement tool, and method is enabled
+  if (!state.frozen || !_SNAP_PREVIEW_TOOLS.has(state.tool) ||
+      state.settings.subpixelMethod === "none") {
+    if (state._subpixelSnapTarget) { state._subpixelSnapTarget = null; redraw(); }
+    return;
+  }
+  clearTimeout(_subpixelDebounce);
+  _subpixelDebounce = setTimeout(async () => {
+    const baseRadius = state.settings.subpixelSearchRadius || 10;
+    const zoomScale = Math.max(1, viewport.zoom);
+    const searchRadius = Math.max(2, Math.round(baseRadius / zoomScale));
+    try {
+      const resp = await fetch("/refine-point", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          x: pt.x, y: pt.y, search_radius: searchRadius,
+          subpixel: state.settings.subpixelMethod,
+        }),
+      });
+      if (resp.ok) {
+        const r = await resp.json();
+        state._subpixelSnapTarget = (r.magnitude > 20) ? { x: r.x, y: r.y } : null;
+        redraw();
+      }
+    } catch { /* ignore */ }
+  }, 40);  // 40ms debounce — ~25fps update rate
+}
+
 /** Run a drawing callback inside the viewport transform (for preview overlays after redraw) */
 function withViewport(fn) {
   ctx.save();
@@ -280,6 +317,7 @@ export function initMouseHandlers() {
     const pt = canvasPoint(e);
     const rawPt = pt;
     state.mousePos = pt;
+    _updateSubpixelPreview(pt);
     if (state._panStart) {
       const dx = (e.clientX - state._panStart.x);
       const dy = (e.clientY - state._panStart.y);
