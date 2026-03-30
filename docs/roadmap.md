@@ -58,23 +58,44 @@ license if they can't generate a Cpk report or trust the measurement resolution.
 - Pure function extraction (measurementLabel, formatCsvValue, viewport transforms)
 - Canvas backing resolution decoupled from zoom (fixed coordinate stability bugs)
 
+### Sub-Pixel Edge Refinement (2026-03-30)
+- Pluggable algorithm architecture (parabola + gaussian)
+- Guided inspection: sub-pixel refinement per-corridor (on by default)
+- Manual measurement: click-to-edge snap with magnitude/distance scoring
+- Auto-detection: opt-in sub-pixel before algebraic fitting
+- Live snap preview (orange crosshair on mousemove)
+- Gradient magnitude visualization overlay
+- Zoom-scaled search radius, configurable snap radius
+
+### Camera UI Overhaul (2026-03-30)
+- Camera dropdown menu in top bar (replaces sidebar panel)
+- All camera controls: exposure, gain, gamma, auto-exposure, auto-WB, white balance RGB
+- Camera selection, pixel format selector in dropdown header
+- ROI set-from-view / reset with stream reconnect
+- Capability-based visibility (unsupported features hidden per camera)
+- Settings dialog reorganized: 3 tabs (General, Measurement, Display)
+- Fixed-height dialog, save button pinned to bottom
+
+### Multi-User Hosted Mode (2026-03-30)
+- Per-session frame store (SessionFrameStore with UUID keys, TTL, max cap)
+- Session ID via X-Session-ID header (generated per browser tab)
+- Frontend apiFetch wrapper on all ~40 API calls
+- Config read-only in hosted mode (403 with graceful frontend handling)
+- Session cleanup on tab close (fetch keepalive)
+
+### Security Hardening (2026-03-30)
+- CORS restricted to explicit origins in hosted mode (no wildcard)
+- IP rate limiting: 60 req/s global, 5 req/s for heavy endpoints
+- Error message scrubbing in hosted mode (no internal info leaks)
+- Input validation: all Pydantic fields bounded (ge/le/max_length)
+- Upload size limits: 20MB images, 10MB DXF
+- List size limits: max 10,000 entities per request
+- Dependencies pinned to exact versions
+- Deploy scripts for Ubuntu + Apache + supervisord
+
 ---
 
-## Tier 1: Accuracy & Daily Workflow
-
-These close the biggest competitive gaps and make the tool trustworthy for
-production measurement. Every major competitor has these.
-
-### Sub-pixel edge refinement
-*Priority: critical. Effort: medium.*
-
-The single biggest accuracy improvement without hardware changes. Moves
-effective resolution from ~5µm to ~1µm. Gradient-based sub-pixel localization
-along existing Canny edges. Apply to both auto-detection and guided inspection
-corridor fitting.
-
-Competitive context: all six competitors have this. Currently our main
-accuracy limitation.
+## Tier 1: Daily Workflow
 
 ### Measurement templates / programs
 *Priority: high. Effort: medium.*
@@ -200,34 +221,59 @@ Unchanged from original assessment:
 - TypeScript migration (codebase is ~7K LOC, vanilla JS works fine)
 - Component framework (canvas rendering doesn't benefit)
 - WebGL rendering (canvas performance is fine at current image sizes)
-- Multi-user collaboration (single-operator tool)
 - AI-assisted detection (classical CV pipeline needs to be solid first)
+
+Removed from list (done):
+- ~~Multi-user collaboration~~ → implemented as multi-user hosted mode
+
+---
+
+## Revised Competitive Scoring (estimated)
+
+| Category | Before (Mar 28) | After (Mar 30) | Change |
+|----------|-----------------|-----------------|--------|
+| Measurement tools | 90% | 90% | — |
+| Vision / auto-detection | 75% | 85% | +10% (sub-pixel refinement) |
+| CAD integration | 70% | 70% | — |
+| Inspection / GD&T | 40% | 45% | +5% (sub-pixel improves accuracy) |
+| SPC & analytics | 5% | 5% | — (needs run storage + Cpk) |
+| Reporting & export | 65% | 65% | — |
+| Camera & hardware | 45% | 55% | +10% (gamma, auto-exposure, ROI) |
+| Automation & workflow | 35% | 40% | +5% (sub-pixel snap, edge preview) |
+| UI / UX / platform | 95% | 98% | +3% (camera dropdown, settings reorg, hosted mode) |
+
+**Biggest remaining gaps:** SPC (5%), Inspection/GD&T (45%), Automation (40%).
+These are addressed by the Tier 1-2 roadmap items (templates, True Position,
+run storage, Cpk).
 
 ---
 
 ## Execution Log
 
 ```
-✅ Done:   Phase 1 (reliability + UX)    — 2026-03-25
-✅ Done:   Phase 1.5 (zoom/pan)          — 2026-03-25
-✅ Done:   Phase 2 (guided inspection)   — 2026-03-25
-✅ Done:   Phase 2.5 (Punch/Die + tol)   — 2026-03-26
-✅ Done:   Misc polish + camera fixes    — 2026-03-26
-✅ Done:   Edge-based auto-alignment     — 2026-03-28
-✅ Done:   DXF export, grouping, labels  — 2026-03-28
-✅ Done:   Phase 5.1 (PDF/CSV reports)   — 2026-03-28
-✅ Done:   Phase 6 (tests + module splits)— 2026-03-29
-✅ Done:   Viewport coordinate fixes     — 2026-03-29
-✅ Done:   Sub-pixel edge refinement     — 2026-03-30  — parabola + gaussian algorithms, edge snap, gradient overlay
+✅ Done:   Phase 1 (reliability + UX)        — 2026-03-25
+✅ Done:   Phase 1.5 (zoom/pan)              — 2026-03-25
+✅ Done:   Phase 2 (guided inspection)       — 2026-03-25
+✅ Done:   Phase 2.5 (Punch/Die + tol)       — 2026-03-26
+✅ Done:   Misc polish + camera fixes        — 2026-03-26
+✅ Done:   Edge-based auto-alignment         — 2026-03-28
+✅ Done:   DXF export, grouping, labels      — 2026-03-28
+✅ Done:   Phase 5.1 (PDF/CSV reports)       — 2026-03-28
+✅ Done:   Phase 6 (tests + module splits)   — 2026-03-29
+✅ Done:   Viewport coordinate fixes         — 2026-03-29
+✅ Done:   Sub-pixel edge refinement         — 2026-03-30  — parabola + gaussian, edge snap, gradient overlay
+✅ Done:   Camera UI overhaul               — 2026-03-30  — dropdown menu, gamma, auto-exposure, ROI, settings reorg
+✅ Done:   Multi-user hosted mode           — 2026-03-30  — per-session frame store, apiFetch, 403 handling
+✅ Done:   Security hardening              — 2026-03-30  — CORS, rate limiting, input validation, error scrubbing
+✅ Done:   Deploy scripts                  — 2026-03-30  — Ubuntu + Apache + supervisord
 
-Next:      Measurement templates         — repeatable inspection programs
-Then:      Measurement templates         — repeatable inspection programs
-Then:      GD&T: True Position           — hole pattern inspection
-Then:      Detection presets             — EDM/Lathe/Print surface modes
-Then:      Run storage (SQLite)          — foundational for SPC
-Then:      Basic SPC (Cpk + charts)      — quality system credibility
-Later:     Report templates              — customer-specific FAI forms
-Later:     Batch inspection              — multi-part production use case
-Future:    Gear inspection               — when gear machine is running
-Future:    Nikon XY stage                — hardware integration
+Next:      Measurement templates             — repeatable inspection programs
+Then:      GD&T: True Position               — hole pattern inspection
+Then:      Detection presets                 — EDM/Lathe/Print surface modes
+Then:      Run storage (SQLite)              — foundational for SPC
+Then:      Basic SPC (Cpk + charts)          — quality system credibility
+Later:     Report templates                  — customer-specific FAI forms
+Later:     Batch inspection                  — multi-part production use case
+Future:    Gear inspection                   — when gear machine is running
+Future:    Nikon XY stage                    — hardware integration
 ```
