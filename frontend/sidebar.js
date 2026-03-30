@@ -1,5 +1,5 @@
 import { state, DETECTION_TYPES } from './state.js';
-import { redraw, showStatus, getStatus, canvas, listEl } from './render.js';
+import { redraw, resizeCanvas, showStatus, getStatus, canvas, listEl } from './render.js';
 import { measurementLabel } from './format.js';
 import { imageWidth, imageHeight, setImageSize, fitToWindow } from './viewport.js';
 
@@ -277,13 +277,12 @@ export async function loadCameraInfo() {
     // Set image dimensions from camera resolution so annotations are always
     // in camera-pixel coordinates, even before freeze. This prevents the
     // coordinate shift that occurs when doFreeze sets imageWidth/imageHeight.
-    if (d.width > 0 && d.height > 0 && d.width !== imageWidth) {
+    if (d.width > 0 && d.height > 0 && (d.width !== imageWidth || d.height !== imageHeight)) {
       setImageSize(d.width, d.height);
-      // Start at fit-to-window zoom so the full camera frame is visible.
-      // Without this, zoom=1 would show only a top-left crop since
-      // camera resolution (e.g. 2592) >> display width (e.g. 800).
+      // Fit viewport so the full camera frame is visible, then redraw.
       const rect = canvas.getBoundingClientRect();
       if (rect.width > 0) fitToWindow(rect.width, rect.height);
+      resizeCanvas();
     }
     // Cache camera info for ROI "Set from view"
     state._cameraInfo = d;
