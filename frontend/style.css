@@ -957,3 +957,13 @@ body.no-camera .camera-section { display: none; }
   white-space: pre-line;
 }
 #label-tooltip[hidden] { display: none; }
+
+/* ─── SPC Dashboard ────────────────────────────────────────── */
+.spc-panel { border-bottom: 1px solid var(--border); }
+.spc-controls { padding: 6px 10px; display: flex; gap: 6px; }
+.spc-select { flex: 1; background: var(--surface-2); color: var(--fg); border: 1px solid var(--border); border-radius: 4px; padding: 3px; font-size: 11px; }
+#spc-chart { width: 100%; height: 180px; display: block; }
+#spc-cpk-summary { padding: 6px 10px; font-size: 11px; }
+.cpk-good { color: #32d74b; }
+.cpk-marginal { color: #ff9f0a; }
+.cpk-bad { color: #ff453a; }

@@ -15,6 +15,7 @@ import { viewport, clampPan, fitToWindow, setImageSize, imageWidth, imageHeight 
 import { showContextMenu, hideContextMenu } from './events-context-menu.js';
 import { undo, redo, initKeyboard } from './events-keyboard.js';
 import { initMouseHandlers } from './events-mouse.js';
+import { loadSpcParts, loadSpcFeatures, loadSpcData } from './spc.js';
 
 // ─── Dropdown helpers ─────��──────────────────────────────────────────────────
 function closeAllDropdowns() {
@@ -398,6 +399,7 @@ document.getElementById("btn-save-run")?.addEventListener("click", async () => {
     const run = await runResp.json();
 
     showStatus(`Run #${run.run_id} saved for "${partName}"`);
+    loadSpcParts();  // refresh SPC dashboard after saving a run
   } catch (err) {
     showStatus("Failed to save run: " + err.message);
   } finally {
@@ -977,6 +979,32 @@ loadTolerances();
 updateCalibrationButton();
 checkStartupWarning();
 resizeCanvas();
+
+// ── SPC Dashboard wiring ──────────────────────────────────────────────────────
+loadSpcParts();
+
+document.getElementById("spc-part-select")?.addEventListener("change", (e) => {
+  loadSpcFeatures(e.target.value);
+  // Clear chart when part changes
+  const chart = document.getElementById("spc-chart");
+  const summary = document.getElementById("spc-cpk-summary");
+  if (chart) chart.getContext("2d").clearRect(0, 0, chart.width, chart.height);
+  if (summary) summary.innerHTML = "";
+});
+
+document.getElementById("spc-feature-select")?.addEventListener("change", (e) => {
+  const partId = document.getElementById("spc-part-select")?.value;
+  if (partId && e.target.value) loadSpcData(partId, e.target.value);
+});
+
+document.getElementById("spc-header")?.addEventListener("click", () => {
+  const body = document.getElementById("spc-body");
+  const header = document.getElementById("spc-header");
+  if (!body || !header) return;
+  const collapsed = body.hidden;
+  body.hidden = !collapsed;
+  header.textContent = collapsed ? "SPC Dashboard \u25BE" : "SPC Dashboard \u25B8";
+});
 
 // Auto-save every 30 seconds
 setInterval(autoSave, 30000);

@@ -342,6 +342,17 @@
           <span class="template-badge">Template:</span>
           <span id="template-name-display"></span>
         </div>
+        <div id="spc-panel" class="spc-panel" hidden>
+          <div class="section-label section-toggle" id="spc-header">SPC Dashboard &#x25BE;</div>
+          <div id="spc-body">
+            <div class="spc-controls">
+              <select id="spc-part-select" class="spc-select"><option value="">Select part...</option></select>
+              <select id="spc-feature-select" class="spc-select"><option value="">Select feature...</option></select>
+            </div>
+            <canvas id="spc-chart" width="300" height="180"></canvas>
+            <div id="spc-cpk-summary"></div>
+          </div>
+        </div>
         <div id="measurement-list"></div>
       </div>
 
