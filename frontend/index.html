@@ -333,6 +333,11 @@
             <option value="parabola" selected>Parabola (default)</option>
           </select>
         </div>
+        <div class="settings-row">
+          <label class="settings-label" title="Search radius for edge snap (pixels at 1x zoom). Scales inversely with digital zoom.">Snap radius (px)</label>
+          <input type="range" id="subpixel-radius-slider" min="3" max="25" value="10" style="width:100px" />
+          <span id="subpixel-radius-value" style="min-width:24px;text-align:right">10</span>
+        </div>
         <button class="settings-save-btn" id="btn-save-general">Save</button>
       </div>
 

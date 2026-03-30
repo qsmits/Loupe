@@ -104,19 +104,23 @@ export async function handleToolClick(rawPt, e = {}) {
     : { pt: rawPt };
   let pt = snappedPt;
 
-  // Sub-pixel edge snap — skip for calibration (user needs precise control
-  // over which edge of a thin graduation line to click), center-dist (clicks
-  // on circle centers, not edges), and select/pan (not placing points).
+  // Sub-pixel edge snap — skip for center-dist (clicks on circle centers,
+  // not edges), and select/pan (not placing points). Alt overrides.
+  // Search radius scales inversely with zoom: at 10x zoom you're clicking
+  // more precisely, so the search window shrinks proportionally.
   if (state.frozen && !e.altKey &&
       state.settings.subpixelMethod !== "none" &&
       state.tool !== "select" && state.tool !== "pan" &&
-      state.tool !== "calibrate" && state.tool !== "center-dist") {
+      state.tool !== "center-dist") {
+    const baseRadius = state.settings.subpixelSearchRadius || 10;
+    const zoomScale = Math.max(1, viewport.zoom);
+    const searchRadius = Math.max(2, Math.round(baseRadius / zoomScale));
     try {
       const resp = await fetch("/refine-point", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          x: pt.x, y: pt.y, search_radius: 10,
+          x: pt.x, y: pt.y, search_radius: searchRadius,
           subpixel: state.settings.subpixelMethod,
         }),
       });

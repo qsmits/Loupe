@@ -505,6 +505,18 @@ if (subpixelSelect) {
   });
 }
 
+// Sub-pixel snap radius slider
+const radiusSlider = document.getElementById("subpixel-radius-slider");
+const radiusValue = document.getElementById("subpixel-radius-value");
+if (radiusSlider) {
+  radiusSlider.value = state.settings.subpixelSearchRadius;
+  if (radiusValue) radiusValue.textContent = state.settings.subpixelSearchRadius;
+  radiusSlider.addEventListener("input", () => {
+    state.settings.subpixelSearchRadius = parseInt(radiusSlider.value);
+    if (radiusValue) radiusValue.textContent = radiusSlider.value;
+  });
+}
+
 // Crosshair swatches
 document.querySelectorAll(".swatch").forEach(swatch => {
   swatch.addEventListener("click", () => {
