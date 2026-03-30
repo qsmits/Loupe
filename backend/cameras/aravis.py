@@ -332,6 +332,9 @@ class AravisCamera(BaseCamera):
                 self._stream.push_buffer(Aravis.Buffer.new_allocate(payload))
         finally:
             self._cam.start_acquisition()
+            # Wait for the camera to produce frames at the new ROI size.
+            # Without this, the reader thread may get bad/empty frames immediately.
+            time.sleep(0.5)
 
     def reset_roi(self) -> None:
         if self._cam is None:
