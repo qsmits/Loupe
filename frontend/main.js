@@ -3,8 +3,9 @@ import { state, TRANSIENT_TYPES } from './state.js';
 import { canvas, ctx, img, showStatus, redraw, resizeCanvas } from './render.js';
 import { renderSidebar, loadCameraInfo, loadUiConfig, loadTolerances,
          updateCalibrationButton, checkStartupWarning, updateFreezeUI,
-         loadCameraList } from './sidebar.js';
-import { deleteAnnotation, elevateSelected, clearDetections, clearMeasurements, clearDxfOverlay, clearAll } from './annotations.js';
+         loadCameraList, renderInspectionTable } from './sidebar.js';
+import { deleteAnnotation, addAnnotation, elevateSelected, clearDetections, clearMeasurements, clearDxfOverlay, clearAll } from './annotations.js';
+import { assembleTemplate, downloadTemplate, readTemplateFile } from './template.js';
 import { setTool } from './tools.js';
 import { initDxfHandlers } from './dxf.js';
 import { doFreeze, initDetectHandlers } from './detect.js';
@@ -748,6 +749,161 @@ document.getElementById("measurement-list").addEventListener("click", e => {
 });
 
 // ── Init ──────��───────────────────────────────────��───────────────────────────
+// ── Template save/load ──────────────────────────────────────────────────────
+function updateTemplateButtons() {
+  const btn = document.getElementById("btn-save-template");
+  if (!btn) return;
+  const hasDxf = state.annotations.some(a => a.type === "dxf-overlay");
+  const hasCal = !!state.calibration;
+  btn.style.display = (hasDxf && hasCal) ? "" : "none";
+}
+
+document.addEventListener("dxf-state-changed", updateTemplateButtons);
+updateTemplateButtons();
+
+document.getElementById("btn-save-template")?.addEventListener("click", () => {
+  closeAllDropdowns();
+  const dxfAnn = state.annotations.find(a => a.type === "dxf-overlay");
+  if (!dxfAnn || !state.calibration) {
+    showStatus("Load a DXF and calibrate before saving a template");
+    return;
+  }
+  const defaultName = state.dxfFilename || "template";
+  const name = prompt("Template name:", defaultName);
+  if (!name) return;
+
+  const tmpl = assembleTemplate({
+    name,
+    dxfFilename: state.dxfFilename || "",
+    entities: dxfAnn.entities,
+    calibration: {
+      pixelsPerMm: state.calibration.pixelsPerMm,
+      displayUnit: state.calibration.displayUnit || "mm",
+    },
+    tolerances: { warn: state.tolerances.warn, fail: state.tolerances.fail },
+    featureTolerances: state.featureTolerances,
+    featureModes: state.featureModes,
+    featureNames: state.featureNames,
+    detection: {
+      cannyLow: parseInt(document.getElementById("canny-low").value),
+      cannyHigh: parseInt(document.getElementById("canny-high").value),
+      smoothing: parseInt(document.getElementById("adv-smoothing").value),
+      subpixel: state.settings.subpixelMethod,
+    },
+    alignment: {
+      method: "edge",
+      smoothing: parseInt(document.getElementById("adv-smoothing").value),
+    },
+  });
+
+  downloadTemplate(tmpl);
+  showStatus("Template saved: " + name);
+});
+
+document.getElementById("btn-load-template")?.addEventListener("click", () => {
+  closeAllDropdowns();
+  document.getElementById("template-input").click();
+});
+
+document.getElementById("template-input")?.addEventListener("change", async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  e.target.value = ""; // allow re-loading same file
+
+  try {
+    const tmpl = await readTemplateFile(file);
+
+    // Unsaved work check
+    const hasWork = state.annotations.some(a => !TRANSIENT_TYPES.has(a.type));
+    if (hasWork) {
+      if (!confirm("Loading a template will replace your current work. Continue?")) return;
+    }
+
+    // Calibration mismatch check
+    if (state.calibration && Math.abs(state.calibration.pixelsPerMm - tmpl.calibration.pixelsPerMm) > 0.1) {
+      if (!confirm(`Current calibration (${state.calibration.pixelsPerMm.toFixed(2)} px/mm) differs from template (${tmpl.calibration.pixelsPerMm.toFixed(2)} px/mm). Continue?`)) return;
+    }
+
+    // Clear existing DXF overlay, inspection results, feature state
+    state.annotations = state.annotations.filter(a => a.type !== "dxf-overlay");
+    state.inspectionResults = [];
+    state.featureTolerances = {};
+    state.featureModes = {};
+    state.featureNames = {};
+
+    // Apply calibration
+    state.calibration = {
+      pixelsPerMm: tmpl.calibration.pixelsPerMm,
+      displayUnit: tmpl.calibration.displayUnit,
+    };
+
+    // Apply tolerances
+    state.tolerances.warn = tmpl.tolerances.warn;
+    state.tolerances.fail = tmpl.tolerances.fail;
+
+    // Apply feature config
+    if (tmpl.featureTolerances) state.featureTolerances = { ...tmpl.featureTolerances };
+    if (tmpl.featureModes) state.featureModes = { ...tmpl.featureModes };
+    if (tmpl.featureNames) state.featureNames = { ...tmpl.featureNames };
+
+    // Create DXF overlay annotation
+    const dxfAnn = {
+      type: "dxf-overlay",
+      entities: tmpl.dxf.entities,
+      offsetX: canvas.width / 2,
+      offsetY: canvas.height / 2,
+      scale: tmpl.calibration.pixelsPerMm,
+      rotation: 0,
+      flipH: false,
+      flipV: false,
+      id: state.nextId++,
+      name: "",
+    };
+    state.annotations.push(dxfAnn);
+    state.dxfFilename = tmpl.dxf.filename || tmpl.name;
+
+    // Update detection slider DOM values
+    const sliderUpdates = [
+      ["canny-low", tmpl.detection.cannyLow],
+      ["canny-high", tmpl.detection.cannyHigh],
+      ["adv-smoothing", tmpl.detection.smoothing],
+    ];
+    for (const [id, value] of sliderUpdates) {
+      if (value != null) {
+        const slider = document.getElementById(id);
+        if (slider) slider.value = value;
+        const valSpan = document.getElementById(id + "-val");
+        if (valSpan) valSpan.textContent = value;
+      }
+    }
+
+    // Set template state
+    state._templateLoaded = true;
+    state._templateName = tmpl.name;
+
+    // Update DXF panel visibility
+    const dxfPanel = document.getElementById("dxf-controls-group");
+    if (dxfPanel) dxfPanel.hidden = false;
+
+    // Update scale input
+    const scaleInput = document.getElementById("dxf-scale");
+    if (scaleInput) scaleInput.value = tmpl.calibration.pixelsPerMm.toFixed(3);
+
+    // Update calibration button
+    updateCalibrationButton();
+
+    // Dispatch dxf-state-changed to update template button visibility
+    document.dispatchEvent(new CustomEvent("dxf-state-changed"));
+
+    renderSidebar();
+    renderInspectionTable();
+    redraw();
+    showStatus("Template loaded: " + tmpl.name);
+  } catch (err) {
+    alert("Failed to load template: " + err.message);
+  }
+});
+
 initDxfHandlers();
 initDetectHandlers();
 

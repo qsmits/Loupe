@@ -52,6 +52,8 @@ export const state = {
   _panStart: null,
   _flashExpiry: 0,
   _labelDrag: null,         // { handle, startX, startY, origDx, origDy }
+  _templateLoaded: false,
+  _templateName: null,
   _subpixelSnapTarget: null, // { x, y } — live preview of where sub-pixel snap would place a point
   _noCamera: false,         // was let _noCamera (line 36)
   _dirty: false,
