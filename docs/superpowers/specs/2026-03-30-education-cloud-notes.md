@@ -59,6 +59,25 @@ beyond one university, migrate to Option B.
 - Don't build a grading system — the teacher reviews inspection results
   and grades externally
 
+## Enterprise / multi-user microscope sharing
+
+The "frozen frame" architecture naturally enables shared microscope use:
+- **Operator** at the microscope freezes frames → images go to shared storage
+- **Engineers** at their desks load images → run inspection/analysis independently
+- **Quality manager** reviews SPC trends across all parts and operators
+
+The microscope becomes a shared capture device, not a per-user workstation.
+Multiple people analyze different frames simultaneously on the same server.
+This is how expensive CMM systems work in production shops.
+
+Additional enterprise features:
+- **Shared image library**: capture → shared storage → anyone can load
+- **Role-based access**: operator / engineer / manager roles
+- **Audit trail**: who measured what, when, with which template (ISO compliance)
+- **Multi-microscope**: route different cameras to different capture stations
+
+The per-session frame store we built for hosted mode is the foundation.
+
 ## Priority
 
 This is a **future initiative**, not near-term. The foundation is:
