@@ -169,7 +169,7 @@ document.getElementById("file-input").addEventListener("change", async e => {
   loadedImg.onload = async () => {
     state.frozenBackground = loadedImg;
     img.style.opacity = "0";
-    img.src = "";  // stop MJPEG download
+    img.src = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";  // stop MJPEG stream
     state.frozen = true;
     updateFreezeUI();
     resizeCanvas();
@@ -281,7 +281,7 @@ viewerEl.addEventListener("drop", async e => {
   loadedImg.onload = () => {
     state.frozenBackground = loadedImg;
     img.style.opacity = "0";
-    img.src = "";  // stop MJPEG download
+    img.src = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";  // stop MJPEG stream
     state.frozen = true;
     updateFreezeUI();
     resizeCanvas();
