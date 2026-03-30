@@ -41,16 +41,6 @@ function toggleDropdown(btnId, dropId) {
 initMouseHandlers();
 initKeyboard(closeAllDropdowns);
 
-// ── Tool strip buttons + camera collapse ─────────────────────────────────────
-const cameraSectionHeader = document.getElementById("camera-section-header");
-const cameraSectionBody   = document.getElementById("camera-section-body");
-if (cameraSectionHeader && cameraSectionBody) {
-  cameraSectionHeader.addEventListener("click", () => {
-    const isOpen = cameraSectionHeader.classList.toggle("open");
-    cameraSectionBody.style.display = isOpen ? "" : "none";
-  });
-}
-
 // ── Dropdown menu wiring ───────────────────────────��─────────────────────────
 document.getElementById("btn-menu-measure").addEventListener("click", e => {
   e.stopPropagation();
@@ -540,30 +530,11 @@ document.getElementById("crosshair-opacity").addEventListener("input", e => {
   redraw();
 });
 
-// ── Exposure / Gain sliders ──────────────────────────────────────────────────
-document.getElementById("exp-slider").addEventListener("input", async e => {
-  const v = parseFloat(e.target.value);
-  document.getElementById("exp-value").textContent = `${v} µs`;
-  try {
-    await fetch("/camera/exposure", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ value: v }) });
-  } catch (err) { console.error("Failed to set exposure:", err); }
-});
-
-document.getElementById("gain-slider").addEventListener("input", async e => {
-  const v = parseFloat(e.target.value);
-  document.getElementById("gain-value").textContent = `${v} dB`;
-  try {
-    await fetch("/camera/gain", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ value: v }) });
-  } catch (err) { console.error("Failed to set gain:", err); }
-});
 // ── Camera dropdown controls ────────────────────────────────────────────────
 // Exposure slider (top bar)
 document.getElementById("exp-slider-top")?.addEventListener("input", async e => {
   const v = parseFloat(e.target.value);
   document.getElementById("exp-value-top").textContent = `${v} µs`;
-  // Sync sidebar slider
-  document.getElementById("exp-slider").value = v;
-  document.getElementById("exp-value").textContent = `${v} µs`;
   try {
     await fetch("/camera/exposure", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ value: v }) });
   } catch (err) { console.error("Failed to set exposure:", err); }
@@ -573,9 +544,6 @@ document.getElementById("exp-slider-top")?.addEventListener("input", async e => 
 document.getElementById("gain-slider-top")?.addEventListener("input", async e => {
   const v = parseFloat(e.target.value);
   document.getElementById("gain-value-top").textContent = `${v} dB`;
-  // Sync sidebar slider
-  document.getElementById("gain-slider").value = v;
-  document.getElementById("gain-value").textContent = `${v} dB`;
   try {
     await fetch("/camera/gain", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ value: v }) });
   } catch (err) { console.error("Failed to set gain:", err); }
@@ -603,8 +571,6 @@ document.getElementById("btn-auto-exposure")?.addEventListener("click", async ()
     if (data.exposure != null) {
       document.getElementById("exp-slider-top").value = data.exposure;
       document.getElementById("exp-value-top").textContent = `${data.exposure} µs`;
-      document.getElementById("exp-slider").value = data.exposure;
-      document.getElementById("exp-value").textContent = `${data.exposure} µs`;
     }
   } catch (err) { console.error("Auto exposure failed:", err); }
 });

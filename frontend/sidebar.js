@@ -1,5 +1,5 @@
 import { state, DETECTION_TYPES } from './state.js';
-import { redraw, showStatus, getStatus, canvas, listEl, cameraInfoEl } from './render.js';
+import { redraw, showStatus, getStatus, canvas, listEl } from './render.js';
 import { measurementLabel } from './format.js';
 import { imageWidth, imageHeight, setImageSize, fitToWindow } from './viewport.js';
 
@@ -288,14 +288,6 @@ export async function loadCameraInfo() {
     // Cache camera info for ROI "Set from view"
     state._cameraInfo = d;
 
-    cameraInfoEl.innerHTML =
-      `<div>${d.model}</div>` +
-      `<div style="color:var(--muted)">${d.width}×${d.height}</div>` +
-      `<div id="scale-display">${state.calibration ? scaleText() : "Uncalibrated"}</div>`;
-    document.getElementById("exp-slider").value = d.exposure;
-    document.getElementById("exp-value").textContent = `${d.exposure} µs`;
-    document.getElementById("gain-slider").value = d.gain;
-    document.getElementById("gain-value").textContent = `${d.gain} dB`;
     // Populate settings dialog camera info
     const modelEl = document.getElementById("settings-model");
     const serialEl = document.getElementById("settings-serial");
@@ -389,7 +381,7 @@ export async function loadCameraInfo() {
       showStatus("No camera — image only");
       updateDropOverlay();
     }
-  } catch { cameraInfoEl.textContent = "Camera unavailable"; }
+  } catch { /* camera unavailable */ }
 }
 
 function updateDropOverlay() {

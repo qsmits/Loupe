@@ -15,7 +15,6 @@ export const canvas    = document.getElementById("overlay-canvas");
 export const ctx       = canvas.getContext("2d");
 export const statusEl  = document.getElementById("status-text");
 export const listEl    = document.getElementById("measurement-list");
-export const cameraInfoEl = document.getElementById("camera-info");
 
 // NEW: replaces all inline statusEl.textContent = "..." patterns in other modules
 export function showStatus(msg) {

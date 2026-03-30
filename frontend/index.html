@@ -336,26 +336,6 @@
         <div id="measurement-list"></div>
       </div>
 
-      <!-- Camera (collapsible; hidden in no-camera mode via body.no-camera) -->
-      <div class="sidebar-section camera-section">
-        <div class="section-label section-toggle open" id="camera-section-header">
-          Camera <span class="chevron">▾</span>
-        </div>
-        <div id="camera-section-body">
-          <div class="camera-row">
-            <span class="camera-label">Exp</span>
-            <input type="range" id="exp-slider" min="100" max="100000" step="100" value="5000" />
-            <span id="exp-value" class="camera-value">5000 µs</span>
-          </div>
-          <div class="camera-row">
-            <span class="camera-label">Gain</span>
-            <input type="range" id="gain-slider" min="0" max="24" step="0.1" value="0" />
-            <span id="gain-value" class="camera-value">0 dB</span>
-          </div>
-          <div id="camera-info" class="camera-info"></div>
-        </div>
-      </div>
-
       <!-- Status bar -->
       <div id="sidebar-status">
         <span id="status-text">● Live</span>
