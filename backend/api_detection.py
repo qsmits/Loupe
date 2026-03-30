@@ -1,8 +1,8 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
 from pydantic import BaseModel, Field, model_validator
 
-from .frame_store import FrameStore
+from .session_store import SessionFrameStore, get_session_id_dep
 from .vision import detection
 
 
@@ -97,20 +97,20 @@ class MatchDxfArcsBody(BaseModel):
         return self
 
 
-def make_detection_router(frame_store: FrameStore) -> APIRouter:
+def make_detection_router(frame_store: SessionFrameStore) -> APIRouter:
     router = APIRouter()
 
     @router.post("/detect-edges")
-    async def detect_edges_route(params: EdgeParams):
-        frame = frame_store.get()
+    async def detect_edges_route(params: EdgeParams, session_id: str = Depends(get_session_id_dep)):
+        frame = frame_store.get(session_id)
         if frame is None:
             raise HTTPException(status_code=400, detail="No frame stored. Call /freeze first.")
         png_bytes = detection.detect_edges(frame, params.threshold1, params.threshold2)
         return Response(content=png_bytes, media_type="image/png")
 
     @router.post("/detect-circles")
-    async def detect_circles_route(params: CircleParams):
-        frame = frame_store.get()
+    async def detect_circles_route(params: CircleParams, session_id: str = Depends(get_session_id_dep)):
+        frame = frame_store.get(session_id)
         if frame is None:
             raise HTTPException(status_code=400, detail="No frame stored. Call /freeze first.")
         circles = detection.detect_circles(
@@ -121,8 +121,8 @@ def make_detection_router(frame_store: FrameStore) -> APIRouter:
         return circles
 
     @router.post("/detect-lines")
-    async def detect_lines_route(params: LineParams):
-        frame = frame_store.get()
+    async def detect_lines_route(params: LineParams, session_id: str = Depends(get_session_id_dep)):
+        frame = frame_store.get(session_id)
         if frame is None:
             raise HTTPException(status_code=400, detail="No frame stored. Call /freeze first.")
         lines = detection.detect_lines(
@@ -132,8 +132,8 @@ def make_detection_router(frame_store: FrameStore) -> APIRouter:
         return lines
 
     @router.post("/detect-lines-merged")
-    async def detect_lines_merged_route(params: DetectLinesParams):
-        frame = frame_store.get()
+    async def detect_lines_merged_route(params: DetectLinesParams, session_id: str = Depends(get_session_id_dep)):
+        frame = frame_store.get(session_id)
         if frame is None:
             raise HTTPException(status_code=400, detail="No frame stored. Call /freeze first.")
         return detection.detect_lines_contour(
@@ -143,8 +143,8 @@ def make_detection_router(frame_store: FrameStore) -> APIRouter:
             smoothing=params.smoothing, subpixel=params.subpixel)
 
     @router.post("/detect-arcs-partial")
-    async def detect_arcs_partial_route(params: DetectArcsParams):
-        frame = frame_store.get()
+    async def detect_arcs_partial_route(params: DetectArcsParams, session_id: str = Depends(get_session_id_dep)):
+        frame = frame_store.get(session_id)
         if frame is None:
             raise HTTPException(status_code=400, detail="No frame stored. Call /freeze first.")
         return detection.detect_partial_arcs(
@@ -154,8 +154,8 @@ def make_detection_router(frame_store: FrameStore) -> APIRouter:
             smoothing=params.smoothing, subpixel=params.subpixel)
 
     @router.post("/preprocessed-view")
-    async def preprocessed_view_route():
-        frame = frame_store.get()
+    async def preprocessed_view_route(session_id: str = Depends(get_session_id_dep)):
+        frame = frame_store.get(session_id)
         if frame is None:
             raise HTTPException(status_code=400, detail="No frame stored. Call /freeze first.")
         jpg_bytes = detection.preprocessed_view(frame)

@@ -4,13 +4,13 @@ import pathlib
 
 import cv2
 import numpy as np
-from fastapi import APIRouter, HTTPException, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, File
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
 
 from .cameras.base import BaseCamera
 from .config import save_config
-from .frame_store import FrameStore
+from .session_store import SessionFrameStore, get_session_id_dep
 from .stream import mjpeg_generator, BOUNDARY
 
 SNAPSHOTS_DIR = pathlib.Path(__file__).parent.parent / "snapshots"
@@ -58,7 +58,10 @@ class LoadSnapshotBody(BaseModel):
     filename: str = Field(..., min_length=1, pattern=r'^[\w\-]+\.(jpg|jpeg|png)$')
 
 
-def make_camera_router(camera: BaseCamera, frame_store: FrameStore, startup_warning: str | None = None) -> APIRouter:
+MAX_UPLOAD_BYTES = 20 * 1024 * 1024  # 20 MB
+
+
+def make_camera_router(camera: BaseCamera, frame_store: SessionFrameStore, startup_warning: str | None = None) -> APIRouter:
     router = APIRouter()
     _warning = [startup_warning]   # mutable container for pop semantics
 
@@ -76,15 +79,15 @@ def make_camera_router(camera: BaseCamera, frame_store: FrameStore, startup_warn
         )
 
     @router.post("/freeze")
-    async def freeze():
+    async def freeze(session_id: str = Depends(get_session_id_dep)):
         frame = camera.get_frame()
-        frame_store.store(frame)
+        frame_store.store(session_id, frame)
         h, w = frame.shape[:2]
         return {"width": w, "height": h}
 
     @router.get("/frame")
-    async def get_frame():
-        frame = frame_store.get()
+    async def get_frame(session_id: str = Depends(get_session_id_dep)):
+        frame = frame_store.get(session_id)
         if frame is None:
             raise HTTPException(status_code=404, detail="No frame stored")
         ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 95])
@@ -93,7 +96,9 @@ def make_camera_router(camera: BaseCamera, frame_store: FrameStore, startup_warn
         return Response(content=buf.tobytes(), media_type="image/jpeg")
 
     @router.post("/snapshot")
-    async def snapshot():
+    async def snapshot(request: Request):
+        if getattr(request.app.state, "hosted", False):
+            raise HTTPException(403, detail="Not allowed in hosted mode")
         if camera.is_null:
             raise HTTPException(503, detail="No camera")
         frame = camera.get_frame()
@@ -105,13 +110,15 @@ def make_camera_router(camera: BaseCamera, frame_store: FrameStore, startup_warn
         return {"filename": filename}
 
     @router.post("/load-image")
-    async def load_image(file: UploadFile = File(...)):
-        data = await file.read()
+    async def load_image(session_id: str = Depends(get_session_id_dep), file: UploadFile = File(...)):
+        data = await file.read(MAX_UPLOAD_BYTES + 1)
+        if len(data) > MAX_UPLOAD_BYTES:
+            raise HTTPException(status_code=413, detail="Image too large (max 20 MB)")
         arr = np.frombuffer(data, np.uint8)
         frame = cv2.imdecode(arr, cv2.IMREAD_COLOR)
         if frame is None:
             raise HTTPException(status_code=400, detail="Cannot decode image")
-        frame_store.store(frame)
+        frame_store.store(session_id, frame)
         h, w = frame.shape[:2]
         return {"width": w, "height": h}
 
@@ -129,7 +136,9 @@ def make_camera_router(camera: BaseCamera, frame_store: FrameStore, startup_warn
         return entries
 
     @router.post("/load-snapshot")
-    async def load_snapshot(body: LoadSnapshotBody):
+    async def load_snapshot(body: LoadSnapshotBody, request: Request, session_id: str = Depends(get_session_id_dep)):
+        if getattr(request.app.state, "hosted", False):
+            raise HTTPException(403, detail="Not allowed in hosted mode")
         # Prevent path traversal: reject any filename containing a separator
         safe_name = pathlib.Path(body.filename).name
         if safe_name != body.filename:
@@ -140,7 +149,7 @@ def make_camera_router(camera: BaseCamera, frame_store: FrameStore, startup_warn
         frame = cv2.imread(str(path))
         if frame is None:
             raise HTTPException(status_code=400, detail="Could not read image file")
-        frame_store.store(frame)
+        frame_store.store(session_id, frame)
         h, w = frame.shape[:2]
         return {"width": w, "height": h}
 
@@ -264,6 +273,11 @@ def make_camera_router(camera: BaseCamera, frame_store: FrameStore, startup_warn
         if camera.is_null:
             raise HTTPException(503, detail="No camera")
         await asyncio.to_thread(camera.reset_roi)
+        return {"ok": True}
+
+    @router.delete("/session")
+    async def delete_session(session_id: str = Depends(get_session_id_dep)):
+        frame_store.clear(session_id)
         return {"ok": True}
 
     return router

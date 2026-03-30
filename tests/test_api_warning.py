@@ -2,7 +2,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from tests.conftest import FakeCamera
-from backend.frame_store import FrameStore
+from backend.session_store import SessionFrameStore
 from backend.stream import CameraReader
 from backend.api import make_router
 from contextlib import asynccontextmanager
@@ -13,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 def _app_with_warning(warning: str | None):
     """Build a minimal FastAPI app that uses make_router with a specific startup_warning."""
     camera = FakeCamera()
-    frame_store = FrameStore()
+    frame_store = SessionFrameStore()
     reader = CameraReader(camera)
 
     @asynccontextmanager

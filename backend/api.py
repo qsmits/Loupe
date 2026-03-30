@@ -3,7 +3,7 @@ from pydantic import BaseModel, Field, model_validator
 
 from .cameras.base import BaseCamera
 from .config import load_config, save_config
-from .frame_store import FrameStore
+from .session_store import SessionFrameStore
 from .api_camera import make_camera_router
 from .api_detection import make_detection_router
 from .api_inspection import make_inspection_router, router as inspection_router
@@ -68,7 +68,7 @@ def post_tolerances(body: TolerancesConfig, request: Request):
 router.include_router(inspection_router)
 
 
-def make_router(camera: BaseCamera, frame_store: FrameStore, startup_warning: str | None = None) -> APIRouter:
+def make_router(camera: BaseCamera, frame_store: SessionFrameStore, startup_warning: str | None = None) -> APIRouter:
     composed = APIRouter()
     composed.include_router(make_camera_router(camera, frame_store, startup_warning))
     composed.include_router(make_detection_router(frame_store))

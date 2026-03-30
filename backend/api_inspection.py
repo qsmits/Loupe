@@ -1,8 +1,8 @@
-from fastapi import APIRouter, HTTPException, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
-from .frame_store import FrameStore
+from .session_store import SessionFrameStore, get_session_id_dep
 from .vision.alignment import extract_dxf_circles, align_circles
 
 
@@ -102,12 +102,12 @@ def export_dxf_route(body: ExportDxfBody):
     )
 
 
-def make_inspection_router(frame_store: FrameStore) -> APIRouter:
+def make_inspection_router(frame_store: SessionFrameStore) -> APIRouter:
     insp_router = APIRouter()
 
     @insp_router.post("/align-dxf-edges")
-    async def align_dxf_edges_route(body: AlignEdgesBody):
-        frame = frame_store.get()
+    async def align_dxf_edges_route(body: AlignEdgesBody, session_id: str = Depends(get_session_id_dep)):
+        frame = frame_store.get(session_id)
         if frame is None:
             raise HTTPException(status_code=400, detail="No frame stored. Call /freeze first.")
         from .vision.alignment import align_dxf_edges
@@ -121,8 +121,8 @@ def make_inspection_router(frame_store: FrameStore) -> APIRouter:
         return result
 
     @insp_router.post("/inspect-guided")
-    async def inspect_guided_route(body: InspectGuidedBody):
-        frame = frame_store.get()
+    async def inspect_guided_route(body: InspectGuidedBody, session_id: str = Depends(get_session_id_dep)):
+        frame = frame_store.get(session_id)
         if frame is None:
             raise HTTPException(status_code=400, detail="No frame stored. Call /freeze first.")
         from .vision.guided_inspection import inspect_features
@@ -159,8 +159,8 @@ def make_inspection_router(frame_store: FrameStore) -> APIRouter:
         return entities
 
     @insp_router.post("/refine-point")
-    async def refine_point(body: RefinePointBody):
-        frame = frame_store.get()
+    async def refine_point(body: RefinePointBody, session_id: str = Depends(get_session_id_dep)):
+        frame = frame_store.get(session_id)
         if frame is None:
             raise HTTPException(status_code=404, detail="No frame stored")
         import cv2
@@ -177,10 +177,10 @@ def make_inspection_router(frame_store: FrameStore) -> APIRouter:
         return available_methods()
 
     @insp_router.post("/gradient-overlay")
-    async def gradient_overlay():
+    async def gradient_overlay(session_id: str = Depends(get_session_id_dep)):
         import numpy as np
         import cv2
-        frame = frame_store.get()
+        frame = frame_store.get(session_id)
         if frame is None:
             raise HTTPException(status_code=404, detail="No frame stored")
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
