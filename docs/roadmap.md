@@ -238,16 +238,15 @@ Removed from list (done):
 | Measurement tools | 90% | 90% | — |
 | Vision / auto-detection | 75% | 85% | +10% (sub-pixel refinement) |
 | CAD integration | 70% | 70% | — |
-| Inspection / GD&T | 40% | 45% | +5% (sub-pixel improves accuracy) |
-| SPC & analytics | 5% | 5% | — (needs run storage + Cpk) |
-| Reporting & export | 65% | 65% | — |
+| Inspection / GD&T | 40% | 55% | +15% (sub-pixel + True Position) |
+| SPC & analytics | 5% | 40% | +35% (run storage, Cpk, trend charts) |
+| Reporting & export | 65% | 70% | +5% (TP in CSV/PDF, SPC CSV export) |
 | Camera & hardware | 45% | 55% | +10% (gamma, auto-exposure, ROI) |
-| Automation & workflow | 35% | 40% | +5% (sub-pixel snap, edge preview) |
+| Automation & workflow | 35% | 55% | +20% (templates, one-click inspect) |
 | UI / UX / platform | 95% | 98% | +3% (camera dropdown, settings reorg, hosted mode) |
 
-**Biggest remaining gaps:** SPC (5%), Inspection/GD&T (45%), Automation (40%).
-These are addressed by the Tier 1-2 roadmap items (templates, True Position,
-run storage, Cpk).
+**Biggest remaining gaps:** Automation (55% — needs detection presets, batch),
+Inspection/GD&T (55% — needs profile tolerance, more GD&T callouts).
 
 ---
 
@@ -269,14 +268,14 @@ run storage, Cpk).
 ✅ Done:   Multi-user hosted mode           — 2026-03-30  — per-session frame store, apiFetch, 403 handling
 ✅ Done:   Security hardening              — 2026-03-30  — CORS, rate limiting, input validation, error scrubbing
 ✅ Done:   Deploy scripts                  — 2026-03-30  — Ubuntu + Apache + supervisord
+✅ Done:   Measurement templates           — 2026-03-30  — save/load inspection recipes, one-click Run with auto-align
+✅ Done:   GD&T: True Position             — 2026-03-30  — TP ⌀ for circles, datum X/Y tooltip, CSV/PDF export
+✅ Done:   Run storage + SPC              — 2026-03-30  — SQLite, Cpk (feature-type-aware), trend chart, SPC dashboard
 
-Next:      Measurement templates             — repeatable inspection programs
-Then:      GD&T: True Position               — hole pattern inspection
-Then:      Detection presets                 — EDM/Lathe/Print surface modes
-Then:      Run storage (SQLite)              — foundational for SPC
-Then:      Basic SPC (Cpk + charts)          — quality system credibility
-Later:     Report templates                  — customer-specific FAI forms
-Later:     Batch inspection                  — multi-part production use case
+Next:      Detection presets                 — EDM/Lathe/Print surface modes
+Then:      GD&T: Profile of a line           — bilateral/unilateral tolerance zones
+Then:      Report templates                  — customer-specific FAI forms
+Then:      Batch inspection                  — multi-part production use case
 Future:    Gear inspection                   — when gear machine is running
 Future:    Nikon XY stage                    — hardware integration
 ```
