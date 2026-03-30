@@ -15,11 +15,11 @@ import { initMouseHandlers } from './events-mouse.js';
 
 // ─── Dropdown helpers ─────��──────────────────────────────────────────────────
 function closeAllDropdowns() {
-  ["dropdown-measure","dropdown-detect","dropdown-overlay","dropdown-clear"].forEach(id => {
+  ["dropdown-measure","dropdown-detect","dropdown-overlay","dropdown-clear","dropdown-camera"].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.hidden = true;
   });
-  ["btn-menu-measure","btn-menu-detect","btn-menu-overlay","btn-menu-clear"].forEach(id => {
+  ["btn-menu-measure","btn-menu-detect","btn-menu-overlay","btn-menu-clear","btn-menu-camera"].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.classList.remove("open");
   });
@@ -67,6 +67,12 @@ document.getElementById("btn-menu-overlay").addEventListener("click", e => {
 document.getElementById("btn-menu-clear").addEventListener("click", e => {
   e.stopPropagation();
   toggleDropdown("btn-menu-clear", "dropdown-clear");
+});
+document.getElementById("btn-menu-camera").addEventListener("click", e => {
+  e.stopPropagation();
+  toggleDropdown("btn-menu-camera", "dropdown-camera");
+  loadCameraInfo();
+  loadCameraList();
 });
 
 document.getElementById("btn-clear-detections")?.addEventListener("click", () => { closeAllDropdowns(); clearDetections(); });
@@ -639,6 +645,180 @@ document.getElementById("camera-select").addEventListener("change", async e => {
     fmtStatusEl.textContent = `Error: ${err.message}`;
     await loadCameraList();
   }
+});
+
+// ── Camera dropdown controls ────────────────────────────────────────────────
+// Exposure slider (top bar)
+document.getElementById("exp-slider-top")?.addEventListener("input", async e => {
+  const v = parseFloat(e.target.value);
+  document.getElementById("exp-value-top").textContent = `${v} µs`;
+  // Sync sidebar slider
+  document.getElementById("exp-slider").value = v;
+  document.getElementById("exp-value").textContent = `${v} µs`;
+  try {
+    await fetch("/camera/exposure", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ value: v }) });
+  } catch (err) { console.error("Failed to set exposure:", err); }
+});
+
+// Gain slider (top bar)
+document.getElementById("gain-slider-top")?.addEventListener("input", async e => {
+  const v = parseFloat(e.target.value);
+  document.getElementById("gain-value-top").textContent = `${v} dB`;
+  // Sync sidebar slider
+  document.getElementById("gain-slider").value = v;
+  document.getElementById("gain-value").textContent = `${v} dB`;
+  try {
+    await fetch("/camera/gain", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ value: v }) });
+  } catch (err) { console.error("Failed to set gain:", err); }
+});
+
+// Gamma slider (debounced)
+let _gammaDebounce = null;
+document.getElementById("gamma-slider")?.addEventListener("input", e => {
+  const v = parseFloat(e.target.value);
+  document.getElementById("gamma-value").textContent = v.toFixed(1);
+  clearTimeout(_gammaDebounce);
+  _gammaDebounce = setTimeout(async () => {
+    try {
+      await fetch("/camera/gamma", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ value: v }) });
+    } catch (err) { console.error("Failed to set gamma:", err); }
+  }, 200);
+});
+
+// Auto Exposure
+document.getElementById("btn-auto-exposure")?.addEventListener("click", async () => {
+  try {
+    const r = await fetch("/camera/auto-exposure", { method: "POST" });
+    if (!r.ok) throw new Error(await r.text());
+    const data = await r.json();
+    if (data.exposure != null) {
+      document.getElementById("exp-slider-top").value = data.exposure;
+      document.getElementById("exp-value-top").textContent = `${data.exposure} µs`;
+      document.getElementById("exp-slider").value = data.exposure;
+      document.getElementById("exp-value").textContent = `${data.exposure} µs`;
+    }
+  } catch (err) { console.error("Auto exposure failed:", err); }
+});
+
+// Auto WB (top bar)
+document.getElementById("btn-wb-auto-top")?.addEventListener("click", async () => {
+  try {
+    const r = await fetch("/camera/white-balance/auto", { method: "POST" });
+    if (!r.ok) throw new Error(await r.text());
+    const ratios = await r.json();
+    ["red", "green", "blue"].forEach(ch => {
+      // Update top bar sliders
+      const sliderTop = document.getElementById(`wb-${ch}-slider-top`);
+      const displayTop = document.getElementById(`wb-${ch}-value-top`);
+      if (sliderTop) sliderTop.value = ratios[ch];
+      if (displayTop) displayTop.textContent = ratios[ch].toFixed(2);
+      // Sync settings dialog sliders
+      const slider = document.getElementById(`wb-${ch}-slider`);
+      const display = document.getElementById(`wb-${ch}-value`);
+      if (slider) slider.value = ratios[ch];
+      if (display) display.textContent = ratios[ch].toFixed(2);
+    });
+  } catch (err) { console.error("Auto WB failed:", err); }
+});
+
+// WB RGB sliders (top bar, debounced)
+let _wbTopDebounce = {};
+["red", "green", "blue"].forEach(ch => {
+  document.getElementById(`wb-${ch}-slider-top`)?.addEventListener("input", e => {
+    const val = parseFloat(e.target.value);
+    document.getElementById(`wb-${ch}-value-top`).textContent = val.toFixed(2);
+    // Sync settings dialog slider
+    const slider = document.getElementById(`wb-${ch}-slider`);
+    const display = document.getElementById(`wb-${ch}-value`);
+    if (slider) slider.value = val;
+    if (display) display.textContent = val.toFixed(2);
+    clearTimeout(_wbTopDebounce[ch]);
+    _wbTopDebounce[ch] = setTimeout(async () => {
+      try {
+        await fetch("/camera/white-balance/ratio", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            channel: ch.charAt(0).toUpperCase() + ch.slice(1),
+            value: val,
+          }),
+        });
+      } catch (err) { console.error("WB ratio update failed:", err); }
+    }, 150);
+  });
+});
+
+// Pixel format (top bar)
+document.getElementById("pixel-format-top")?.addEventListener("change", async e => {
+  const fmt = e.target.value;
+  try {
+    const r = await fetch("/camera/pixel-format", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ pixel_format: fmt }),
+    });
+    if (!r.ok) throw new Error(await r.text());
+    state.settings.pixelFormat = fmt;
+    // Sync settings dialog dropdown
+    const fmtSelect = document.getElementById("pixel-format-select");
+    if (fmtSelect) fmtSelect.value = fmt;
+  } catch (err) {
+    console.error("Pixel format change failed:", err);
+    await loadCameraInfo(); // revert
+  }
+});
+
+// Camera select (top bar)
+document.getElementById("camera-select-top")?.addEventListener("change", async e => {
+  const camera_id = e.target.value;
+  if (!camera_id) return;
+  e.target.disabled = true;
+  try {
+    const r = await fetch("/camera/select", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ camera_id }),
+    });
+    if (!r.ok) throw new Error(await r.text());
+    await loadCameraInfo();
+    await loadCameraList();
+  } catch (err) {
+    console.error("Camera switch failed:", err);
+    await loadCameraList();
+  }
+  e.target.disabled = false;
+});
+
+// ROI Set from view
+document.getElementById("btn-roi-set")?.addEventListener("click", async () => {
+  const info = state._cameraInfo;
+  if (!info) return;
+  const currentRoi = info.roi || { offset_x: 0, offset_y: 0 };
+  const wInc = info.roi_width_inc || 4;
+  const hInc = info.roi_height_inc || 4;
+  let ox = Math.max(0, currentRoi.offset_x + Math.round(viewport.panX));
+  let oy = Math.max(0, currentRoi.offset_y + Math.round(viewport.panY));
+  let w = Math.round(canvas.clientWidth / viewport.zoom);
+  let h = Math.round(canvas.clientHeight / viewport.zoom);
+  w = Math.max(wInc, Math.round(w / wInc) * wInc);
+  h = Math.max(hInc, Math.round(h / hInc) * hInc);
+  ox = Math.round(ox / wInc) * wInc;
+  oy = Math.round(oy / hInc) * hInc;
+  ox = Math.min(ox, info.sensor_width - w);
+  oy = Math.min(oy, info.sensor_height - h);
+  const resp = await fetch("/camera/roi", {
+    method: "PUT", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({ offset_x: ox, offset_y: oy, width: w, height: h }),
+  });
+  if (resp.ok) await loadCameraInfo();
+});
+
+// ROI Reset
+document.getElementById("btn-roi-reset")?.addEventListener("click", async () => {
+  try {
+    const r = await fetch("/camera/roi/reset", { method: "POST" });
+    if (r.ok) await loadCameraInfo();
+  } catch (err) { console.error("ROI reset failed:", err); }
 });
 
 // ── Event delegation for delete buttons ───���──────────────────────────────────

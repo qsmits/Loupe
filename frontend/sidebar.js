@@ -285,6 +285,9 @@ export async function loadCameraInfo() {
       const rect = canvas.getBoundingClientRect();
       if (rect.width > 0) fitToWindow(rect.width, rect.height);
     }
+    // Cache camera info for ROI "Set from view"
+    state._cameraInfo = d;
+
     cameraInfoEl.innerHTML =
       `<div>${d.model}</div>` +
       `<div style="color:var(--muted)">${d.width}×${d.height}</div>` +
@@ -325,6 +328,60 @@ export async function loadCameraInfo() {
     });
     const wbAutoBtn = document.getElementById("btn-wb-auto");
     if (wbAutoBtn) wbAutoBtn.disabled = !wbAvailable;
+
+    // ── Camera dropdown (top bar) ──
+    const el = id => document.getElementById(id);
+
+    // Resolution display
+    if (el("camera-res-display")) el("camera-res-display").textContent = `${d.width} × ${d.height}`;
+
+    // Exposure & gain (top bar)
+    if (el("exp-slider-top")) { el("exp-slider-top").value = d.exposure; }
+    if (el("exp-value-top")) { el("exp-value-top").textContent = `${d.exposure} µs`; }
+    if (el("gain-slider-top")) { el("gain-slider-top").value = d.gain; }
+    if (el("gain-value-top")) { el("gain-value-top").textContent = `${d.gain} dB`; }
+
+    // Pixel format (top bar)
+    if (el("pixel-format-top")) {
+      const fmt = d.pixel_format && d.pixel_format !== "n/a" ? d.pixel_format : null;
+      if (fmt) el("pixel-format-top").value = fmt;
+    }
+
+    // Gamma
+    if (el("gamma-slider") && d.gamma != null) {
+      el("gamma-slider").value = d.gamma;
+      if (d.gamma_min != null) el("gamma-slider").min = d.gamma_min;
+      if (d.gamma_max != null) el("gamma-slider").max = d.gamma_max;
+    }
+    if (el("gamma-value") && d.gamma != null) el("gamma-value").textContent = d.gamma.toFixed(1);
+
+    // WB sliders (top bar)
+    ["red", "green", "blue"].forEach(ch => {
+      const sliderTop = el(`wb-${ch}-slider-top`);
+      const displayTop = el(`wb-${ch}-value-top`);
+      if (sliderTop) sliderTop.value = d[`wb_${ch}`] ?? 1.0;
+      if (displayTop) displayTop.textContent = parseFloat(sliderTop?.value ?? 1.0).toFixed(2);
+    });
+
+    // Capability-based visibility
+    const sup = d.supports || {};
+    if (el("gamma-row")) el("gamma-row").hidden = !sup.gamma;
+    if (el("btn-auto-exposure")) el("btn-auto-exposure").hidden = !sup.auto_exposure;
+    if (el("wb-section")) el("wb-section").hidden = !sup.wb_manual;
+    if (el("btn-wb-auto-top")) el("btn-wb-auto-top").hidden = !(sup.wb_auto ?? true);
+    if (el("roi-section")) el("roi-section").hidden = !sup.roi;
+
+    // ROI info
+    if (el("roi-info") && d.roi) {
+      const roi = d.roi;
+      const isFullFrame = roi.offset_x === 0 && roi.offset_y === 0 &&
+        roi.width === d.sensor_width && roi.height === d.sensor_height;
+      el("roi-info").textContent = isFullFrame
+        ? "Full frame"
+        : `${roi.width}×${roi.height} @ (${roi.offset_x}, ${roi.offset_y})`;
+    } else if (el("roi-info")) {
+      el("roi-info").textContent = "Full frame";
+    }
 
     if (d.no_camera === true && !state._noCamera) {
       state._noCamera = true;
@@ -374,6 +431,7 @@ export async function checkStartupWarning() {
 
 export async function loadCameraList() {
   const sel = document.getElementById("camera-select");
+  const selTop = document.getElementById("camera-select-top");
   try {
     const [camerasResp, infoResp] = await Promise.all([
       fetch("/cameras"),
@@ -382,13 +440,16 @@ export async function loadCameraList() {
     const cameras = await camerasResp.json();
     const info = await infoResp.json();
     const currentId = info.device_id ?? "";
-    sel.innerHTML = cameras.map(c =>
+    const optionsHtml = cameras.map(c =>
       `<option value="${c.id}"${c.id === currentId ? " selected" : ""}>${c.label}</option>`
     ).join("");
-    sel.disabled = cameras.length <= 1 && cameras[0]?.id === "opencv-0";
+    const isDisabled = cameras.length <= 1 && cameras[0]?.id === "opencv-0";
+    if (sel) { sel.innerHTML = optionsHtml; sel.disabled = isDisabled; }
+    if (selTop) { selTop.innerHTML = optionsHtml; selTop.disabled = isDisabled; }
   } catch {
-    sel.innerHTML = "<option>Unavailable</option>";
-    sel.disabled = true;
+    const fallback = "<option>Unavailable</option>";
+    if (sel) { sel.innerHTML = fallback; sel.disabled = true; }
+    if (selTop) { selTop.innerHTML = fallback; selTop.disabled = true; }
   }
 }
 

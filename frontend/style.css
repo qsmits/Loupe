@@ -183,6 +183,15 @@ input[type=range] { cursor: pointer; accent-color: var(--accent); }
 }
 .detect-btn:hover { background: var(--border); }
 
+/* ─── Camera panel dropdown ─────────────────────────────────── */
+.camera-panel { width: 280px; }
+.camera-panel-header { padding: 8px 10px; border-bottom: 1px solid var(--border); }
+.camera-select-dropdown { width: 100%; background: var(--bg); color: var(--fg); border: 1px solid var(--border); border-radius: 4px; padding: 4px; font-size: 12px; }
+.pixel-format-dropdown { background: var(--bg); color: var(--fg); border: 1px solid var(--border); border-radius: 3px; padding: 1px 4px; font-size: 11px; }
+.camera-info-line { font-size: 11px; color: var(--muted); margin-top: 4px; }
+.camera-panel-section { padding: 6px 10px; border-bottom: 1px solid var(--border); }
+.camera-panel-buttons { display: flex; gap: 6px; margin-top: 6px; }
+
 /* ─── Main layout ───────────────────────────────────────────── */
 #main {
   display: flex;
