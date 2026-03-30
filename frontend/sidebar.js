@@ -329,9 +329,9 @@ export async function loadCameraInfo() {
 
     // Exposure & gain (top bar)
     if (el("exp-slider-top")) { el("exp-slider-top").value = d.exposure; }
-    if (el("exp-value-top")) { el("exp-value-top").textContent = `${d.exposure} µs`; }
+    if (el("exp-value-top")) { el("exp-value-top").textContent = `${Math.round(d.exposure)} µs`; }
     if (el("gain-slider-top")) { el("gain-slider-top").value = d.gain; }
-    if (el("gain-value-top")) { el("gain-value-top").textContent = `${d.gain} dB`; }
+    if (el("gain-value-top")) { el("gain-value-top").textContent = `${Number(d.gain).toFixed(1)} dB`; }
 
     // Pixel format (top bar)
     if (el("pixel-format-top")) {
