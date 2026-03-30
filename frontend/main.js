@@ -429,9 +429,9 @@ settingsDialog.addEventListener("click", e => {
 document.querySelectorAll(".settings-tab").forEach(tab => {
   tab.addEventListener("click", () => {
     document.querySelectorAll(".settings-tab").forEach(t => t.classList.remove("active"));
-    document.querySelectorAll(".settings-panel").forEach(p => p.style.display = "none");
+    document.querySelectorAll(".settings-panel").forEach(p => p.classList.remove("active"));
     tab.classList.add("active");
-    document.getElementById(`settings-${tab.dataset.tab}-panel`).style.display = "block";
+    document.getElementById(`settings-${tab.dataset.tab}-panel`).classList.add("active");
   });
 });
 
