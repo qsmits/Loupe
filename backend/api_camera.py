@@ -1,6 +1,7 @@
 import asyncio
 import datetime
 import pathlib
+import uuid
 
 import cv2
 import numpy as np
@@ -65,6 +66,11 @@ MAX_UPLOAD_BYTES = 20 * 1024 * 1024  # 20 MB
 def make_camera_router(camera: BaseCamera, frame_store: SessionFrameStore, startup_warning: str | None = None) -> APIRouter:
     router = APIRouter()
     _warning = [startup_warning]   # mutable container for pop semantics
+
+    @router.post("/session/new")
+    async def create_session():
+        """Issue a server-generated session token."""
+        return {"session_id": str(uuid.uuid4())}
 
     @router.get("/camera/startup-warning")
     async def get_startup_warning():
