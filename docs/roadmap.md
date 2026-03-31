@@ -210,7 +210,7 @@ These are real features but not near-term priorities given the current use case.
 | Height map / focus stacking | Requires motorized Z-axis. Separate project. |
 | Part history database (full) | Subsumed by run storage + SPC. |
 | QDAS/QIF export | Revisit when an ISO shop asks. |
-| Multi-point calibration (lens distortion correction) | Current 2-point is sufficient at single magnification. |
+| Lens distortion correction | Checkerboard calibration → `cv2.calibrateCamera()` → `cv2.undistort()`. Not needed for telecentric microscope objectives (<0.05% distortion). Relevant for hosted mode where users may upload photos from phones, USB microscopes, or macro lenses with 1-5% barrel distortion. Optional "advanced calibration" flow. Half day of work. |
 | Calibration traceability / uncertainty budgets | ISO 17025 requirement. Not needed yet. |
 | OCR serial number recognition | Read etched/stamped serial numbers from frozen frame. Auto-name SPC runs, PDF reports, session files. Tesseract or EasyOCR backend. Medium effort, high value for production traceability. |
 | Education / cloud mode | Login, server-side session storage, teacher dashboard. See `docs/superpowers/specs/2026-03-30-education-cloud-notes.md`. |
