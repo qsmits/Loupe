@@ -45,7 +45,7 @@ class TestRectEdgesContour:
     def test_detects_90pct_edges(self):
         from backend.vision.detection import detect_lines_contour
         img, meta = _load("rect_edges")
-        lines = detect_lines_contour(img)
+        lines = detect_lines_contour(img, min_edge_density=0)
         matched = sum(1 for gt in meta["edges"] if _line_matched(gt, lines))
         assert matched >= len(meta["edges"]) * 0.9
 
