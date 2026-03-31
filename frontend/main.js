@@ -557,13 +557,16 @@ document.getElementById("btn-save-tolerances")?.addEventListener("click", async 
 const subpixelSelect = document.getElementById("subpixel-method-select");
 if (subpixelSelect) {
   apiFetch("/subpixel-methods").then(r => r.json()).then(methods => {
-    subpixelSelect.innerHTML = methods.map(m =>
-      `<option value="${m}"${m === state.settings.subpixelMethod ? " selected" : ""}>${
-        m === "none" ? "None (pixel-level)" :
+    subpixelSelect.innerHTML = "";
+    for (const m of methods) {
+      const opt = document.createElement("option");
+      opt.value = m;
+      opt.selected = m === state.settings.subpixelMethod;
+      opt.textContent = m === "none" ? "None (pixel-level)" :
         m === "parabola" ? "Parabola (default)" :
-        m === "gaussian" ? "Gaussian (soft edges)" : m
-      }</option>`
-    ).join("");
+        m === "gaussian" ? "Gaussian (soft edges)" : m;
+      subpixelSelect.appendChild(opt);
+    }
   });
   subpixelSelect.addEventListener("change", () => {
     state.settings.subpixelMethod = subpixelSelect.value;

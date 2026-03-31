@@ -18,14 +18,24 @@ function _createMeasurementRow(ann, number) {
   const row = document.createElement("div");
   row.className = "measurement-item" + (state.selected.has(ann.id) ? " selected" : "");
   row.dataset.id = ann.id;
-  row.innerHTML = `
-    <span class="measurement-number">${number}</span>
-    <input class="measurement-name" type="text" placeholder="Label…">
-    <span class="measurement-value">${measurementLabel(ann, _mctx())}</span>
-    <button class="del-btn" data-id="${ann.id}">✕</button>`;
-  row.querySelector(".measurement-name").value = ann.name || "";
-  row.querySelector(".measurement-name").addEventListener("input", e => { ann.name = e.target.value; });
-  row.querySelector(".measurement-name").addEventListener("click", e => { e.stopPropagation(); });
+  const numSpan = document.createElement("span");
+  numSpan.className = "measurement-number";
+  numSpan.textContent = number;
+  const nameInput = document.createElement("input");
+  nameInput.className = "measurement-name";
+  nameInput.type = "text";
+  nameInput.placeholder = "Label…";
+  const valSpan = document.createElement("span");
+  valSpan.className = "measurement-value";
+  valSpan.textContent = measurementLabel(ann, _mctx());
+  const delBtn = document.createElement("button");
+  delBtn.className = "del-btn";
+  delBtn.dataset.id = ann.id;
+  delBtn.textContent = "✕";
+  row.append(numSpan, nameInput, valSpan, delBtn);
+  nameInput.value = ann.name || "";
+  nameInput.addEventListener("input", e => { ann.name = e.target.value; });
+  nameInput.addEventListener("click", e => { e.stopPropagation(); });
   row.addEventListener("click", () => {
     const wasSelected = state.selected.has(ann.id);
     state.selected = new Set([ann.id]);
@@ -75,10 +85,16 @@ export function renderSidebar() {
   for (const [groupName, members] of groupMap) {
     const header = document.createElement("div");
     header.className = "meas-group-header";
-    header.innerHTML = `
-      <span class="meas-group-chevron">▾</span>
-      <span class="meas-group-label">${groupName}</span>
-      <span class="meas-group-count">(${members.length})</span>`;
+    const chevronSpan = document.createElement("span");
+    chevronSpan.className = "meas-group-chevron";
+    chevronSpan.textContent = "▾";
+    const labelSpan = document.createElement("span");
+    labelSpan.className = "meas-group-label";
+    labelSpan.textContent = groupName;
+    const countSpan = document.createElement("span");
+    countSpan.className = "meas-group-count";
+    countSpan.textContent = `(${members.length})`;
+    header.append(chevronSpan, labelSpan, countSpan);
     header.style.cursor = "pointer";
     let collapsed = false;
     header.addEventListener("click", () => {
@@ -132,10 +148,18 @@ export function renderSidebar() {
     if (ann.type === "origin") {
       const row = document.createElement("div");
       row.className = "measurement-item" + (state.selected.has(ann.id) ? " selected" : "");
-      row.innerHTML = `
-        <span class="measurement-number">⊙</span>
-        <span class="measurement-name" style="flex:1;font-size:12px;color:var(--muted)">Origin</span>
-        <button class="del-btn" data-id="${ann.id}">✕</button>`;
+      const originNum = document.createElement("span");
+      originNum.className = "measurement-number";
+      originNum.textContent = "⊙";
+      const originLabel = document.createElement("span");
+      originLabel.className = "measurement-name";
+      originLabel.style.cssText = "flex:1;font-size:12px;color:var(--muted)";
+      originLabel.textContent = "Origin";
+      const originDel = document.createElement("button");
+      originDel.className = "del-btn";
+      originDel.dataset.id = ann.id;
+      originDel.textContent = "✕";
+      row.append(originNum, originLabel, originDel);
       row.addEventListener("click", e => {
         if (e.target.classList.contains("del-btn")) return;
         state.selected = new Set([ann.id]);
@@ -156,10 +180,16 @@ export function renderSidebar() {
     const detHeader = document.createElement("div");
     detHeader.className = "meas-group-header";
     detHeader.style.color = "var(--muted)";
-    detHeader.innerHTML = `
-      <span class="meas-group-chevron">▾</span>
-      <span class="meas-group-label">Detections</span>
-      <span class="meas-group-count">(${detections.length})</span>`;
+    const detChevron = document.createElement("span");
+    detChevron.className = "meas-group-chevron";
+    detChevron.textContent = "▾";
+    const detLabel = document.createElement("span");
+    detLabel.className = "meas-group-label";
+    detLabel.textContent = "Detections";
+    const detCount = document.createElement("span");
+    detCount.className = "meas-group-count";
+    detCount.textContent = `(${detections.length})`;
+    detHeader.append(detChevron, detLabel, detCount);
     detHeader.style.cursor = "pointer";
     let detCollapsed = false;
     detHeader.addEventListener("click", () => {
@@ -180,12 +210,25 @@ export function renderSidebar() {
       if (state.selected.has(ann.id)) row.classList.add("selected");
       const typeName = ann.type.replace("detected-", "").replace("-merged", "").replace("-partial", "");
       const label = measurementLabel(ann, _mctx()) || typeName;
-      row.innerHTML = `
-        <span class="measurement-number" style="color:var(--muted)">⚬</span>
-        <span class="measurement-value" style="color:var(--muted);flex:1">${label}</span>
-        <button class="elevate-btn" data-id="${ann.id}" title="Elevate to measurement">↑</button>
-        <button class="del-btn" data-id="${ann.id}">✕</button>`;
-      row.querySelector(".elevate-btn").addEventListener("click", e => {
+      const detNumSpan = document.createElement("span");
+      detNumSpan.className = "measurement-number";
+      detNumSpan.style.color = "var(--muted)";
+      detNumSpan.textContent = "⚬";
+      const detValSpan = document.createElement("span");
+      detValSpan.className = "measurement-value";
+      detValSpan.style.cssText = "color:var(--muted);flex:1";
+      detValSpan.textContent = label;
+      const elevateBtn = document.createElement("button");
+      elevateBtn.className = "elevate-btn";
+      elevateBtn.dataset.id = ann.id;
+      elevateBtn.title = "Elevate to measurement";
+      elevateBtn.textContent = "↑";
+      const detDelBtn = document.createElement("button");
+      detDelBtn.className = "del-btn";
+      detDelBtn.dataset.id = ann.id;
+      detDelBtn.textContent = "✕";
+      row.append(detNumSpan, detValSpan, elevateBtn, detDelBtn);
+      elevateBtn.addEventListener("click", e => {
         e.stopPropagation();
         state.selected = new Set([ann.id]);
         document.dispatchEvent(new CustomEvent("elevate-selected"));
@@ -448,16 +491,28 @@ export async function loadCameraList() {
     const cameras = await camerasResp.json();
     const info = await infoResp.json();
     const currentId = info.device_id ?? "";
-    const optionsHtml = cameras.map(c =>
-      `<option value="${c.id}"${c.id === currentId ? " selected" : ""}>${c.label}</option>`
-    ).join("");
     const isDisabled = cameras.length <= 1 && cameras[0]?.id === "opencv-0";
-    if (sel) { sel.innerHTML = optionsHtml; sel.disabled = isDisabled; }
-    if (selTop) { selTop.innerHTML = optionsHtml; selTop.disabled = isDisabled; }
+    for (const target of [sel, selTop]) {
+      if (!target) continue;
+      target.innerHTML = "";
+      for (const c of cameras) {
+        const opt = document.createElement("option");
+        opt.value = c.id;
+        opt.textContent = c.label;
+        if (c.id === currentId) opt.selected = true;
+        target.appendChild(opt);
+      }
+      target.disabled = isDisabled;
+    }
   } catch {
-    const fallback = "<option>Unavailable</option>";
-    if (sel) { sel.innerHTML = fallback; sel.disabled = true; }
-    if (selTop) { selTop.innerHTML = fallback; selTop.disabled = true; }
+    for (const target of [sel, selTop]) {
+      if (!target) continue;
+      target.innerHTML = "";
+      const opt = document.createElement("option");
+      opt.textContent = "Unavailable";
+      target.appendChild(opt);
+      target.disabled = true;
+    }
   }
 }
 
@@ -571,14 +626,29 @@ export function renderInspectionTable() {
     const modeLabel = mode === "punch" ? "P" : "D";
     const modeClass = mode === "punch" ? "mode-punch" : "mode-die";
 
-    headerTr.innerHTML = `
-      <td colspan="4" class="insp-group-name">
-        <span class="insp-chevron">▾</span>
-        <span class="insp-mode ${modeClass}" title="${mode === 'punch' ? 'Punch (outer)' : 'Die (cavity)'}">${modeLabel}</span>
-        <span class="insp-group-label">${groupName}</span>
-        <span class="insp-group-count">(${segCount})</span>
-      </td>
-      <td><span class="insp-badge ${badgeClass}">${worstResult === "unmatched" ? "—" : worstResult.toUpperCase()}</span></td>`;
+    const nameTd = document.createElement("td");
+    nameTd.colSpan = 4;
+    nameTd.className = "insp-group-name";
+    const inspChevron = document.createElement("span");
+    inspChevron.className = "insp-chevron";
+    inspChevron.textContent = "▾";
+    const inspMode = document.createElement("span");
+    inspMode.className = `insp-mode ${modeClass}`;
+    inspMode.title = mode === "punch" ? "Punch (outer)" : "Die (cavity)";
+    inspMode.textContent = modeLabel;
+    const inspGroupLabel = document.createElement("span");
+    inspGroupLabel.className = "insp-group-label";
+    inspGroupLabel.textContent = groupName;
+    const inspGroupCount = document.createElement("span");
+    inspGroupCount.className = "insp-group-count";
+    inspGroupCount.textContent = `(${segCount})`;
+    nameTd.append(inspChevron, inspMode, inspGroupLabel, inspGroupCount);
+    const badgeTd = document.createElement("td");
+    const inspBadge = document.createElement("span");
+    inspBadge.className = `insp-badge ${badgeClass}`;
+    inspBadge.textContent = worstResult === "unmatched" ? "—" : worstResult.toUpperCase();
+    badgeTd.appendChild(inspBadge);
+    headerTr.append(nameTd, badgeTd);
 
     // Hover: highlight all handles in group
     headerTr.addEventListener("mouseenter", () => {
@@ -670,12 +740,35 @@ export function renderInspectionTable() {
 
       const sourceText = r.source === "manual" ? "M" : "";
 
-      tr.innerHTML = `
-        <td class="insp-handle"><span class="insp-num">${featureNum}</span>${r.handle}</td>
-        <td class="insp-type">${r.type.replace("polyline_", "p_")}</td>
-        <td class="insp-dev" title="${deviationTitle}">${deviationText}</td>
-        <td class="insp-tol">±${r.tolerance_warn}/${r.tolerance_fail}</td>
-        <td><span class="insp-badge ${badgeClass2}">${badgeText}</span>${sourceText ? `<span class="insp-source">${sourceText}</span>` : ""}</td>`;
+      const handleTd = document.createElement("td");
+      handleTd.className = "insp-handle";
+      const numSpan2 = document.createElement("span");
+      numSpan2.className = "insp-num";
+      numSpan2.textContent = featureNum;
+      handleTd.appendChild(numSpan2);
+      handleTd.appendChild(document.createTextNode(r.handle));
+      const typeTd = document.createElement("td");
+      typeTd.className = "insp-type";
+      typeTd.textContent = r.type.replace("polyline_", "p_");
+      const devTd = document.createElement("td");
+      devTd.className = "insp-dev";
+      devTd.title = deviationTitle;
+      devTd.textContent = deviationText;
+      const tolTd = document.createElement("td");
+      tolTd.className = "insp-tol";
+      tolTd.textContent = `±${r.tolerance_warn}/${r.tolerance_fail}`;
+      const statusTd = document.createElement("td");
+      const badge2 = document.createElement("span");
+      badge2.className = `insp-badge ${badgeClass2}`;
+      badge2.textContent = badgeText;
+      statusTd.appendChild(badge2);
+      if (sourceText) {
+        const srcSpan = document.createElement("span");
+        srcSpan.className = "insp-source";
+        srcSpan.textContent = sourceText;
+        statusTd.appendChild(srcSpan);
+      }
+      tr.append(handleTd, typeTd, devTd, tolTd, statusTd);
 
       // Hover: highlight just this handle
       tr.addEventListener("mouseenter", () => {
