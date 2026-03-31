@@ -1,8 +1,8 @@
 # Roadmap
 
-> Revised 2026-03-30 after competitive analysis against Mitutoyo, Heidenhain,
-> Keyence, Zeiss, Hexagon, and OGP. See `Loupe_Competitive_Analysis.docx` for
-> the full 80+ feature comparison matrix and scoring.
+> Revised 2026-03-31 after completing all Tier 1-2 features from the
+> competitive analysis. See `Loupe_Competitive_Analysis.docx` for the full
+> 80+ feature comparison matrix.
 
 ## Context
 
@@ -10,14 +10,27 @@
 (turned surfaces, concentric tooling marks), and eventually gears (involute
 profiles, tooth spacing).
 
-**Competitive position:** Strong on measurement tools (90%), UI/UX (95%), and
-CAD integration (70%). Weak on Inspection/GD&T (40%), SPC/analytics (5%),
-and automation (35%). Unique strengths: web-based, open API, shadow-aware
-edge fitting, edge-based alignment without circles, free/self-hosted.
+**Competitive position (as of 2026-03-31):**
 
-**Strategic goal:** Cross the credibility threshold on accuracy (sub-pixel)
-and quality systems (GD&T + SPC). Shops won't switch from a $10K Mitutoyo
-license if they can't generate a Cpk report or trust the measurement resolution.
+| Category | Score | Notes |
+|----------|-------|-------|
+| Measurement tools | 90% | 14 tools, sub-pixel snap |
+| Vision / auto-detection | 85% | Sub-pixel parabola + gaussian, live preview |
+| CAD integration | 70% | DXF import/export, edge-based alignment |
+| Inspection / GD&T | 55% | Corridor inspection, True Position, Punch/Die |
+| SPC & analytics | 40% | Run storage, Cpk, trend charts |
+| Reporting & export | 70% | PDF, CSV, DXF, SPC CSV, TP in exports |
+| Camera & hardware | 55% | Aravis/GigE, gamma, auto-exposure, ROI |
+| Automation & workflow | 55% | Templates, one-click inspect with auto-align |
+| UI / UX / platform | 98% | Web-based, multi-user hosted, cross-platform |
+
+**Unique strengths vs. all competitors:**
+- Web-based (browser UI) — no other metrology vendor offers this
+- Open REST API — any shop with curl/Python can integrate
+- Free / self-hosted — competitors cost $5K–$50K per seat
+- Multi-user hosted mode — concurrent users, session isolation
+- Shadow-aware edge fitting
+- Edge-based DXF alignment without circles
 
 ---
 
@@ -39,73 +52,65 @@ license if they can't generate a Cpk report or trust the measurement resolution.
 - Per-feature tolerance overrides, grouped inspection sidebar
 - Draggable labels with leader lines, hover tooltips
 
-### Phase 4 (partial): Measurement Workflow (2026-03-28)
+### Measurement Workflow (2026-03-28)
 - Measurement grouping with uniform colors, collapsible headers
 - Draggable labels for all measurement types
 - DXF export for reverse engineering (measurements → DXF in mm)
-
-### Phase 5.1: Reporting (2026-03-28)
 - PDF report with grouped inspection results + all measurement types
 - Annotated screenshot with numbered cross-references
-- CSV export for inspection results
 
-### Phase 6: Technical Foundation (2026-03-29)
-- 81 frontend tests (math, viewport transforms, measurementLabel, CSV format)
-- `main.js` split: 1714 → 611 lines (5 event modules)
-- `render.js` split: 1585 → 302 lines (4 render modules + format.js)
-- `tools.js` split: 821 → 615 lines (hit-test.js extracted)
-- `api.py` split: 585 → 70 lines (3 sub-routers)
-- Pure function extraction (measurementLabel, formatCsvValue, viewport transforms)
-- Canvas backing resolution decoupled from zoom (fixed coordinate stability bugs)
+### Technical Foundation (2026-03-29)
+- 105+ frontend tests (math, viewport, measurementLabel, CSV, templates)
+- Module splits: main.js 1714→611, render.js 1585→302, api.py 585→70
+- Pure function extraction for testability
+- Canvas coordinate stability fixes
 
 ### Sub-Pixel Edge Refinement (2026-03-30)
 - Pluggable algorithm architecture (parabola + gaussian)
 - Guided inspection: sub-pixel refinement per-corridor (on by default)
 - Manual measurement: click-to-edge snap with magnitude/distance scoring
-- Auto-detection: opt-in sub-pixel before algebraic fitting
 - Live snap preview (orange crosshair on mousemove)
 - Gradient magnitude visualization overlay
-- Zoom-scaled search radius, configurable snap radius
+- Zoom-scaled search radius
 
 ### Camera UI Overhaul (2026-03-30)
 - Camera dropdown menu in top bar (replaces sidebar panel)
-- All camera controls: exposure, gain, gamma, auto-exposure, auto-WB, white balance RGB
-- Camera selection, pixel format selector in dropdown header
-- ROI set-from-view / reset with stream reconnect
+- Exposure, gain, gamma, auto-exposure, auto-WB, white balance RGB
+- Camera selection, pixel format, ROI set-from-view/reset
 - Capability-based visibility (unsupported features hidden per camera)
-- Settings dialog reorganized: 3 tabs (General, Measurement, Display)
-- Fixed-height dialog, save button pinned to bottom
+- Settings dialog: 3 tabs (General, Measurement, Display)
 
 ### Multi-User Hosted Mode (2026-03-30)
-- Per-session frame store (SessionFrameStore with UUID keys, TTL, max cap)
-- Session ID via X-Session-ID header (generated per browser tab)
-- Frontend apiFetch wrapper on all ~40 API calls
-- Config read-only in hosted mode (403 with graceful frontend handling)
-- Session cleanup on tab close (fetch keepalive)
-
-### Security Hardening (2026-03-30)
-- CORS restricted to explicit origins in hosted mode (no wildcard)
-- IP rate limiting: 60 req/s global, 5 req/s for heavy endpoints
-- Error message scrubbing in hosted mode (no internal info leaks)
-- Input validation: all Pydantic fields bounded (ge/le/max_length)
-- Upload size limits: 20MB images, 10MB DXF
-- List size limits: max 10,000 entities per request
-- Dependencies pinned to exact versions
+- Per-session frame store (SessionFrameStore with UUID keys, TTL)
+- Frontend apiFetch wrapper on all API calls
+- Config read-only in hosted mode (403 with graceful handling)
+- Security: CORS, rate limiting, input validation, error scrubbing
 - Deploy scripts for Ubuntu + Apache + supervisord
+
+### Measurement Templates (2026-03-30)
+- Save/load inspection recipes as JSON files (client-side, no server storage)
+- Template captures: DXF entities, calibration, tolerances, detection settings, feature modes
+- One-click "Run Inspection" with auto-align when template loaded
+- Template name display in sidebar
+
+### GD&T: True Position (2026-03-30)
+- TP = 2 × radial deviation for circle features
+- Datum-frame X/Y decomposition in hover tooltip
+- TP displayed in sidebar, CSV, and PDF exports
+- Feature-type-aware: lines show perpendicular deviation, circles show TP
+
+### Run Storage + SPC (2026-03-30)
+- SQLite database for inspection history (parts → runs → results)
+- Feature-type-aware Cpk (one-sided for circles, two-sided for lines)
+- Canvas 2D trend chart with tolerance bands and colored dots
+- Cpk summary with capability rating (green/amber/red)
+- Part and feature selector dropdowns
+- SPC CSV export
+- Disabled in hosted mode (no server-side file persistence)
 
 ---
 
-## Tier 1: Daily Workflow
-
-### Measurement templates / programs
-*Priority: high. Effort: medium.*
-
-Save a measurement sequence as a replayable recipe: "Calibrate → align DXF →
-run these features → generate report." Load the template, place the part,
-press go. This is Keyence's entire selling point ("place and press").
-
-Enables the 60-second inspection goal. Also foundational for batch inspection
-(Tier 3) — you can't batch-measure without a repeatable program.
+## Next Up
 
 ### Detection presets (EDM / Lathe / 3D Print)
 *Priority: medium. Effort: low.*
@@ -116,137 +121,56 @@ Surface-aware preprocessing instead of one pipeline for all surfaces:
 - **3D Print**: bilateral smoothing (already available as slider)
 - **Custom**: expose all parameters
 
----
-
-## Tier 2: Quality System Credibility
-
-These cross Loupe into ISO 9001 / IATF 16949 territory. Without them, shops
-must re-measure in a CMM or export data to external tools.
-
-### GD&T: True Position
-*Priority: high. Effort: medium.*
-
-Most requested GD&T callout for wire EDM and precision turned parts. Hole
-patterns on the DXF already have nominal positions; we just need to compute
-position deviation from a datum reference and apply the cylindrical tolerance
-zone formula. Our coordinate origin + DXF overlay provide the datum framework.
-
-### Multi-part run storage (SQLite)
-*Priority: high. Effort: medium.*
-
-Currently each session is standalone. Store inspection results per part number
-and serial number in a lightweight local database (SQLite). This is
-foundational for SPC (next item), trend tracking, and batch inspection.
-
-Schema: parts → runs → feature_results. Simple REST API on top.
-
-### Basic SPC (Cpk/Ppk + histogram + trend)
-*Priority: high. Effort: low–medium.*
-
-Once we have run storage, Cpk is a small calculation on top of stored
-deviation data. Add:
-- Cpk/Ppk per feature across runs
-- Histogram of deviations per feature
-- Trend chart (deviation vs. run number) with control limits
-- Summary dashboard: which features are drifting toward tolerance limits
-
-This is what ISO 9001 shops need. Currently scored at 5% — even basic SPC
-moves us to ~40%, which is competitive for the price point.
-
 ### GD&T: Profile of a line
 *Priority: medium. Effort: medium.*
 
 Our corridor-based inspection is conceptually close to profile tolerance
 already. Wrapping it in proper GD&T semantics (bilateral/unilateral zones,
 datum references) makes inspection results directly comparable to print
-callouts. Connects naturally to the existing inspection pipeline.
-
----
-
-## Tier 3: Production Workflow
-
-These make the tool fast enough for daily production use.
+callouts.
 
 ### Customizable report templates
 *Priority: medium. Effort: medium.*
 
 Shops have customer-specific report layouts (first-article inspection forms,
 PPAP templates). A template system: logo, header fields, which features to
-include, field placement. Differentiator at our price point (free vs $5K–$50K
-per seat for competitors).
+include, field placement.
 
 ### Batch inspection
 *Priority: medium. Effort: high.*
 
 Swiss lathe operator use case: scatter a handful of parts under the microscope,
-get all of them measured at once. Depends on templates (for repeatable
-measurement sequence) and run storage (for results). Includes:
-- Part instance detection via DXF template matching
-- Per-instance alignment and inspection
-- Batch results view with statistical summary
-- Combined PDF report
-
-### Named calibration profiles
-*Priority: low. Effort: low.*
-
-Store calibration per physical objective/lens (e.g., "5x", "20x"). Useful when
-swapping objectives on a turret microscope. Not needed for single-lens setups
-since digital zoom preserves calibration. Quick-switch dropdown in the
-calibration panel.
+get all of them measured at once. Part instance detection via DXF template
+matching, per-instance alignment and inspection, batch results + combined PDF.
 
 ---
 
 ## Future / Deferred
 
-These are real features but not near-term priorities given the current use case.
-
 | Feature | Why deferred |
 |---------|-------------|
 | Gear inspection (involute profiles, tooth spacing) | Separate domain. Wait for gear machine. |
 | Nikon SC-102 XY stage integration | Hardware-dependent. Separate project. |
-| STEP/IGES import with PMI | High effort. Would auto-import GD&T tolerances from 3D model (no manual tolerance entry). Needs pythonocc/OpenCascade. DXF covers 2D geometry well but can't carry tolerances. |
+| STEP/IGES import with PMI | High effort. Auto-import GD&T tolerances from 3D model. Needs pythonocc/OpenCascade. |
 | Pattern matching / golden template | Interesting for incoming inspection but niche. |
 | Full GD&T (runout, concentricity, profile of surface) | Revisit when a compliance requirement drives it. |
 | Height map / focus stacking | Requires motorized Z-axis. Separate project. |
-| Part history database (full) | Subsumed by run storage + SPC. |
 | QDAS/QIF export | Revisit when an ISO shop asks. |
-| Lens distortion correction | Checkerboard calibration → `cv2.calibrateCamera()` → `cv2.undistort()`. Not needed for telecentric microscope objectives (<0.05% distortion). Relevant for hosted mode where users may upload photos from phones, USB microscopes, or macro lenses with 1-5% barrel distortion. Optional "advanced calibration" flow. Half day of work. |
+| Lens distortion correction | Checkerboard calibration → `cv2.undistort()`. Not needed for telecentric objectives. Relevant for hosted mode with phone/USB microscope photos. |
 | Calibration traceability / uncertainty budgets | ISO 17025 requirement. Not needed yet. |
-| OCR serial number recognition | Read etched/stamped serial numbers from frozen frame. Auto-name SPC runs, PDF reports, session files. Tesseract or EasyOCR backend. Medium effort, high value for production traceability. |
+| OCR serial number recognition | Read etched/stamped serial numbers. Auto-name SPC runs and reports. Tesseract or EasyOCR. |
 | Education / cloud mode | Login, server-side session storage, teacher dashboard. See `docs/superpowers/specs/2026-03-30-education-cloud-notes.md`. |
 | Enterprise shared microscope | Role-based access, shared image library, audit trail. Builds on education mode. |
+| Named calibration profiles | Store calibration per physical objective. Not needed for single-lens setups. |
 
 ---
 
 ## What NOT to Do
 
-Unchanged from original assessment:
-- TypeScript migration (codebase is ~7K LOC, vanilla JS works fine)
+- TypeScript migration (codebase is ~10K LOC, vanilla JS works fine)
 - Component framework (canvas rendering doesn't benefit)
 - WebGL rendering (canvas performance is fine at current image sizes)
 - AI-assisted detection (classical CV pipeline needs to be solid first)
-
-Removed from list (done):
-- ~~Multi-user collaboration~~ → implemented as multi-user hosted mode
-
----
-
-## Revised Competitive Scoring (estimated)
-
-| Category | Before (Mar 28) | After (Mar 30) | Change |
-|----------|-----------------|-----------------|--------|
-| Measurement tools | 90% | 90% | — |
-| Vision / auto-detection | 75% | 85% | +10% (sub-pixel refinement) |
-| CAD integration | 70% | 70% | — |
-| Inspection / GD&T | 40% | 55% | +15% (sub-pixel + True Position) |
-| SPC & analytics | 5% | 40% | +35% (run storage, Cpk, trend charts) |
-| Reporting & export | 65% | 70% | +5% (TP in CSV/PDF, SPC CSV export) |
-| Camera & hardware | 45% | 55% | +10% (gamma, auto-exposure, ROI) |
-| Automation & workflow | 35% | 55% | +20% (templates, one-click inspect) |
-| UI / UX / platform | 95% | 98% | +3% (camera dropdown, settings reorg, hosted mode) |
-
-**Biggest remaining gaps:** Automation (55% — needs detection presets, batch),
-Inspection/GD&T (55% — needs profile tolerance, more GD&T callouts).
 
 ---
 
@@ -263,14 +187,13 @@ Inspection/GD&T (55% — needs profile tolerance, more GD&T callouts).
 ✅ Done:   Phase 5.1 (PDF/CSV reports)       — 2026-03-28
 ✅ Done:   Phase 6 (tests + module splits)   — 2026-03-29
 ✅ Done:   Viewport coordinate fixes         — 2026-03-29
-✅ Done:   Sub-pixel edge refinement         — 2026-03-30  — parabola + gaussian, edge snap, gradient overlay
-✅ Done:   Camera UI overhaul               — 2026-03-30  — dropdown menu, gamma, auto-exposure, ROI, settings reorg
-✅ Done:   Multi-user hosted mode           — 2026-03-30  — per-session frame store, apiFetch, 403 handling
-✅ Done:   Security hardening              — 2026-03-30  — CORS, rate limiting, input validation, error scrubbing
-✅ Done:   Deploy scripts                  — 2026-03-30  — Ubuntu + Apache + supervisord
-✅ Done:   Measurement templates           — 2026-03-30  — save/load inspection recipes, one-click Run with auto-align
-✅ Done:   GD&T: True Position             — 2026-03-30  — TP ⌀ for circles, datum X/Y tooltip, CSV/PDF export
-✅ Done:   Run storage + SPC              — 2026-03-30  — SQLite, Cpk (feature-type-aware), trend chart, SPC dashboard
+✅ Done:   Sub-pixel edge refinement         — 2026-03-30
+✅ Done:   Camera UI overhaul               — 2026-03-30
+✅ Done:   Multi-user hosted mode           — 2026-03-30
+✅ Done:   Security hardening + deploy      — 2026-03-30
+✅ Done:   Measurement templates            — 2026-03-30
+✅ Done:   GD&T: True Position              — 2026-03-30
+✅ Done:   Run storage + SPC               — 2026-03-30
 
 Next:      Detection presets                 — EDM/Lathe/Print surface modes
 Then:      GD&T: Profile of a line           — bilateral/unilateral tolerance zones
@@ -278,4 +201,6 @@ Then:      Report templates                  — customer-specific FAI forms
 Then:      Batch inspection                  — multi-part production use case
 Future:    Gear inspection                   — when gear machine is running
 Future:    Nikon XY stage                    — hardware integration
+Future:    Education / cloud mode            — university adoption
+Future:    Enterprise shared microscope      — production shop multi-user
 ```
