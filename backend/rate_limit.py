@@ -107,3 +107,29 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             )
 
         return await call_next(request)
+
+
+class ConcurrencyLimitMiddleware(BaseHTTPMiddleware):
+    """Limits the number of simultaneous heavy operations to prevent resource exhaustion."""
+
+    def __init__(self, app, max_concurrent: int = 3, hosted: bool = False):
+        super().__init__(app)
+        self._hosted = hosted
+        import asyncio
+        self._semaphore = asyncio.Semaphore(max_concurrent)
+        self._heavy_paths = _HEAVY_PATHS
+
+    async def dispatch(self, request, call_next):
+        if not self._hosted:
+            return await call_next(request)
+        path = request.url.path
+        if path in self._heavy_paths:
+            if self._semaphore.locked():
+                # All slots busy — reject immediately
+                return JSONResponse(
+                    status_code=503,
+                    content={"detail": "Server busy. Please try again in a moment."},
+                )
+            async with self._semaphore:
+                return await call_next(request)
+        return await call_next(request)

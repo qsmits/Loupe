@@ -130,8 +130,30 @@ def create_app(camera: BaseCamera | None = None, no_camera: bool = False) -> Fas
         )
 
     # Rate limiting in hosted mode (must be added AFTER CORS middleware)
-    from .rate_limit import RateLimitMiddleware
+    from .rate_limit import RateLimitMiddleware, ConcurrencyLimitMiddleware
     app.add_middleware(RateLimitMiddleware, hosted=hosted)
+    app.add_middleware(ConcurrencyLimitMiddleware, max_concurrent=3, hosted=hosted)
+
+    # Security headers in hosted mode
+    if hosted:
+        from starlette.middleware.base import BaseHTTPMiddleware
+
+        class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+            async def dispatch(self, request, call_next):
+                response = await call_next(request)
+                response.headers["Content-Security-Policy"] = (
+                    "default-src 'self'; "
+                    "script-src 'self'; "
+                    "style-src 'self' 'unsafe-inline'; "
+                    "img-src 'self' data: blob:; "
+                    "connect-src 'self'; "
+                    "frame-ancestors 'none'"
+                )
+                response.headers["X-Content-Type-Options"] = "nosniff"
+                response.headers["X-Frame-Options"] = "DENY"
+                return response
+
+        app.add_middleware(SecurityHeadersMiddleware)
 
     run_store = RunStore(db_path=os.path.join(os.path.dirname(__file__), "..", "data", "runs.db"))
     app.include_router(make_router(reader, frame_store, startup_warning=startup_warning, run_store=run_store))
