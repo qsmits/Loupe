@@ -710,7 +710,7 @@ body.no-camera #stream-img {
 /* ─── Arc-fit chooser ───────────────────────────────────────── */
 .arc-fit-chooser {
   position: fixed;
-  top: 56px;
+  bottom: 62px;
   left: 50%;
   transform: translateX(-50%);
   display: flex;

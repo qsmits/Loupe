@@ -401,8 +401,13 @@ export async function handleToolClick(rawPt, e = {}) {
         const sy = canvas.height / circle.frameHeight;
         return { x: circle.x * sx, y: circle.y * sy };
       })();
+      const circleA = state.pendingCenterCircle;
       state.pendingCenterCircle = null;
-      addAnnotation({ type: "center-dist", a, b });
+      addAnnotation({
+        type: "center-dist", a, b,
+        circleAId: circleA.id ?? null,
+        circleBId: circle.id ?? null,
+      });
       setTool("select");
     }
     return;
@@ -625,6 +630,7 @@ export function handleDrag(pt) {
       ann.r = Math.hypot(pt.x - ann.cx, pt.y - ann.cy);
     } else {
       ann.cx += dx; ann.cy += dy;
+      _syncCenterDist(ann.id, ann.cx, ann.cy);
     }
   }
   else if (ann.type === "calibration") {
@@ -812,6 +818,15 @@ export function updateToolStatus() {
   }
 }
 
+// ── Sync center-dist endpoints when a referenced circle moves ─────────────────
+function _syncCenterDist(circleId, cx, cy) {
+  for (const ann of state.annotations) {
+    if (ann.type !== "center-dist") continue;
+    if (ann.circleAId === circleId) { ann.a.x = cx; ann.a.y = cy; }
+    if (ann.circleBId === circleId) { ann.b.x = cx; ann.b.y = cy; }
+  }
+}
+
 // ── Nudge selected annotations (arrow key movement) ───────────────────────────
 export function nudgeSelected(dx, dy) {
   if (state.selected.size === 0) return false;
@@ -833,6 +848,7 @@ function _nudgeAnn(ann, dx, dy) {
     ann.p3.x += dx; ann.p3.y += dy;
   } else if (ann.type === 'circle' || ann.type === 'arc-fit') {
     ann.cx += dx; ann.cy += dy;
+    if (ann.type === 'circle') _syncCenterDist(ann.id, ann.cx, ann.cy);
   } else if (ann.type === 'calibration') {
     if (ann.x1 !== undefined) { ann.x1 += dx; ann.y1 += dy; ann.x2 += dx; ann.y2 += dy; }
     else { ann.cx += dx; ann.cy += dy; }
