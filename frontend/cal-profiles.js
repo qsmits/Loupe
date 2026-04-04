@@ -1,9 +1,11 @@
 // ── Calibration profiles ──────────────────────────────────────────────────────
 // Stores named calibration presets in localStorage so users can switch between
 // objectives/magnifications without re-calibrating each session.
+// Each profile captures both scale (pixelsPerMm) and lens distortion (lensK1).
 import { state } from './state.js';
 import { updateCalibrationButton } from './sidebar.js';
 import { redraw } from './render.js';
+import { applyLensCorrection } from './lens-cal.js';
 
 const STORAGE_KEY = "loupe_cal_profiles";
 
@@ -25,20 +27,29 @@ function _renderList(panel, profiles) {
   }
   list.innerHTML = profiles.map((p, i) => {
     const umPerPx = (1000 / p.pixelsPerMm).toFixed(2);
+    const lensTag = p.lensK1 ? ` <span class="cal-profile-lens" title="k₁ = ${p.lensK1.toExponential(2)}">lens ✓</span>` : "";
     return `<div class="cal-profile-item">
       <span class="cal-profile-name" title="${p.name}">${p.name}</span>
-      <span class="cal-profile-scale">${umPerPx} µm/px</span>
+      <span class="cal-profile-scale">${umPerPx} µm/px${lensTag}</span>
       <button class="cal-profile-load" data-index="${i}">Load</button>
       <button class="cal-profile-del" data-index="${i}" title="Delete">✕</button>
     </div>`;
   }).join("");
 
   list.querySelectorAll(".cal-profile-load").forEach(btn => {
-    btn.addEventListener("click", () => {
+    btn.addEventListener("click", async () => {
       const p = profiles[parseInt(btn.dataset.index)];
       state.calibration = { pixelsPerMm: p.pixelsPerMm, displayUnit: p.displayUnit };
       updateCalibrationButton();
       redraw();
+      if (p.lensK1) {
+        if (!state.frozenBackground) {
+          // Store k1 for later — lens warp will be applied when image is frozen
+          state.lensK1 = p.lensK1;
+        } else {
+          await applyLensCorrection(p.lensK1);
+        }
+      }
     });
   });
   list.querySelectorAll(".cal-profile-del").forEach(btn => {
@@ -71,6 +82,7 @@ export function initCalProfiles() {
       name,
       pixelsPerMm: state.calibration.pixelsPerMm,
       displayUnit: state.calibration.displayUnit || "mm",
+      lensK1: state.lensK1 || 0,
     });
     _saveProfiles(profiles);
     nameInput.value = "";

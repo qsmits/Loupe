@@ -110,6 +110,19 @@ export function drawLensCalOverlay() {
 // ── Dialog logic ──────────────────────────────────────────────────────────────
 export function openLensCalDialog() { _openDialog(); }
 
+/** Apply k1 directly to the current frozen frame (used by cal-profiles). */
+export async function applyLensCorrection(k1) {
+  if (!state.frozenBackground || k1 === 0) return;
+  const corrected = _applyK1(state.frozenBackground, k1);
+  state.frozenBackground = corrected;
+  state.lensK1 = k1;
+  cacheImageData(corrected, imageWidth, imageHeight);
+  redraw();
+  showStatus(`Lens correction applied (k₁ = ${k1.toExponential(2)}) — syncing to server…`);
+  await uploadCorrectedFrame(corrected);
+  showStatus(`Lens correction applied (k₁ = ${k1.toExponential(2)})`);
+}
+
 function _openDialog() {
   if (!state.frozenBackground) {
     showStatus("Freeze an image first");

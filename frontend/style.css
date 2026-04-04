@@ -223,6 +223,7 @@ input[type=range] { cursor: pointer; accent-color: var(--accent); }
 }
 .cal-profile-name { flex: 1; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cal-profile-scale { font-size: 11px; color: #888; white-space: nowrap; }
+.cal-profile-lens { color: var(--accent); font-size: 10px; margin-left: 4px; }
 .cal-profile-load, .cal-profile-del {
   padding: 2px 7px;
   font-size: 11px;
