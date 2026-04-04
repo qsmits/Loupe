@@ -195,9 +195,10 @@ export async function handleToolClick(rawPt, e = {}) {
               const sy = canvas.height / circle.frameHeight;
               cx = circle.x * sx; cy = circle.y * sy; r = circle.radius * sx;
             }
-            applyCalibration({ type: "calibration", cx, cy, r, knownValue: parsed.value, unit: parsed.unit });
-            // Promote the detected circle to a measurement so it isn't left as a raw detection underneath the calibration line.
+            // Elevate before calibration so the calibration annotation ends up last
+            // in the array and renders on top of the circle measurement.
             if (circle.type !== "circle") elevateAnnotation(circle.id);
+            applyCalibration({ type: "calibration", cx, cy, r, knownValue: parsed.value, unit: parsed.unit });
             setTool("select");
           }
         }
