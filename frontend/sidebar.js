@@ -525,14 +525,26 @@ export async function loadCameraList() {
       ? browserDevices.map(d => ({ id: `browser-cam-${d.deviceId}`, label: `Browser: ${d.label}` }))
       : [{ id: "browser-cam", label: "Browser Camera (Webcam)" }];
     const allCameras = [...cameras, ...browserEntries];
+    // When no hardware cameras are available and browser cam isn't active yet,
+    // a placeholder forces the user to make a real selection — without it the
+    // browser-cam entry is pre-selected and change never fires.
+    const needsPlaceholder = cameras.length === 0 && !state.browserCamera?.active;
     for (const target of [sel, selTop]) {
       if (!target) continue;
       target.innerHTML = "";
+      if (needsPlaceholder) {
+        const ph = document.createElement("option");
+        ph.value = "";
+        ph.disabled = true;
+        ph.selected = true;
+        ph.textContent = "Select camera…";
+        target.appendChild(ph);
+      }
       for (const c of allCameras) {
         const opt = document.createElement("option");
         opt.value = c.id;
         opt.textContent = c.label;
-        if (c.id === currentId) opt.selected = true;
+        if (!needsPlaceholder && c.id === currentId) opt.selected = true;
         target.appendChild(opt);
       }
       target.disabled = false;
