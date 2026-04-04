@@ -195,10 +195,16 @@ export async function handleToolClick(rawPt, e = {}) {
               const sy = canvas.height / circle.frameHeight;
               cx = circle.x * sx; cy = circle.y * sy; r = circle.radius * sx;
             }
-            // Elevate before calibration so the calibration annotation ends up last
-            // in the array and renders on top of the circle measurement.
-            if (circle.type !== "circle") elevateAnnotation(circle.id);
-            applyCalibration({ type: "calibration", cx, cy, r, knownValue: parsed.value, unit: parsed.unit });
+            if (circle.type !== "circle") {
+              // Elevate the detection first, then calibrate without adding the
+              // redundant diameter-line annotation — the circle measurement is
+              // already the visual record of what was calibrated on.
+              elevateAnnotation(circle.id);
+              applyCalibration({ type: "calibration", cx, cy, r, knownValue: parsed.value, unit: parsed.unit });
+              state.annotations = state.annotations.filter(a => a.type !== "calibration");
+            } else {
+              applyCalibration({ type: "calibration", cx, cy, r, knownValue: parsed.value, unit: parsed.unit });
+            }
             setTool("select");
           }
         }
