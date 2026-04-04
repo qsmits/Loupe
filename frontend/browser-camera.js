@@ -2,6 +2,7 @@ import { state } from './state.js';
 import { apiFetch } from './api.js';
 import { setImageSize } from './viewport.js';
 import { img, showStatus, resizeCanvas } from './render.js';
+import { updateDropOverlay } from './sidebar.js';
 
 const videoEl = document.getElementById("browser-cam-video");
 
@@ -49,6 +50,7 @@ export async function startBrowserCamera(deviceId = null) {
     resizeCanvas();
     const label = stream.getVideoTracks()[0]?.label || "Browser camera";
     showStatus(`${label} active`);
+    updateDropOverlay();
     // Enumerate after permission granted so labels are available
     await _enumerateAndRefresh();
   } catch (err) {
@@ -63,6 +65,7 @@ export function stopBrowserCamera() {
   videoEl.hidden = true;
   videoEl.srcObject = null;
   img.style.display = "";
+  updateDropOverlay();
 }
 
 export async function captureBrowserFrame() {

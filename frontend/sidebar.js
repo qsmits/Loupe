@@ -468,10 +468,10 @@ export async function loadCameraInfo() {
   } catch { /* camera unavailable */ }
 }
 
-function updateDropOverlay() {
+export function updateDropOverlay() {
   const overlay = document.getElementById("drop-overlay");
   if (!overlay) return;
-  overlay.classList.toggle("visible", state._noCamera && !state.frozen);
+  overlay.classList.toggle("visible", state._noCamera && !state.frozen && !state.browserCamera?.active);
 }
 
 export function updateFreezeUI() {
