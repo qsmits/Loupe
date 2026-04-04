@@ -523,7 +523,8 @@ export function hitTestHandle(ann, pt) {
 }
 
 export function getHandles(ann) {
-  if (ann.type === "distance" || ann.type === "center-dist" ||
+  if (ann.type === "center-dist") return {};  // linked — no movable handles
+  if (ann.type === "distance" ||
       ann.type === "perp-dist" || ann.type === "para-dist" ||
       ann.type === "parallelism") return { a: ann.a, b: ann.b };
   if (ann.type === "angle")    return { p1: ann.p1, vertex: ann.vertex, p3: ann.p3 };
@@ -612,7 +613,8 @@ export function handleDrag(pt) {
   state.dragState.startX = pt.x;
   state.dragState.startY = pt.y;
 
-  if (ann.type === "distance" || ann.type === "center-dist" ||
+  if (ann.type === "center-dist") { /* linked to circles — drag ignored */ }
+  else if (ann.type === "distance" ||
       ann.type === "perp-dist" || ann.type === "para-dist" ||
       ann.type === "parallelism") {
     if (handleKey === "a")    { ann.a.x += dx; ann.a.y += dy; }
@@ -839,7 +841,8 @@ export function nudgeSelected(dx, dy) {
 }
 
 function _nudgeAnn(ann, dx, dy) {
-  if (['distance', 'center-dist', 'perp-dist', 'para-dist', 'parallelism'].includes(ann.type)) {
+  if (ann.type === 'center-dist') { /* linked — nudge the circles instead */ }
+  else if (['distance', 'perp-dist', 'para-dist', 'parallelism'].includes(ann.type)) {
     ann.a.x += dx; ann.a.y += dy;
     ann.b.x += dx; ann.b.y += dy;
   } else if (ann.type === 'angle') {
