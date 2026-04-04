@@ -146,9 +146,11 @@ def create_app(camera: BaseCamera | None = None, no_camera: bool = False) -> Fas
                     "script-src 'self'; "
                     "style-src 'self' 'unsafe-inline'; "
                     "img-src 'self' data: blob:; "
+                    "media-src 'self' blob:; "
                     "connect-src 'self'; "
                     "frame-ancestors 'none'"
                 )
+                response.headers["Permissions-Policy"] = "camera=self"
                 response.headers["X-Content-Type-Options"] = "nosniff"
                 response.headers["X-Frame-Options"] = "DENY"
                 return response

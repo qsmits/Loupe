@@ -37,8 +37,11 @@ export async function startBrowserCamera(deviceId = null) {
     const activeDeviceId = stream.getVideoTracks()[0]?.getSettings().deviceId ?? deviceId;
     state.browserCamera = { active: true, stream, deviceId: activeDeviceId };
     videoEl.srcObject = stream;
-    await new Promise(resolve => { videoEl.onloadedmetadata = resolve; });
-    videoEl.play();
+    await new Promise(resolve => {
+      if (videoEl.readyState >= 1) { resolve(); return; }
+      videoEl.addEventListener("loadedmetadata", resolve, { once: true });
+    });
+    await videoEl.play();
     videoEl.hidden = false;
     img.style.display = "none";
     document.body.classList.remove("no-camera");
