@@ -22,6 +22,7 @@ import { initTiltCal, openTiltCalDialog, hasPerspectiveCorrection, undoPerspecti
 import { initCalProfiles, openCalProfiles } from './cal-profiles.js';
 import { isBrowserCameraActive, startBrowserCamera, stopBrowserCamera } from './browser-camera.js';
 import { finalizeArcFit } from './tools.js';
+import { initZstack } from './zstack.js';
 
 // ─── Dropdown helpers ─────��──────────────────────────────────────────────────
 function closeAllDropdowns() {
@@ -1089,6 +1090,7 @@ initDetectHandlers();
 initLensCal();
 initTiltCal();
 initCalProfiles();
+initZstack();
 document.getElementById("btn-arc-fit-arc")?.addEventListener("click", () => finalizeArcFit(false));
 document.getElementById("btn-arc-fit-circle")?.addEventListener("click", () => finalizeArcFit(true));
 

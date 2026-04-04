@@ -8,6 +8,7 @@ from .api_camera import make_camera_router
 from .api_detection import make_detection_router
 from .api_inspection import make_inspection_router, router as inspection_router
 from .api_runs import make_runs_router
+from .api_zstack import make_zstack_router
 from .run_store import RunStore
 
 
@@ -76,6 +77,7 @@ def make_router(camera: BaseCamera, frame_store: SessionFrameStore, startup_warn
     composed.include_router(make_camera_router(camera, frame_store, startup_warning))
     composed.include_router(make_detection_router(frame_store))
     composed.include_router(make_inspection_router(frame_store))
+    composed.include_router(make_zstack_router(camera))
     if run_store:
         composed.include_router(make_runs_router(run_store))
     return composed
