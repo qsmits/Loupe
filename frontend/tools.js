@@ -75,7 +75,12 @@ function _updateStripGroups(name) {
     setupBtn.classList.toggle("active", name === "calibrate");
   }
   if (optsBar) {
-    optsBar.hidden = name !== "arc-measure";
+    const showOpts = name === "arc-measure" || name === "circle";
+    optsBar.hidden = !showOpts;
+    const arcOpts = document.getElementById("tool-opts-arc-measure");
+    const circleOpts = document.getElementById("tool-opts-circle");
+    if (arcOpts) arcOpts.hidden = name !== "arc-measure";
+    if (circleOpts) circleOpts.hidden = name !== "circle";
   }
 }
 
@@ -243,16 +248,27 @@ export async function handleToolClick(rawPt, e = {}) {
   }
 
   if (tool === "circle") {
-    state.pendingPoints.push(pt);
-    if (state.pendingPoints.length === 3) {
-      const [p1, p2, p3] = state.pendingPoints;
-      try {
-        const { cx, cy, r } = fitCircle(p1, p2, p3);
-        addAnnotation({ type: "circle", cx, cy, r });
-      } catch {
-        alert("Those three points are collinear — can't fit a circle.");
+    if (state.circleMode === "center-edge") {
+      state.pendingPoints.push(pt);
+      if (state.pendingPoints.length === 2) {
+        const [center, edge] = state.pendingPoints;
+        const r = Math.hypot(edge.x - center.x, edge.y - center.y);
+        addAnnotation({ type: "circle", cx: center.x, cy: center.y, r,
+          p1: center, p2: edge, p3: edge });
+        state.pendingPoints = [];
       }
-      state.pendingPoints = [];
+    } else {
+      state.pendingPoints.push(pt);
+      if (state.pendingPoints.length === 3) {
+        const [p1, p2, p3] = state.pendingPoints;
+        try {
+          const { cx, cy, r } = fitCircle(p1, p2, p3);
+          addAnnotation({ type: "circle", cx, cy, r });
+        } catch {
+          alert("Those three points are collinear — can't fit a circle.");
+        }
+        state.pendingPoints = [];
+      }
     }
     updateToolStatus();
     redraw();
@@ -788,14 +804,17 @@ export function updateToolStatus() {
   const steps = {
     distance:      ['Click point 2'],
     angle:         ['Click the vertex', 'Click point 3 (other arm)'],
-    circle:        ['Click point 2 of 3', 'Click point 3 of 3'],
+    circle:        state.circleMode === 'center-edge'
+      ? ['Click edge point']
+      : ['Click point 2 of 3', 'Click point 3 of 3'],
     calibrate:     ['Click point 2'],
     'arc-measure': state.arcMeasureMode === 'ends-first'
       ? ['Click second end', 'Click arc midpoint']
       : ['Click arc midpoint', 'Click arc end'],
   };
   const names = {
-    distance: 'Distance', angle: 'Angle', circle: 'Circle (3-point)',
+    distance: 'Distance', angle: 'Angle',
+    circle: state.circleMode === 'center-edge' ? 'Circle (Center+Edge)' : 'Circle (3-point)',
     calibrate: 'Calibrate', 'arc-measure': 'Arc Measure',
   };
   if (steps[tool]) {

@@ -39,26 +39,39 @@ _ARC_PARTIAL_NMS_CENTER_PX = 20
 _ARC_PARTIAL_NMS_R_RATIO   = 0.20
 
 
-def preprocess(frame: np.ndarray, smoothing: int = 1) -> np.ndarray:
+def preprocess(frame: np.ndarray, smoothing: int = 1, surface_mode: str = "edm") -> np.ndarray:
     """
     Convert to grayscale, boost local contrast with CLAHE, then apply
     bilateral filter(s) to smooth surface texture while preserving sharp edges.
-    smoothing: 1=standard (machined parts), 2-3=aggressive (3D prints, textured surfaces).
+
+    surface_mode:
+      "edm"   — Wire EDM / default: standard CLAHE + bilateral.
+      "lathe" — Turned/lathe parts: directional blur suppresses concentric
+                tooling marks (horizontal striations) before CLAHE.
+      "print" — 3D-printed / textured surfaces: one extra bilateral pass for
+                heavier smoothing on rough surface texture.
+    smoothing: 1=standard, 2-3=aggressive (additive with surface_mode boost).
     """
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    if surface_mode == "lathe":
+        # Anisotropic blur: tall kernel suppresses horizontal concentric marks
+        # while preserving vertical/diagonal edges from turning faces.
+        gray = cv2.GaussianBlur(gray, (3, 15), 0)
     clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(16, 16))
     gray = clahe.apply(gray)
-    for _ in range(max(1, smoothing)):
+    effective_smoothing = smoothing + (1 if surface_mode == "print" else 0)
+    for _ in range(max(1, effective_smoothing)):
         gray = cv2.bilateralFilter(gray, d=9, sigmaColor=75, sigmaSpace=75)
     return gray
 
 
-def detect_edges(frame: np.ndarray, threshold1: int, threshold2: int) -> bytes:
+def detect_edges(frame: np.ndarray, threshold1: int, threshold2: int,
+                 surface_mode: str = "edm") -> bytes:
     """
     Run Canny edge detection on frame.
     Returns a PNG image (RGBA, edges white on transparent background) as bytes.
     """
-    gray = preprocess(frame)
+    gray = preprocess(frame, surface_mode=surface_mode)
     edges = cv2.Canny(gray, threshold1, threshold2)
 
     # Build RGBA image: edges are white, background transparent
@@ -118,6 +131,7 @@ def detect_circles(
     min_radius: int = 8,
     max_radius: int = 500,
     subpixel: str = "none",
+    surface_mode: str = "edm",
 ) -> list[dict]:
     """
     Contour-based circle detection.
@@ -128,7 +142,7 @@ def detect_circles(
     The legacy Hough parameters (dp, min_dist, param1, param2) are accepted for API
     compatibility but are not used.
     """
-    gray = preprocess(frame)
+    gray = preprocess(frame, surface_mode=surface_mode)
     k_small = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (_CLOSE_KERNEL_SMALL,) * 2)
     k_large = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (_CLOSE_KERNEL_LARGE,) * 2)
 
@@ -215,13 +229,14 @@ def detect_lines(
     hough_threshold: int,
     min_length: int,
     max_gap: int,
+    surface_mode: str = "edm",
 ) -> list[dict]:
     """
     Detect line segments using Canny + HoughLinesP.
     Returns list of {"x1", "y1", "x2", "y2", "length"} dicts.
     'length' is the Euclidean length of the segment in pixels.
     """
-    gray = preprocess(frame)
+    gray = preprocess(frame, surface_mode=surface_mode)
     edges = cv2.Canny(gray, threshold1, threshold2)
     lines = cv2.HoughLinesP(
         edges,
@@ -352,6 +367,7 @@ def detect_lines_contour(
     min_edge_density: float = _CONTOUR_MIN_EDGE_DENSITY,
     smoothing: int = 1,
     subpixel: str = "none",
+    surface_mode: str = "edm",
 ) -> list[dict]:
     """
     Detect straight segments via Douglas-Peucker contour approximation.
@@ -359,7 +375,7 @@ def detect_lines_contour(
     Returns list of {"x1", "y1", "x2", "y2", "length"} dicts.
     """
     import math
-    gray = preprocess(frame, smoothing=smoothing)
+    gray = preprocess(frame, smoothing=smoothing, surface_mode=surface_mode)
     edges = cv2.Canny(gray, threshold1, threshold2)
     if close_kernel > 1:
         k = cv2.getStructuringElement(cv2.MORPH_RECT, (close_kernel, close_kernel))
@@ -473,6 +489,7 @@ def detect_partial_arcs(
     line_ratio: float = _ARC_PARTIAL_LINE_RATIO,
     smoothing: int = 1,
     subpixel: str = "none",
+    surface_mode: str = "edm",
 ) -> list[dict]:
     """
     Detect partial arcs (arc segments subtending >= min_span_deg degrees).
@@ -480,7 +497,7 @@ def detect_partial_arcs(
     straight edges misidentified as large-radius arcs.
     Returns list of {"cx", "cy", "r", "start_deg", "end_deg"} dicts (image pixels / degrees).
     """
-    gray = preprocess(frame, smoothing=smoothing)
+    gray = preprocess(frame, smoothing=smoothing, surface_mode=surface_mode)
     edges = cv2.Canny(gray, threshold1, threshold2)
     k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (_CLOSE_KERNEL_SMALL,) * 2)
     edges = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, k)
@@ -551,12 +568,12 @@ def detect_partial_arcs(
             for _, cx, cy, r, s, e in kept]
 
 
-def preprocessed_view(frame: np.ndarray) -> bytes:
+def preprocessed_view(frame: np.ndarray, surface_mode: str = "edm") -> bytes:
     """
     Return the CLAHE+bilateral preprocessed grayscale image as JPEG bytes.
     Useful for diagnosing why detection succeeds or fails on a given frame.
     """
-    gray = preprocess(frame)
+    gray = preprocess(frame, surface_mode=surface_mode)
     ok, buf = cv2.imencode(".jpg", gray, [cv2.IMWRITE_JPEG_QUALITY, 90])
     if not ok:
         raise RuntimeError("Failed to encode preprocessed image")

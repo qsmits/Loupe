@@ -12,6 +12,7 @@ import { state } from './state.js';
 import { canvas, showStatus, redraw } from './render.js';
 import { imageWidth, imageHeight } from './viewport.js';
 import { cacheImageData } from './subpixel-js.js';
+import { uploadCorrectedFrame } from './api.js';
 
 // ── Module state ──────────────────────────────────────────────────────────────
 let _active   = false;
@@ -142,8 +143,10 @@ async function _applyCorrection() {
   _active = false;
   _points = [];
   document.getElementById("tilt-cal-dialog").hidden = true;
-  if (applyBtn) { applyBtn.disabled = false; applyBtn.textContent = "Apply"; }
   redraw();
+  showStatus("Perspective correction applied — syncing to server…");
+  await uploadCorrectedFrame(corrected);
+  if (applyBtn) { applyBtn.disabled = false; applyBtn.textContent = "Apply"; }
   showStatus("Perspective correction applied");
 }
 

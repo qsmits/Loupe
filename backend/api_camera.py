@@ -129,6 +129,21 @@ def make_camera_router(camera: BaseCamera, frame_store: SessionFrameStore, start
         h, w = frame.shape[:2]
         return {"width": w, "height": h}
 
+    @router.post("/update-frame")
+    async def update_frame(session_id: str = Depends(get_session_id_dep), file: UploadFile = File(...)):
+        """Replace the stored frame with a browser-corrected image (lens/perspective correction)."""
+        if frame_store.get(session_id) is None:
+            raise HTTPException(status_code=400, detail="No frame stored. Call /freeze first.")
+        data = await file.read(MAX_UPLOAD_BYTES + 1)
+        if len(data) > MAX_UPLOAD_BYTES:
+            raise HTTPException(status_code=413, detail="Image too large (max 20 MB)")
+        arr = np.frombuffer(data, np.uint8)
+        frame = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+        if frame is None:
+            raise HTTPException(status_code=400, detail="Cannot decode image")
+        frame_store.store(session_id, frame)
+        return {"ok": True}
+
     @router.get("/snapshots")
     async def list_snapshots():
         if not SNAPSHOTS_DIR.exists():

@@ -57,6 +57,8 @@ export const state = {
   _subpixelSnapTarget: null, // { x, y } — live preview of where sub-pixel snap would place a point
   lensK1: 0,                 // radial distortion coefficient (applied in-place to frozenBackground)
   arcMeasureMode: "sequential", // "sequential" | "ends-first"
+  circleMode: "3-point",       // "3-point" | "center-edge"
+  surfaceMode: "edm",          // "edm" | "lathe" | "print"
   _noCamera: false,         // was let _noCamera (line 36)
   _dirty: false,
   _savedManually: true,
@@ -91,7 +93,7 @@ export const TOOL_STATUS = {
   "calibrate":      "Click — place two points or select a circle",
   "distance":       "Click — place point 1",
   "angle":          "Click — place point 1",
-  "circle":         "Click — place point 1",
+  "circle":         "Click — place point 1 (3-point mode)",
   "arc-fit":        "Click — place points (double-click to confirm)",
   "center-dist":    "Click — select a circle",
   "detect":         "Click — detect features",

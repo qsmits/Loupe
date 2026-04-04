@@ -16,6 +16,7 @@ import { state } from './state.js';
 import { imageWidth, imageHeight } from './viewport.js';
 import { ctx, showStatus, redraw, pw, drawHandle } from './render.js';
 import { cacheImageData } from './subpixel-js.js';
+import { uploadCorrectedFrame } from './api.js';
 
 // ── Module-private state ──────────────────────────────────────────────────────
 let _active    = false;
@@ -158,6 +159,8 @@ async function _confirmCal() {
   if (confirmBtn) { confirmBtn.textContent = "Apply"; }
 
   redraw();
+  showStatus(`Lens correction applied (k₁ = ${k1.toExponential(2)}) — syncing to server…`);
+  await uploadCorrectedFrame(corrected);
   showStatus(`Lens correction applied (k₁ = ${k1.toExponential(2)})`);
 }
 

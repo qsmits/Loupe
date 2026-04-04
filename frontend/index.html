@@ -36,6 +36,14 @@
       <button class="menu-btn" id="btn-menu-detect">Detect ▾</button>
       <div class="dropdown detect-panel" id="dropdown-detect" hidden>
         <div class="detect-section">
+          <div class="detect-section-label">Surface Preset</div>
+          <div class="detect-preset-group">
+            <button class="detect-preset-btn active" id="preset-edm" title="Wire EDM, milled parts: standard preprocessing">Wire EDM</button>
+            <button class="detect-preset-btn" id="preset-lathe" title="Turned/lathe parts: directional filter suppresses concentric tooling marks">Lathe</button>
+            <button class="detect-preset-btn" id="preset-print" title="3D-printed / textured surfaces: extra smoothing pass">3D Print</button>
+          </div>
+        </div>
+        <div class="detect-section">
           <div class="detect-section-label">Edge Detection</div>
           <div class="detect-row">
             <label class="detect-label">Low</label>
@@ -327,6 +335,7 @@
               <button class="strip-btn flyout-item" data-tool="calibrate">Calibrate <span class="flyout-key">C</span></button>
               <button class="strip-btn flyout-item" id="btn-lens-cal-open">Lens Cal</button>
               <button class="strip-btn flyout-item" id="btn-tilt-cal-open">Perspective Correct</button>
+              <button class="strip-btn flyout-item" id="btn-cal-profiles-open">Cal Profiles…</button>
               <div id="cal-status-line" class="flyout-cal-status"></div>
             </div>
           </div>
@@ -339,10 +348,15 @@
         <!-- Tool options row: shown for tools with extra options -->
         <div id="tool-options-bar" hidden>
           <div class="tool-opts-divider"></div>
-          <div id="tool-opts-arc-measure">
+          <div id="tool-opts-arc-measure" hidden>
             <span class="tool-opts-label">Point order:</span>
             <button class="strip-btn tool-opts-btn active" id="btn-arc-order-sequential">Sequential</button>
             <button class="strip-btn tool-opts-btn" id="btn-arc-order-ends-first">Ends first</button>
+          </div>
+          <div id="tool-opts-circle" hidden>
+            <span class="tool-opts-label">Mode:</span>
+            <button class="strip-btn tool-opts-btn active" id="btn-circle-mode-3pt">3-Point</button>
+            <button class="strip-btn tool-opts-btn" id="btn-circle-mode-center-edge">Center+Edge</button>
           </div>
         </div>
       </div>
@@ -455,6 +469,20 @@
     </div>
   </div>
 
+  <!-- Calibration profiles panel (floats in corner) -->
+  <div id="cal-profiles-panel" class="lens-cal-panel" hidden>
+    <div class="lens-cal-panel-header">
+      <span class="lens-cal-panel-title">Calibration Profiles</span>
+      <button id="btn-cal-profiles-close" class="dialog-close" title="Close">✕</button>
+    </div>
+    <p class="lens-cal-intro">Save and recall calibration settings per objective or magnification level.</p>
+    <div class="cal-profiles-save-row">
+      <input type="text" id="cal-profile-name" class="cal-profile-name-input" placeholder="Name (e.g. 10×)" maxlength="40" />
+      <button id="btn-cal-profiles-save" class="settings-save-btn">Save current</button>
+    </div>
+    <div id="cal-profiles-list" class="cal-profiles-list"></div>
+  </div>
+
   <!-- Settings dialog -->
   <div id="settings-dialog" class="dialog-overlay" hidden>
     <div class="dialog-content">
@@ -551,6 +579,7 @@
           <div class="help-nav-section">Measurement Tools</div>
           <button class="help-nav-item top-level" data-page="tool-calibrate">Calibrate</button>
           <button class="help-nav-item top-level" data-page="lens-cal">Lens Calibration</button>
+          <button class="help-nav-item top-level" data-page="perspective-cal">Perspective Correction</button>
           <button class="help-nav-item top-level" data-page="tool-distance">Distance</button>
           <button class="help-nav-item top-level" data-page="tool-angle">Angle</button>
           <button class="help-nav-item top-level" data-page="tool-circle">Circle</button>
@@ -594,7 +623,7 @@
             <div class="help-section-label">Basic workflow</div>
             <div class="help-step"><span class="help-step-num">1</span><span>Freeze a frame using the <strong>❄ Live</strong> button, or drag and drop an image onto the viewer.</span></div>
             <div class="help-step"><span class="help-step-num">2</span><span>Calibrate the image: press <kbd>C</kbd>, click two points of known distance, enter the value in mm.</span></div>
-            <div class="help-step"><span class="help-step-num">3</span><span>Select a measurement tool from the toolbar or press its key. Click points on the image to place measurements.</span></div>
+            <div class="help-step"><span class="help-step-num">3</span><span>Select a measurement tool from the <strong>Measure ▾</strong> flyout in the toolbar, or press its shortcut key. Click points on the image to place measurements. Some tools show extra options (e.g. point order) in the options row above the flyout.</span></div>
             <div class="help-step"><span class="help-step-num">4</span><span>Export results as CSV, PDF, or annotated PNG from the Overlay menu.</span></div>
             <div class="help-section-label">Tips</div>
             <div class="help-tip">Hover over the image with a measurement tool active — the cursor snaps to the nearest detected edge automatically. Hold <kbd>Alt</kbd> to bypass snapping and place a point exactly where you click.</div>
@@ -622,7 +651,7 @@
             <p class="help-p">Regular lenses project through a curved optical path. Points near the image edge appear shifted inward (barrel) or outward (pincushion) relative to their true position. A pixel calibration at the centre will under- or over-measure features near the edges. Telecentric lenses eliminate this by design; this tool compensates for it in software.</p>
             <div class="help-section-label">How to calibrate</div>
             <div class="help-step"><span class="help-step-num">1</span><span>Freeze an image of something with a <strong>repeating equal dimension</strong> — evenly-spaced holes, a grid, a ruler, or any feature you can measure multiple times.</span></div>
-            <div class="help-step"><span class="help-step-num">2</span><span>Click <strong>Lens Cal</strong> in the sidebar to open the calibration dialog.</span></div>
+            <div class="help-step"><span class="help-step-num">2</span><span>Open the <strong>Setup ▾</strong> flyout in the toolbar and click <strong>Lens Cal</strong>.</span></div>
             <div class="help-step"><span class="help-step-num">3</span><span>Click two points to measure the dimension at one position. Repeat at 3–8 positions spread across the image — include measurements near the centre, the middle, and the edges.</span></div>
             <div class="help-step"><span class="help-step-num">4</span><span>The dialog shows the <strong>spread</strong> (max deviation from mean) before and after correction, and a dot plot of each measurement vs its radial distance from centre. Grey = raw, green = corrected. When the green dots cluster near the horizontal axis, the fit is good.</span></div>
             <div class="help-step"><span class="help-step-num">5</span><span>Press <strong>Apply</strong>. The correction is applied directly to the frozen image — all subsequent measurements are automatically corrected.</span></div>
@@ -632,6 +661,25 @@
             <div class="help-tip">Apply lens calibration <em>before</em> placing measurement annotations for best accuracy. Re-calibrate if you change the lens, zoom level, or camera position significantly.</div>
             <div class="help-section-label">Technical note</div>
             <p class="help-p">The model used is first-order radial distortion: a point at distance r from the image centre is corrected by dividing by (1 + k₁r²). k₁ is found by a golden-section search that minimises the variance of corrected lengths across all your samples. The correction is applied by remapping each output pixel to its source in the original distorted image using bilinear interpolation.</p>
+          </div>
+
+          <div class="help-page" id="help-page-perspective-cal" hidden>
+            <h2 class="help-page-title">Perspective Correction</h2>
+            <p class="help-page-sub">Corrects tilt and perspective distortion when the camera is not perfectly perpendicular to the part — common when photographing with a phone or handheld camera.</p>
+            <div class="help-section-label">When to use</div>
+            <p class="help-p">If you photograph a flat part at an angle (even a slight tilt), parallel edges appear to converge, circles become ellipses, and measurements are systematically skewed. Perspective correction remaps the image as if taken from directly above, restoring accurate geometry before you calibrate and measure.</p>
+            <div class="help-section-label">How to correct</div>
+            <div class="help-step"><span class="help-step-num">1</span><span>Freeze the image first.</span></div>
+            <div class="help-step"><span class="help-step-num">2</span><span>Open the <strong>Setup ▾</strong> flyout in the toolbar and click <strong>Perspective Correct</strong>.</span></div>
+            <div class="help-step"><span class="help-step-num">3</span><span>Click the four corners of a known rectangular feature — a reference square, graph paper grid cell, or part edge — in order: <strong>TL → TR → BR → BL</strong> (top-left first, then clockwise).</span></div>
+            <div class="help-step"><span class="help-step-num">4</span><span>Enter the <strong>width</strong> and <strong>height</strong> of the rectangle in mm in the dialog.</span></div>
+            <div class="help-step"><span class="help-step-num">5</span><span>Click <strong>Apply</strong>. The frozen image is remapped and replaces the original.</span></div>
+            <div class="help-section-label">Tips</div>
+            <div class="help-tip">Use graph paper or a calibration grid for best accuracy — a known square gives equal width and height, so one value suffices.</div>
+            <div class="help-tip">Apply perspective correction <em>before</em> lens calibration. Both corrections modify the frozen image in-place; re-applying one after the other is fine.</div>
+            <div class="help-tip">The corner markers are numbered on-canvas (1–4 with TL/TR/BR/BL labels). A dashed quadrilateral connects them so you can verify the shape before applying.</div>
+            <div class="help-section-label">Technical note</div>
+            <p class="help-p">A full projective homography (DLT, 8 DOF) is computed from the four point correspondences. Each output pixel is backward-mapped to the source image using bilinear interpolation, preserving sharpness. The destination rectangle is scaled to match the perimeter of the source quad, so the output resolution stays close to the input.</p>
           </div>
 
           <div class="help-page" id="help-page-tool-distance" hidden>
@@ -653,10 +701,13 @@
 
           <div class="help-page" id="help-page-tool-circle" hidden>
             <h2 class="help-page-title">Circle <span class="help-badge">O</span></h2>
-            <p class="help-page-sub">Exact circumscribed circle through three points on the circumference.</p>
+            <p class="help-page-sub">Exact circumscribed circle through three points on the circumference, or a center+edge two-click circle.</p>
+            <div class="help-section-label">3-Point mode (default)</div>
             <div class="help-step"><span class="help-step-num">1</span><span>Press <kbd>O</kbd> and click three points on the edge of the circle.</span></div>
             <p class="help-p">Outputs: center coordinates, diameter, and radius. The three points define a unique circle using perpendicular bisector intersection.</p>
             <div class="help-tip">For the most accurate result, space the three points as evenly as possible around the arc rather than clustering them together.</div>
+            <div class="help-section-label">Center+Edge mode</div>
+            <p class="help-p">Switch to <strong>Center+Edge</strong> in the tool options bar above the toolbar. Click the center first, then click any point on the circumference. Useful when the center is known (e.g. a punch mark, a detected circle center, or a known coordinate).</p>
           </div>
 
           <div class="help-page" id="help-page-tool-arc-fit" hidden>
@@ -665,14 +716,20 @@
             <div class="help-step"><span class="help-step-num">1</span><span>Press <kbd>F</kbd> and click at least 3 points along the arc or circle edge.</span></div>
             <div class="help-step"><span class="help-step-num">2</span><span>Double-click or press <kbd>Enter</kbd> to confirm.</span></div>
             <p class="help-p">Uses an algebraic (least-squares) fit minimising distance in the implicit circle space. The more points placed, the more stable the result — especially useful on partial arcs with surface texture or noise.</p>
+            <div class="help-section-label">Output</div>
+            <p class="help-p">A chooser appears above the toolbar after confirming. Choose <strong>Arc segment</strong> to show just the fitted portion (label shows <em>R radius</em>), or <strong>Full circle</strong> to display the complete circle (label shows <em>⌀ diameter</em>). The choice can be changed at any time via the right-click context menu.</p>
           </div>
 
           <div class="help-page" id="help-page-tool-arc-measure" hidden>
             <h2 class="help-page-title">Arc Measure</h2>
             <p class="help-page-sub">Radius, chord length, and angular span of an arc defined by three points.</p>
+            <div class="help-section-label">Sequential mode (default)</div>
             <div class="help-step"><span class="help-step-num">1</span><span>Click the start point of the arc.</span></div>
             <div class="help-step"><span class="help-step-num">2</span><span>Click a midpoint on the arc.</span></div>
             <div class="help-step"><span class="help-step-num">3</span><span>Click the end point of the arc.</span></div>
+            <div class="help-section-label">Ends-first mode</div>
+            <p class="help-p">When the arc ends are easier to snap to than the midpoint, switch to <strong>Ends first</strong> in the tool options bar: click the two endpoints first, then click the midpoint. The arc is computed identically — only the click order differs.</p>
+            <div class="help-tip">Switch modes using the <strong>Sequential / Ends first</strong> buttons that appear in the options row above the toolbar when Arc Measure is active.</div>
             <p class="help-p">Outputs: radius, chord distance (straight line from start to end), and arc span in degrees.</p>
           </div>
 
@@ -682,6 +739,9 @@
             <div class="help-step"><span class="help-step-num">1</span><span>Press <kbd>M</kbd> and click the first circle or arc annotation.</span></div>
             <div class="help-step"><span class="help-step-num">2</span><span>Click the second circle or arc annotation.</span></div>
             <p class="help-p">Draws a line between the two centers and shows the distance. Useful for bolt-hole patterns, pin spacing, etc.</p>
+            <div class="help-section-label">Live tracking</div>
+            <p class="help-p">The Center Distance measurement is <strong>linked</strong> to its two source circles. If you reposition either circle (by dragging its center handle), the Center Distance line and label update automatically.</p>
+            <div class="help-tip">Center Distance annotations are read-only — you cannot drag their endpoints directly. To remove one, select it and press <kbd>Del</kbd>.</div>
           </div>
 
           <div class="help-page" id="help-page-tool-perp" hidden>
@@ -777,6 +837,7 @@
                 <tr><td><kbd>0</kbd></td><td>Zoom to fit window</td></tr>
                 <tr><td><kbd>1</kbd></td><td>Zoom to 1:1 pixels</td></tr>
                 <tr><td><kbd>`</kbd></td><td>Toggle measurement grid</td></tr>
+                <tr><td><kbd>←</kbd><kbd>↑</kbd><kbd>→</kbd><kbd>↓</kbd></td><td>Nudge selected annotation 1 px (hold <kbd>Shift</kbd> for 10 px)</td></tr>
                 <tr><td><kbd>Ctrl Z</kbd> / <kbd>⌘Z</kbd></td><td>Undo</td></tr>
                 <tr><td><kbd>Ctrl Y</kbd> / <kbd>⌘⇧Z</kbd></td><td>Redo</td></tr>
                 <tr><td><kbd>?</kbd></td><td>Open this documentation</td></tr>
@@ -794,6 +855,7 @@
                 <tr><td>Scroll wheel</td><td>Zoom in / out (frozen image only)</td></tr>
                 <tr><td>Middle-click drag</td><td>Pan the viewport</td></tr>
                 <tr><td><kbd>H</kbd> + drag</td><td>Pan using the Pan tool</td></tr>
+                <tr><td><kbd>Space</kbd> + drag (hold)</td><td>Temporary pan — release to return to the previous tool</td></tr>
                 <tr><td>Click minimap</td><td>Jump viewport to that position</td></tr>
               </tbody>
             </table>
@@ -921,8 +983,10 @@
           <!-- ALGO: FITTING -->
           <div class="help-page" id="help-page-algo-fitting" hidden>
             <h2 class="help-page-title">Circle &amp; Arc Fitting</h2>
-            <div class="help-section-label">3-point circle (Circle tool)</div>
+            <div class="help-section-label">3-point circle (Circle tool — 3-Point mode)</div>
             <p class="help-p">Given three points, the unique circumscribed circle is found by intersecting the perpendicular bisectors of two chords. This is an exact solution — there is no fitting involved — so it is sensitive to point placement accuracy. Use Fit Arc for more robust results from many points.</p>
+            <div class="help-section-label">Center+Edge circle (Circle tool — Center+Edge mode)</div>
+            <p class="help-p">Click a center point, then click any point on the circumference. The radius is the Euclidean distance between the two clicks. This is exact and requires only two points, but accuracy depends entirely on how precisely the center is known.</p>
             <div class="help-section-label">Algebraic fit (Fit Arc, ≥3 points)</div>
             <p class="help-p">Minimises an algebraic distance in the space of implicit circle equations. Every point (xᵢ, yᵢ) on a circle satisfies xᵢ² + yᵢ² + Dxᵢ + Eyᵢ + F = 0. The coefficients [D, E, F] are found by solving a linear least-squares system (equivalent to a constrained SVD). This is more robust than geometric fitting and does not require an initial estimate.</p>
             <div class="help-section-label">RANSAC inlier filtering (guided inspection)</div>

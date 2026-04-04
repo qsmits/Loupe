@@ -19,6 +19,7 @@ import { initMouseHandlers } from './events-mouse.js';
 import { loadSpcParts, loadSpcFeatures, loadSpcData } from './spc.js';
 import { initLensCal } from './lens-cal.js';
 import { initTiltCal, openTiltCalDialog } from './tilt-cal.js';
+import { initCalProfiles, openCalProfiles } from './cal-profiles.js';
 import { finalizeArcFit } from './tools.js';
 
 // ─── Dropdown helpers ─────��──────────────────────────────────────────────────
@@ -138,6 +139,12 @@ document.getElementById("btn-tilt-cal-open")?.addEventListener("click", () => {
   openTiltCalDialog();
 });
 
+// Cal Profiles button in setup flyout
+document.getElementById("btn-cal-profiles-open")?.addEventListener("click", () => {
+  closeAllDropdowns();
+  openCalProfiles();
+});
+
 // Arc-measure point-order toggle
 document.getElementById("btn-arc-order-sequential")?.addEventListener("click", () => {
   state.arcMeasureMode = "sequential";
@@ -150,6 +157,22 @@ document.getElementById("btn-arc-order-ends-first")?.addEventListener("click", (
   state.arcMeasureMode = "ends-first";
   document.getElementById("btn-arc-order-ends-first").classList.add("active");
   document.getElementById("btn-arc-order-sequential").classList.remove("active");
+  state.pendingPoints = [];
+  redraw();
+});
+
+// Circle mode toggle
+document.getElementById("btn-circle-mode-3pt")?.addEventListener("click", () => {
+  state.circleMode = "3-point";
+  document.getElementById("btn-circle-mode-3pt").classList.add("active");
+  document.getElementById("btn-circle-mode-center-edge").classList.remove("active");
+  state.pendingPoints = [];
+  redraw();
+});
+document.getElementById("btn-circle-mode-center-edge")?.addEventListener("click", () => {
+  state.circleMode = "center-edge";
+  document.getElementById("btn-circle-mode-center-edge").classList.add("active");
+  document.getElementById("btn-circle-mode-3pt").classList.remove("active");
   state.pendingPoints = [];
   redraw();
 });
@@ -507,7 +530,9 @@ document.getElementById("btn-gradient-overlay")?.addEventListener("change", asyn
   redraw();
 });
 
-// Calibrate tool is now wired via data-tool="calibrate" in the Setup flyout
+// Calibrate tool is now wired via data-tool="calibrate" in the Setup flyout.
+// Clicking the cal-badge in the status bar also enters calibration mode.
+document.getElementById("cal-badge")?.addEventListener("click", () => setTool("calibrate"));
 
 // ── Help dialog ──────────────────────────────────────────────────────────────
 document.getElementById("btn-help")?.addEventListener("click", () => {
@@ -1031,6 +1056,7 @@ initDxfHandlers();
 initDetectHandlers();
 initLensCal();
 initTiltCal();
+initCalProfiles();
 document.getElementById("btn-arc-fit-arc")?.addEventListener("click", () => finalizeArcFit(false));
 document.getElementById("btn-arc-fit-circle")?.addEventListener("click", () => finalizeArcFit(true));
 

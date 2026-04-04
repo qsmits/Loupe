@@ -183,6 +183,59 @@ input[type=range] { cursor: pointer; accent-color: var(--accent); }
 }
 .detect-btn:hover { background: var(--border); }
 
+.detect-preset-group { display: flex; gap: 4px; margin-top: 4px; }
+.detect-preset-btn {
+  flex: 1;
+  padding: 4px 4px;
+  background: var(--surface-2);
+  border-radius: 4px;
+  font-size: 10px;
+  color: var(--text);
+  cursor: pointer;
+  border: 1px solid transparent;
+}
+.detect-preset-btn:hover { background: var(--border); }
+.detect-preset-btn.active {
+  background: var(--accent, #e8a020);
+  color: #000;
+  border-color: transparent;
+}
+
+/* ─── Cal profiles panel ─────────────────────────────────────── */
+.cal-profiles-save-row { display: flex; gap: 6px; margin-bottom: 8px; }
+.cal-profile-name-input {
+  flex: 1;
+  padding: 4px 6px;
+  background: #2a2a2a;
+  border: 1px solid #444;
+  border-radius: 3px;
+  color: #e0e0e0;
+  font-size: 12px;
+}
+.cal-profiles-list { max-height: 180px; overflow-y: auto; }
+.cal-profiles-empty { color: #888; font-size: 12px; padding: 6px 0; }
+.cal-profile-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 0;
+  border-bottom: 1px solid #2e2e2e;
+}
+.cal-profile-name { flex: 1; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cal-profile-scale { font-size: 11px; color: #888; white-space: nowrap; }
+.cal-profile-load, .cal-profile-del {
+  padding: 2px 7px;
+  font-size: 11px;
+  background: #3a3a3a;
+  border: 1px solid #555;
+  border-radius: 3px;
+  color: #e0e0e0;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.cal-profile-load:hover { background: #4a4a4a; }
+.cal-profile-del:hover { background: #5a2020; color: #ff9090; border-color: #7a3030; }
+
 /* ─── Camera panel dropdown ─────────────────────────────────── */
 .camera-panel { width: 320px; overflow: hidden; }
 .camera-panel .detect-val { width: auto; min-width: 55px; text-align: right; font-size: 11px; white-space: nowrap; }
@@ -673,7 +726,10 @@ body.no-camera #stream-img {
   border-radius: 5px;
   letter-spacing: 0.03em;
   white-space: nowrap;
+  cursor: pointer;
+  transition: opacity 0.15s;
 }
+.cal-badge:hover { opacity: 0.75; }
 .cal-badge.uncalibrated {
   color: var(--warning);
   background: rgba(255,159,10,.12);

@@ -20,7 +20,7 @@ export function hitTestAnnotation(ann, pt) {
     return distPointToSegment(pt, ann.p1, ann.vertex) < 8 / z ||
            distPointToSegment(pt, ann.vertex, ann.p3) < 8 / z;
   }
-  if (ann.type === "circle") {
+  if (ann.type === "circle" || ann.type === "arc-fit") {
     const d = Math.hypot(pt.x - ann.cx, pt.y - ann.cy);
     return Math.abs(d - ann.r) < 10 / z || d < 10 / z;
   }

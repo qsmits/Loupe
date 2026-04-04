@@ -3,10 +3,10 @@ import { state, undoStack, redoStack, takeSnapshot } from './state.js';
 import { canvas, showStatus, redraw, resizeCanvas } from './render.js';
 import { renderSidebar } from './sidebar.js';
 import { deleteSelected, elevateSelected } from './annotations.js';
-import { setTool, finalizeArcFit, finalizeArea, finalizeSpline } from './tools.js';
+import { setTool, promptArcFitChoice, finalizeArcFit, finalizeArea, finalizeSpline, nudgeSelected } from './tools.js';
 import { exitDxfAlignMode } from './dxf.js';
 import { saveSession } from './session.js';
-import { viewport, fitToWindow, zoomOneToOne } from './viewport.js';
+import { viewport, fitToWindow, zoomOneToOne, clampPan } from './viewport.js';
 import { hideContextMenu } from './events-context-menu.js';
 import { _finalizePickInspection } from './events-inspection.js';
 
@@ -40,7 +40,16 @@ export function redo() {
   renderSidebar(); redraw();
 }
 
+let _spacebarPrevTool = null;  // non-null while spacebar is held
+
 export function initKeyboard(closeAllDropdowns) {
+  document.addEventListener("keyup", e => {
+    if (e.key === " " && _spacebarPrevTool !== null) {
+      setTool(_spacebarPrevTool);
+      _spacebarPrevTool = null;
+    }
+  });
+
   document.addEventListener("keydown", e => {
     // Help dialog shortcut — works even when an input is focused
     if (e.key === "?") {
@@ -51,10 +60,21 @@ export function initKeyboard(closeAllDropdowns) {
     // All other shortcuts are blocked when an input/select/textarea/dialog is focused
     if (document.activeElement.closest("input, select, textarea") !== null || document.querySelector(".dialog-overlay:not([hidden])") !== null) return;
 
+    // Spacebar — temporary pan while held (Figma / CAD convention)
+    if (e.key === " " && !e.repeat) {
+      e.preventDefault();
+      if (state.tool !== "pan") {
+        _spacebarPrevTool = state.tool;
+        setTool("pan");
+      }
+      return;
+    }
+    if (e.key === " ") { e.preventDefault(); return; }  // suppress repeat scroll
+
     if (e.key === "Enter") {
       if (state.inspectionPickTarget) { _finalizePickInspection(); return; }
       if (state.tool === "spline" && state.pendingPoints.length >= 2) { finalizeSpline(); return; }
-      if (state.tool === "arc-fit" && state.pendingPoints.length >= 3) { finalizeArcFit(); return; }
+      if (state.tool === "arc-fit" && state.pendingPoints.length >= 3) { promptArcFitChoice(); return; }
       if (state.tool === "area" && state.pendingPoints.length >= 3) { finalizeArea(); return; }
     }
     if ((e.key === "Delete" || e.key === "Backspace") && state.selected.size > 0) {
@@ -62,6 +82,7 @@ export function initKeyboard(closeAllDropdowns) {
       return;
     }
     if (e.key === "Escape") {
+      document.getElementById("arc-fit-chooser").hidden = true;
       if (state.inspectionPickTarget) {
         state.inspectionPickTarget = null;
         state.inspectionPickPoints = [];
@@ -119,6 +140,26 @@ export function initKeyboard(closeAllDropdowns) {
       redraw();
       return;
     }
+    if (e.key.startsWith("Arrow")) {
+      const step = e.shiftKey ? 10 : 1;
+      const dx = e.key === "ArrowLeft" ? -step : e.key === "ArrowRight" ? step : 0;
+      const dy = e.key === "ArrowUp"   ? -step : e.key === "ArrowDown"  ? step : 0;
+      if (state.selected.size > 0) {
+        e.preventDefault();
+        nudgeSelected(dx, dy);
+        renderSidebar();
+        redraw();
+      } else if (state.frozen) {
+        e.preventDefault();
+        viewport.panX += dx;
+        viewport.panY += dy;
+        const rect = canvas.getBoundingClientRect();
+        clampPan(rect.width, rect.height);
+        resizeCanvas();
+      }
+      return;
+    }
+
     const toolKeys = { v: "select", c: "calibrate", d: "distance", a: "angle",
                        o: "circle", f: "arc-fit", m: "center-dist", e: "detect",
                        p: "perp-dist", l: "para-dist", r: "area", b: "spline",

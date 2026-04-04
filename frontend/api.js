@@ -32,3 +32,18 @@ export function apiFetch(url, options = {}) {
 export function getSessionId() {
   return SESSION_ID;
 }
+
+/**
+ * Upload a corrected canvas to the server so backend analysis (detection,
+ * guided inspection, sub-pixel refinement) operates on the corrected image.
+ * Call this after any client-side image correction (lens distortion, perspective).
+ *
+ * @param {HTMLCanvasElement} canvas — the corrected image canvas
+ */
+export async function uploadCorrectedFrame(canvas) {
+  const blob = await new Promise(resolve => canvas.toBlob(resolve, "image/jpeg", 0.95));
+  if (!blob) return;
+  const fd = new FormData();
+  fd.append("file", blob, "frame.jpg");
+  await apiFetch("/update-frame", { method: "POST", body: fd });
+}

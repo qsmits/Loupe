@@ -127,10 +127,10 @@ export function drawPendingPoints() {
 const _loupeCanvas = document.getElementById("loupe-canvas");
 const _loupeCtx    = _loupeCanvas ? _loupeCanvas.getContext("2d") : null;
 
-export function drawLoupe() {
+export function drawLoupe(forceShow = false) {
   if (!_loupeCanvas || !_loupeCtx) return;
 
-  const show = state.frozenBackground && state.mousePos && _LOUPE_TOOLS.has(state.tool);
+  const show = forceShow || (state.frozenBackground && state.mousePos && _LOUPE_TOOLS.has(state.tool));
   if (!show) {
     _loupeCanvas.hidden = true;
     return;

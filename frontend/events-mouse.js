@@ -357,7 +357,7 @@ export function initMouseHandlers() {
     lensCalMouseMove(pt);
     tiltCalMouseMove(pt);
     _updateSubpixelPreview(pt, e.altKey);
-    drawLoupe();
+    drawLoupe(isLensCalMode() || isTiltCalMode());
     if (state._panStart) {
       const dx = (e.clientX - state._panStart.x);
       const dy = (e.clientY - state._panStart.y);

@@ -9,6 +9,7 @@ from .vision import detection
 class EdgeParams(BaseModel):
     threshold1: int = Field(default=50, ge=0, le=255)
     threshold2: int = Field(default=150, ge=0, le=255)
+    surface_mode: str = Field(default="edm", pattern=r"^(edm|lathe|print)$")
 
 
 class CircleParams(BaseModel):
@@ -19,6 +20,7 @@ class CircleParams(BaseModel):
     min_radius: int = Field(default=10, ge=1, le=5000)
     max_radius: int = Field(default=500, ge=1, le=5000)
     subpixel: str = Field(default="none", max_length=20)
+    surface_mode: str = Field(default="edm", pattern=r"^(edm|lathe|print)$")
 
 
 class LineParams(BaseModel):
@@ -27,6 +29,7 @@ class LineParams(BaseModel):
     hough_threshold: int = Field(default=30, ge=1, le=500)
     min_length: int = Field(default=20, ge=1, le=5000)
     max_gap: int = Field(default=8, ge=1, le=500)
+    surface_mode: str = Field(default="edm", pattern=r"^(edm|lathe|print)$")
 
 
 class DetectedLine(BaseModel):
@@ -46,6 +49,7 @@ class DetectLinesParams(BaseModel):
     nms_angle: float = Field(default=10.0, ge=0.5, le=90.0)
     smoothing: int = Field(default=1, ge=1, le=5)
     subpixel: str = Field(default="none", max_length=20)
+    surface_mode: str = Field(default="edm", pattern=r"^(edm|lathe|print)$")
 
 
 class DetectArcsParams(BaseModel):
@@ -57,6 +61,11 @@ class DetectArcsParams(BaseModel):
     residual_tol: float = Field(default=0.05, ge=0.001, le=1.0)
     smoothing: int = Field(default=1, ge=1, le=5)
     subpixel: str = Field(default="none", max_length=20)
+    surface_mode: str = Field(default="edm", pattern=r"^(edm|lathe|print)$")
+
+
+class PreprocessedViewParams(BaseModel):
+    surface_mode: str = Field(default="edm", pattern=r"^(edm|lathe|print)$")
 
 
 class MatchDxfLinesBody(BaseModel):
@@ -105,7 +114,8 @@ def make_detection_router(frame_store: SessionFrameStore) -> APIRouter:
         frame = frame_store.get(session_id)
         if frame is None:
             raise HTTPException(status_code=400, detail="No frame stored. Call /freeze first.")
-        png_bytes = detection.detect_edges(frame, params.threshold1, params.threshold2)
+        png_bytes = detection.detect_edges(frame, params.threshold1, params.threshold2,
+                                           surface_mode=params.surface_mode)
         return Response(content=png_bytes, media_type="image/png")
 
     @router.post("/detect-circles")
@@ -116,7 +126,7 @@ def make_detection_router(frame_store: SessionFrameStore) -> APIRouter:
         circles = detection.detect_circles(
             frame, params.dp, params.min_dist, params.param1,
             params.param2, params.min_radius, params.max_radius,
-            subpixel=params.subpixel,
+            subpixel=params.subpixel, surface_mode=params.surface_mode,
         )
         return circles
 
@@ -128,6 +138,7 @@ def make_detection_router(frame_store: SessionFrameStore) -> APIRouter:
         lines = detection.detect_lines(
             frame, params.threshold1, params.threshold2,
             params.hough_threshold, params.min_length, params.max_gap,
+            surface_mode=params.surface_mode,
         )
         return lines
 
@@ -140,7 +151,8 @@ def make_detection_router(frame_store: SessionFrameStore) -> APIRouter:
             frame, params.threshold1, params.threshold2,
             dp_epsilon=params.dp_epsilon, min_length_px=params.min_length,
             nms_dist_px=params.nms_dist, nms_angle_deg=params.nms_angle,
-            smoothing=params.smoothing, subpixel=params.subpixel)
+            smoothing=params.smoothing, subpixel=params.subpixel,
+            surface_mode=params.surface_mode)
 
     @router.post("/detect-arcs-partial")
     async def detect_arcs_partial_route(params: DetectArcsParams, session_id: str = Depends(get_session_id_dep)):
@@ -151,14 +163,15 @@ def make_detection_router(frame_store: SessionFrameStore) -> APIRouter:
             frame, params.threshold1, params.threshold2,
             min_radius=params.min_radius, max_radius=params.max_radius,
             min_span_deg=params.min_span_deg, residual_tol=params.residual_tol,
-            smoothing=params.smoothing, subpixel=params.subpixel)
+            smoothing=params.smoothing, subpixel=params.subpixel,
+            surface_mode=params.surface_mode)
 
     @router.post("/preprocessed-view")
-    async def preprocessed_view_route(session_id: str = Depends(get_session_id_dep)):
+    async def preprocessed_view_route(params: PreprocessedViewParams = PreprocessedViewParams(), session_id: str = Depends(get_session_id_dep)):
         frame = frame_store.get(session_id)
         if frame is None:
             raise HTTPException(status_code=400, detail="No frame stored. Call /freeze first.")
-        jpg_bytes = detection.preprocessed_view(frame)
+        jpg_bytes = detection.preprocessed_view(frame, surface_mode=params.surface_mode)
         return Response(content=jpg_bytes, media_type="image/jpeg")
 
     @router.post("/match-dxf-lines")

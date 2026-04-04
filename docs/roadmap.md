@@ -1,8 +1,7 @@
 # Roadmap
 
-> Revised 2026-03-31 after completing all Tier 1-2 features from the
-> competitive analysis. See `Loupe_Competitive_Analysis.docx` for the full
-> 80+ feature comparison matrix.
+> Revised 2026-04-04 after completing calibration profiles + detection presets.
+> See `Loupe_Competitive_Analysis.html` for the full 80+ feature comparison matrix.
 
 ## Context
 
@@ -14,12 +13,13 @@ profiles, tooth spacing).
 
 | Category | Score | Notes |
 |----------|-------|-------|
-| Measurement tools | 90% | 14 tools, sub-pixel snap |
-| Vision / auto-detection | 85% | Sub-pixel parabola + gaussian, live preview |
-| CAD integration | 70% | DXF import/export, edge-based alignment |
-| Inspection / GD&T | 55% | Corridor inspection, True Position, Punch/Die |
-| SPC & analytics | 40% | Run storage, Cpk, trend charts |
-| Reporting & export | 70% | PDF, CSV, DXF, SPC CSV, TP in exports |
+| Measurement tools | 92% | 14 tools + center-edge circle, sub-pixel snap |
+| Vision / auto-detection | 88% | Sub-pixel parabola + gaussian, JS instant preview |
+| CAD integration | 72% | DXF import/export, edge-based alignment |
+| Calibration & correction | 70% | Lens distortion, perspective/tilt correction, frame sync |
+| Inspection / GD&T | 58% | Corridor inspection, True Position, Punch/Die |
+| SPC & analytics | 45% | Run storage, Cpk, trend charts |
+| Reporting & export | 68% | PDF, CSV, DXF, SPC CSV, TP in exports |
 | Camera & hardware | 55% | Aravis/GigE, gamma, auto-exposure, ROI |
 | Automation & workflow | 55% | Templates, one-click inspect with auto-align |
 | UI / UX / platform | 98% | Web-based, multi-user hosted, cross-platform |
@@ -108,79 +108,77 @@ profiles, tooth spacing).
 - SPC CSV export
 - Disabled in hosted mode (no server-side file persistence)
 
+### Client-Side Sub-Pixel Snapping (2026-03-31)
+- `parabola-js` / `gaussian-js` modes run entirely in the browser
+- Instant orange crosshair snap preview on mousemove — no HTTP round-trip
+- Cached `ImageData` from frozen canvas; patch sampled per-mousemove
+- Default in hosted mode; server-side remains available locally
+
+### Bézier Spline Tool (2026-03-31)
+- `B` key; click to place anchor points, double-click/Enter to finish
+- Catmull-Rom interpolation — smooth curve through every anchor, no manual handle adjustment
+- Draggable anchors in Select mode; arc length output (mm if calibrated)
+- DXF export as `SPLINE` entity
+
+### Help System Overhaul (2026-04-04)
+- Redesigned as two-panel layout: nav tree (left) + content page (right)
+- 20+ pages covering every tool, algorithm, workflow, and export format
+- New pages: Perspective Correction, Sub-pixel Snapping, Edge Detection pipeline, Circle & Arc Fitting, DXF Auto-alignment
+- All new features documented: grouped flyout toolbar, tool options bar, center-dist tracking, arc-measure modes
+
+### Calibration Profiles + Detection Presets (2026-04-04)
+- **Multi-magnification calibration profiles**: save/load/delete named calibration presets in localStorage; floating panel in Setup flyout; instant recall per objective without re-calibrating
+- **Detection surface presets**: Wire EDM (default) / Lathe / 3D Print selector at top of Detect menu; surface-aware preprocessing — anisotropic directional blur for lathe tooling marks, extra bilateral pass for 3D print texture; `surface_mode` threaded through all detection endpoints
+
+### UX & Calibration Sprint (2026-04-04)
+- **Grouped flyout toolbar**: Measure ▾ (13 tools with key labels) + Setup ▾ (Calibrate, Lens Cal, Perspective Correct) flyouts above the tool strip
+- **Tool options bar**: second row in strip, shown per-tool — arc-measure Sequential/Ends-First toggle, circle 3-Point/Center+Edge toggle
+- **Arc-measure ends-first mode**: click both arc ends first, then the midpoint — easier when ends snap cleanly
+- **Circle center+edge mode**: two-click circle (center then any edge point) alongside existing 3-point mode
+- **Center-dist dynamic linking**: center-distance annotation updates live when either linked circle moves; read-only (delete only, no manual drag)
+- **Calibration status badge**: always-visible orange/green pill in status bar; click it to enter calibration mode
+- **Perspective (tilt) correction**: 4-point homography from a known rectangle; corrects camera tilt without telecentric optics
+- **Lens cal + perspective cal magnifier**: loupe now active during both calibration modes for precise point placement
+- **Backend frame sync**: `POST /update-frame` endpoint; called after lens or perspective correction so all backend analysis (detection, guided inspection, sub-pixel refinement) operates on the corrected image
+
 ---
 
 ## Next Up
 
-### Improve help screen
-*Priority: low. Effort: low.*
+### STEP import — geometry + PMI tolerances
+*Priority: high. Effort: high.*
 
-Current help dialog has three tabs but is dense and hard to navigate. Redesign as a two-panel layout: left sidebar with an index/navigation tree, right panel with the content for the selected page. Suggested sections: Getting Started, Tools (one page per tool with screenshot/diagram), Keyboard Shortcuts, Mouse & Modifiers, Detection & Auto-detect, DXF & Inspection, Algorithms (sub-pixel snap, corridor inspection, fitting methods), Exporting.
+Two phases, both needed to make this worth the effort:
 
-The "How it works" tab in particular needs breathing room — break it into individual pages rather than one wall of text.
+**Phase 1 — Geometry:** Accept a STEP file (AP203/AP214/AP242), project the relevant face to 2D, and feed the result into the existing DXF overlay pipeline as LINE/CIRCLE/ARC entities. Replaces the current "export DXF from your CAD tool first" step — many users have STEP from FreeCAD, OnShape, or Fusion 360 but no dedicated CAD tool to flatten it.
 
-### Client-side sub-pixel edge snapping
+**Phase 2 — PMI tolerances:** STEP AP242 stores GD&T callouts semantically (tolerance values, datum references, bilateral zones) linked to specific geometric features. Read these and auto-populate feature tolerances on load — eliminating manual tolerance entry entirely. No competitor at this price point does this.
+
+Implementation options:
+- **Server-side:** `pythonocc-core` (Python wrapper for OpenCASCADE, available via conda-forge, ~200 MB). Handles both geometry projection and PMI extraction. Works well for local installs.
+- **Client-side:** `opencascade.js` (WebAssembly build of the same library, ~40 MB lazy-loaded). STEP file stays in the browser — privacy win, no server dependency, works in hosted image-mode. API is less mature than pythonocc but sufficient for Phase 1 geometry and basic AP242 PMI.
+
+Phase 1 alone isn't compelling enough to justify the dependency. The goal is Phase 1 + PMI together — automatic inspection setup from a STEP file drop.
+
+### SPC: Control charts + histograms
 *Priority: medium. Effort: low–medium.*
 
-Move the sub-pixel edge refinement from the server to the browser so it works instantly in hosted mode (and is faster locally too).
+Run storage and Cpk are implemented. Adding X-bar/R control charts, histograms, and Pp/Ppk completes the quality analytics picture. Same Canvas 2D rendering pattern as the existing trend charts.
 
-The frontend already has the frozen image as an `HTMLImageElement`. Once drawn onto an offscreen canvas, `getImageData()` exposes raw pixel data. The edge refinement math (Sobel filter on a ~20×20 px patch + parabola/Gaussian fit) is ~30 lines of JS and takes well under 1 ms — no HTTP round-trip.
-
-Implementation notes:
-- Draw the frozen image to an `OffscreenCanvas` once at freeze time, cache the `ImageData`.
-- Extract the local patch around the cursor on each mousemove (no full re-read).
-- Run the same parabola/Gaussian fit as the server (`backend/vision/detection.py`).
-- Make it switchable via `subpixel_method` config: `"parabola-js"` / `"gaussian-js"` for client-side, existing `"parabola"` / `"gaussian"` for server-side. Default to JS in hosted mode, server-side locally.
-- JPEG compression slightly softens edges vs. the raw frame buffer, but the difference is negligible at ≥90% quality.
-
-### Bézier spline measurement tool
+### GD&T: Form tolerances (roundness, flatness)
 *Priority: medium. Effort: medium.*
 
-For reverse-engineering freeform profiles that aren't well-described by lines, arcs, or circles — e.g. blended fillets, cam profiles, organic contours on EDM parts.
+Roundness: already fit circles and compute radius; max deviation from the fit radius = roundness error. Flatness on a line segment: max deviation from the best-fit line across the measured points. Both are common callouts for turned and ground parts, and the data is already present in the inspection results. Lower priority than STEP import since tolerances can come from PMI.
 
-A cubic Bézier spline tool: click to place anchor points, each with two tangent handles (control points) that set the direction and magnitude of the curve at that point. The handles are the same concept as Illustrator's pen tool — drag a handle outward to pull the curve toward it, move it angularly to steer the tangent.
-
-Output:
-- The spline geometry exported to DXF as a `SPLINE` entity (already supported by ezdxf).
-- Chord length and approximate arc length along the spline.
-- Optionally: deviation of the fitted spline from a set of manually picked edge points (same point-pick workflow as guided inspection).
-
-Implementation notes:
-- Rendering: evaluate the cubic Bézier segments with `ctx.bezierCurveTo()` — the canvas 2D API handles this natively.
-- Handles visualised as small circles connected to the anchor by a thin line, draggable in Select mode.
-- Smooth / corner node toggle: smooth nodes mirror their two handles (equal and opposite tangents); corner nodes allow independent handles.
-- Snapping: anchor points snap to existing annotations and detected edges; handles do not snap.
-
-### Detection presets (EDM / Lathe / 3D Print)
-*Priority: medium. Effort: low.*
-
-Surface-aware preprocessing instead of one pipeline for all surfaces:
-- **Wire EDM** (default): light preprocessing, lower CLAHE to avoid boosting reflections
-- **Turned/Lathe**: directional filtering to suppress concentric tooling marks
-- **3D Print**: bilateral smoothing (already available as slider)
-- **Custom**: expose all parameters
-
-### GD&T: Profile of a line
+### GD&T: Profile of a line/surface
 *Priority: medium. Effort: medium.*
 
-Our corridor-based inspection is conceptually close to profile tolerance
-already. Wrapping it in proper GD&T semantics (bilateral/unilateral zones,
-datum references) makes inspection results directly comparable to print
-callouts.
-
-### Customizable report templates
-*Priority: medium. Effort: medium.*
-
-Shops have customer-specific report layouts (first-article inspection forms,
-PPAP templates). A template system: logo, header fields, which features to
-include, field placement.
+The corridor-based inspection already computes perpendicular deviation per feature point. Wrapping it in formal GD&T semantics (bilateral/unilateral tolerance zones, datum references in the report) makes results directly comparable to print callouts. Better addressed after STEP/PMI import since that work overlaps heavily.
 
 ### Batch inspection
-*Priority: medium. Effort: high.*
+*Priority: low. Effort: high.*
 
-Swiss lathe operator use case: scatter a handful of parts under the microscope,
-get all of them measured at once. Part instance detection via DXF template
-matching, per-instance alignment and inspection, batch results + combined PDF.
+Multiple parts in one frame, each measured in one pass. Part instance detection via DXF template matching, per-instance alignment and inspection, batch results table and combined PDF. Less relevant for single-image upload mode.
 
 ---
 
@@ -190,17 +188,15 @@ matching, per-instance alignment and inspection, batch results + combined PDF.
 |---------|-------------|
 | Gear inspection (involute profiles, tooth spacing) | Separate domain. Wait for gear machine. |
 | Nikon SC-102 XY stage integration | Hardware-dependent. Separate project. |
-| STEP/IGES import with PMI | High effort. Auto-import GD&T tolerances from 3D model. Needs pythonocc/OpenCascade. |
 | Pattern matching / golden template | Interesting for incoming inspection but niche. |
 | Full GD&T (runout, concentricity, profile of surface) | Revisit when a compliance requirement drives it. |
 | Height map / focus stacking | Requires motorized Z-axis. Separate project. |
 | QDAS/QIF export | Revisit when an ISO shop asks. |
-| Lens distortion correction | Checkerboard calibration → `cv2.undistort()`. Not needed for telecentric objectives. Relevant for hosted mode with phone/USB microscope photos. |
 | Calibration traceability / uncertainty budgets | ISO 17025 requirement. Not needed yet. |
 | OCR serial number recognition | Read etched/stamped serial numbers. Auto-name SPC runs and reports. Tesseract or EasyOCR. |
 | Education / cloud mode | Login, server-side session storage, teacher dashboard. See `docs/superpowers/specs/2026-03-30-education-cloud-notes.md`. |
 | Enterprise shared microscope | Role-based access, shared image library, audit trail. Builds on education mode. |
-| Named calibration profiles | Store calibration per physical objective. Not needed for single-lens setups. |
+| Customizable report templates | Fixed-format PDF covers most cases; full template system (logo, layout, PPAP fields) deferred until someone asks for it. |
 
 ---
 
@@ -233,13 +229,26 @@ matching, per-instance alignment and inspection, batch results + combined PDF.
 ✅ Done:   Measurement templates            — 2026-03-30
 ✅ Done:   GD&T: True Position              — 2026-03-30
 ✅ Done:   Run storage + SPC               — 2026-03-30
+✅ Done:   Client-side sub-pixel snapping  — 2026-03-31
+✅ Done:   Bézier spline tool              — 2026-03-31
+✅ Done:   Help system overhaul            — 2026-04-04
+✅ Done:   Grouped flyout toolbar          — 2026-04-04
+✅ Done:   Perspective (tilt) correction   — 2026-04-04
+✅ Done:   Circle center+edge mode         — 2026-04-04
+✅ Done:   Arc-measure ends-first mode     — 2026-04-04
+✅ Done:   Center-dist dynamic linking     — 2026-04-04
+✅ Done:   Backend frame sync (corrections)— 2026-04-04
+✅ Done:   Multi-mag calibration profiles  — per-objective cal recall
+✅ Done:   Detection presets               — EDM/Lathe/Print surface modes
 
-Next:      Detection presets                 — EDM/Lathe/Print surface modes
-Then:      GD&T: Profile of a line           — bilateral/unilateral tolerance zones
-Then:      Report templates                  — customer-specific FAI forms
-Then:      Batch inspection                  — multi-part production use case
-Future:    Gear inspection                   — when gear machine is running
-Future:    Nikon XY stage                    — hardware integration
-Future:    Education / cloud mode            — university adoption
-Future:    Enterprise shared microscope      — production shop multi-user
+Next:      STEP import (geometry + PMI)     — auto inspection setup from STEP file drop
+Then:      STEP import (geometry + PMI)     — auto inspection setup from STEP file drop
+Then:      SPC: control charts + histograms — X-bar/R, Pp/Ppk
+Then:      GD&T: Form tolerances            — roundness, flatness (after STEP/PMI)
+Then:      GD&T: Profile of a line/surface  — formal tolerance zones (after STEP/PMI)
+Then:      Batch inspection                 — multi-part, lower priority for image-mode
+Future:    Gear inspection                  — when gear machine is running
+Future:    Nikon XY stage                   — hardware integration
+Future:    Education / cloud mode           — university adoption
+Future:    Enterprise shared microscope     — production shop multi-user
 ```

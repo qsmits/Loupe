@@ -72,21 +72,40 @@ export function drawArcMeasure(ann, sel) {
 }
 
 export function drawArcFit(ann, sel) {
+  const color = _annColor(ann, sel, "#34d399");
+  const isArc = ann.startAngle !== undefined;
   ctx.save();
   ctx.beginPath();
-  ctx.arc(ann.cx, ann.cy, ann.r, 0, Math.PI * 2);
-  const color = _annColor(ann, sel, "#34d399");
+  if (isArc) {
+    ctx.arc(ann.cx, ann.cy, ann.r, ann.startAngle, ann.endAngle, ann.anticlockwise);
+  } else {
+    ctx.arc(ann.cx, ann.cy, ann.r, 0, Math.PI * 2);
+  }
   ctx.strokeStyle = color;
   ctx.lineWidth = sel ? pw(2) : pw(1.5);
-  ctx.setLineDash([pw(5), pw(3)]);
   ctx.stroke();
-  ctx.setLineDash([]);
   ctx.restore();
   if (sel) {
     drawHandle({ x: ann.cx, y: ann.cy }, "#60a5fa");
-    drawHandle({ x: ann.cx + ann.r, y: ann.cy }, "#60a5fa");
+    if (isArc) {
+      drawHandle({ x: ann.cx + Math.cos(ann.startAngle) * ann.r, y: ann.cy + Math.sin(ann.startAngle) * ann.r }, "#60a5fa");
+      drawHandle({ x: ann.cx + Math.cos(ann.endAngle)   * ann.r, y: ann.cy + Math.sin(ann.endAngle)   * ann.r }, "#60a5fa");
+    } else {
+      drawHandle({ x: ann.cx + ann.r, y: ann.cy }, "#60a5fa");
+    }
   }
-  drawMeasurementLabel(ann, measurementLabel(ann), ann.cx + 5, ann.cy - ann.r - 5, ann.cx, ann.cy);
+  // Label just outside the midpoint of the arc (or top of circle)
+  let midAngle = -Math.PI / 2;
+  if (isArc) {
+    let span = ann.endAngle - ann.startAngle;
+    if (ann.anticlockwise) span = -span;
+    span = ((span % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
+    midAngle = ann.anticlockwise ? ann.startAngle - span / 2 : ann.startAngle + span / 2;
+  }
+  const labelOffset = pw(14);
+  const lx = ann.cx + Math.cos(midAngle) * (ann.r + labelOffset);
+  const ly = ann.cy + Math.sin(midAngle) * (ann.r + labelOffset);
+  drawMeasurementLabel(ann, measurementLabel(ann), lx, ly, ann.cx, ann.cy);
 }
 
 export function drawSpline(ann, sel) {

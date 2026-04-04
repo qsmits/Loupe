@@ -86,6 +86,34 @@ export async function doFreeze() {
 
 // ── Detect tool event handlers ──────────────────────────────────────────────
 export function initDetectHandlers() {
+  // Surface preset buttons — also set recommended slider values for each surface type
+  const PRESET_SLIDERS = {
+    //              low  high  smooth  adv-len  nms  span
+    edm:   { "canny-low": 50, "canny-high": 150, "adv-smoothing": 1, "adv-min-length": 80, "adv-nms-dist": 20 },
+    lathe: { "canny-low": 40, "canny-high": 120, "adv-smoothing": 1, "adv-min-length": 60, "adv-nms-dist": 25 },
+    print: { "canny-low": 30, "canny-high": 100, "adv-smoothing": 2, "adv-min-length": 80, "adv-nms-dist": 20 },
+  };
+  function _applyPresetSliders(mode) {
+    const vals = PRESET_SLIDERS[mode];
+    if (!vals) return;
+    Object.entries(vals).forEach(([id, value]) => {
+      const el = document.getElementById(id);
+      const valEl = document.getElementById(id + "-val");
+      if (el) { el.value = value; if (valEl) valEl.textContent = value; }
+    });
+  }
+
+  ["edm", "lathe", "print"].forEach(mode => {
+    const btn = document.getElementById("preset-" + mode);
+    if (!btn) return;
+    btn.addEventListener("click", () => {
+      state.surfaceMode = mode;
+      document.querySelectorAll(".detect-preset-btn").forEach(b => b.classList.remove("active"));
+      btn.classList.add("active");
+      _applyPresetSliders(mode);
+    });
+  });
+
   // Slider input handlers: update the display value on input
   ["canny-low","canny-high","hough-p2","circle-min-r","circle-max-r","line-sensitivity","line-min-length","adv-smoothing","adv-min-length","adv-nms-dist","adv-min-span"].forEach(id => {
     const el = document.getElementById(id);
@@ -105,7 +133,7 @@ export function initDetectHandlers() {
     const r = await apiFetch("/detect-edges", {
       method: "POST",
       headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({ threshold1: t1, threshold2: t2 }),
+      body: JSON.stringify({ threshold1: t1, threshold2: t2, surface_mode: state.surfaceMode }),
     });
     if (!r.ok) { alert(await r.text()); return; }
     const blob = await r.blob();
@@ -125,7 +153,11 @@ export function initDetectHandlers() {
   const btnPreproc = document.getElementById("btn-show-preprocessed");
   btnPreproc.addEventListener("click", withBusy(btnPreproc, "Preprocessing", async () => {
     await ensureFrozen();
-    const r = await apiFetch("/preprocessed-view", { method: "POST" });
+    const r = await apiFetch("/preprocessed-view", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({ surface_mode: state.surfaceMode }),
+    });
     if (!r.ok) { alert(await r.text()); return; }
     const blob = await r.blob();
     const url = URL.createObjectURL(blob);
@@ -152,7 +184,7 @@ export function initDetectHandlers() {
     const resp = await apiFetch("/detect-circles", {
       method: "POST",
       headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({ dp:1.2, min_dist:50, param1:100, param2:p2, min_radius:minR, max_radius:maxR, subpixel }),
+      body: JSON.stringify({ dp:1.2, min_dist:50, param1:100, param2:p2, min_radius:minR, max_radius:maxR, subpixel, surface_mode: state.surfaceMode }),
     });
     if (!resp.ok) { alert(await resp.text()); return; }
     const circles = await resp.json();
@@ -177,7 +209,7 @@ export function initDetectHandlers() {
     const resp = await apiFetch("/detect-lines", {
       method: "POST",
       headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({ threshold1: 50, threshold2: 130, hough_threshold: sensitivity, min_length: minLength, max_gap: 8 }),
+      body: JSON.stringify({ threshold1: 50, threshold2: 130, hough_threshold: sensitivity, min_length: minLength, max_gap: 8, surface_mode: state.surfaceMode }),
     });
     if (!resp.ok) { alert(await resp.text()); return; }
     const lines = await resp.json();
@@ -207,7 +239,7 @@ export function initDetectHandlers() {
       ? state.settings.subpixelMethod : "none";
     const r = await apiFetch("/detect-lines-merged", { method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ threshold1: t1, threshold2: t2, min_length: minLen, nms_dist: nmsDist, smoothing, subpixel }) });
+      body: JSON.stringify({ threshold1: t1, threshold2: t2, min_length: minLen, nms_dist: nmsDist, smoothing, subpixel, surface_mode: state.surfaceMode }) });
     if (!r.ok) { const d = await r.json().catch(() => null); showStatus(d?.detail || "Line detection failed (HTTP " + r.status + ")"); return; }
     const lines = await r.json();
     const fw = state.frozenSize?.w || canvas.width;
@@ -231,7 +263,7 @@ export function initDetectHandlers() {
       ? state.settings.subpixelMethod : "none";
     const r = await apiFetch("/detect-arcs-partial", { method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ threshold1: t1, threshold2: t2, min_span_deg: minSpan, smoothing, subpixel }) });
+      body: JSON.stringify({ threshold1: t1, threshold2: t2, min_span_deg: minSpan, smoothing, subpixel, surface_mode: state.surfaceMode }) });
     if (!r.ok) { const d = await r.json().catch(() => null); showStatus(d?.detail || "Arc detection failed (HTTP " + r.status + ")"); return; }
     const arcs = await r.json();
     const fw = state.frozenSize?.w || canvas.width;
