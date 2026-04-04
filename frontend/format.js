@@ -76,6 +76,22 @@ export function measurementLabel(ann, ctx) {
       ? `\u2300 ${(mm * 1000).toFixed(2)} \u00b5m`
       : `\u2300 ${mm.toFixed(3)} mm`;
   }
+  if (ann.type === "arc-fit") {
+    const isArc = ann.startAngle !== undefined;
+    if (isArc) {
+      if (!cal) return `R ${ann.r.toFixed(1)} px`;
+      const mm = ann.r / cal.pixelsPerMm;
+      return cal.displayUnit === "\u00b5m"
+        ? `R ${(mm * 1000).toFixed(2)} \u00b5m`
+        : `R ${mm.toFixed(3)} mm`;
+    } else {
+      if (!cal) return `\u2300 ${(ann.r * 2).toFixed(1)} px`;
+      const mm = (ann.r * 2) / cal.pixelsPerMm;
+      return cal.displayUnit === "\u00b5m"
+        ? `\u2300 ${(mm * 1000).toFixed(2)} \u00b5m`
+        : `\u2300 ${mm.toFixed(3)} mm`;
+    }
+  }
   if (ann.type === "detected-circle") {
     const sx = ctx.imageWidth / ann.frameWidth;
     const r = ann.radius * sx;

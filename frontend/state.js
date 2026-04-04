@@ -55,6 +55,8 @@ export const state = {
   _templateLoaded: false,
   _templateName: null,
   _subpixelSnapTarget: null, // { x, y } — live preview of where sub-pixel snap would place a point
+  lensK1: 0,                 // radial distortion coefficient (applied in-place to frozenBackground)
+  arcMeasureMode: "sequential", // "sequential" | "ends-first"
   _noCamera: false,         // was let _noCamera (line 36)
   _dirty: false,
   _savedManually: true,

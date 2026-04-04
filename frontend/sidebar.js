@@ -331,17 +331,15 @@ export async function loadUiConfig() {
 }
 
 export function updateCalibrationButton() {
-  const btn = document.getElementById("btn-calibration");
-  if (!btn) return;
+  const indicator = document.getElementById("cal-indicator");
+  const statusLine = document.getElementById("cal-status-line");
   if (state.calibration) {
     const scale = (1000 / state.calibration.pixelsPerMm).toFixed(3);
-    btn.textContent = `${scale} µm/px`;
-    btn.classList.remove("uncalibrated");
-    btn.classList.add("calibrated");
+    if (indicator) indicator.hidden = true;
+    if (statusLine) statusLine.textContent = `${scale} µm/px`;
   } else {
-    btn.textContent = "NOT CALIBRATED";
-    btn.classList.remove("calibrated");
-    btn.classList.add("uncalibrated");
+    if (indicator) { indicator.hidden = false; indicator.dataset.label = "NOT CALIBRATED"; }
+    if (statusLine) statusLine.textContent = "Not calibrated";
   }
 }
 

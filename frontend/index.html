@@ -290,29 +290,59 @@
         <div class="loading-message">Uploading…</div>
       </div>
 
+      <!-- Calibration warning border -->
+      <div id="cal-indicator" hidden></div>
+
       <!-- Floating tool strip -->
       <div id="tool-strip">
-        <button class="strip-btn" data-tool="select">Select</button>
-        <button class="strip-btn" data-tool="distance">Distance</button>
-        <button class="strip-btn" data-tool="angle">Angle</button>
-        <button class="strip-btn" data-tool="circle">Circle</button>
-        <button class="strip-btn" data-tool="arc-fit">Fit Arc</button>
-        <button class="strip-btn" data-tool="pan">Pan</button>
-        <div class="strip-divider"></div>
-        <button class="strip-btn" id="btn-undo" title="Undo (Ctrl+Z)">↩</button>
-        <button class="strip-btn" id="btn-redo" title="Redo (Ctrl+Y)">↪</button>
-        <div class="strip-divider"></div>
-        <button class="strip-btn overflow-btn" id="btn-overflow">···</button>
-        <div id="overflow-popup" hidden>
-          <button class="strip-btn" data-tool="center-dist">Cdist</button>
-          <button class="strip-btn" data-tool="para-dist">Para</button>
-          <button class="strip-btn" data-tool="perp-dist">Perp</button>
-          <button class="strip-btn" data-tool="area">Area</button>
-          <button class="strip-btn" data-tool="pt-circle-dist">PtCirc</button>
-          <button class="strip-btn" data-tool="intersect">Isect</button>
-          <button class="strip-btn" data-tool="slot-dist">Slot</button>
-          <button class="strip-btn" data-tool="arc-measure">ArcMeas</button>
-          <button class="strip-btn" data-tool="spline">Spline</button>
+        <div id="tool-strip-main">
+          <button class="strip-btn" data-tool="select" title="Select (V)">Select</button>
+          <button class="strip-btn" data-tool="pan" title="Pan (H)">Pan</button>
+          <div class="strip-divider"></div>
+
+          <!-- Measure group -->
+          <div class="strip-group">
+            <button class="strip-btn group-btn" id="btn-strip-measure">Measure ▾</button>
+            <div class="strip-flyout" id="strip-flyout-measure" hidden>
+              <button class="strip-btn flyout-item" data-tool="distance">Distance <span class="flyout-key">D</span></button>
+              <button class="strip-btn flyout-item" data-tool="angle">Angle <span class="flyout-key">A</span></button>
+              <button class="strip-btn flyout-item" data-tool="circle">Circle <span class="flyout-key">O</span></button>
+              <button class="strip-btn flyout-item" data-tool="arc-fit">Fit Arc <span class="flyout-key">F</span></button>
+              <button class="strip-btn flyout-item" data-tool="arc-measure">Arc Measure</button>
+              <button class="strip-btn flyout-item" data-tool="center-dist">Center Dist <span class="flyout-key">M</span></button>
+              <button class="strip-btn flyout-item" data-tool="para-dist">Para Dist <span class="flyout-key">L</span></button>
+              <button class="strip-btn flyout-item" data-tool="perp-dist">Perp Dist <span class="flyout-key">P</span></button>
+              <button class="strip-btn flyout-item" data-tool="area">Area <span class="flyout-key">R</span></button>
+              <button class="strip-btn flyout-item" data-tool="pt-circle-dist">Pt-Circle <span class="flyout-key">G</span></button>
+              <button class="strip-btn flyout-item" data-tool="intersect">Intersect <span class="flyout-key">I</span></button>
+              <button class="strip-btn flyout-item" data-tool="slot-dist">Slot Dist <span class="flyout-key">W</span></button>
+              <button class="strip-btn flyout-item" data-tool="spline">Spline <span class="flyout-key">B</span></button>
+            </div>
+          </div>
+
+          <!-- Setup group -->
+          <div class="strip-group">
+            <button class="strip-btn group-btn" id="btn-strip-setup">Setup ▾</button>
+            <div class="strip-flyout" id="strip-flyout-setup" hidden>
+              <button class="strip-btn flyout-item" data-tool="calibrate">Calibrate <span class="flyout-key">C</span></button>
+              <button class="strip-btn flyout-item" id="btn-lens-cal-open">Lens Cal</button>
+              <div id="cal-status-line" class="flyout-cal-status"></div>
+            </div>
+          </div>
+
+          <div class="strip-divider"></div>
+          <button class="strip-btn" id="btn-undo" title="Undo (Ctrl+Z)">↩</button>
+          <button class="strip-btn" id="btn-redo" title="Redo (Ctrl+Y)">↪</button>
+        </div>
+
+        <!-- Tool options row: shown for tools with extra options -->
+        <div id="tool-options-bar" hidden>
+          <div class="tool-opts-divider"></div>
+          <div id="tool-opts-arc-measure">
+            <span class="tool-opts-label">Point order:</span>
+            <button class="strip-btn tool-opts-btn active" id="btn-arc-order-sequential">Sequential</button>
+            <button class="strip-btn tool-opts-btn" id="btn-arc-order-ends-first">Ends first</button>
+          </div>
         </div>
       </div>
     </div>
@@ -367,9 +397,36 @@
       <!-- Status bar -->
       <div id="sidebar-status">
         <span id="status-text">● Live</span>
-        <button id="btn-calibration" class="cal-btn uncalibrated">NOT CALIBRATED</button>
       </div>
 
+    </div>
+  </div>
+
+  <!-- Arc-fit chooser: appears after double-click/Enter to pick arc vs circle -->
+  <div id="arc-fit-chooser" class="arc-fit-chooser" hidden>
+    <span class="arc-fit-chooser-label">Fit as:</span>
+    <button id="btn-arc-fit-arc">Arc segment</button>
+    <button id="btn-arc-fit-circle">Full circle</button>
+  </div>
+
+  <!-- Lens calibration panel (non-blocking — floats in corner, canvas stays clickable) -->
+  <div id="lens-cal-dialog" class="lens-cal-panel" hidden>
+    <div class="lens-cal-panel-header">
+      <span class="lens-cal-panel-title">Lens Distortion Calibration</span>
+      <button id="btn-lens-cal-cancel" class="dialog-close" title="Cancel">✕</button>
+    </div>
+    <p class="lens-cal-intro">
+      Click two points on the image to measure a feature. Repeat at
+      3–8 positions spread across the image — same feature, different locations.
+    </p>
+    <div class="lens-cal-section-label">Measurements</div>
+    <div id="lens-cal-samples"></div>
+    <button id="btn-lens-cal-clear" class="lens-cal-clear-btn">Clear all</button>
+    <div class="lens-cal-section-label" style="margin-top:10px">Before (grey) · After (green)</div>
+    <div id="lens-cal-plot"></div>
+    <div id="lens-cal-stats"></div>
+    <div class="lens-cal-footer">
+      <button id="btn-lens-cal-confirm" class="settings-save-btn" disabled>Apply correction</button>
     </div>
   </div>
 
@@ -468,6 +525,7 @@
 
           <div class="help-nav-section">Measurement Tools</div>
           <button class="help-nav-item top-level" data-page="tool-calibrate">Calibrate</button>
+          <button class="help-nav-item top-level" data-page="lens-cal">Lens Calibration</button>
           <button class="help-nav-item top-level" data-page="tool-distance">Distance</button>
           <button class="help-nav-item top-level" data-page="tool-angle">Angle</button>
           <button class="help-nav-item top-level" data-page="tool-circle">Circle</button>
@@ -530,6 +588,25 @@
             <div class="help-section-label">Circle calibration</div>
             <p class="help-p">If a circle annotation is already placed, click it while in Calibrate mode and enter the known diameter — useful when you have a precision reference hole or pin.</p>
             <div class="help-tip">For best accuracy, calibrate across the longest available reference distance to minimise the effect of pixel quantisation errors.</div>
+          </div>
+
+          <div class="help-page" id="help-page-lens-cal" hidden>
+            <h2 class="help-page-title">Lens Distortion Calibration</h2>
+            <p class="help-page-sub">Corrects barrel or pincushion distortion from non-telecentric lenses — improves measurement accuracy near image edges.</p>
+            <div class="help-section-label">Why this matters</div>
+            <p class="help-p">Regular lenses project through a curved optical path. Points near the image edge appear shifted inward (barrel) or outward (pincushion) relative to their true position. A pixel calibration at the centre will under- or over-measure features near the edges. Telecentric lenses eliminate this by design; this tool compensates for it in software.</p>
+            <div class="help-section-label">How to calibrate</div>
+            <div class="help-step"><span class="help-step-num">1</span><span>Freeze an image of something with a <strong>repeating equal dimension</strong> — evenly-spaced holes, a grid, a ruler, or any feature you can measure multiple times.</span></div>
+            <div class="help-step"><span class="help-step-num">2</span><span>Click <strong>Lens Cal</strong> in the sidebar to open the calibration dialog.</span></div>
+            <div class="help-step"><span class="help-step-num">3</span><span>Click two points to measure the dimension at one position. Repeat at 3–8 positions spread across the image — include measurements near the centre, the middle, and the edges.</span></div>
+            <div class="help-step"><span class="help-step-num">4</span><span>The dialog shows the <strong>spread</strong> (max deviation from mean) before and after correction, and a dot plot of each measurement vs its radial distance from centre. Grey = raw, green = corrected. When the green dots cluster near the horizontal axis, the fit is good.</span></div>
+            <div class="help-step"><span class="help-step-num">5</span><span>Press <strong>Apply</strong>. The correction is applied directly to the frozen image — all subsequent measurements are automatically corrected.</span></div>
+            <div class="help-section-label">Tips</div>
+            <div class="help-tip">You do not need to know the true physical length of what you're measuring — only that all samples represent the <em>same</em> dimension.</div>
+            <div class="help-tip">Spread after correction above ~1% may indicate k₂ (higher-order) distortion or inconsistent point placement. Try placing points more carefully first.</div>
+            <div class="help-tip">Apply lens calibration <em>before</em> placing measurement annotations for best accuracy. Re-calibrate if you change the lens, zoom level, or camera position significantly.</div>
+            <div class="help-section-label">Technical note</div>
+            <p class="help-p">The model used is first-order radial distortion: a point at distance r from the image centre is corrected by dividing by (1 + k₁r²). k₁ is found by a golden-section search that minimises the variance of corrected lengths across all your samples. The correction is applied by remapping each output pixel to its source in the original distorted image using bilinear interpolation.</p>
           </div>
 
           <div class="help-page" id="help-page-tool-distance" hidden>

@@ -17,6 +17,8 @@ import { showContextMenu, hideContextMenu } from './events-context-menu.js';
 import { undo, redo, initKeyboard } from './events-keyboard.js';
 import { initMouseHandlers } from './events-mouse.js';
 import { loadSpcParts, loadSpcFeatures, loadSpcData } from './spc.js';
+import { initLensCal } from './lens-cal.js';
+import { finalizeArcFit } from './tools.js';
 
 // ─── Dropdown helpers ─────��──────────────────────────────────────────────────
 function closeAllDropdowns() {
@@ -28,8 +30,19 @@ function closeAllDropdowns() {
     const el = document.getElementById(id);
     if (el) el.classList.remove("open");
   });
-  const popup = document.getElementById("overflow-popup");
-  if (popup) popup.hidden = true;
+  // Close strip flyouts
+  ["strip-flyout-measure","strip-flyout-setup"].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.hidden = true;
+  });
+}
+
+function toggleStripFlyout(flyoutId) {
+  const flyout = document.getElementById(flyoutId);
+  if (!flyout) return;
+  const wasOpen = !flyout.hidden;
+  closeAllDropdowns();
+  if (!wasOpen) flyout.hidden = false;
 }
 
 function toggleDropdown(btnId, dropId) {
@@ -94,30 +107,50 @@ document.querySelectorAll("#dropdown-measure .dropdown-item[data-tool]").forEach
     if (el) el.addEventListener("click", closeAllDropdowns, true);
   });
 
-// ── Overflow popup ────────────────────────────────────────────────────────────
-const overflowBtn   = document.getElementById("btn-overflow");
-const overflowPopup = document.getElementById("overflow-popup");
+// ── Strip flyout groups ───────────────────────────────────────────────────────
+document.getElementById("btn-strip-measure")?.addEventListener("click", e => {
+  e.stopPropagation();
+  toggleStripFlyout("strip-flyout-measure");
+});
+document.getElementById("btn-strip-setup")?.addEventListener("click", e => {
+  e.stopPropagation();
+  toggleStripFlyout("strip-flyout-setup");
+});
 
-if (overflowBtn && overflowPopup) {
-  overflowBtn.addEventListener("click", e => {
-    e.stopPropagation();
-    const wasOpen = !overflowPopup.hidden;
-    closeAllDropdowns(); // close any open dropdown first
-    if (!wasOpen) overflowPopup.hidden = false;
+// Tools in flyouts: use event delegation on each flyout
+document.querySelectorAll(".strip-flyout .flyout-item[data-tool]").forEach(btn => {
+  btn.addEventListener("click", () => {
+    setTool(btn.dataset.tool);
+    closeAllDropdowns();
   });
+});
 
-  document.querySelectorAll("#overflow-popup .strip-btn[data-tool]").forEach(btn => {
-    btn.addEventListener("click", () => {
-      setTool(btn.dataset.tool);
-      overflowPopup.hidden = true;
-    });
-  });
-}
+// Lens Cal button in setup flyout
+document.getElementById("btn-lens-cal-open")?.addEventListener("click", () => {
+  closeAllDropdowns();
+  document.getElementById("lens-cal-dialog").hidden = false;
+});
+
+// Arc-measure point-order toggle
+document.getElementById("btn-arc-order-sequential")?.addEventListener("click", () => {
+  state.arcMeasureMode = "sequential";
+  document.getElementById("btn-arc-order-sequential").classList.add("active");
+  document.getElementById("btn-arc-order-ends-first").classList.remove("active");
+  state.pendingPoints = [];
+  redraw();
+});
+document.getElementById("btn-arc-order-ends-first")?.addEventListener("click", () => {
+  state.arcMeasureMode = "ends-first";
+  document.getElementById("btn-arc-order-ends-first").classList.add("active");
+  document.getElementById("btn-arc-order-sequential").classList.remove("active");
+  state.pendingPoints = [];
+  redraw();
+});
 
 // ── Close dropdowns on click-outside ─────────────────────────────────────────
 document.addEventListener("click", e => {
-  // Don't close if clicking inside a dropdown (e.g. adjusting sliders)
-  if (e.target.closest(".dropdown")) return;
+  // Don't close if clicking inside a dropdown or strip flyout (e.g. adjusting sliders)
+  if (e.target.closest(".dropdown") || e.target.closest(".strip-group")) return;
   closeAllDropdowns();
 });
 
@@ -467,8 +500,7 @@ document.getElementById("btn-gradient-overlay")?.addEventListener("change", asyn
   redraw();
 });
 
-// ── Calibration button ────────────────────────────────────────────────────────
-document.getElementById("btn-calibration").addEventListener("click", () => setTool("calibrate"));
+// Calibrate tool is now wired via data-tool="calibrate" in the Setup flyout
 
 // ── Help dialog ──────────────────────────────────────────────────────────────
 document.getElementById("btn-help")?.addEventListener("click", () => {
@@ -990,6 +1022,9 @@ document.getElementById("template-input")?.addEventListener("change", async (e) 
 
 initDxfHandlers();
 initDetectHandlers();
+initLensCal();
+document.getElementById("btn-arc-fit-arc")?.addEventListener("click", () => finalizeArcFit(false));
+document.getElementById("btn-arc-fit-circle")?.addEventListener("click", () => finalizeArcFit(true));
 
 new ResizeObserver(resizeCanvas).observe(img);
 img.addEventListener("load", resizeCanvas);

@@ -342,9 +342,16 @@ body.no-camera #stream-img {
   border-radius: 12px;
   padding: 5px 8px;
   display: flex;
+  flex-direction: column;
+  gap: 0;
+  box-shadow: 0 4px 16px rgba(0,0,0,.6);
+  z-index: 200;
+}
+
+#tool-strip-main {
+  display: flex;
   align-items: center;
   gap: 3px;
-  box-shadow: 0 4px 16px rgba(0,0,0,.6);
 }
 
 .strip-btn {
@@ -357,9 +364,6 @@ body.no-camera #stream-img {
 .strip-btn.active { background: var(--accent); color: #fff; font-weight: 500; }
 .strip-btn.active:hover { background: var(--accent-hover); }
 
-.overflow-btn { color: var(--muted); padding: 5px 8px; }
-.overflow-btn:hover { background: var(--surface-2); color: var(--text-secondary); }
-
 .strip-divider {
   width: 1px;
   height: 16px;
@@ -368,20 +372,123 @@ body.no-camera #stream-img {
   flex-shrink: 0;
 }
 
-/* ─── Overflow popup ────────────────────────────────────────── */
-#overflow-popup {
+/* ─── Strip groups with flyout menus ────────────────────────── */
+.strip-group {
+  position: relative;
+}
+
+.group-btn {
+  white-space: nowrap;
+}
+
+.strip-flyout {
   position: absolute;
-  bottom: calc(100% + 8px);
-  right: 4px;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 10px;
-  box-shadow: 0 4px 16px rgba(0,0,0,.6);
-  padding: 6px;
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 3px;
-  min-width: 140px;
+  padding: 4px;
+  box-shadow: 0 4px 20px rgba(0,0,0,.6);
+  z-index: 460;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 150px;
+}
+.strip-flyout[hidden] { display: none; }
+
+.flyout-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  text-align: left;
+  padding: 5px 10px;
+  border-radius: 6px;
+  white-space: nowrap;
+  width: 100%;
+}
+
+.flyout-key {
+  color: var(--muted);
+  font-size: 9px;
+  margin-left: 12px;
+  flex-shrink: 0;
+}
+
+.flyout-cal-status {
+  margin-top: 3px;
+  padding: 3px 10px 2px;
+  font-size: 9px;
+  color: var(--muted);
+  border-top: 1px solid var(--border);
+}
+
+/* ─── Tool options bar ──────────────────────────────────────── */
+#tool-options-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+#tool-options-bar[hidden] { display: none; }
+
+.tool-opts-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 4px -8px 3px;
+}
+
+#tool-opts-arc-measure {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 0 2px;
+}
+
+.tool-opts-label {
+  font-size: 9px;
+  color: var(--muted);
+  white-space: nowrap;
+  margin-right: 2px;
+}
+
+.tool-opts-btn {
+  padding: 3px 8px;
+  font-size: 9px;
+  border-radius: 6px;
+  color: var(--text-secondary);
+}
+.tool-opts-btn.active {
+  background: var(--accent);
+  color: #fff;
+  font-weight: 500;
+}
+
+/* ─── Calibration warning indicator ────────────────────────── */
+#cal-indicator {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 5;
+  border: 2px dashed var(--warning);
+  border-radius: 3px;
+  opacity: 0.5;
+}
+#cal-indicator::after {
+  content: attr(data-label);
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(255,159,10,.12);
+  color: var(--warning);
+  font-size: 9px;
+  font-weight: 700;
+  padding: 2px 10px;
+  border-radius: 4px;
+  letter-spacing: 0.08em;
+  white-space: nowrap;
 }
 
 /* ─── Sidebar ───────────────────────────────────────────────── */
@@ -581,6 +688,182 @@ body.no-camera #stream-img {
   color: var(--success);
 }
 .cal-btn.calibrated:hover { background: rgba(48,209,88,.25); }
+
+/* ─── Arc-fit chooser ───────────────────────────────────────── */
+.arc-fit-chooser {
+  position: fixed;
+  top: 56px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  padding: 6px 10px;
+  box-shadow: 0 4px 16px rgba(0,0,0,.5);
+  z-index: 450;
+  white-space: nowrap;
+}
+.arc-fit-chooser[hidden] { display: none; }
+.arc-fit-chooser-label {
+  font-size: 11px;
+  color: var(--muted);
+  margin-right: 2px;
+}
+.arc-fit-chooser button {
+  padding: 4px 12px;
+  border-radius: 14px;
+  font-size: 11px;
+  font-weight: 500;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+  cursor: pointer;
+  transition: background 0.1s;
+}
+.arc-fit-chooser button:hover {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+/* ─── Lens-cal button states ────────────────────────────────── */
+.cal-btn.lens-uncalibrated {
+  background: rgba(99,102,241,.13);
+  border-color: rgba(99,102,241,.35);
+  color: #a5b4fc;
+}
+.cal-btn.lens-uncalibrated:hover { background: rgba(99,102,241,.22); }
+
+.cal-btn.lens-calibrated {
+  background: rgba(48,209,88,.15);
+  border-color: rgba(48,209,88,.4);
+  color: var(--success);
+}
+.cal-btn.lens-calibrated:hover { background: rgba(48,209,88,.25); }
+
+/* ─── Lens-cal floating panel ───────────────────────────────── */
+.lens-cal-panel {
+  position: fixed;
+  top: 60px;           /* below the top toolbar */
+  right: 16px;
+  width: 260px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 8px 32px rgba(0,0,0,.5);
+  z-index: 400;        /* above canvas, below settings/help */
+  padding: 12px 14px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+.lens-cal-panel[hidden] { display: none; }
+
+.lens-cal-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.lens-cal-panel-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.lens-cal-intro {
+  font-size: 11px;
+  color: var(--muted);
+  margin: 0 0 10px;
+  line-height: 1.5;
+}
+
+.lens-cal-section-label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  color: var(--muted);
+  margin-bottom: 5px;
+}
+
+.lens-cal-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 0;
+  border-bottom: 1px solid rgba(255,255,255,.05);
+  font-size: 11px;
+}
+
+.lens-cal-num  { width: 20px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.lens-cal-len  { flex: 1; color: var(--text); font-variant-numeric: tabular-nums; }
+.lens-cal-r    { color: var(--muted); font-size: 10px; }
+.lens-cal-del  {
+  background: none; border: none; color: var(--muted);
+  cursor: pointer; padding: 0 2px; font-size: 10px;
+}
+.lens-cal-del:hover { color: var(--danger); }
+
+.lens-cal-hint {
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.5;
+  padding: 4px 0;
+}
+
+.lens-cal-hint-sm {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.lens-cal-clear-btn {
+  margin-top: 8px;
+  background: none;
+  border: 1px solid rgba(255,255,255,.12);
+  border-radius: 4px;
+  color: var(--muted);
+  font-size: 10px;
+  padding: 3px 8px;
+  cursor: pointer;
+}
+.lens-cal-clear-btn:hover { border-color: rgba(255,255,255,.25); color: var(--text); }
+
+#lens-cal-plot {
+  margin-bottom: 10px;
+}
+
+.lens-stat-line {
+  font-size: 12px;
+  margin-bottom: 4px;
+}
+.lens-stat-before { color: rgba(160,160,160,0.8); font-weight: 600; }
+.lens-stat-after  { color: var(--success); font-weight: 600; }
+.lens-stat-k1     { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+.lens-cal-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.dialog-close-btn {
+  padding: 5px 14px;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  font-size: 11px;
+  color: var(--muted);
+  cursor: pointer;
+}
+.dialog-close-btn:hover { background: var(--surface-2); color: var(--text); }
 
 /* ─── No-camera mode ────────────────────────────────────────── */
 body.no-camera .camera-section { display: none; }

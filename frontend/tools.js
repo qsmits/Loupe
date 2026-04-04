@@ -1,6 +1,6 @@
 import { apiFetch } from './api.js';
 import { refinePointJS } from './subpixel-js.js';
-import { state, TOOL_STATUS } from './state.js';
+import { state, TOOL_STATUS, pushUndo } from './state.js';
 import { redraw, canvas, showStatus, getLineEndpoints, lineAngleDeg, listEl } from './render.js';
 import { dxfToCanvas } from './render-dxf.js';
 import { addAnnotation, applyCalibration } from './annotations.js';
@@ -44,9 +44,39 @@ export function setTool(name) {
   document.querySelectorAll("#tool-strip .strip-btn[data-tool]").forEach(btn => {
     btn.classList.toggle("active", btn.dataset.tool === name);
   });
+  _updateStripGroups(name);
   showStatus(TOOL_STATUS[name] ?? name);
   canvas.style.cursor = name === "pan" ? "grab" : name === "select" ? "default" : "crosshair";
   redraw();
+}
+
+const _MEASURE_TOOLS = new Set([
+  "distance","angle","circle","arc-fit","arc-measure","center-dist",
+  "para-dist","perp-dist","area","pt-circle-dist","intersect","slot-dist","spline",
+]);
+const _TOOL_LABELS = {
+  "distance":"Distance","angle":"Angle","circle":"Circle","arc-fit":"Fit Arc",
+  "arc-measure":"Arc Meas","center-dist":"Center Dist","para-dist":"Para Dist",
+  "perp-dist":"Perp Dist","area":"Area","pt-circle-dist":"Pt-Circle",
+  "intersect":"Intersect","slot-dist":"Slot Dist","spline":"Spline",
+  "calibrate":"Calibrate",
+};
+
+function _updateStripGroups(name) {
+  const measureBtn = document.getElementById("btn-strip-measure");
+  const setupBtn   = document.getElementById("btn-strip-setup");
+  const optsBar    = document.getElementById("tool-options-bar");
+  if (measureBtn) {
+    const inGroup = _MEASURE_TOOLS.has(name);
+    measureBtn.textContent = inGroup ? (_TOOL_LABELS[name] ?? name) + " ▾" : "Measure ▾";
+    measureBtn.classList.toggle("active", inGroup);
+  }
+  if (setupBtn) {
+    setupBtn.classList.toggle("active", name === "calibrate");
+  }
+  if (optsBar) {
+    optsBar.hidden = name !== "arc-measure";
+  }
 }
 
 export function canvasPoint(e) {
@@ -170,6 +200,7 @@ export async function handleToolClick(rawPt, e = {}) {
     }
     // Two-point calibration flow
     state.pendingPoints.push(pt);
+    updateToolStatus();
     if (state.pendingPoints.length === 2) {
       const [p1, p2] = state.pendingPoints;
       const dist = prompt("Distance between these two points (e.g. '1.000 mm' or '500 µm'):");
@@ -194,6 +225,7 @@ export async function handleToolClick(rawPt, e = {}) {
       addAnnotation({ type: "distance", a, b });
       state.pendingPoints = [];
     }
+    updateToolStatus();
     redraw();
     return;
   }
@@ -205,6 +237,7 @@ export async function handleToolClick(rawPt, e = {}) {
       addAnnotation({ type: "angle", p1, vertex, p3 });
       state.pendingPoints = [];
     }
+    updateToolStatus();
     redraw();
     return;
   }
@@ -221,18 +254,21 @@ export async function handleToolClick(rawPt, e = {}) {
       }
       state.pendingPoints = [];
     }
+    updateToolStatus();
     redraw();
     return;
   }
 
   if (tool === "arc-fit") {
     state.pendingPoints.push(pt);
+    updateToolStatus();
     redraw();
     return;
   }
 
   if (tool === "spline") {
     state.pendingPoints.push(pt);
+    updateToolStatus();
     redraw();
     return;
   }
@@ -240,7 +276,9 @@ export async function handleToolClick(rawPt, e = {}) {
   if (tool === "arc-measure") {
     state.pendingPoints.push(pt);
     if (state.pendingPoints.length === 3) {
-      const [p1, p2, p3] = state.pendingPoints;
+      // In "ends-first" mode: clicks are [end1, end2, mid]; reorder to [end1, mid, end2]
+      let [p1, p2, p3] = state.pendingPoints;
+      if (state.arcMeasureMode === "ends-first") [p1, p2, p3] = [p1, p3, p2];
       const ax = p2.x - p1.x, ay = p2.y - p1.y;
       const bx = p3.x - p1.x, by = p3.y - p1.y;
       const D = 2 * (ax * by - ay * bx);
@@ -262,12 +300,14 @@ export async function handleToolClick(rawPt, e = {}) {
       addAnnotation({ type: "arc-measure", cx, cy, r, p1, p2, p3, span_deg: span, chord_px: chord });
       state.pendingPoints = [];
     }
+    updateToolStatus();
     redraw();
     return;
   }
 
   if (tool === "area") {
     state.pendingPoints.push(pt);
+    updateToolStatus();
     redraw();
     return;
   }
@@ -665,14 +705,51 @@ export function handleDrag(pt) {
 
 // ── Multi-point tool finalization ─────────────────────────────────────────────
 
-export function finalizeArcFit() {
-  if (state.pendingPoints.length < 3) return false;
+/** Show the Arc / Circle chooser. Called from dblclick and Enter handlers. */
+export function promptArcFitChoice() {
+  if (state.pendingPoints.length < 3) return;
   const fit = fitCircleAlgebraic(state.pendingPoints);
-  if (!fit) { showStatus("Could not fit circle — points may be collinear"); return false; }
-  addAnnotation({ type: "arc-fit", cx: fit.cx, cy: fit.cy, r: fit.r });
+  if (!fit) { showStatus("Could not fit circle — points may be collinear"); return; }
+  const chooser = document.getElementById("arc-fit-chooser");
+  if (!chooser) { finalizeArcFit(false); return; }
+  chooser.hidden = false;
+}
+
+/** Called by the Arc / Circle chooser buttons. */
+export function finalizeArcFit(asCircle) {
+  const chooser = document.getElementById("arc-fit-chooser");
+  if (chooser) chooser.hidden = true;
+  if (state.pendingPoints.length < 3) return;
+  const fit = fitCircleAlgebraic(state.pendingPoints);
+  if (!fit) { showStatus("Could not fit circle — points may be collinear"); return; }
+
+  let ann;
+  if (asCircle) {
+    ann = { type: "arc-fit", cx: fit.cx, cy: fit.cy, r: fit.r };
+  } else {
+    const { startAngle, endAngle, anticlockwise } = _arcAngles(state.pendingPoints, fit.cx, fit.cy);
+    ann = { type: "arc-fit", cx: fit.cx, cy: fit.cy, r: fit.r, startAngle, endAngle, anticlockwise };
+  }
+  addAnnotation(ann);
   state.pendingPoints = [];
   setTool("select");
-  return true;
+}
+
+function _arcAngles(points, cx, cy) {
+  const angles = points.map(p => Math.atan2(p.y - cy, p.x - cx));
+  // Sum signed angular steps to determine winding direction
+  let totalDelta = 0;
+  for (let i = 1; i < angles.length; i++) {
+    let d = angles[i] - angles[i - 1];
+    if (d > Math.PI)  d -= 2 * Math.PI;
+    if (d < -Math.PI) d += 2 * Math.PI;
+    totalDelta += d;
+  }
+  return {
+    startAngle: angles[0],
+    endAngle:   angles[angles.length - 1],
+    anticlockwise: totalDelta < 0,
+  };
 }
 
 export function finalizeArea() {
@@ -690,6 +767,89 @@ export function finalizeSpline() {
   state.pendingPoints = [];
   setTool("select");
   return true;
+}
+
+// ── Dynamic step status ───────────────────────────────────────────────────────
+// Called after each point placement to keep the status bar current.
+export function updateToolStatus() {
+  const n = state.pendingPoints.length;
+  if (n === 0) return;
+  const tool = state.tool;
+
+  // Fixed-step tools: array index = points already placed
+  const steps = {
+    distance:      ['Click point 2'],
+    angle:         ['Click the vertex', 'Click point 3 (other arm)'],
+    circle:        ['Click point 2 of 3', 'Click point 3 of 3'],
+    calibrate:     ['Click point 2'],
+    'arc-measure': state.arcMeasureMode === 'ends-first'
+      ? ['Click second end', 'Click arc midpoint']
+      : ['Click arc midpoint', 'Click arc end'],
+  };
+  const names = {
+    distance: 'Distance', angle: 'Angle', circle: 'Circle (3-point)',
+    calibrate: 'Calibrate', 'arc-measure': 'Arc Measure',
+  };
+  if (steps[tool]) {
+    const msg = steps[tool][n - 1] ?? steps[tool][steps[tool].length - 1];
+    showStatus(`${names[tool]} — ${msg}`);
+    return;
+  }
+  if (tool === 'arc-fit') {
+    if (n < 3) showStatus(`Fit Arc — ${n} point${n > 1 ? 's' : ''} placed, need ${3 - n} more`);
+    else       showStatus(`Fit Arc — ${n} points · double-click or Enter to finish`);
+    return;
+  }
+  if (tool === 'area') {
+    if (n < 3) showStatus(`Area — ${n} point${n > 1 ? 's' : ''} placed, need ${3 - n} more`);
+    else       showStatus(`Area — ${n} points · double-click or Enter to finish`);
+    return;
+  }
+  if (tool === 'spline') {
+    if (n < 2) showStatus(`Spline — ${n} anchor placed, need ${2 - n} more`);
+    else       showStatus(`Spline — ${n} anchors · double-click or Enter to finish`);
+    return;
+  }
+}
+
+// ── Nudge selected annotations (arrow key movement) ───────────────────────────
+export function nudgeSelected(dx, dy) {
+  if (state.selected.size === 0) return false;
+  pushUndo();
+  for (const id of state.selected) {
+    const ann = state.annotations.find(a => a.id === id);
+    if (ann) _nudgeAnn(ann, dx, dy);
+  }
+  return true;
+}
+
+function _nudgeAnn(ann, dx, dy) {
+  if (['distance', 'center-dist', 'perp-dist', 'para-dist', 'parallelism'].includes(ann.type)) {
+    ann.a.x += dx; ann.a.y += dy;
+    ann.b.x += dx; ann.b.y += dy;
+  } else if (ann.type === 'angle') {
+    ann.p1.x += dx; ann.p1.y += dy;
+    ann.vertex.x += dx; ann.vertex.y += dy;
+    ann.p3.x += dx; ann.p3.y += dy;
+  } else if (ann.type === 'circle' || ann.type === 'arc-fit') {
+    ann.cx += dx; ann.cy += dy;
+  } else if (ann.type === 'calibration') {
+    if (ann.x1 !== undefined) { ann.x1 += dx; ann.y1 += dy; ann.x2 += dx; ann.y2 += dy; }
+    else { ann.cx += dx; ann.cy += dy; }
+  } else if (ann.type === 'area' || ann.type === 'spline') {
+    ann.points.forEach(p => { p.x += dx; p.y += dy; });
+  } else if (ann.type === 'origin') {
+    ann.x += dx; ann.y += dy;
+  } else if (ann.type === 'arc-measure') {
+    ann.p1.x += dx; ann.p1.y += dy;
+    ann.p2.x += dx; ann.p2.y += dy;
+    ann.p3.x += dx; ann.p3.y += dy;
+    ann.cx += dx; ann.cy += dy;
+  } else if (ann.type === 'pt-circle-dist') {
+    ann.px += dx; ann.py += dy;
+  }
+  // intersect, slot-dist: reference-based — skip individual nudge
+  // detected-*: skip
 }
 
 export function collectDxfSnapPoints(ann) {
