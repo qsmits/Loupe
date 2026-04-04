@@ -3,7 +3,7 @@ import { refinePointJS } from './subpixel-js.js';
 import { state, TOOL_STATUS, pushUndo } from './state.js';
 import { redraw, canvas, showStatus, getLineEndpoints, lineAngleDeg, listEl } from './render.js';
 import { dxfToCanvas } from './render-dxf.js';
-import { addAnnotation, applyCalibration } from './annotations.js';
+import { addAnnotation, applyCalibration, elevateAnnotation } from './annotations.js';
 import { fitCircle, fitCircleAlgebraic, splineArcLength, parseDistanceInput, distPointToSegment } from './math.js';
 import { renderSidebar } from './sidebar.js';
 import { viewport, screenToImage, imageWidth, imageHeight } from './viewport.js';
@@ -196,6 +196,8 @@ export async function handleToolClick(rawPt, e = {}) {
               cx = circle.x * sx; cy = circle.y * sy; r = circle.radius * sx;
             }
             applyCalibration({ type: "calibration", cx, cy, r, knownValue: parsed.value, unit: parsed.unit });
+            // Promote the detected circle to a measurement so it isn't left as a raw detection underneath the calibration line.
+            if (circle.type !== "circle") elevateAnnotation(circle.id);
             setTool("select");
           }
         }
