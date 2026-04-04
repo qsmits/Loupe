@@ -18,6 +18,7 @@ import { undo, redo, initKeyboard } from './events-keyboard.js';
 import { initMouseHandlers } from './events-mouse.js';
 import { loadSpcParts, loadSpcFeatures, loadSpcData } from './spc.js';
 import { initLensCal } from './lens-cal.js';
+import { initTiltCal, openTiltCalDialog } from './tilt-cal.js';
 import { finalizeArcFit } from './tools.js';
 
 // ─── Dropdown helpers ─────��──────────────────────────────────────────────────
@@ -129,6 +130,12 @@ document.querySelectorAll(".strip-flyout .flyout-item[data-tool]").forEach(btn =
 document.getElementById("btn-lens-cal-open")?.addEventListener("click", () => {
   closeAllDropdowns();
   document.getElementById("lens-cal-dialog").hidden = false;
+});
+
+// Perspective correction button in setup flyout
+document.getElementById("btn-tilt-cal-open")?.addEventListener("click", () => {
+  closeAllDropdowns();
+  openTiltCalDialog();
 });
 
 // Arc-measure point-order toggle
@@ -1023,6 +1030,7 @@ document.getElementById("template-input")?.addEventListener("change", async (e) 
 initDxfHandlers();
 initDetectHandlers();
 initLensCal();
+initTiltCal();
 document.getElementById("btn-arc-fit-arc")?.addEventListener("click", () => finalizeArcFit(false));
 document.getElementById("btn-arc-fit-circle")?.addEventListener("click", () => finalizeArcFit(true));
 

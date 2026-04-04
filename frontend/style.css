@@ -872,6 +872,29 @@ body.no-camera #stream-img {
   border-top: 1px solid var(--border);
 }
 
+/* ─── Tilt / perspective correction panel ───────────────────── */
+.tilt-cal-dims {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  flex-wrap: wrap;
+}
+.tilt-cal-label {
+  font-size: 10px;
+  color: var(--muted);
+}
+.tilt-cal-input {
+  width: 64px;
+  padding: 3px 6px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--text);
+  font-size: 11px;
+}
+.tilt-cal-input:focus { outline: none; border-color: var(--accent); }
+
 .dialog-close-btn {
   padding: 5px 14px;
   background: none;

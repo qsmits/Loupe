@@ -10,7 +10,7 @@ import { addAnnotation, deleteSelected, elevateSelected, isDetection,
 import { setTool, handleToolClick, handleSelectDown, handleDrag,
          canvasPoint, snapPoint, collectDxfSnapPoints,
          projectConstrained, hitTestDxfEntity,
-         finalizeArcFit, finalizeArea, finalizeSpline } from './tools.js';
+         promptArcFitChoice, finalizeArcFit, finalizeArea, finalizeSpline } from './tools.js';
 import { fitCircle } from './math.js';
 import { exitDxfAlignMode, openFeatureTolPopover } from './dxf.js';
 import { viewport, screenToImage, clampPan, fitToWindow, zoomOneToOne,
@@ -19,6 +19,8 @@ import { showContextMenu, hideContextMenu } from './events-context-menu.js';
 import { _hitTestGuidedResult, _findConnectedEntities, _annotationPrimaryPoint,
          _nearestSegmentDist, _updatePickFit, _finalizePickInspection } from './events-inspection.js';
 import { drawLoupe } from './render-hud.js';
+import { isLensCalMode, lensCalClick, lensCalMouseMove } from './lens-cal.js';
+import { isTiltCalMode, tiltCalClick, tiltCalMouseMove } from './tilt-cal.js';
 import { refinePointJS } from './subpixel-js.js';
 
 // ── Sub-pixel snap preview (debounced) ────────────────────────────────────────
@@ -161,6 +163,8 @@ async function onMouseDown(e) {
     document.getElementById("btn-set-origin").classList.remove("active");
     return;
   }
+  if (isLensCalMode()) { lensCalClick(pt); return; }
+  if (isTiltCalMode()) { tiltCalClick(pt); return; }
   if (state._dxfOriginMode) {
     const ann = state.annotations.find(a => a.type === "dxf-overlay");
     if (ann) { ann.offsetX = pt.x; ann.offsetY = pt.y; redraw(); }
@@ -334,7 +338,7 @@ export function initMouseHandlers() {
     if (state.tool === "arc-fit" && state.pendingPoints.length >= 4) {
       e.preventDefault();
       state.pendingPoints.pop();
-      finalizeArcFit();
+      promptArcFitChoice();
       return;
     }
     if (state.tool === "area" && state.pendingPoints.length >= 4) {
@@ -350,6 +354,8 @@ export function initMouseHandlers() {
     const pt = canvasPoint(e);
     const rawPt = pt;
     state.mousePos = pt;
+    lensCalMouseMove(pt);
+    tiltCalMouseMove(pt);
     _updateSubpixelPreview(pt, e.altKey);
     drawLoupe();
     if (state._panStart) {

@@ -130,6 +130,8 @@ import { drawAnnotations } from './render-annotations.js';
 import { drawDxfOverlay, dxfToCanvas, drawGuidedResults, drawDeviations,
          drawEdgesOverlay, drawPreprocessedOverlay, deviationColor } from './render-dxf.js';
 import { drawGrid, drawMinimap, drawPendingPoints, drawCrosshair, drawLoupe } from './render-hud.js';
+import { drawLensCalOverlay } from './lens-cal.js';
+import { drawTiltCalOverlay } from './tilt-cal.js';
 
 // Re-export sub-module functions for backward compatibility
 export { drawAnnotations } from './render-annotations.js';
@@ -285,6 +287,11 @@ export function redraw() {
       }
     }
   }
+
+  // Lens calibration overlay (blue sample lines + preview)
+  drawLensCalOverlay();
+  // Perspective correction overlay (corner markers)
+  drawTiltCalOverlay();
 
   // Point-pick mode rendering
   if (state.inspectionPickTarget) {
