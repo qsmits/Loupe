@@ -18,6 +18,26 @@ import { uploadCorrectedFrame } from './api.js';
 let _active   = false;
 let _points   = [];   // up to 4 {x, y} image-space points
 let _mousePos = null;
+let _savedBackground = null;  // pre-correction frozenBackground for one-level undo
+
+export function hasPerspectiveCorrection() { return _savedBackground !== null; }
+
+export async function undoPerspectiveCorrection() {
+  if (!_savedBackground) return;
+  state.frozenBackground = _savedBackground;
+  _savedBackground = null;
+  cacheImageData(state.frozenBackground, imageWidth, imageHeight);
+  redraw();
+  showStatus("Perspective correction undone — syncing to server…");
+  // uploadCorrectedFrame expects a canvas, so draw the image into one first
+  const offscreen = document.createElement("canvas");
+  offscreen.width = imageWidth;
+  offscreen.height = imageHeight;
+  offscreen.getContext("2d").drawImage(state.frozenBackground, 0, 0);
+  await uploadCorrectedFrame(offscreen);
+  showStatus("Perspective correction undone");
+  document.dispatchEvent(new CustomEvent("perspective-correction-changed"));
+}
 
 export function isTiltCalMode() { return _active; }
 
@@ -136,7 +156,8 @@ async function _applyCorrection() {
   const H_inv  = _inv3x3(H);
   if (!H_inv) { showStatus("Degenerate transform — points may be collinear"); return; }
 
-  const corrected = _warpImage(H_inv, state.frozenBackground);
+  _savedBackground = state.frozenBackground;  // save for undo
+  const corrected = _warpImage(H_inv, _savedBackground);
   state.frozenBackground = corrected;
   cacheImageData(corrected, imageWidth, imageHeight);
 
@@ -148,6 +169,7 @@ async function _applyCorrection() {
   await uploadCorrectedFrame(corrected);
   if (applyBtn) { applyBtn.disabled = false; applyBtn.textContent = "Apply"; }
   showStatus("Perspective correction applied");
+  document.dispatchEvent(new CustomEvent("perspective-correction-changed"));
 }
 
 // ── UI update ─────────────────────────────────────────────────────────────────

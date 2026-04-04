@@ -18,7 +18,7 @@ import { undo, redo, initKeyboard } from './events-keyboard.js';
 import { initMouseHandlers } from './events-mouse.js';
 import { loadSpcParts, loadSpcFeatures, loadSpcData } from './spc.js';
 import { initLensCal } from './lens-cal.js';
-import { initTiltCal, openTiltCalDialog } from './tilt-cal.js';
+import { initTiltCal, openTiltCalDialog, hasPerspectiveCorrection, undoPerspectiveCorrection } from './tilt-cal.js';
 import { initCalProfiles, openCalProfiles } from './cal-profiles.js';
 import { isBrowserCameraActive, startBrowserCamera, stopBrowserCamera } from './browser-camera.js';
 import { finalizeArcFit } from './tools.js';
@@ -139,6 +139,18 @@ document.getElementById("btn-tilt-cal-open")?.addEventListener("click", () => {
   closeAllDropdowns();
   openTiltCalDialog();
 });
+
+const _undoPerspBtn = document.getElementById("btn-tilt-cal-undo");
+if (_undoPerspBtn) {
+  _undoPerspBtn.addEventListener("click", async () => {
+    closeAllDropdowns();
+    await undoPerspectiveCorrection();
+    _undoPerspBtn.hidden = true;
+  });
+  document.addEventListener("perspective-correction-changed", () => {
+    _undoPerspBtn.hidden = !hasPerspectiveCorrection();
+  });
+}
 
 // Cal Profiles button in setup flyout
 document.getElementById("btn-cal-profiles-open")?.addEventListener("click", () => {
