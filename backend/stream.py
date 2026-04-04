@@ -216,6 +216,16 @@ async def mjpeg_generator(camera: BaseCamera, fps: int = 30):
             start = loop.time()
 
             frame = camera.get_frame()
+            # Apply the 4-up "compare" post-processing profile if one is active.
+            # Import lazily to avoid a circular import (api_compare -> cameras -> stream).
+            try:
+                from .api_compare import get_active_profile
+                from .vision.settings_proposer import apply_variant
+                profile = get_active_profile()
+                if profile is not None:
+                    frame = apply_variant(frame, profile)
+            except Exception as e:  # pragma: no cover - defensive
+                _log.warning("compare profile apply failed: %s", e)
             ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
             if ok:
                 data = buf.tobytes()

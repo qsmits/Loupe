@@ -265,6 +265,7 @@
     </div>
 
     <div class="top-bar-right">
+      <button id="btn-compare" class="top-btn" title="Compare 4 image settings (Keyence-style)">4-up</button>
       <button id="btn-freeze" class="top-btn freeze-btn freeze-live">❄ Live</button>
       <button id="btn-load" class="top-btn icon-btn" title="Load image">📁</button>
       <button id="btn-save-session" class="top-btn icon-btn" title="Save session">💾</button>
@@ -294,6 +295,15 @@
       <div id="coord-display"></div>
       <div id="drop-overlay">
         <div class="drop-message">Drop image here</div>
+      </div>
+      <div id="compare-overlay" hidden>
+        <div class="compare-grid">
+          <div class="compare-cell" data-idx="0"><img alt="" /><div class="compare-label"></div></div>
+          <div class="compare-cell" data-idx="1"><img alt="" /><div class="compare-label"></div></div>
+          <div class="compare-cell" data-idx="2"><img alt="" /><div class="compare-label"></div></div>
+          <div class="compare-cell" data-idx="3"><img alt="" /><div class="compare-label"></div></div>
+        </div>
+        <div class="compare-hint">Double-click a quadrant to apply those settings. Press Esc to cancel.</div>
       </div>
       <div id="loading-overlay" hidden>
         <div class="loading-spinner"></div>
@@ -393,6 +403,11 @@
               <tbody id="inspection-tbody"></tbody>
             </table>
           </div>
+        </div>
+        <div id="compare-active-badge" class="compare-active-badge" hidden>
+          <span class="compare-active-label">Profile:</span>
+          <span id="compare-active-name">—</span>
+          <button id="btn-compare-clear" class="compare-clear-btn" title="Reset to raw camera frame">Reset</button>
         </div>
         <div id="template-info" class="template-info" hidden>
           <span class="template-badge">Template:</span>

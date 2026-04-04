@@ -5,6 +5,7 @@ from .cameras.base import BaseCamera
 from .config import load_config, save_config
 from .session_store import SessionFrameStore
 from .api_camera import make_camera_router
+from .api_compare import make_compare_router
 from .api_detection import make_detection_router
 from .api_inspection import make_inspection_router, router as inspection_router
 from .api_runs import make_runs_router
@@ -74,6 +75,7 @@ router.include_router(inspection_router)
 def make_router(camera: BaseCamera, frame_store: SessionFrameStore, startup_warning: str | None = None, run_store: RunStore | None = None) -> APIRouter:
     composed = APIRouter()
     composed.include_router(make_camera_router(camera, frame_store, startup_warning))
+    composed.include_router(make_compare_router(camera))
     composed.include_router(make_detection_router(frame_store))
     composed.include_router(make_inspection_router(frame_store))
     if run_store:
