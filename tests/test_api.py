@@ -129,7 +129,13 @@ def test_set_white_balance_ratio_out_of_range(client):
     assert r.status_code == 400
 
 
-def test_list_cameras_returns_list(client):
+def test_list_cameras_returns_list(client, monkeypatch):
+    # Stub out hardware probing — list_aravis_cameras requires GI, list_opencv_cameras
+    # opens VideoCapture devices which wakes hardware (including iPhone Continuity Camera).
+    monkeypatch.setattr("backend.cameras.aravis.list_aravis_cameras", lambda: [])
+    monkeypatch.setattr("backend.cameras.opencv.list_opencv_cameras", lambda: [
+        {"id": "opencv-0", "vendor": "Webcam", "label": "Webcam 1"},
+    ])
     r = client.get("/cameras")
     assert r.status_code == 200
     data = r.json()
