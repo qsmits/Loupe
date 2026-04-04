@@ -815,8 +815,10 @@ document.getElementById("camera-select-top")?.addEventListener("change", async e
   const camera_id = e.target.value;
   if (!camera_id) return;
 
-  if (camera_id === "browser-cam") {
-    await startBrowserCamera();
+  if (camera_id === "browser-cam" || camera_id.startsWith("browser-cam-")) {
+    const deviceId = camera_id.startsWith("browser-cam-")
+      ? camera_id.slice("browser-cam-".length) : null;
+    await startBrowserCamera(deviceId);
     return;
   }
 

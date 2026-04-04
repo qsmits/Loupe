@@ -9,14 +9,33 @@ export function isBrowserCameraActive() {
   return state.browserCamera?.active === true;
 }
 
-export async function startBrowserCamera() {
+// Enumerate video input devices and store in state.browserCameraDevices.
+// Labels are only populated after permission has been granted.
+async function _enumerateAndRefresh() {
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({
-      video: { width: { ideal: 1920 }, height: { ideal: 1080 } },
-    });
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    state.browserCameraDevices = devices
+      .filter(d => d.kind === "videoinput")
+      .map((d, i) => ({
+        deviceId: d.deviceId,
+        label: d.label || `Camera ${i + 1}`,
+      }));
+    // Refresh dropdown so individual entries appear
+    const { loadCameraList } = await import('./sidebar.js');
+    await loadCameraList();
+  } catch { /* permission denied or API unavailable */ }
+}
+
+export async function startBrowserCamera(deviceId = null) {
+  const constraints = deviceId
+    ? { video: { deviceId: { exact: deviceId }, width: { ideal: 1920 }, height: { ideal: 1080 } } }
+    : { video: { width: { ideal: 1920 }, height: { ideal: 1080 } } };
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia(constraints);
     // Stop any previous stream
     state.browserCamera?.stream?.getTracks().forEach(t => t.stop());
-    state.browserCamera = { active: true, stream };
+    const activeDeviceId = stream.getVideoTracks()[0]?.getSettings().deviceId ?? deviceId;
+    state.browserCamera = { active: true, stream, deviceId: activeDeviceId };
     videoEl.srcObject = stream;
     await new Promise(resolve => { videoEl.onloadedmetadata = resolve; });
     videoEl.play();
@@ -25,16 +44,19 @@ export async function startBrowserCamera() {
     document.body.classList.remove("no-camera");
     setImageSize(videoEl.videoWidth, videoEl.videoHeight);
     resizeCanvas();
-    showStatus("Browser camera active");
+    const label = stream.getVideoTracks()[0]?.label || "Browser camera";
+    showStatus(`${label} active`);
+    // Enumerate after permission granted so labels are available
+    await _enumerateAndRefresh();
   } catch (err) {
     showStatus("Camera access denied: " + err.message);
-    state.browserCamera = { active: false, stream: null };
+    state.browserCamera = { active: false, stream: null, deviceId: null };
   }
 }
 
 export function stopBrowserCamera() {
   state.browserCamera?.stream?.getTracks().forEach(t => t.stop());
-  state.browserCamera = { active: false, stream: null };
+  state.browserCamera = { active: false, stream: null, deviceId: null };
   videoEl.hidden = true;
   videoEl.srcObject = null;
   img.style.display = "";

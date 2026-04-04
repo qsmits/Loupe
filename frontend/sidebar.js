@@ -515,9 +515,16 @@ export async function loadCameraList() {
     ]);
     const cameras = await camerasResp.json();
     const info = await infoResp.json();
-    const currentId = state.browserCamera?.active ? "browser-cam" : (info.device_id ?? "");
-    // Always append browser camera option
-    const allCameras = [...cameras, { id: "browser-cam", label: "Browser Camera (Webcam)" }];
+    const activeDeviceId = state.browserCamera?.deviceId;
+    const currentId = state.browserCamera?.active
+      ? (activeDeviceId ? `browser-cam-${activeDeviceId}` : "browser-cam")
+      : (info.device_id ?? "");
+    // Append browser camera entries — individual devices if enumerated, generic otherwise
+    const browserDevices = state.browserCameraDevices;
+    const browserEntries = browserDevices && browserDevices.length > 0
+      ? browserDevices.map(d => ({ id: `browser-cam-${d.deviceId}`, label: `Browser: ${d.label}` }))
+      : [{ id: "browser-cam", label: "Browser Camera (Webcam)" }];
+    const allCameras = [...cameras, ...browserEntries];
     for (const target of [sel, selTop]) {
       if (!target) continue;
       target.innerHTML = "";
