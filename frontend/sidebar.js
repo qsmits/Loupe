@@ -333,13 +333,24 @@ export async function loadUiConfig() {
 export function updateCalibrationButton() {
   const indicator = document.getElementById("cal-indicator");
   const statusLine = document.getElementById("cal-status-line");
+  const badge = document.getElementById("cal-badge");
   if (state.calibration) {
     const scale = (1000 / state.calibration.pixelsPerMm).toFixed(3);
     if (indicator) indicator.hidden = true;
     if (statusLine) statusLine.textContent = `${scale} µm/px`;
+    if (badge) {
+      badge.textContent = `${scale} µm/px`;
+      badge.classList.remove("uncalibrated");
+      badge.classList.add("calibrated");
+    }
   } else {
     if (indicator) { indicator.hidden = false; indicator.dataset.label = "NOT CALIBRATED"; }
     if (statusLine) statusLine.textContent = "Not calibrated";
+    if (badge) {
+      badge.textContent = "NOT CALIBRATED";
+      badge.classList.remove("calibrated");
+      badge.classList.add("uncalibrated");
+    }
   }
 }
 

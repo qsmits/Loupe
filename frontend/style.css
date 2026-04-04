@@ -665,7 +665,25 @@ body.no-camera #stream-img {
   color: var(--muted);
 }
 
-/* ─── Calibration button ────────────────────────────────────── */
+/* ─── Calibration badge (sidebar status) ───────────────────── */
+.cal-badge {
+  font-size: 9px;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 5px;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+}
+.cal-badge.uncalibrated {
+  color: var(--warning);
+  background: rgba(255,159,10,.12);
+}
+.cal-badge.calibrated {
+  color: var(--success);
+  background: rgba(48,209,88,.1);
+}
+
+/* ─── Calibration button (legacy, kept for reference) ──────── */
 .cal-btn {
   border-radius: 6px;
   padding: 3px 8px;
