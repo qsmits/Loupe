@@ -1,10 +1,17 @@
 /**
- * render-hud.js — HUD elements: minimap, grid, crosshair, pending points.
+ * render-hud.js — HUD elements: minimap, grid, crosshair, pending points, loupe.
  * Extracted from render.js (Task 7).
  */
 import { state } from './state.js';
 import { viewport, imageWidth, imageHeight } from './viewport.js';
 import { ctx, canvas, pw, drawHandle } from './render.js';
+
+// Tools that trigger the loupe (any tool that places measurement points)
+const _LOUPE_TOOLS = new Set([
+  "distance", "angle", "circle", "arc-fit", "arc-measure",
+  "perp-dist", "para-dist", "center-dist", "pt-circle-dist",
+  "intersect", "slot-dist", "area", "calibrate", "spline",
+]);
 
 export function drawGrid() {
   if (!state.showGrid) return;
@@ -107,6 +114,117 @@ export function drawMinimap() {
 
 export function drawPendingPoints() {
   state.pendingPoints.forEach(pt => drawHandle(pt, "#fb923c"));
+}
+
+/**
+ * Draw a circular magnifier loupe into the dedicated #loupe-canvas element
+ * (NOT the main overlay canvas). This complete isolation prevents any loupe
+ * rendering error from affecting the main canvas or its event handling.
+ *
+ * The loupe canvas sits as an absolutely-positioned sibling with pointer-events:none
+ * so it cannot intercept clicks on anything.
+ */
+const _loupeCanvas = document.getElementById("loupe-canvas");
+const _loupeCtx    = _loupeCanvas ? _loupeCanvas.getContext("2d") : null;
+
+export function drawLoupe() {
+  if (!_loupeCanvas || !_loupeCtx) return;
+
+  const show = state.frozenBackground && state.mousePos && _LOUPE_TOOLS.has(state.tool);
+  if (!show) {
+    _loupeCanvas.hidden = true;
+    return;
+  }
+
+  const LOUPE_R = 90;   // loupe radius in CSS pixels
+  const MAGNIFY = 10;   // 1 image pixel appears as MAGNIFY CSS pixels
+  const DIAM    = LOUPE_R * 2;
+  const padding = 16;
+
+  // Position the loupe canvas in the bottom-right of the viewer.
+  // It is a sibling of overlay-canvas; use the same parent for coordinate reference.
+  const canvasRect = canvas.getBoundingClientRect();
+  const parentRect = canvas.parentElement.getBoundingClientRect();
+  const left = (canvasRect.right  - parentRect.left) - DIAM - padding;
+  const top  = (canvasRect.bottom - parentRect.top)  - DIAM - padding;
+
+  _loupeCanvas.style.left   = left + "px";
+  _loupeCanvas.style.top    = top  + "px";
+  _loupeCanvas.style.width  = DIAM + "px";
+  _loupeCanvas.style.height = DIAM + "px";
+  _loupeCanvas.width        = DIAM;
+  _loupeCanvas.height       = DIAM;
+  _loupeCanvas.hidden       = false;
+
+  const lc = _loupeCtx;
+  lc.clearRect(0, 0, DIAM, DIAM);
+
+  // Source area in image space: DIAM/MAGNIFY image pixels wide
+  const srcW = DIAM / MAGNIFY;
+  const srcH = DIAM / MAGNIFY;
+
+  // When a snap target exists, center the loupe on it so it's always visible.
+  // The cursor crosshair then shows the offset from snap to actual mouse position.
+  const snap = state._subpixelSnapTarget ?? state.snapTarget;
+  const center = snap ?? state.mousePos;
+  const srcX = center.x - srcW / 2;
+  const srcY = center.y - srcH / 2;
+
+  // Skip if completely outside the image
+  if (imageWidth > 0 && imageHeight > 0 &&
+      (srcX + srcW <= 0 || srcY + srcH <= 0 ||
+       srcX >= imageWidth || srcY >= imageHeight)) {
+    _loupeCanvas.hidden = true;
+    return;
+  }
+
+  // Circular clip on the loupe canvas
+  lc.save();
+  lc.beginPath();
+  lc.arc(LOUPE_R, LOUPE_R, LOUPE_R, 0, Math.PI * 2);
+  lc.clip();
+
+  // Dark background (visible when cursor is near image edge)
+  lc.fillStyle = "#111";
+  lc.fillRect(0, 0, DIAM, DIAM);
+
+  // Magnified image patch
+  lc.drawImage(state.frozenBackground, srcX, srcY, srcW, srcH, 0, 0, DIAM, DIAM);
+
+  lc.restore();
+
+  // Border ring
+  lc.strokeStyle = "rgba(255, 255, 255, 0.7)";
+  lc.lineWidth = 1.5;
+  lc.beginPath();
+  lc.arc(LOUPE_R, LOUPE_R, LOUPE_R - 1, 0, Math.PI * 2);
+  lc.stroke();
+
+  // Dim white crosshair at actual cursor position
+  const ch = 8;
+  const cx = (state.mousePos.x - srcX) * MAGNIFY;
+  const cy = (state.mousePos.y - srcY) * MAGNIFY;
+  lc.strokeStyle = "rgba(255, 255, 255, 0.35)";
+  lc.lineWidth = 1;
+  lc.beginPath();
+  lc.moveTo(cx - ch, cy); lc.lineTo(cx + ch, cy);
+  lc.moveTo(cx, cy - ch); lc.lineTo(cx, cy + ch);
+  lc.stroke();
+
+  // Snap target crosshair — always at center when snap is active
+  if (snap) {
+    const sc = 10;
+    lc.strokeStyle = "rgba(251, 146, 60, 0.95)";
+    lc.lineWidth = 1.5;
+    lc.beginPath();
+    lc.moveTo(LOUPE_R - sc, LOUPE_R); lc.lineTo(LOUPE_R + sc, LOUPE_R);
+    lc.moveTo(LOUPE_R, LOUPE_R - sc); lc.lineTo(LOUPE_R, LOUPE_R + sc);
+    lc.stroke();
+    lc.fillStyle = "rgba(251, 146, 60, 0.95)";
+    lc.beginPath();
+    lc.arc(LOUPE_R, LOUPE_R, 2, 0, Math.PI * 2);
+    lc.fill();
+  }
 }
 
 export function drawCrosshair() {

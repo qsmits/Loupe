@@ -304,10 +304,26 @@ export async function loadUiConfig() {
     if (nameInput) nameInput.value = data.app_name || "Microscope";
     const themeSelect = document.getElementById("theme-select");
     if (themeSelect) themeSelect.value = data.theme || "macos-dark";
-    if (data.subpixel_method) {
-      state.settings.subpixelMethod = data.subpixel_method;
+    if (data.hosted) {
+      // In hosted mode use client-side JS snapping — no server round-trip.
+      state.settings.subpixelMethod = "parabola-js";
       const sel = document.getElementById("subpixel-method-select");
-      if (sel) sel.value = data.subpixel_method;
+      if (sel) {
+        sel.value = "parabola-js";
+        // Hide server-side options to avoid confusion; JS options remain available
+        ["parabola", "gaussian"].forEach(v => {
+          const opt = sel.querySelector(`option[value="${v}"]`);
+          if (opt) opt.hidden = true;
+        });
+      }
+    } else if (data.subpixel_method) {
+      // Prefer the JS equivalent if a server-side method is configured
+      const jsMethod = data.subpixel_method === "gaussian" ? "gaussian-js"
+                     : data.subpixel_method === "parabola" ? "parabola-js"
+                     : data.subpixel_method;
+      state.settings.subpixelMethod = jsMethod;
+      const sel = document.getElementById("subpixel-method-select");
+      if (sel) sel.value = jsMethod;
     }
   } catch (_) {
     // non-fatal: default theme class is already on <html>

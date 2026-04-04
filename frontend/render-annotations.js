@@ -5,6 +5,7 @@
 import { state, _labelHitBoxes } from './state.js';
 import { getLineEndpoints, lineAngleDeg } from './format.js';
 import { viewport, imageWidth, imageHeight } from './viewport.js';
+import { catmullRomControlPoints } from './math.js';
 import {
   ctx, canvas, pw, drawLine, drawHandle, drawDiamondHandle, drawLabel,
   drawMeasurementLabel, _annColor, measurementLabel,
@@ -68,6 +69,66 @@ export function drawArcMeasure(ann, sel) {
   }
   ctx.restore();
   drawMeasurementLabel(ann, measurementLabel(ann), ann.cx + 5, ann.cy - ann.r - 5, ann.cx, ann.cy);
+}
+
+export function drawArcFit(ann, sel) {
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(ann.cx, ann.cy, ann.r, 0, Math.PI * 2);
+  const color = _annColor(ann, sel, "#34d399");
+  ctx.strokeStyle = color;
+  ctx.lineWidth = sel ? pw(2) : pw(1.5);
+  ctx.setLineDash([pw(5), pw(3)]);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.restore();
+  if (sel) {
+    drawHandle({ x: ann.cx, y: ann.cy }, "#60a5fa");
+    drawHandle({ x: ann.cx + ann.r, y: ann.cy }, "#60a5fa");
+  }
+  drawMeasurementLabel(ann, measurementLabel(ann), ann.cx + 5, ann.cy - ann.r - 5, ann.cx, ann.cy);
+}
+
+export function drawSpline(ann, sel) {
+  if (!ann.points || ann.points.length < 2) return;
+  const pts = ann.points;
+  const n = pts.length;
+  const color = _annColor(ann, sel, "#06b6d4");
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.moveTo(pts[0].x, pts[0].y);
+  for (let i = 0; i < n - 1; i++) {
+    const { cp1x, cp1y, cp2x, cp2y } = catmullRomControlPoints(pts, i);
+    ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, pts[i + 1].x, pts[i + 1].y);
+  }
+  ctx.strokeStyle = color;
+  ctx.lineWidth = sel ? pw(2) : pw(1.5);
+  ctx.stroke();
+  if (sel) pts.forEach(p => drawHandle(p, "#60a5fa"));
+  ctx.restore();
+
+  const mid = pts[Math.floor((n - 1) / 2)];
+  drawMeasurementLabel(ann, measurementLabel(ann), mid.x + 5, mid.y - 5, mid.x, mid.y);
+}
+
+export function drawSplinePreview(pts, cursor) {
+  if (pts.length === 0) return;
+  const allPts = [...pts, cursor];
+  const n = allPts.length;
+  ctx.save();
+  ctx.beginPath();
+  ctx.moveTo(allPts[0].x, allPts[0].y);
+  for (let i = 0; i < n - 1; i++) {
+    const { cp1x, cp1y, cp2x, cp2y } = catmullRomControlPoints(allPts, i);
+    ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, allPts[i + 1].x, allPts[i + 1].y);
+  }
+  ctx.strokeStyle = "rgba(6,182,212,0.45)";
+  ctx.lineWidth = pw(1);
+  ctx.setLineDash([pw(5), pw(4)]);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.restore();
 }
 
 export function drawDetectedCircle(ann, sel) {
@@ -414,6 +475,8 @@ export function drawAnnotations(redrawFn, dxfFns) {
     else if (ann.type === "intersect")      drawIntersect(ann, sel);
     else if (ann.type === "slot-dist")      drawSlotDist(ann, sel);
     else if (ann.type === "arc-measure")    drawArcMeasure(ann, sel);
+    else if (ann.type === "arc-fit")        drawArcFit(ann, sel);
+    else if (ann.type === "spline")         drawSpline(ann, sel);
 
     if (sel && flashActive) {
       let fx, fy;

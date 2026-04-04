@@ -1,9 +1,10 @@
 import { apiFetch } from './api.js';
+import { refinePointJS } from './subpixel-js.js';
 import { state, TOOL_STATUS } from './state.js';
 import { redraw, canvas, showStatus, getLineEndpoints, lineAngleDeg, listEl } from './render.js';
 import { dxfToCanvas } from './render-dxf.js';
 import { addAnnotation, applyCalibration } from './annotations.js';
-import { fitCircle, parseDistanceInput, distPointToSegment } from './math.js';
+import { fitCircle, fitCircleAlgebraic, splineArcLength, parseDistanceInput, distPointToSegment } from './math.js';
 import { renderSidebar } from './sidebar.js';
 import { viewport, screenToImage, imageWidth, imageHeight } from './viewport.js';
 import { hitTestAnnotation, hitTestDxfEntity } from './hit-test.js';
@@ -84,6 +85,8 @@ export function snapPoint(rawPt, bypass = false) {
       }
     } else if (["circle", "arc-fit", "detected-circle"].includes(ann.type)) {
       targets.push({ x: ann.cx, y: ann.cy });
+    } else if (ann.type === "spline") {
+      (ann.points || []).forEach(p => targets.push(p));
     } else if (ann.type === "origin") {
       targets.push({ x: ann.x, y: ann.y });
     } else if (ann.type === "area") {
@@ -100,38 +103,38 @@ export function snapPoint(rawPt, bypass = false) {
 
 // ── Tool click handler ─────────────────────────────────────────────────────
 export async function handleToolClick(rawPt, e = {}) {
-  const { pt: snappedPt } = (state.tool !== "calibrate" && state.tool !== "center-dist")
+  const { pt: snappedPt, snapped: annotationSnapped } = (state.tool !== "calibrate" && state.tool !== "center-dist")
     ? snapPoint(rawPt, e.altKey ?? false)
-    : { pt: rawPt };
+    : { pt: rawPt, snapped: false };
   let pt = snappedPt;
 
-  // Sub-pixel edge snap — skip for center-dist (clicks on circle centers,
-  // not edges), and select/pan (not placing points). Alt overrides.
-  // Search radius scales inversely with zoom: at 10x zoom you're clicking
-  // more precisely, so the search window shrinks proportionally.
-  if (state.frozen && !e.altKey &&
+  // Sub-pixel edge snap — skip when annotation-snap already fired (prefer
+  // exact endpoint over nearby edge), skip for center-dist, select, pan.
+  // Alt key bypasses both annotation-snap and subpixel.
+  if (state.frozen && !e.altKey && !annotationSnapped &&
       state.settings.subpixelMethod !== "none" &&
       state.tool !== "select" && state.tool !== "pan" &&
       state.tool !== "center-dist") {
+    const method = state.settings.subpixelMethod;
     const baseRadius = state.settings.subpixelSearchRadius || 10;
     const zoomScale = Math.max(1, viewport.zoom);
     const searchRadius = Math.max(2, Math.round(baseRadius / zoomScale));
-    try {
-      const resp = await apiFetch("/refine-point", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          x: pt.x, y: pt.y, search_radius: searchRadius,
-          subpixel: state.settings.subpixelMethod,
-        }),
-      });
-      if (resp.ok) {
-        const refined = await resp.json();
-        if (refined.magnitude > 20) {
-          pt = { x: refined.x, y: refined.y, snapped: true };
+    if (method === "parabola-js" || method === "gaussian-js") {
+      const result = refinePointJS(pt.x, pt.y, searchRadius, method);
+      if (result) pt = { x: result.x, y: result.y, snapped: true };
+    } else {
+      try {
+        const resp = await apiFetch("/refine-point", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ x: pt.x, y: pt.y, search_radius: searchRadius, subpixel: method }),
+        });
+        if (resp.ok) {
+          const refined = await resp.json();
+          if (refined.magnitude > 20) pt = { x: refined.x, y: refined.y, snapped: true };
         }
-      }
-    } catch { /* network error — use unrefined point */ }
+      } catch { /* network error — use unrefined point */ }
+    }
   }
 
   const tool = state.tool;
@@ -223,6 +226,12 @@ export async function handleToolClick(rawPt, e = {}) {
   }
 
   if (tool === "arc-fit") {
+    state.pendingPoints.push(pt);
+    redraw();
+    return;
+  }
+
+  if (tool === "spline") {
     state.pendingPoints.push(pt);
     redraw();
     return;
@@ -495,6 +504,12 @@ export function getHandles(ann) {
     };
   }
   if (ann.type === "arc-measure") return { p1: ann.p1, p2: ann.p2, p3: ann.p3 };
+  if (ann.type === "arc-fit") return { center: { x: ann.cx, y: ann.cy }, edge: { x: ann.cx + ann.r, y: ann.cy } };
+  if (ann.type === "spline") {
+    const handles = {};
+    (ann.points || []).forEach((p, i) => { handles[`v${i}`] = p; });
+    return handles;
+  }
   if (ann.type === "pt-circle-dist") return { pt: { x: ann.px, y: ann.py } };
   if (ann.type === "intersect") return {};
   if (ann.type === "slot-dist") return {};
@@ -624,12 +639,57 @@ export function handleDrag(pt) {
       }
     }
   }
+  else if (ann.type === "arc-fit") {
+    if (handleKey === "edge") {
+      ann.r = Math.hypot(pt.x - ann.cx, pt.y - ann.cy);
+    } else {
+      ann.cx += dx; ann.cy += dy;
+    }
+  }
+  else if (ann.type === "spline") {
+    if (handleKey === "body") {
+      (ann.points || []).forEach(p => { p.x += dx; p.y += dy; });
+    } else if (handleKey.startsWith("v")) {
+      const i = parseInt(handleKey.slice(1));
+      ann.points[i].x += dx; ann.points[i].y += dy;
+    }
+    ann.length_px = splineArcLength(ann.points);
+  }
   else if (ann.type === "pt-circle-dist") {
     ann.px += dx; ann.py += dy;
   }
 
   renderSidebar();
   redraw();
+}
+
+// ── Multi-point tool finalization ─────────────────────────────────────────────
+
+export function finalizeArcFit() {
+  if (state.pendingPoints.length < 3) return false;
+  const fit = fitCircleAlgebraic(state.pendingPoints);
+  if (!fit) { showStatus("Could not fit circle — points may be collinear"); return false; }
+  addAnnotation({ type: "arc-fit", cx: fit.cx, cy: fit.cy, r: fit.r });
+  state.pendingPoints = [];
+  setTool("select");
+  return true;
+}
+
+export function finalizeArea() {
+  if (state.pendingPoints.length < 3) return false;
+  addAnnotation({ type: "area", points: [...state.pendingPoints] });
+  state.pendingPoints = [];
+  setTool("select");
+  return true;
+}
+
+export function finalizeSpline() {
+  if (state.pendingPoints.length < 2) return false;
+  const length_px = splineArcLength(state.pendingPoints);
+  addAnnotation({ type: "spline", points: [...state.pendingPoints], length_px });
+  state.pendingPoints = [];
+  setTool("select");
+  return true;
 }
 
 export function collectDxfSnapPoints(ann) {

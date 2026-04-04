@@ -112,6 +112,45 @@ profiles, tooth spacing).
 
 ## Next Up
 
+### Improve help screen
+*Priority: low. Effort: low.*
+
+Current help dialog has three tabs but is dense and hard to navigate. Redesign as a two-panel layout: left sidebar with an index/navigation tree, right panel with the content for the selected page. Suggested sections: Getting Started, Tools (one page per tool with screenshot/diagram), Keyboard Shortcuts, Mouse & Modifiers, Detection & Auto-detect, DXF & Inspection, Algorithms (sub-pixel snap, corridor inspection, fitting methods), Exporting.
+
+The "How it works" tab in particular needs breathing room — break it into individual pages rather than one wall of text.
+
+### Client-side sub-pixel edge snapping
+*Priority: medium. Effort: low–medium.*
+
+Move the sub-pixel edge refinement from the server to the browser so it works instantly in hosted mode (and is faster locally too).
+
+The frontend already has the frozen image as an `HTMLImageElement`. Once drawn onto an offscreen canvas, `getImageData()` exposes raw pixel data. The edge refinement math (Sobel filter on a ~20×20 px patch + parabola/Gaussian fit) is ~30 lines of JS and takes well under 1 ms — no HTTP round-trip.
+
+Implementation notes:
+- Draw the frozen image to an `OffscreenCanvas` once at freeze time, cache the `ImageData`.
+- Extract the local patch around the cursor on each mousemove (no full re-read).
+- Run the same parabola/Gaussian fit as the server (`backend/vision/detection.py`).
+- Make it switchable via `subpixel_method` config: `"parabola-js"` / `"gaussian-js"` for client-side, existing `"parabola"` / `"gaussian"` for server-side. Default to JS in hosted mode, server-side locally.
+- JPEG compression slightly softens edges vs. the raw frame buffer, but the difference is negligible at ≥90% quality.
+
+### Bézier spline measurement tool
+*Priority: medium. Effort: medium.*
+
+For reverse-engineering freeform profiles that aren't well-described by lines, arcs, or circles — e.g. blended fillets, cam profiles, organic contours on EDM parts.
+
+A cubic Bézier spline tool: click to place anchor points, each with two tangent handles (control points) that set the direction and magnitude of the curve at that point. The handles are the same concept as Illustrator's pen tool — drag a handle outward to pull the curve toward it, move it angularly to steer the tangent.
+
+Output:
+- The spline geometry exported to DXF as a `SPLINE` entity (already supported by ezdxf).
+- Chord length and approximate arc length along the spline.
+- Optionally: deviation of the fitted spline from a set of manually picked edge points (same point-pick workflow as guided inspection).
+
+Implementation notes:
+- Rendering: evaluate the cubic Bézier segments with `ctx.bezierCurveTo()` — the canvas 2D API handles this natively.
+- Handles visualised as small circles connected to the anchor by a thin line, draggable in Select mode.
+- Smooth / corner node toggle: smooth nodes mirror their two handles (equal and opposite tangents); corner nodes allow independent handles.
+- Snapping: anchor points snap to existing annotations and detected edges; handles do not snap.
+
 ### Detection presets (EDM / Lathe / 3D Print)
 *Priority: medium. Effort: low.*
 

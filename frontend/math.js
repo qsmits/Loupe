@@ -82,6 +82,47 @@ export function distPointToSegment(pt, a, b) {
  * Least-squares line fit through N points (eigenvector method / orthogonal distance regression).
  * Returns { cx, cy, dx, dy, x1, y1, x2, y2 } or null if < 2 points.
  */
+/**
+ * Compute Catmull-Rom Bézier control points for segment pts[i] → pts[i+1].
+ * Clamps boundary indices so endpoints get mirror tangents.
+ */
+export function catmullRomControlPoints(pts, i) {
+  const n = pts.length;
+  const p0 = pts[Math.max(0, i - 1)];
+  const p1 = pts[i];
+  const p2 = pts[i + 1];
+  const p3 = pts[Math.min(n - 1, i + 2)];
+  return {
+    cp1x: p1.x + (p2.x - p0.x) / 6,
+    cp1y: p1.y + (p2.y - p0.y) / 6,
+    cp2x: p2.x - (p3.x - p1.x) / 6,
+    cp2y: p2.y - (p3.y - p1.y) / 6,
+  };
+}
+
+/**
+ * Approximate arc length of a Catmull-Rom spline through points[].
+ */
+export function splineArcLength(points) {
+  const n = points.length;
+  if (n < 2) return 0;
+  let total = 0;
+  const SAMPLES = 20;
+  for (let i = 0; i < n - 1; i++) {
+    const { cp1x, cp1y, cp2x, cp2y } = catmullRomControlPoints(points, i);
+    const p1 = points[i], p2 = points[i + 1];
+    let prevX = p1.x, prevY = p1.y;
+    for (let j = 1; j <= SAMPLES; j++) {
+      const t = j / SAMPLES, mt = 1 - t;
+      const bx = mt*mt*mt*p1.x + 3*mt*mt*t*cp1x + 3*mt*t*t*cp2x + t*t*t*p2.x;
+      const by = mt*mt*mt*p1.y + 3*mt*mt*t*cp1y + 3*mt*t*t*cp2y + t*t*t*p2.y;
+      total += Math.hypot(bx - prevX, by - prevY);
+      prevX = bx; prevY = by;
+    }
+  }
+  return total;
+}
+
 export function fitLine(points) {
   if (points.length < 2) return null;
   const n = points.length;

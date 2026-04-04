@@ -28,6 +28,7 @@
         <button class="dropdown-item" data-tool="pt-circle-dist">Pt-Circle</button>
         <button class="dropdown-item" data-tool="intersect">Intersect</button>
         <button class="dropdown-item" data-tool="slot-dist">Slot</button>
+        <button class="dropdown-item" data-tool="spline">Spline</button>
       </div>
     </div>
 
@@ -259,6 +260,7 @@
       <button id="btn-load" class="top-btn icon-btn" title="Load image">📁</button>
       <button id="btn-save-session" class="top-btn icon-btn" title="Save session">💾</button>
       <button id="btn-settings" class="top-btn icon-btn" title="Settings">⚙</button>
+      <button id="btn-help" class="top-btn icon-btn" title="Help &amp; shortcuts (?)">?</button>
     </div>
   </div>
 
@@ -269,6 +271,7 @@
     <div id="viewer">
       <img id="stream-img" src="/stream" alt="" />
       <canvas id="overlay-canvas"></canvas>
+      <canvas id="loupe-canvas" hidden style="position:absolute;pointer-events:none;border-radius:50%;"></canvas>
       <div id="zoom-badge" hidden>1.0x</div>
       <div id="zoom-presets" hidden>
         <button class="zoom-preset-btn" data-zoom="fit">Fit</button>
@@ -281,6 +284,10 @@
       <div id="coord-display"></div>
       <div id="drop-overlay">
         <div class="drop-message">Drop image here</div>
+      </div>
+      <div id="loading-overlay" hidden>
+        <div class="loading-spinner"></div>
+        <div class="loading-message">Uploading…</div>
       </div>
 
       <!-- Floating tool strip -->
@@ -305,6 +312,7 @@
           <button class="strip-btn" data-tool="intersect">Isect</button>
           <button class="strip-btn" data-tool="slot-dist">Slot</button>
           <button class="strip-btn" data-tool="arc-measure">ArcMeas</button>
+          <button class="strip-btn" data-tool="spline">Spline</button>
         </div>
       </div>
     </div>
@@ -424,7 +432,10 @@
           <label class="settings-label">Sub-pixel method</label>
           <select id="subpixel-method-select" class="settings-select">
             <option value="none">None (pixel-level)</option>
-            <option value="parabola" selected>Parabola (default)</option>
+            <option value="parabola">Parabola — server-side</option>
+            <option value="gaussian">Gaussian — server-side</option>
+            <option value="parabola-js" selected>Parabola — in browser (default)</option>
+            <option value="gaussian-js">Gaussian — in browser</option>
           </select>
         </div>
         <div class="settings-row">
@@ -443,44 +454,397 @@
 
   <!-- Help dialog -->
   <div id="help-dialog" class="dialog-overlay" hidden>
-    <div class="dialog-content dialog-content-wide">
+    <div class="dialog-content">
       <div class="dialog-header">
-        <span class="dialog-title">Keyboard shortcuts</span>
+        <span class="dialog-title">Documentation</span>
         <button class="dialog-close" id="btn-help-close">✕</button>
       </div>
-      <div class="help-body">
-        <div class="help-section-label">Tools</div>
-        <table class="help-table">
-          <thead><tr><th>Tool</th><th>Key</th><th>How to use</th></tr></thead>
-          <tbody>
-            <tr><td>Select</td><td>V</td><td>Click annotation to select; drag to move</td></tr>
-            <tr><td>Calibrate</td><td>C</td><td>Click two points of known distance and enter value; or click a circle of known diameter</td></tr>
-            <tr><td>Distance</td><td>D</td><td>Click two points</td></tr>
-            <tr><td>Angle</td><td>A</td><td>Click three points (middle point is the vertex)</td></tr>
-            <tr><td>Circle</td><td>O</td><td>Click three points on the circumference</td></tr>
-            <tr><td>Fit Arc</td><td>F</td><td>Click ≥3 points on an arc or circle edge, double-click to confirm</td></tr>
-            <tr><td>Center Dist</td><td>M</td><td>Click two circles to measure center-to-center distance</td></tr>
-            <tr><td>Detect</td><td>E</td><td>Opens detection panel</td></tr>
-            <tr><td>Para</td><td>L</td><td>Click a reference line, then two points (parallel constraint) or a second line (shows parallelism angle)</td></tr>
-            <tr><td>Perp</td><td>P</td><td>Click a reference line, then two points; line is constrained perpendicular to it</td></tr>
-            <tr><td>Area</td><td>R</td><td>Click ≥3 points to define a polygon, double-click to confirm</td></tr>
-            <tr><td>Pt-Circle</td><td>G</td><td>Click a circle, then click a free point — measures shortest gap to the circle edge</td></tr>
-            <tr><td>Intersect</td><td>I</td><td>Click two line annotations — marks their mathematical intersection (even off-screen)</td></tr>
-            <tr><td>Slot</td><td>W</td><td>Click two line annotations — measures perpendicular distance between the lines</td></tr>
-          </tbody>
-        </table>
-        <div class="help-section-label" style="margin-top:12px">Other Shortcuts</div>
-        <table class="help-table">
-          <thead><tr><th>Key</th><th>Action</th></tr></thead>
-          <tbody>
-            <tr><td>Escape</td><td>Back to Select / cancel</td></tr>
-            <tr><td>Delete / Backspace</td><td>Delete selected annotation</td></tr>
-            <tr><td>?</td><td>This help dialog</td></tr>
-            <tr><td>Alt + click</td><td>Bypass snap (precision placement)</td></tr>
-            <tr><td>⊙ (toolbar)</td><td>Click toolbar ⊙ then click canvas to set coordinate origin; hovering shows X/Y relative to origin</td></tr>
-          </tbody>
-        </table>
-      </div>
+      <div class="help-layout">
+
+        <!-- Left nav -->
+        <nav class="help-nav">
+          <div class="help-nav-section">Overview</div>
+          <button class="help-nav-item top-level active" data-page="start">Getting Started</button>
+
+          <div class="help-nav-section">Measurement Tools</div>
+          <button class="help-nav-item top-level" data-page="tool-calibrate">Calibrate</button>
+          <button class="help-nav-item top-level" data-page="tool-distance">Distance</button>
+          <button class="help-nav-item top-level" data-page="tool-angle">Angle</button>
+          <button class="help-nav-item top-level" data-page="tool-circle">Circle</button>
+          <button class="help-nav-item top-level" data-page="tool-arc-fit">Fit Arc</button>
+          <button class="help-nav-item top-level" data-page="tool-arc-measure">Arc Measure</button>
+          <button class="help-nav-item top-level" data-page="tool-center-dist">Center Distance</button>
+          <button class="help-nav-item top-level" data-page="tool-perp">Perp Distance</button>
+          <button class="help-nav-item top-level" data-page="tool-para">Para Distance</button>
+          <button class="help-nav-item top-level" data-page="tool-pt-circle">Pt-Circle Distance</button>
+          <button class="help-nav-item top-level" data-page="tool-intersect">Line Intersect</button>
+          <button class="help-nav-item top-level" data-page="tool-slot">Slot Distance</button>
+          <button class="help-nav-item top-level" data-page="tool-area">Area</button>
+          <button class="help-nav-item top-level" data-page="tool-spline">Bézier Spline</button>
+
+          <div class="help-nav-section">Controls</div>
+          <button class="help-nav-item top-level" data-page="shortcuts">Keyboard Shortcuts</button>
+          <button class="help-nav-item top-level" data-page="mouse">Mouse &amp; Modifiers</button>
+
+          <div class="help-nav-section">Detection &amp; DXF</div>
+          <button class="help-nav-item top-level" data-page="detection">Auto-Detection</button>
+          <button class="help-nav-item top-level" data-page="dxf">DXF Overlay</button>
+          <button class="help-nav-item top-level" data-page="inspection">Guided Inspection</button>
+
+          <div class="help-nav-section">How It Works</div>
+          <button class="help-nav-item top-level" data-page="algo-subpixel">Sub-pixel Snapping</button>
+          <button class="help-nav-item top-level" data-page="algo-detection">Edge Detection</button>
+          <button class="help-nav-item top-level" data-page="algo-alignment">DXF Auto-alignment</button>
+          <button class="help-nav-item top-level" data-page="algo-fitting">Circle &amp; Arc Fitting</button>
+
+          <div class="help-nav-section">Output</div>
+          <button class="help-nav-item top-level" data-page="exporting">Exporting</button>
+        </nav>
+
+        <!-- Right content -->
+        <div class="help-content">
+
+          <!-- Getting Started -->
+          <div class="help-page" id="help-page-start">
+            <h2 class="help-page-title">Getting Started</h2>
+            <p class="help-page-sub">Loupe is a web-based precision measurement tool for microscope images.</p>
+            <div class="help-section-label">Basic workflow</div>
+            <div class="help-step"><span class="help-step-num">1</span><span>Freeze a frame using the <strong>❄ Live</strong> button, or drag and drop an image onto the viewer.</span></div>
+            <div class="help-step"><span class="help-step-num">2</span><span>Calibrate the image: press <kbd>C</kbd>, click two points of known distance, enter the value in mm.</span></div>
+            <div class="help-step"><span class="help-step-num">3</span><span>Select a measurement tool from the toolbar or press its key. Click points on the image to place measurements.</span></div>
+            <div class="help-step"><span class="help-step-num">4</span><span>Export results as CSV, PDF, or annotated PNG from the Overlay menu.</span></div>
+            <div class="help-section-label">Tips</div>
+            <div class="help-tip">Hover over the image with a measurement tool active — the cursor snaps to the nearest detected edge automatically. Hold <kbd>Alt</kbd> to bypass snapping and place a point exactly where you click.</div>
+            <div class="help-tip">Use <kbd>?</kbd> at any time to open this documentation.</div>
+            <div class="help-tip">Sessions auto-save to your browser every 30 seconds. Press <kbd>S</kbd> to save manually as a JSON file you can reload later.</div>
+          </div>
+
+          <!-- TOOL PAGES -->
+          <div class="help-page" id="help-page-tool-calibrate" hidden>
+            <h2 class="help-page-title">Calibrate <span class="help-badge">C</span></h2>
+            <p class="help-page-sub">Sets the pixel-to-millimetre scale for all subsequent measurements.</p>
+            <div class="help-section-label">Two-point calibration</div>
+            <div class="help-step"><span class="help-step-num">1</span><span>Press <kbd>C</kbd> and click two points on a feature of known length.</span></div>
+            <div class="help-step"><span class="help-step-num">2</span><span>Enter the known distance in mm in the dialog that appears.</span></div>
+            <p class="help-p">All measurements already placed update immediately. The calibration is saved with the session.</p>
+            <div class="help-section-label">Circle calibration</div>
+            <p class="help-p">If a circle annotation is already placed, click it while in Calibrate mode and enter the known diameter — useful when you have a precision reference hole or pin.</p>
+            <div class="help-tip">For best accuracy, calibrate across the longest available reference distance to minimise the effect of pixel quantisation errors.</div>
+          </div>
+
+          <div class="help-page" id="help-page-tool-distance" hidden>
+            <h2 class="help-page-title">Distance <span class="help-badge">D</span></h2>
+            <p class="help-page-sub">Straight-line distance between two points.</p>
+            <div class="help-step"><span class="help-step-num">1</span><span>Press <kbd>D</kbd> and click the first point.</span></div>
+            <div class="help-step"><span class="help-step-num">2</span><span>Click the second point. The measurement is placed immediately.</span></div>
+            <p class="help-p">Shows distance in pixels, or in mm if calibrated. The label can be dragged to reposition it.</p>
+          </div>
+
+          <div class="help-page" id="help-page-tool-angle" hidden>
+            <h2 class="help-page-title">Angle <span class="help-badge">A</span></h2>
+            <p class="help-page-sub">Included angle at a vertex point.</p>
+            <div class="help-step"><span class="help-step-num">1</span><span>Press <kbd>A</kbd> and click the first arm endpoint.</span></div>
+            <div class="help-step"><span class="help-step-num">2</span><span>Click the vertex (the corner).</span></div>
+            <div class="help-step"><span class="help-step-num">3</span><span>Click the second arm endpoint.</span></div>
+            <p class="help-p">Displays the angle in degrees at the vertex. The arc indicator shows which angle is being measured.</p>
+          </div>
+
+          <div class="help-page" id="help-page-tool-circle" hidden>
+            <h2 class="help-page-title">Circle <span class="help-badge">O</span></h2>
+            <p class="help-page-sub">Exact circumscribed circle through three points on the circumference.</p>
+            <div class="help-step"><span class="help-step-num">1</span><span>Press <kbd>O</kbd> and click three points on the edge of the circle.</span></div>
+            <p class="help-p">Outputs: center coordinates, diameter, and radius. The three points define a unique circle using perpendicular bisector intersection.</p>
+            <div class="help-tip">For the most accurate result, space the three points as evenly as possible around the arc rather than clustering them together.</div>
+          </div>
+
+          <div class="help-page" id="help-page-tool-arc-fit" hidden>
+            <h2 class="help-page-title">Fit Arc <span class="help-badge">F</span></h2>
+            <p class="help-page-sub">Best-fit circle through three or more points — more robust than the 3-point circle for noisy edges.</p>
+            <div class="help-step"><span class="help-step-num">1</span><span>Press <kbd>F</kbd> and click at least 3 points along the arc or circle edge.</span></div>
+            <div class="help-step"><span class="help-step-num">2</span><span>Double-click or press <kbd>Enter</kbd> to confirm.</span></div>
+            <p class="help-p">Uses an algebraic (least-squares) fit minimising distance in the implicit circle space. The more points placed, the more stable the result — especially useful on partial arcs with surface texture or noise.</p>
+          </div>
+
+          <div class="help-page" id="help-page-tool-arc-measure" hidden>
+            <h2 class="help-page-title">Arc Measure</h2>
+            <p class="help-page-sub">Radius, chord length, and angular span of an arc defined by three points.</p>
+            <div class="help-step"><span class="help-step-num">1</span><span>Click the start point of the arc.</span></div>
+            <div class="help-step"><span class="help-step-num">2</span><span>Click a midpoint on the arc.</span></div>
+            <div class="help-step"><span class="help-step-num">3</span><span>Click the end point of the arc.</span></div>
+            <p class="help-p">Outputs: radius, chord distance (straight line from start to end), and arc span in degrees.</p>
+          </div>
+
+          <div class="help-page" id="help-page-tool-center-dist" hidden>
+            <h2 class="help-page-title">Center Distance <span class="help-badge">M</span></h2>
+            <p class="help-page-sub">Distance between the centers of two circles or arcs.</p>
+            <div class="help-step"><span class="help-step-num">1</span><span>Press <kbd>M</kbd> and click the first circle or arc annotation.</span></div>
+            <div class="help-step"><span class="help-step-num">2</span><span>Click the second circle or arc annotation.</span></div>
+            <p class="help-p">Draws a line between the two centers and shows the distance. Useful for bolt-hole patterns, pin spacing, etc.</p>
+          </div>
+
+          <div class="help-page" id="help-page-tool-perp" hidden>
+            <h2 class="help-page-title">Perp Distance <span class="help-badge">P</span></h2>
+            <p class="help-page-sub">Distance measured perpendicular to a reference line.</p>
+            <div class="help-step"><span class="help-step-num">1</span><span>Press <kbd>P</kbd> and click an existing line annotation to use as the reference.</span></div>
+            <div class="help-step"><span class="help-step-num">2</span><span>Click two points. The measurement line is constrained to be perpendicular to the reference.</span></div>
+            <p class="help-p">Use this to measure a step height, wall thickness, or any dimension that must be taken at a right angle to a known datum.</p>
+          </div>
+
+          <div class="help-page" id="help-page-tool-para" hidden>
+            <h2 class="help-page-title">Para Distance / Parallelism <span class="help-badge">L</span></h2>
+            <p class="help-page-sub">Parallel distance or angle deviation between two lines.</p>
+            <div class="help-section-label">Parallel distance</div>
+            <div class="help-step"><span class="help-step-num">1</span><span>Press <kbd>L</kbd> and click an existing line annotation as the reference.</span></div>
+            <div class="help-step"><span class="help-step-num">2</span><span>Click two points to define a second line parallel to the first. Shows the perpendicular distance between them.</span></div>
+            <div class="help-section-label">Parallelism check</div>
+            <div class="help-step"><span class="help-step-num">1</span><span>Click a line annotation as the reference.</span></div>
+            <div class="help-step"><span class="help-step-num">2</span><span>Click a second line annotation. Shows the angle deviation from parallel.</span></div>
+          </div>
+
+          <div class="help-page" id="help-page-tool-pt-circle" hidden>
+            <h2 class="help-page-title">Pt-Circle Distance <span class="help-badge">G</span></h2>
+            <p class="help-page-sub">Shortest distance from a free point to a circle's edge.</p>
+            <div class="help-step"><span class="help-step-num">1</span><span>Press <kbd>G</kbd> and click a circle or arc annotation.</span></div>
+            <div class="help-step"><span class="help-step-num">2</span><span>Click a free point in the image.</span></div>
+            <p class="help-p">Measures the gap (positive) or overlap (negative) between the point and the circle edge. Useful for checking clearance between a hole and a nearby feature.</p>
+          </div>
+
+          <div class="help-page" id="help-page-tool-intersect" hidden>
+            <h2 class="help-page-title">Line Intersect <span class="help-badge">I</span></h2>
+            <p class="help-page-sub">Mathematical intersection of two lines, even outside the image frame.</p>
+            <div class="help-step"><span class="help-step-num">1</span><span>Press <kbd>I</kbd> and click the first line annotation.</span></div>
+            <div class="help-step"><span class="help-step-num">2</span><span>Click the second line annotation.</span></div>
+            <p class="help-p">Computes the intersection of the two lines' infinite extensions and places a marker. The coordinates are shown in the label and included in CSV export.</p>
+          </div>
+
+          <div class="help-page" id="help-page-tool-slot" hidden>
+            <h2 class="help-page-title">Slot Distance <span class="help-badge">W</span></h2>
+            <p class="help-page-sub">Perpendicular distance between two parallel lines — slot or gap width.</p>
+            <div class="help-step"><span class="help-step-num">1</span><span>Press <kbd>W</kbd> and click the first line annotation.</span></div>
+            <div class="help-step"><span class="help-step-num">2</span><span>Click the second line annotation.</span></div>
+            <p class="help-p">Shows the perpendicular (shortest) distance between the two lines. Best used after detecting or manually placing parallel lines on opposing slot walls.</p>
+          </div>
+
+          <div class="help-page" id="help-page-tool-area" hidden>
+            <h2 class="help-page-title">Area <span class="help-badge">R</span></h2>
+            <p class="help-page-sub">Enclosed area of a polygon defined by clicked points.</p>
+            <div class="help-step"><span class="help-step-num">1</span><span>Press <kbd>R</kbd> and click at least 3 points to define the polygon vertices.</span></div>
+            <div class="help-step"><span class="help-step-num">2</span><span>Double-click or press <kbd>Enter</kbd> to confirm. The polygon closes automatically.</span></div>
+            <p class="help-p">Area shown in px² or mm² if calibrated. Perimeter is also calculated. Uses the shoelace formula.</p>
+          </div>
+
+          <div class="help-page" id="help-page-tool-spline" hidden>
+            <h2 class="help-page-title">Bézier Spline <span class="help-badge">B</span></h2>
+            <p class="help-page-sub">A smooth curve through a series of points — for capturing freeform profiles, blended fillets, and organic contours.</p>
+            <div class="help-section-label">Placing a spline</div>
+            <div class="help-step"><span class="help-step-num">1</span><span>Press <kbd>B</kbd> and click to place anchor points along the curve.</span></div>
+            <div class="help-step"><span class="help-step-num">2</span><span>Double-click or press <kbd>Enter</kbd> to finish. A smooth curve is fitted automatically.</span></div>
+            <div class="help-section-label">Editing anchor points</div>
+            <p class="help-p">After placing, switch to Select (<kbd>V</kbd>) and click the spline to select it. Drag any orange anchor point to reshape the curve. The curve tangents are computed automatically using <strong>Catmull-Rom interpolation</strong> — the curve always passes smoothly through every anchor point without requiring manual handle adjustments.</p>
+            <div class="help-tip">To get a tighter curve, add more anchor points close together. To get a gentle sweep, space them further apart.</div>
+            <div class="help-section-label">Output</div>
+            <p class="help-p">Shows approximate arc length (mm if calibrated). Exports as a DXF <code>SPLINE</code> entity in reverse-engineering exports.</p>
+          </div>
+
+          <!-- SHORTCUTS -->
+          <div class="help-page" id="help-page-shortcuts" hidden>
+            <h2 class="help-page-title">Keyboard Shortcuts</h2>
+            <div class="help-section-label">Tool keys</div>
+            <table>
+              <thead><tr><th>Key</th><th>Tool</th><th>Key</th><th>Tool</th></tr></thead>
+              <tbody>
+                <tr><td><kbd>V</kbd></td><td>Select</td><td><kbd>G</kbd></td><td>Pt-Circle Dist</td></tr>
+                <tr><td><kbd>D</kbd></td><td>Distance</td><td><kbd>I</kbd></td><td>Line Intersect</td></tr>
+                <tr><td><kbd>A</kbd></td><td>Angle</td><td><kbd>W</kbd></td><td>Slot Distance</td></tr>
+                <tr><td><kbd>O</kbd></td><td>Circle (3-point)</td><td><kbd>R</kbd></td><td>Area</td></tr>
+                <tr><td><kbd>F</kbd></td><td>Fit Arc</td><td><kbd>B</kbd></td><td>Bézier Spline</td></tr>
+                <tr><td><kbd>M</kbd></td><td>Center Distance</td><td><kbd>C</kbd></td><td>Calibrate</td></tr>
+                <tr><td><kbd>P</kbd></td><td>Perp Distance</td><td><kbd>E</kbd></td><td>Detect panel</td></tr>
+                <tr><td><kbd>L</kbd></td><td>Para Distance</td><td><kbd>H</kbd></td><td>Pan</td></tr>
+              </tbody>
+            </table>
+            <div class="help-section-label">Actions</div>
+            <table>
+              <thead><tr><th>Key</th><th>Action</th></tr></thead>
+              <tbody>
+                <tr><td><kbd>Esc</kbd></td><td>Cancel / back to Select</td></tr>
+                <tr><td><kbd>Del</kbd> / <kbd>Bksp</kbd></td><td>Delete selected annotation(s)</td></tr>
+                <tr><td><kbd>U</kbd></td><td>Elevate selected detection to measurement</td></tr>
+                <tr><td><kbd>Enter</kbd></td><td>Confirm multi-point tool or point-pick inspection</td></tr>
+                <tr><td><kbd>S</kbd></td><td>Save session</td></tr>
+                <tr><td><kbd>0</kbd></td><td>Zoom to fit window</td></tr>
+                <tr><td><kbd>1</kbd></td><td>Zoom to 1:1 pixels</td></tr>
+                <tr><td><kbd>`</kbd></td><td>Toggle measurement grid</td></tr>
+                <tr><td><kbd>Ctrl Z</kbd> / <kbd>⌘Z</kbd></td><td>Undo</td></tr>
+                <tr><td><kbd>Ctrl Y</kbd> / <kbd>⌘⇧Z</kbd></td><td>Redo</td></tr>
+                <tr><td><kbd>?</kbd></td><td>Open this documentation</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <!-- MOUSE & MODIFIERS -->
+          <div class="help-page" id="help-page-mouse" hidden>
+            <h2 class="help-page-title">Mouse &amp; Modifier Keys</h2>
+            <div class="help-section-label">Navigation</div>
+            <table>
+              <thead><tr><th>Gesture</th><th>Action</th></tr></thead>
+              <tbody>
+                <tr><td>Scroll wheel</td><td>Zoom in / out (frozen image only)</td></tr>
+                <tr><td>Middle-click drag</td><td>Pan the viewport</td></tr>
+                <tr><td><kbd>H</kbd> + drag</td><td>Pan using the Pan tool</td></tr>
+                <tr><td>Click minimap</td><td>Jump viewport to that position</td></tr>
+              </tbody>
+            </table>
+            <div class="help-section-label">Modifier keys during placement</div>
+            <table>
+              <thead><tr><th>Modifier</th><th>Effect</th></tr></thead>
+              <tbody>
+                <tr><td><kbd>Alt</kbd> + click</td><td>Bypass all snapping — place point exactly where you click, ignoring detected edges and annotation snaps</td></tr>
+                <tr><td><kbd>Alt</kbd> (hold, no click)</td><td>Suppresses the orange snap preview crosshair on mousemove</td></tr>
+              </tbody>
+            </table>
+            <div class="help-section-label">Selection (Select tool)</div>
+            <table>
+              <thead><tr><th>Gesture</th><th>Action</th></tr></thead>
+              <tbody>
+                <tr><td>Click annotation</td><td>Select it (deselects others)</td></tr>
+                <tr><td><kbd>Shift</kbd> + click</td><td>Add to / remove from current selection</td></tr>
+                <tr><td>Drag on empty area</td><td>Rectangle drag-select all annotations inside</td></tr>
+                <tr><td>Right-click</td><td>Context menu: elevate, delete, rename, group, merge lines, Punch/Die toggle, re-measure</td></tr>
+              </tbody>
+            </table>
+            <div class="help-section-label">DXF &amp; inspection modes</div>
+            <table>
+              <thead><tr><th>Gesture</th><th>Action</th></tr></thead>
+              <tbody>
+                <tr><td><kbd>Shift</kbd> + click DXF feature (point-pick mode)</td><td>Add that feature to the compound pick target</td></tr>
+                <tr><td>Double-click</td><td>Finish multi-point tool or confirm manual inspection</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <!-- DETECTION -->
+          <div class="help-page" id="help-page-detection" hidden>
+            <h2 class="help-page-title">Auto-Detection</h2>
+            <p class="help-page-sub">Automatically finds circles, lines, and arcs in the frozen image.</p>
+            <div class="help-section-label">Circle detection</div>
+            <p class="help-p">Uses the Hough circle transform. Adjust <strong>Min radius</strong>, <strong>Max radius</strong>, and <strong>Threshold</strong> sliders before running. Lower the threshold to find fainter circles; raise it to suppress false positives.</p>
+            <div class="help-section-label">Line detection</div>
+            <p class="help-p">Runs Canny edge detection followed by a Hough line transform and non-maximum suppression (NMS). Lines closer than the NMS distance and within the angle tolerance are merged, keeping the longest. The <strong>bilateral smoothing</strong> slider reduces noise on textured surfaces before edge detection.</p>
+            <div class="help-section-label">Partial arc detection</div>
+            <p class="help-p">Contour-based detection that discriminates arcs from straight lines using curvature analysis. Useful for EDM wire-cut parts where arcs may be incomplete due to reflections or chamfers.</p>
+            <div class="help-section-label">Elevation</div>
+            <p class="help-p">Detected features (shown in orange in the sidebar) are separate from measurements. Click <strong>↑</strong> (elevate) in the sidebar or press <kbd>U</kbd> to promote a detected feature to a permanent measurement that appears in CSV, PDF, and DXF exports.</p>
+            <div class="help-tip">Run detection with the <strong>Sub-pixel</strong> checkbox enabled for more accurate line/arc positions before elevation.</div>
+          </div>
+
+          <!-- DXF -->
+          <div class="help-page" id="help-page-dxf" hidden>
+            <h2 class="help-page-title">DXF Overlay</h2>
+            <p class="help-page-sub">Load a CAD drawing and overlay it on the frozen image for comparison and guided inspection.</p>
+            <div class="help-section-label">Loading and scaling</div>
+            <div class="help-step"><span class="help-step-num">1</span><span>Go to <strong>Overlay → Load DXF</strong>.</span></div>
+            <div class="help-step"><span class="help-step-num">2</span><span>Set the <strong>Scale</strong> (px/mm) to match your calibration. If you've calibrated the image, use that same value.</span></div>
+            <div class="help-step"><span class="help-step-num">3</span><span>Use the rotation nudge buttons and Flip H/V if needed to orient the drawing.</span></div>
+            <div class="help-section-label">Alignment</div>
+            <p class="help-p"><strong>Manual:</strong> use <em>Move DXF</em> to drag the overlay into position, or use <em>Set Origin</em> to pin an anchor point.</p>
+            <p class="help-p"><strong>Auto-align (edge-based):</strong> run line detection first, then click <em>Auto-align</em>. The algorithm matches detected edges to DXF geometry without requiring circles. See <em>DXF Auto-alignment</em> in How It Works for details.</p>
+            <div class="help-section-label">Supported entities</div>
+            <p class="help-p">LINE, CIRCLE, ARC, LWPOLYLINE (decomposed into line and arc segments). Layer names are preserved and shown in hover tooltips.</p>
+          </div>
+
+          <!-- GUIDED INSPECTION -->
+          <div class="help-page" id="help-page-inspection" hidden>
+            <h2 class="help-page-title">Guided Inspection</h2>
+            <p class="help-page-sub">Automatically measure deviations of real part edges from a loaded DXF nominal.</p>
+            <div class="help-section-label">Automated inspection</div>
+            <div class="help-step"><span class="help-step-num">1</span><span>Load and align a DXF overlay (see DXF Overlay).</span></div>
+            <div class="help-step"><span class="help-step-num">2</span><span>Run edge detection (lines and/or circles).</span></div>
+            <div class="help-step"><span class="help-step-num">3</span><span>Click <strong>Run Inspection</strong>. Each DXF feature is processed individually in a ±15 px corridor.</span></div>
+            <p class="help-p">Results show perpendicular deviation from nominal in mm, colour-coded green / amber / red by tolerance. Punch and Die features are distinguished because they deviate in opposite directions.</p>
+            <div class="help-section-label">Manual point-pick fallback</div>
+            <p class="help-p">If a feature fails to auto-detect (reflection, burr, incomplete edge), click it in the DXF overlay to enter point-pick mode. Place points along the real edge, then double-click or press <kbd>Enter</kbd> to fit and compute deviation.</p>
+            <div class="help-tip">Right-click any inspection result on the canvas to toggle Punch/Die, re-measure manually, or delete the result.</div>
+            <div class="help-section-label">Tolerances</div>
+            <p class="help-p">Global warn/fail thresholds are set in Settings. Per-feature overrides can be set by clicking a deviation label on the canvas.</p>
+          </div>
+
+          <!-- ALGO: SUB-PIXEL -->
+          <div class="help-page" id="help-page-algo-subpixel" hidden>
+            <h2 class="help-page-title">Sub-pixel Edge Snapping</h2>
+            <p class="help-page-sub">Locates edges more precisely than individual pixel positions.</p>
+            <p class="help-p">When you hover over the frozen image with a measurement tool active, the cursor snaps to the nearest detected edge at sub-pixel precision. An orange crosshair marks the snap position. Hold <kbd>Alt</kbd> to bypass snapping.</p>
+            <div class="help-section-label">How it works</div>
+            <p class="help-p">A small neighbourhood around the cursor is sampled. A <strong>Sobel filter</strong> computes the image gradient — the rate of change of brightness — giving a high response at edges and near-zero in flat regions. The pixel with the highest gradient magnitude in the search radius is identified as the edge.</p>
+            <p class="help-p">Then the edge is refined to sub-pixel precision along the gradient direction using one of two methods:</p>
+            <table>
+              <thead><tr><th>Method</th><th>How it works</th><th>Best for</th></tr></thead>
+              <tbody>
+                <tr><td><strong>Parabola</strong></td><td>Fits a parabola to the three gradient values around the peak. Sub-pixel offset = −(g₊₁ − g₋₁) / (2(g₊₁ − 2g₀ + g₋₁)). Fast and stable.</td><td>Sharp, clean edges</td></tr>
+                <tr><td><strong>Gaussian</strong></td><td>Fits a Gaussian by taking the log of the gradient values and solving a linear system. Handles asymmetric or slightly blurred peaks better.</td><td>Soft edges, textured surfaces</td></tr>
+              </tbody>
+            </table>
+            <p class="help-p">If the peak gradient magnitude is below 20 (out of 255), snapping is suppressed — the edge is considered too faint to snap to reliably.</p>
+            <div class="help-tip">The snapping radius shrinks as you zoom in, so at high zoom you snap to the finest local edge rather than a distant one.</div>
+          </div>
+
+          <!-- ALGO: EDGE DETECTION -->
+          <div class="help-page" id="help-page-algo-detection" hidden>
+            <h2 class="help-page-title">Edge Detection Pipeline</h2>
+            <div class="help-section-label">Preprocessing</div>
+            <p class="help-p">Before edge detection the image may be smoothed using a bilateral filter (controlled by the smoothing slider). Bilateral filtering reduces noise while preserving sharp edges better than Gaussian blur — it is especially useful on textured surfaces like turned or ground parts.</p>
+            <div class="help-section-label">Canny edge detection</div>
+            <p class="help-p">The Canny algorithm finds edges in several steps: Gaussian smoothing → Sobel gradient computation → non-maximum suppression along gradient directions → hysteresis thresholding (strong edges kept, weak edges kept only if connected to strong ones). The result is a thin, one-pixel-wide edge map.</p>
+            <div class="help-section-label">Line detection (Hough transform)</div>
+            <p class="help-p">The Hough line transform votes in a parameter space of (ρ, θ) for every edge point. Peaks in vote space correspond to lines. After detection, non-maximum suppression merges nearby lines with similar angles and positions, keeping the longest representative.</p>
+            <div class="help-section-label">Circle detection (Hough transform)</div>
+            <p class="help-p">Similar voting approach in the (cx, cy, r) space. The radius range is constrained by the Min/Max radius sliders to limit search space and false positives.</p>
+            <div class="help-section-label">Partial arc detection</div>
+            <p class="help-p">Contours are extracted from the edge map. Each contour is tested against a fitted circle — if the residual error is low and the contour spans at least the minimum arc angle, it is classified as an arc. Nearby collinear contours are classified as lines instead.</p>
+          </div>
+
+          <!-- ALGO: ALIGNMENT -->
+          <div class="help-page" id="help-page-algo-alignment" hidden>
+            <h2 class="help-page-title">DXF Auto-alignment</h2>
+            <p class="help-page-sub">Aligns the DXF overlay to the image without requiring circle features in the drawing.</p>
+            <div class="help-section-label">Algorithm</div>
+            <ol class="help-ol">
+              <li><strong>Coarse translation:</strong> detected line segments are matched to DXF line entities by nearest-neighbour in angle and position space. The centroid offset of matched pairs gives an initial translation.</li>
+              <li><strong>Angular refinement:</strong> small rotation offsets are swept around the initial estimate. Each is scored by a normalised cross-correlation metric between detected and DXF edge positions.</li>
+              <li><strong>Rotation bias penalty:</strong> a small penalty on large rotations prevents over-rotating on symmetric parts where many rotation angles could produce similar scores.</li>
+            </ol>
+            <div class="help-tip">For best results, run line detection before auto-aligning. The algorithm works best when most of the major DXF edges are visible and detected in the image.</div>
+          </div>
+
+          <!-- ALGO: FITTING -->
+          <div class="help-page" id="help-page-algo-fitting" hidden>
+            <h2 class="help-page-title">Circle &amp; Arc Fitting</h2>
+            <div class="help-section-label">3-point circle (Circle tool)</div>
+            <p class="help-p">Given three points, the unique circumscribed circle is found by intersecting the perpendicular bisectors of two chords. This is an exact solution — there is no fitting involved — so it is sensitive to point placement accuracy. Use Fit Arc for more robust results from many points.</p>
+            <div class="help-section-label">Algebraic fit (Fit Arc, ≥3 points)</div>
+            <p class="help-p">Minimises an algebraic distance in the space of implicit circle equations. Every point (xᵢ, yᵢ) on a circle satisfies xᵢ² + yᵢ² + Dxᵢ + Eyᵢ + F = 0. The coefficients [D, E, F] are found by solving a linear least-squares system (equivalent to a constrained SVD). This is more robust than geometric fitting and does not require an initial estimate.</p>
+            <div class="help-section-label">RANSAC inlier filtering (guided inspection)</div>
+            <p class="help-p">In corridor inspection, edge points are collected and then filtered using a RANSAC-like loop: a random subset is used to fit a candidate line or circle, and only points within a residual threshold are kept as inliers. This rejects outliers from reflections, scratches, and burrs that fall within the corridor.</p>
+          </div>
+
+          <!-- EXPORTING -->
+          <div class="help-page" id="help-page-exporting" hidden>
+            <h2 class="help-page-title">Exporting</h2>
+            <table>
+              <thead><tr><th>Format</th><th>Contents</th><th>How to export</th></tr></thead>
+              <tbody>
+                <tr><td><strong>Annotated PNG</strong></td><td>Image with all measurements and labels rendered on top</td><td>Overlay → Export annotated image</td></tr>
+                <tr><td><strong>CSV</strong></td><td>All measurements with values, coordinates, calibration. One row per measurement.</td><td>Overlay → Export CSV</td></tr>
+                <tr><td><strong>Inspection CSV</strong></td><td>Guided inspection results: feature handle, deviation, pass/fail, Punch/Die</td><td>Overlay → Export Inspection CSV (requires inspection)</td></tr>
+                <tr><td><strong>Inspection PDF</strong></td><td>Formatted report with numbered features, deviation table, pass/fail summary</td><td>Overlay → Export Inspection PDF (requires inspection)</td></tr>
+                <tr><td><strong>DXF (reverse engineering)</strong></td><td>All measurement annotations converted to DXF entities in mm-space. Distances → lines, circles → circles, splines → SPLINE entities.</td><td>Overlay → Export DXF</td></tr>
+                <tr><td><strong>Session JSON</strong></td><td>Full session state including all annotations, calibration, DXF, and inspection results. Can be reloaded exactly.</td><td>Press <kbd>S</kbd> or the 💾 button</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+        </div><!-- .help-content -->
+      </div><!-- .help-layout -->
     </div>
   </div>
 

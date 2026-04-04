@@ -12,6 +12,7 @@ import { initDxfHandlers } from './dxf.js';
 import { doFreeze, initDetectHandlers } from './detect.js';
 import { saveSession, loadSession, exportAnnotatedImage, exportCsv, exportDxf, autoSave, tryAutoRestore } from './session.js';
 import { viewport, clampPan, fitToWindow, setImageSize, imageWidth, imageHeight } from './viewport.js';
+import { cacheImageData } from './subpixel-js.js';
 import { showContextMenu, hideContextMenu } from './events-context-menu.js';
 import { undo, redo, initKeyboard } from './events-keyboard.js';
 import { initMouseHandlers } from './events-mouse.js';
@@ -153,30 +154,37 @@ document.getElementById("file-input").addEventListener("change", async e => {
   const file = e.target.files[0];
   if (!file) return;
 
-  const formData = new FormData();
-  formData.append("file", file);
-  const r = await apiFetch("/load-image", { method: "POST", body: formData });
-  if (!r.ok) { alert("Could not load image"); return; }
-  const { width, height } = await r.json();
-  state.frozenSize = { w: width, h: height };
-  setImageSize(width, height);
-  // Reset viewport for new image
-  viewport.zoom = 1;
-  viewport.panX = 0;
-  viewport.panY = 0;
+  const loadingEl = document.getElementById("loading-overlay");
+  loadingEl.hidden = false;
+  try {
+    const formData = new FormData();
+    formData.append("file", file);
+    const r = await apiFetch("/load-image", { method: "POST", body: formData });
+    if (!r.ok) { alert("Could not load image"); return; }
+    const { width, height } = await r.json();
+    state.frozenSize = { w: width, h: height };
+    setImageSize(width, height);
+    viewport.zoom = 1;
+    viewport.panX = 0;
+    viewport.panY = 0;
 
-  const url = URL.createObjectURL(file);
-  const loadedImg = new Image();
-  loadedImg.onload = async () => {
-    state.frozenBackground = loadedImg;
-    img.style.opacity = "0";
-    // MJPEG stream continues in background (changing src breaks canvas sizing)
-    state.frozen = true;
-    updateFreezeUI();
-    resizeCanvas();
-    showStatus("Loaded image");
-  };
-  loadedImg.src = url;
+    const url = URL.createObjectURL(file);
+    const loadedImg = new Image();
+    loadedImg.onload = async () => {
+      loadingEl.hidden = true;
+      state.frozenBackground = loadedImg;
+      img.style.opacity = "0";
+      // MJPEG stream continues in background (changing src breaks canvas sizing)
+      state.frozen = true;
+      cacheImageData(loadedImg, width, height);
+      updateFreezeUI();
+      resizeCanvas();
+      showStatus("Loaded image");
+    };
+    loadedImg.src = url;
+  } catch {
+    loadingEl.hidden = true;
+  }
   e.target.value = "";
 });
 
@@ -266,29 +274,37 @@ viewerEl.addEventListener("drop", async e => {
   const file = e.dataTransfer.files[0];
   if (!file) return;
 
-  const formData = new FormData();
-  formData.append("file", file);
-  const r = await apiFetch("/load-image", { method: "POST", body: formData });
-  if (!r.ok) { alert("Could not load image"); return; }
-  const { width, height } = await r.json();
-  state.frozenSize = { w: width, h: height };
-  setImageSize(width, height);
-  viewport.zoom = 1;
-  viewport.panX = 0;
-  viewport.panY = 0;
+  const loadingEl = document.getElementById("loading-overlay");
+  loadingEl.hidden = false;
+  try {
+    const formData = new FormData();
+    formData.append("file", file);
+    const r = await apiFetch("/load-image", { method: "POST", body: formData });
+    if (!r.ok) { alert("Could not load image"); return; }
+    const { width, height } = await r.json();
+    state.frozenSize = { w: width, h: height };
+    setImageSize(width, height);
+    viewport.zoom = 1;
+    viewport.panX = 0;
+    viewport.panY = 0;
 
-  const url = URL.createObjectURL(file);
-  const loadedImg = new Image();
-  loadedImg.onload = () => {
-    state.frozenBackground = loadedImg;
-    img.style.opacity = "0";
-    // MJPEG stream continues in background (changing src breaks canvas sizing)
-    state.frozen = true;
-    updateFreezeUI();
-    resizeCanvas();
-    showStatus("Loaded image");
-  };
-  loadedImg.src = url;
+    const url = URL.createObjectURL(file);
+    const loadedImg = new Image();
+    loadedImg.onload = () => {
+      loadingEl.hidden = true;
+      state.frozenBackground = loadedImg;
+      img.style.opacity = "0";
+      // MJPEG stream continues in background (changing src breaks canvas sizing)
+      state.frozen = true;
+      cacheImageData(loadedImg, width, height);
+      updateFreezeUI();
+      resizeCanvas();
+      showStatus("Loaded image");
+    };
+    loadedImg.src = url;
+  } catch {
+    loadingEl.hidden = true;
+  }
 });
 
 // ── Coordinate origin ───���──────────────────────────────────────────────────────
@@ -454,12 +470,20 @@ document.getElementById("btn-gradient-overlay")?.addEventListener("change", asyn
 // ── Calibration button ────────────────────────────────────────────────────────
 document.getElementById("btn-calibration").addEventListener("click", () => setTool("calibrate"));
 
-// ── Help dialog ───────────────────────────────────────���───────────────────────
+// ── Help dialog ──────────────────────────────────────────────────────────────
 document.getElementById("btn-help")?.addEventListener("click", () => {
   document.getElementById("help-dialog").hidden = false;
 });
 document.getElementById("btn-help-close").addEventListener("click", () => {
   document.getElementById("help-dialog").hidden = true;
+});
+document.querySelectorAll(".help-nav-item").forEach(item => {
+  item.addEventListener("click", () => {
+    document.querySelectorAll(".help-nav-item").forEach(i => i.classList.remove("active"));
+    document.querySelectorAll(".help-page").forEach(p => { p.hidden = true; });
+    item.classList.add("active");
+    document.getElementById("help-page-" + item.dataset.page).hidden = false;
+  });
 });
 
 // ── Settings dialog ────────────────────────────────────��──────────────────────

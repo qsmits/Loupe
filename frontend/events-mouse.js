@@ -2,14 +2,15 @@
 import { apiFetch } from './api.js';
 import { state, _deviationHitBoxes, _labelHitBoxes, pushUndo } from './state.js';
 import { canvas, ctx, img, showStatus, redraw, resizeCanvas,
-         drawLine, drawOrigin, drawAreaPreview, dxfToCanvas } from './render.js';
+         drawLine, drawOrigin, drawAreaPreview, drawSplinePreview, dxfToCanvas } from './render.js';
 import { renderSidebar, renderInspectionTable } from './sidebar.js';
 import { addAnnotation, deleteSelected, elevateSelected, isDetection,
          mergeSelectedLines, clearDetections, clearMeasurements,
          clearDxfOverlay, clearAll } from './annotations.js';
 import { setTool, handleToolClick, handleSelectDown, handleDrag,
          canvasPoint, snapPoint, collectDxfSnapPoints,
-         projectConstrained, hitTestDxfEntity } from './tools.js';
+         projectConstrained, hitTestDxfEntity,
+         finalizeArcFit, finalizeArea, finalizeSpline } from './tools.js';
 import { fitCircle } from './math.js';
 import { exitDxfAlignMode, openFeatureTolPopover } from './dxf.js';
 import { viewport, screenToImage, clampPan, fitToWindow, zoomOneToOne,
@@ -17,42 +18,53 @@ import { viewport, screenToImage, clampPan, fitToWindow, zoomOneToOne,
 import { showContextMenu, hideContextMenu } from './events-context-menu.js';
 import { _hitTestGuidedResult, _findConnectedEntities, _annotationPrimaryPoint,
          _nearestSegmentDist, _updatePickFit, _finalizePickInspection } from './events-inspection.js';
+import { drawLoupe } from './render-hud.js';
+import { refinePointJS } from './subpixel-js.js';
 
 // ── Sub-pixel snap preview (debounced) ────────────────────────────────────────
 let _subpixelDebounce = null;
 const _SNAP_PREVIEW_TOOLS = new Set([
   "distance", "angle", "circle", "arc-fit", "arc-measure",
-  "perp-dist", "para-dist", "area", "calibrate",
+  "perp-dist", "para-dist", "area", "calibrate", "spline",
 ]);
 
-function _updateSubpixelPreview(pt) {
-  // Only show preview when frozen, tool is a measurement tool, and method is enabled
+function _updateSubpixelPreview(pt, altKey = false) {
+  // Only show preview when frozen, tool is a measurement tool, method is enabled, and Alt not held
   if (!state.frozen || !_SNAP_PREVIEW_TOOLS.has(state.tool) ||
-      state.settings.subpixelMethod === "none") {
+      state.settings.subpixelMethod === "none" || altKey) {
     if (state._subpixelSnapTarget) { state._subpixelSnapTarget = null; redraw(); }
     return;
   }
+
+  const method = state.settings.subpixelMethod;
+  const baseRadius = state.settings.subpixelSearchRadius || 10;
+  const zoomScale = Math.max(1, viewport.zoom);
+  const searchRadius = Math.max(2, Math.round(baseRadius / zoomScale));
+
+  if (method === "parabola-js" || method === "gaussian-js") {
+    // Client-side: synchronous, no debounce needed
+    const result = refinePointJS(pt.x, pt.y, searchRadius, method);
+    state._subpixelSnapTarget = result ? { x: result.x, y: result.y } : null;
+    redraw();
+    return;
+  }
+
+  // Server-side: debounce to ~25 fps
   clearTimeout(_subpixelDebounce);
   _subpixelDebounce = setTimeout(async () => {
-    const baseRadius = state.settings.subpixelSearchRadius || 10;
-    const zoomScale = Math.max(1, viewport.zoom);
-    const searchRadius = Math.max(2, Math.round(baseRadius / zoomScale));
     try {
       const resp = await apiFetch("/refine-point", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          x: pt.x, y: pt.y, search_radius: searchRadius,
-          subpixel: state.settings.subpixelMethod,
-        }),
+        body: JSON.stringify({ x: pt.x, y: pt.y, search_radius: searchRadius, subpixel: method }),
       });
       if (resp.ok) {
         const r = await resp.json();
         state._subpixelSnapTarget = (r.magnitude > 20) ? { x: r.x, y: r.y } : null;
         redraw();
       }
-    } catch { /* ignore */ }
-  }, 40);  // 40ms debounce — ~25fps update rate
+    } catch { /* ignore network errors */ }
+  }, 40);
 }
 
 /** Run a drawing callback inside the viewport transform (for preview overlays after redraw) */
@@ -60,8 +72,7 @@ function withViewport(fn) {
   ctx.save();
   ctx.scale(viewport.zoom, viewport.zoom);
   ctx.translate(-viewport.panX, -viewport.panY);
-  fn();
-  ctx.restore();
+  try { fn(); } finally { ctx.restore(); }
 }
 
 async function onMouseDown(e) {
@@ -310,6 +321,27 @@ export function initMouseHandlers() {
     if (state.inspectionPickTarget) {
       e.preventDefault();
       _finalizePickInspection();
+      return;
+    }
+    // Multi-point tools: dblclick fires after 2 mousedowns (which each added a point).
+    // Pop the duplicate from the second mousedown before finalizing.
+    if (state.tool === "spline" && state.pendingPoints.length >= 3) {
+      e.preventDefault();
+      state.pendingPoints.pop();
+      finalizeSpline();
+      return;
+    }
+    if (state.tool === "arc-fit" && state.pendingPoints.length >= 4) {
+      e.preventDefault();
+      state.pendingPoints.pop();
+      finalizeArcFit();
+      return;
+    }
+    if (state.tool === "area" && state.pendingPoints.length >= 4) {
+      e.preventDefault();
+      state.pendingPoints.pop();
+      finalizeArea();
+      return;
     }
   });
 
@@ -318,7 +350,8 @@ export function initMouseHandlers() {
     const pt = canvasPoint(e);
     const rawPt = pt;
     state.mousePos = pt;
-    _updateSubpixelPreview(pt);
+    _updateSubpixelPreview(pt, e.altKey);
+    drawLoupe();
     if (state._panStart) {
       const dx = (e.clientX - state._panStart.x);
       const dy = (e.clientY - state._panStart.y);
@@ -436,7 +469,8 @@ export function initMouseHandlers() {
         && state.tool !== "arc-fit"
         && state.tool !== "perp-dist"
         && state.tool !== "para-dist"
-        && state.tool !== "area") {
+        && state.tool !== "area"
+        && state.tool !== "spline") {
       const { pt: snappedPt, snapped } = snapPoint(rawPt, e.altKey);
       state.snapTarget = (snapped && !e.altKey) ? snappedPt : null;
       redraw();
@@ -506,6 +540,16 @@ export function initMouseHandlers() {
       });
     }
 
+    // Spline preview
+    if (state.tool === "spline" && state.pendingPoints.length >= 1) {
+      const { pt: snappedPt, snapped } = snapPoint(rawPt, e.altKey);
+      state.snapTarget = (snapped && !e.altKey) ? snappedPt : null;
+      redraw();
+      withViewport(() => {
+        drawSplinePreview(state.pendingPoints, snappedPt);
+      });
+    }
+
     // Coordinate readout HUD
     const coordEl = document.getElementById("coord-display");
     if (coordEl && state.origin) {
@@ -545,6 +589,8 @@ export function initMouseHandlers() {
     const coordEl = document.getElementById("coord-display");
     if (coordEl) coordEl.textContent = "";
     document.getElementById("label-tooltip")?.setAttribute("hidden", "");
+    const lc = document.getElementById("loupe-canvas");
+    if (lc) lc.hidden = true;
   });
 
   // ── Context menu (right-click) ──────────────────────────────────────────────
@@ -765,7 +811,12 @@ export function initMouseHandlers() {
     const minZoom = (imageWidth > 0 && imageHeight > 0)
       ? Math.min(rect.width / imageWidth, rect.height / imageHeight)
       : 0.5;
-    viewport.zoom = Math.max(minZoom, Math.min(10, viewport.zoom * factor));
+    // Max zoom must always allow reaching at least 4× past 1:1 pixel level.
+    // For large images (e.g. 15000px on a 1400px canvas) 1:1 = zoom≈10.7,
+    // so a hardcoded cap of 10 would prevent the user from ever reaching 100%.
+    const oneToOneZoom = imageWidth > 0 ? Math.max(imageWidth / rect.width, imageHeight / rect.height) : 1;
+    const maxZoom = Math.max(10, oneToOneZoom * 4);
+    viewport.zoom = Math.max(minZoom, Math.min(maxZoom, viewport.zoom * factor));
 
     // Adjust pan so image point stays under cursor
     viewport.panX = imgPt.x - screenX / viewport.zoom;

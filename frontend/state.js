@@ -100,6 +100,7 @@ export const TOOL_STATUS = {
   "intersect":      "Click — select a reference line",
   "slot-dist":      "Click — select a reference line",
   "arc-measure":    "Click — place 3 points on arc (double-click or 3rd click to confirm)",
+  "spline":         "Click — place anchor points (double-click or Enter to finish)",
 };
 
 // ── TRANSIENT_TYPES (moved from line 3062) ───────────────────────────────────

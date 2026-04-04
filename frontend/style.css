@@ -293,6 +293,33 @@ body.no-camera #stream-img {
   border-radius: 4px;
   pointer-events: none;
 }
+
+#loading-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  background: rgba(0, 0, 0, 0.55);
+  border-radius: 4px;
+  z-index: 20;
+}
+#loading-overlay[hidden] { display: none; }
+.loading-spinner {
+  width: 36px;
+  height: 36px;
+  border: 3px solid rgba(255, 255, 255, 0.15);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.75s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.loading-message {
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.75);
+}
 #drop-overlay.visible  { display: flex; }
 #drop-overlay.drag-active {
   background: rgba(10,132,255,.18);
@@ -718,32 +745,163 @@ body.no-camera .camera-section { display: none; }
 }
 
 /* ─── Help dialog ───────────────────────────────────────────── */
-.help-body {
-  padding: 12px 16px;
-  overflow-y: auto;
-  flex: 1;
+#help-dialog .dialog-content {
+  width: min(900px, 92vw);
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
 }
 
-.help-body table { width: 100%; border-collapse: collapse; font-size: 11px; }
-.help-body th {
+.help-layout {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+  min-height: 0;
+}
+
+/* Left navigation sidebar */
+.help-nav {
+  width: 190px;
+  flex-shrink: 0;
+  border-right: 1px solid var(--border);
+  overflow-y: auto;
+  padding: 8px 0;
+}
+.help-nav-section {
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  color: var(--muted);
+  padding: 10px 12px 3px;
+}
+.help-nav-section:first-child { padding-top: 4px; }
+.help-nav-item {
+  display: block;
+  width: 100%;
+  background: none;
+  border: none;
+  text-align: left;
+  font-size: 12px;
+  color: var(--text-dim, #aaa);
+  padding: 4px 12px 4px 20px;
+  cursor: pointer;
+  border-radius: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.help-nav-item.top-level { padding-left: 12px; font-weight: 500; color: var(--text); }
+.help-nav-item:hover { background: var(--surface-2); color: var(--text); }
+.help-nav-item.active { background: var(--accent-dim, rgba(10,132,255,.15)); color: var(--accent); }
+
+/* Right content area */
+.help-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 20px;
+  min-width: 0;
+}
+
+.help-page-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+  margin: 0 0 4px;
+}
+.help-page-sub {
+  font-size: 11px;
+  color: var(--muted);
+  margin: 0 0 14px;
+}
+.help-p {
+  font-size: 12px;
+  color: var(--text);
+  line-height: 1.6;
+  margin: 0 0 8px;
+}
+.help-ol, .help-ul {
+  font-size: 12px;
+  color: var(--text);
+  line-height: 1.7;
+  margin: 0 0 10px 18px;
+  padding: 0;
+}
+.help-section-label {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .07em;
+  color: var(--muted);
+  margin: 16px 0 6px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--border);
+}
+.help-section-label:first-child { margin-top: 0; }
+
+.help-content table { width: 100%; border-collapse: collapse; font-size: 11px; margin-bottom: 12px; }
+.help-content th {
   text-align: left;
   color: var(--muted);
-  padding: 4px 8px;
+  padding: 4px 10px;
   border-bottom: 1px solid var(--border);
   font-weight: 600;
   font-size: 10px;
   text-transform: uppercase;
   letter-spacing: .05em;
 }
-.help-body td { padding: 5px 8px; color: var(--text); }
-.help-body tr:nth-child(even) td { background: var(--surface-2); }
-.help-body kbd {
+.help-content td { padding: 5px 10px; color: var(--text); vertical-align: top; }
+.help-content tr:nth-child(even) td { background: var(--surface-2); }
+
+.help-content kbd {
   background: var(--surface-2);
   border: 1px solid var(--border);
   border-radius: 3px;
-  padding: 1px 5px;
+  padding: 1px 6px;
   font-family: ui-monospace, monospace;
   font-size: 10px;
+}
+.help-step {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  margin: 4px 0;
+  font-size: 12px;
+  color: var(--text);
+}
+.help-step-num {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.help-badge {
+  display: inline-block;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 7px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text);
+  margin-right: 4px;
+}
+.help-tip {
+  background: rgba(10,132,255,.08);
+  border-left: 3px solid var(--accent);
+  border-radius: 0 4px 4px 0;
+  padding: 6px 10px;
+  font-size: 11px;
+  color: var(--text);
+  line-height: 1.5;
+  margin: 8px 0;
 }
 
 /* ─── DXF overlay controls ──────────────────────────────────── */

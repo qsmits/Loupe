@@ -3,7 +3,7 @@ import { state, undoStack, redoStack, takeSnapshot } from './state.js';
 import { canvas, showStatus, redraw, resizeCanvas } from './render.js';
 import { renderSidebar } from './sidebar.js';
 import { deleteSelected, elevateSelected } from './annotations.js';
-import { setTool } from './tools.js';
+import { setTool, finalizeArcFit, finalizeArea, finalizeSpline } from './tools.js';
 import { exitDxfAlignMode } from './dxf.js';
 import { saveSession } from './session.js';
 import { viewport, fitToWindow, zoomOneToOne } from './viewport.js';
@@ -51,9 +51,11 @@ export function initKeyboard(closeAllDropdowns) {
     // All other shortcuts are blocked when an input/select/textarea/dialog is focused
     if (document.activeElement.closest("input, select, textarea") !== null || document.querySelector(".dialog-overlay:not([hidden])") !== null) return;
 
-    if (e.key === "Enter" && state.inspectionPickTarget) {
-      _finalizePickInspection();
-      return;
+    if (e.key === "Enter") {
+      if (state.inspectionPickTarget) { _finalizePickInspection(); return; }
+      if (state.tool === "spline" && state.pendingPoints.length >= 2) { finalizeSpline(); return; }
+      if (state.tool === "arc-fit" && state.pendingPoints.length >= 3) { finalizeArcFit(); return; }
+      if (state.tool === "area" && state.pendingPoints.length >= 3) { finalizeArea(); return; }
     }
     if ((e.key === "Delete" || e.key === "Backspace") && state.selected.size > 0) {
       deleteSelected();
@@ -119,7 +121,7 @@ export function initKeyboard(closeAllDropdowns) {
     }
     const toolKeys = { v: "select", c: "calibrate", d: "distance", a: "angle",
                        o: "circle", f: "arc-fit", m: "center-dist", e: "detect",
-                       p: "perp-dist", l: "para-dist", r: "area",
+                       p: "perp-dist", l: "para-dist", r: "area", b: "spline",
                        g: "pt-circle-dist", i: "intersect", w: "slot-dist", h: "pan" };
     const toolName = toolKeys[e.key.toLowerCase()];
     if (toolName) {

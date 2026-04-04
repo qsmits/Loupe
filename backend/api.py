@@ -32,12 +32,13 @@ router = APIRouter()
 
 
 @router.get("/config/ui")
-def get_ui_config():
+def get_ui_config(request: Request):
     cfg = load_config()
     return {
         "app_name":        cfg.get("app_name", "Microscope"),
         "theme":           cfg.get("theme",    "macos-dark"),
         "subpixel_method": cfg.get("subpixel_method", "parabola"),
+        "hosted":          getattr(request.app.state, "hosted", False),
     }
 
 

@@ -4,7 +4,7 @@
  */
 import { state } from './state.js';
 import { getLineEndpoints, lineAngleDeg } from './format.js';
-import { distPointToSegment } from './math.js';
+import { distPointToSegment, catmullRomControlPoints } from './math.js';
 import { viewport, imageWidth, imageHeight } from './viewport.js';
 import { canvas } from './render.js';
 import { dxfToCanvas } from './render-dxf.js';
@@ -131,6 +131,28 @@ export function hitTestAnnotation(ann, pt) {
     if (Math.hypot(pt.x - ann.p1.x, pt.y - ann.p1.y) < 8 / z) return true;
     if (Math.hypot(pt.x - ann.p2.x, pt.y - ann.p2.y) < 8 / z) return true;
     if (Math.hypot(pt.x - ann.p3.x, pt.y - ann.p3.y) < 8 / z) return true;
+    return false;
+  }
+  if (ann.type === "spline") {
+    const pts = ann.points;
+    if (!pts || pts.length < 2) return false;
+    const n = pts.length;
+    const threshold = 8 / z;
+    for (const p of pts) {
+      if (Math.hypot(pt.x - p.x, pt.y - p.y) < threshold) return true;
+    }
+    for (let i = 0; i < n - 1; i++) {
+      const { cp1x, cp1y, cp2x, cp2y } = catmullRomControlPoints(pts, i);
+      const p1 = pts[i], p2 = pts[i + 1];
+      let prevX = p1.x, prevY = p1.y;
+      for (let j = 1; j <= 20; j++) {
+        const t = j / 20, mt = 1 - t;
+        const bx = mt*mt*mt*p1.x + 3*mt*mt*t*cp1x + 3*mt*t*t*cp2x + t*t*t*p2.x;
+        const by = mt*mt*mt*p1.y + 3*mt*mt*t*cp1y + 3*mt*t*t*cp2y + t*t*t*p2.y;
+        if (Math.hypot(pt.x - bx, pt.y - by) < threshold) return true;
+        prevX = bx; prevY = by;
+      }
+    }
     return false;
   }
   if (ann.type === "detected-circle") {

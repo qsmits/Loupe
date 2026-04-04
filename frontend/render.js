@@ -129,20 +129,21 @@ export function drawMeasurementLabel(ann, text, defaultX, defaultY, refX, refY) 
 import { drawAnnotations } from './render-annotations.js';
 import { drawDxfOverlay, dxfToCanvas, drawGuidedResults, drawDeviations,
          drawEdgesOverlay, drawPreprocessedOverlay, deviationColor } from './render-dxf.js';
-import { drawGrid, drawMinimap, drawPendingPoints, drawCrosshair } from './render-hud.js';
+import { drawGrid, drawMinimap, drawPendingPoints, drawCrosshair, drawLoupe } from './render-hud.js';
 
 // Re-export sub-module functions for backward compatibility
 export { drawAnnotations } from './render-annotations.js';
 export { drawDxfOverlay, dxfToCanvas, drawGuidedResults, drawDeviations,
          drawEdgesOverlay, drawPreprocessedOverlay, deviationColor } from './render-dxf.js';
-export { drawGrid, drawMinimap, drawPendingPoints, drawCrosshair } from './render-hud.js';
+export { drawGrid, drawMinimap, drawPendingPoints, drawCrosshair, drawLoupe } from './render-hud.js';
 
 // Re-export annotation draw functions that other modules import from render.js
 export { drawDistance, drawAngle, drawCircle, drawArcMeasure,
          drawDetectedCircle, drawDetectedLine, drawCalibration,
          drawPerpDist, drawParaDist, drawParallelism,
          drawPtCircleDist, drawIntersect, drawSlotDist,
-         drawArea, drawAreaPreview, drawOrigin } from './render-annotations.js';
+         drawArea, drawAreaPreview, drawOrigin,
+         drawArcFit, drawSpline, drawSplinePreview } from './render-annotations.js';
 
 // ── Canvas sizing ──────────────────────────────────────────────────────────────
 export function resizeCanvas() {

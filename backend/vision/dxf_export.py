@@ -97,6 +97,17 @@ def export_annotations_dxf(
                 ]
                 msp.add_lwpolyline(pts, close=True)
 
+        elif atype == "spline":
+            # SPLINE through fit points (Catmull-Rom interpolation preserved)
+            points = ann.get("points", [])
+            if len(points) >= 2:
+                fit_pts = [
+                    ((p.get("x", 0) - origin_x) / pixels_per_mm,
+                     -(p.get("y", 0) - origin_y) / pixels_per_mm)
+                    for p in points
+                ]
+                msp.add_spline(fit_points=fit_pts)
+
     buf = io.StringIO()
     doc.write(buf)
     return buf.getvalue().encode("utf-8")

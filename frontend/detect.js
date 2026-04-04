@@ -4,6 +4,7 @@ import { redraw, showStatus, img, canvas, resizeCanvas } from './render.js';
 import { addAnnotation } from './annotations.js';
 import { updateFreezeUI } from './sidebar.js';
 import { setImageSize, imageWidth, imageHeight } from './viewport.js';
+import { cacheImageData } from './subpixel-js.js';
 
 // ── Detection busy indicator ──────────────────────────────────────────────
 function withBusy(btn, label, fn) {
@@ -78,6 +79,7 @@ export async function doFreeze() {
   img.style.opacity = "0";   // hide stream
   // Stream continues in background (see note above)
   state.frozen = true;
+  cacheImageData(state.frozenBackground, imageWidth, imageHeight);
   updateFreezeUI();
   resizeCanvas();  // re-read img rect after opacity change to guarantee pixel-perfect alignment
 }

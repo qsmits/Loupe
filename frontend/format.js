@@ -124,6 +124,14 @@ export function measurementLabel(ann, ctx) {
       ? `r ${(mm * 1000).toFixed(2)} \u00b5m  ${spanDeg.toFixed(0)}\u00b0`
       : `r ${mm.toFixed(3)} mm  ${spanDeg.toFixed(0)}\u00b0`;
   }
+  if (ann.type === "spline") {
+    const lenPx = ann.length_px || 0;
+    if (!cal) return `~ ${lenPx.toFixed(1)} px`;
+    const mm = lenPx / cal.pixelsPerMm;
+    return cal.displayUnit === "\u00b5m"
+      ? `~ ${(mm * 1000).toFixed(2)} \u00b5m`
+      : `~ ${mm.toFixed(3)} mm`;
+  }
   if (ann.type === "calibration") {
     const prefix = ann.x1 !== undefined ? "\u27f7" : "\u2300";
     return `${prefix} ${ann.knownValue} ${ann.unit}`;
@@ -318,6 +326,9 @@ export function formatCsvValue(ann, calibration, imgWidth) {
   }
   if (ann.type === "area") {
     return areaResult(polygonArea(ann.points));
+  }
+  if (ann.type === "spline") {
+    return distResult(ann.length_px || 0);
   }
   if (ann.type === "parallelism") {
     return { value: ann.angleDeg.toFixed(2), unit: "\u00b0" };

@@ -75,7 +75,7 @@ export async function exportDxf() {
   // Collect exportable measurement annotations
   const exportTypes = new Set([
     "distance", "circle", "arc-measure", "center-dist",
-    "perp-dist", "para-dist", "parallelism", "slot-dist", "area",
+    "perp-dist", "para-dist", "parallelism", "slot-dist", "area", "spline",
   ]);
   const annotations = state.annotations.filter(a => exportTypes.has(a.type));
   if (annotations.length === 0) {
