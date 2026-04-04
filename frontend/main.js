@@ -17,7 +17,7 @@ import { showContextMenu, hideContextMenu } from './events-context-menu.js';
 import { undo, redo, initKeyboard } from './events-keyboard.js';
 import { initMouseHandlers } from './events-mouse.js';
 import { loadSpcParts, loadSpcFeatures, loadSpcData } from './spc.js';
-import { initLensCal } from './lens-cal.js';
+import { initLensCal, openLensCalDialog } from './lens-cal.js';
 import { initTiltCal, openTiltCalDialog, hasPerspectiveCorrection, undoPerspectiveCorrection } from './tilt-cal.js';
 import { initCalProfiles, openCalProfiles } from './cal-profiles.js';
 import { isBrowserCameraActive, startBrowserCamera, stopBrowserCamera } from './browser-camera.js';
@@ -131,7 +131,7 @@ document.querySelectorAll(".strip-flyout .flyout-item[data-tool]").forEach(btn =
 // Lens Cal button in setup flyout
 document.getElementById("btn-lens-cal-open")?.addEventListener("click", () => {
   closeAllDropdowns();
-  document.getElementById("lens-cal-dialog").hidden = false;
+  openLensCalDialog();
 });
 
 // Perspective correction button in setup flyout

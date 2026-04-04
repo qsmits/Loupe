@@ -108,6 +108,8 @@ export function drawLensCalOverlay() {
 }
 
 // ── Dialog logic ──────────────────────────────────────────────────────────────
+export function openLensCalDialog() { _openDialog(); }
+
 function _openDialog() {
   if (!state.frozenBackground) {
     showStatus("Freeze an image first");
