@@ -8,7 +8,7 @@ import { renderSidebar, loadCameraInfo, loadUiConfig, loadTolerances,
 import { deleteAnnotation, addAnnotation, elevateSelected, clearDetections, clearMeasurements, clearDxfOverlay, clearAll } from './annotations.js';
 import { assembleTemplate, downloadTemplate, readTemplateFile } from './template.js';
 import { setTool } from './tools.js';
-import { initDxfHandlers } from './dxf.js';
+import { initDxfHandlers, measurementsAsDxf } from './dxf.js';
 import { doFreeze, initDetectHandlers } from './detect.js';
 import { saveSession, loadSession, exportAnnotatedImage, exportCsv, exportDxf, autoSave, tryAutoRestore } from './session.js';
 import { viewport, clampPan, fitToWindow, setImageSize, imageWidth, imageHeight } from './viewport.js';
@@ -492,6 +492,10 @@ document.getElementById("btn-export").addEventListener("click", exportAnnotatedI
 // ── Export CSV / DXF ────────────────────────────────────��─────────────────────
 document.getElementById("btn-export-csv").addEventListener("click", exportCsv);
 document.getElementById("btn-export-dxf")?.addEventListener("click", exportDxf);
+document.getElementById("btn-measurements-as-dxf")?.addEventListener("click", () => {
+  closeAllDropdowns();
+  measurementsAsDxf();
+});
 
 // ── Crosshair toggle ──────────────────────────────────────────────────────────
 document.getElementById("btn-crosshair").addEventListener("click", () => {

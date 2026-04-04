@@ -556,3 +556,168 @@ export function initDxfHandlers() {
 
   document.getElementById("ftol-close")?.addEventListener("click", closeFeatureTolPopover);
 }
+
+// ── Use measurements as reference overlay ────────────────────────────────────
+/**
+ * Convert the current measurement annotations into a DXF-format entity list
+ * and inject them as a dxf-overlay — bypassing the file export/import cycle.
+ *
+ * Supported types:
+ *   distance / perp-dist / para-dist / slot-dist → "line"
+ *   circle / arc-fit (full)                      → "circle"
+ *   arc-fit (arc segment)                        → "arc"
+ *   arc-measure                                  → "arc"
+ *   spline                                       → "polyline_line" segments (alignment only)
+ *
+ * The overlay is placed so entities render exactly where the measurements are,
+ * then auto-align runs (if frozen) to snap it to the actual part edges.
+ */
+export async function measurementsAsDxf() {
+  const cal = state.calibration;
+  if (!cal?.pixelsPerMm) {
+    showStatus("Calibrate first — reference overlay needs a px/mm scale");
+    return;
+  }
+
+  const ppm = cal.pixelsPerMm;
+  const originX = state.origin?.x ?? 0;
+  const originY = state.origin?.y ?? 0;
+
+  // Convert pixel coords → mm with Y-flip (canvas Y-down → DXF Y-up)
+  const toX = px => (px - originX) / ppm;
+  const toY = py => -(py - originY) / ppm;
+
+  const entities = [];
+  let handleN = 0;
+  const nextHandle = () => `ref_${++handleN}`;
+  const layer = "measurements";
+
+  const LINE_TYPES = new Set(["distance", "perp-dist", "para-dist", "slot-dist"]);
+
+  for (const ann of state.annotations) {
+    if (LINE_TYPES.has(ann.type)) {
+      const { a, b } = ann;
+      if (!a || !b) continue;
+      entities.push({
+        type: "line",
+        x1: toX(a.x), y1: toY(a.y), x2: toX(b.x), y2: toY(b.y),
+        handle: nextHandle(), layer,
+      });
+    } else if (ann.type === "circle") {
+      if (!ann.r || ann.r <= 0) continue;
+      entities.push({
+        type: "circle",
+        cx: toX(ann.cx), cy: toY(ann.cy), radius: ann.r / ppm,
+        handle: nextHandle(), layer,
+      });
+    } else if (ann.type === "arc-measure") {
+      if (!ann.r || !ann.p1 || !ann.p3) continue;
+      const cx_mm = toX(ann.cx), cy_mm = toY(ann.cy);
+      // Compute angles from the two endpoint pixels — already in DXF (Y-up) frame
+      // because toX/toY already flipped Y.
+      const start_deg = Math.atan2(toY(ann.p1.y) - cy_mm, toX(ann.p1.x) - cx_mm) * 180 / Math.PI;
+      const end_deg   = Math.atan2(toY(ann.p3.y) - cy_mm, toX(ann.p3.x) - cx_mm) * 180 / Math.PI;
+      entities.push({
+        type: "arc",
+        cx: cx_mm, cy: cy_mm, radius: ann.r / ppm,
+        start_angle: start_deg, end_angle: end_deg,
+        handle: nextHandle(), layer,
+      });
+    } else if (ann.type === "arc-fit") {
+      if (!ann.r || ann.r <= 0) continue;
+      if (ann.startAngle === undefined) {
+        // Full circle
+        entities.push({
+          type: "circle",
+          cx: toX(ann.cx), cy: toY(ann.cy), radius: ann.r / ppm,
+          handle: nextHandle(), layer,
+        });
+      } else {
+        // Arc: convert canvas angles (radians, Y-down) → DXF degrees (Y-up).
+        // Negating flips Y; for anticlockwise=false (canvas CW = DXF CCW), swap start/end.
+        let dxfStart = -ann.endAngle * 180 / Math.PI;
+        let dxfEnd   = -ann.startAngle * 180 / Math.PI;
+        if (ann.anticlockwise) [dxfStart, dxfEnd] = [dxfEnd, dxfStart];
+        entities.push({
+          type: "arc",
+          cx: toX(ann.cx), cy: toY(ann.cy), radius: ann.r / ppm,
+          start_angle: dxfStart, end_angle: dxfEnd,
+          handle: nextHandle(), layer,
+        });
+      }
+    } else if (ann.type === "spline") {
+      const pts = ann.points;
+      if (!pts || pts.length < 2) continue;
+      const h = nextHandle();
+      for (let i = 0; i < pts.length - 1; i++) {
+        entities.push({
+          type: "polyline_line",
+          x1: toX(pts[i].x), y1: toY(pts[i].y),
+          x2: toX(pts[i + 1].x), y2: toY(pts[i + 1].y),
+          handle: `${h}_s${i}`, layer,
+        });
+      }
+    }
+  }
+
+  if (entities.length === 0) {
+    showStatus("No supported measurements — add distances, circles, arcs, or splines first");
+    return;
+  }
+
+  // Set up the overlay exactly as the DXF file loader does.
+  // Overlay origin placed at the coordinate origin so entities land on the measurements.
+  const dxfScaleInput = document.getElementById("dxf-scale");
+  if (dxfScaleInput) dxfScaleInput.value = ppm.toFixed(3);
+  state.annotations = state.annotations.filter(a => a.type !== "dxf-overlay");
+  state.inspectionResults = [];
+  state.inspectionFrame = null;
+  state._templateLoaded = false;
+  state._templateName = null;
+  state.dxfFilename = "from measurements";
+  renderInspectionTable();
+  updateExportButtons();
+  addAnnotation({
+    type: "dxf-overlay",
+    entities,
+    offsetX: originX,
+    offsetY: originY,
+    scale: ppm,
+    angle: 0,
+    scaleManual: false,
+    flipH: false,
+    flipV: false,
+  });
+  const dxfPanelEl = document.getElementById("dxf-panel");
+  if (dxfPanelEl) dxfPanelEl.style.display = "";
+  updateDxfControlsVisibility();
+  document.dispatchEvent(new CustomEvent("dxf-state-changed"));
+  showStatus(`Reference overlay created — ${entities.length} entities`);
+  redraw();
+
+  // Auto-align against actual image edges for robustness (same as DXF file load).
+  if (state.frozen) {
+    showStatus("Auto-aligning reference overlay…");
+    try {
+      const smoothing = parseInt(document.getElementById("adv-smoothing")?.value || "1");
+      const alignResp = await apiFetch("/align-dxf-edges", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ entities, pixels_per_mm: ppm, smoothing }),
+      });
+      if (alignResp.ok) {
+        const result = await alignResp.json();
+        const ann = state.annotations.find(a => a.type === "dxf-overlay");
+        if (ann) {
+          applyAlignmentResult(ann, result);
+          showStatus(`Reference overlay ready (score ${(result.score * 100).toFixed(0)}%)`);
+        }
+      } else {
+        showStatus("Reference overlay set — use Move DXF to fine-tune position");
+      }
+    } catch (_) {
+      showStatus("Reference overlay set — use Move DXF to fine-tune position");
+    }
+    redraw();
+  }
+}
