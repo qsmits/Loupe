@@ -5,6 +5,7 @@ import { addAnnotation } from './annotations.js';
 import { updateFreezeUI } from './sidebar.js';
 import { setImageSize, imageWidth, imageHeight } from './viewport.js';
 import { cacheImageData } from './subpixel-js.js';
+import { isBrowserCameraActive, captureBrowserFrame } from './browser-camera.js';
 
 // ── Detection busy indicator ──────────────────────────────────────────────
 function withBusy(btn, label, fn) {
@@ -36,12 +37,30 @@ export async function doFreeze() {
   // mark as frozen without re-capturing from the camera. In no-camera mode,
   // /freeze would overwrite the loaded image with a blank NullCamera frame.
   if (state.frozenBackground) {
-    img.style.opacity = "0";
-    // Stream continues in background (browser keeps MJPEG connection open
-  // regardless of src changes; setting src breaks canvas sizing)
+    const streamEl = isBrowserCameraActive()
+      ? document.getElementById("browser-cam-video") : img;
+    streamEl.style.opacity = "0";
     state.frozen = true;
     updateFreezeUI();
     resizeCanvas();
+    return;
+  }
+
+  // Browser camera: capture frame from video element and upload to /load-image
+  if (isBrowserCameraActive()) {
+    try {
+      const { image, width, height } = await captureBrowserFrame();
+      state.frozenSize = { w: width, h: height };
+      if (width !== imageWidth || height !== imageHeight) setImageSize(width, height);
+      state.frozenBackground = image;
+      document.getElementById("browser-cam-video").style.opacity = "0";
+      state.frozen = true;
+      cacheImageData(image, width, height);
+      updateFreezeUI();
+      resizeCanvas();
+    } catch (err) {
+      showStatus("Failed to capture frame: " + err.message);
+    }
     return;
   }
 

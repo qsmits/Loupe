@@ -149,8 +149,11 @@ export { drawDistance, drawAngle, drawCircle, drawArcMeasure,
 
 // ── Canvas sizing ──────────────────────────────────────────────────────────────
 export function resizeCanvas() {
-  const r = img.getBoundingClientRect();
-  const vr = img.parentElement.getBoundingClientRect();
+  const streamEl = state.browserCamera?.active
+    ? document.getElementById("browser-cam-video")
+    : img;
+  const r = streamEl.getBoundingClientRect();
+  const vr = streamEl.parentElement.getBoundingClientRect();
 
   let displayW = r.width;
   let displayH = r.height;

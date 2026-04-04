@@ -276,6 +276,13 @@ body.no-camera #stream-img {
   height: 100%;
 }
 
+#browser-cam-video {
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
 #overlay-canvas {
   position: absolute;
   top: 0; left: 0;

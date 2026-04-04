@@ -515,19 +515,20 @@ export async function loadCameraList() {
     ]);
     const cameras = await camerasResp.json();
     const info = await infoResp.json();
-    const currentId = info.device_id ?? "";
-    const isDisabled = cameras.length <= 1 && cameras[0]?.id === "opencv-0";
+    const currentId = state.browserCamera?.active ? "browser-cam" : (info.device_id ?? "");
+    // Always append browser camera option
+    const allCameras = [...cameras, { id: "browser-cam", label: "Browser Camera (Webcam)" }];
     for (const target of [sel, selTop]) {
       if (!target) continue;
       target.innerHTML = "";
-      for (const c of cameras) {
+      for (const c of allCameras) {
         const opt = document.createElement("option");
         opt.value = c.id;
         opt.textContent = c.label;
         if (c.id === currentId) opt.selected = true;
         target.appendChild(opt);
       }
-      target.disabled = isDisabled;
+      target.disabled = false;
     }
   } catch {
     for (const target of [sel, selTop]) {

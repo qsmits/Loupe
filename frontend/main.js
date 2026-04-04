@@ -20,6 +20,7 @@ import { loadSpcParts, loadSpcFeatures, loadSpcData } from './spc.js';
 import { initLensCal } from './lens-cal.js';
 import { initTiltCal, openTiltCalDialog } from './tilt-cal.js';
 import { initCalProfiles, openCalProfiles } from './cal-profiles.js';
+import { isBrowserCameraActive, startBrowserCamera, stopBrowserCamera } from './browser-camera.js';
 import { finalizeArcFit } from './tools.js';
 
 // ─── Dropdown helpers ─────��──────────────────────────────────────────────────
@@ -187,9 +188,13 @@ document.addEventListener("click", e => {
 // ─��� Freeze button ───���───────────────────────────────��─────────────────────────
 document.getElementById("btn-freeze").addEventListener("click", async () => {
   if (state.frozen) {
-    // Unfreeze — restart MJPEG stream
-    img.src = "/stream?" + Date.now();
-    img.style.opacity = "1";
+    // Unfreeze — restore live stream
+    if (isBrowserCameraActive()) {
+      document.getElementById("browser-cam-video").style.opacity = "1";
+    } else {
+      img.src = "/stream?" + Date.now();
+      img.style.opacity = "1";
+    }
     state.frozen = false;
     state.frozenBackground = null;
     state._gradientOverlayImg = null;
@@ -809,6 +814,15 @@ document.getElementById("pixel-format-top")?.addEventListener("change", async e 
 document.getElementById("camera-select-top")?.addEventListener("change", async e => {
   const camera_id = e.target.value;
   if (!camera_id) return;
+
+  if (camera_id === "browser-cam") {
+    await startBrowserCamera();
+    return;
+  }
+
+  // Switching away from browser camera — stop it first
+  if (isBrowserCameraActive()) stopBrowserCamera();
+
   e.target.disabled = true;
   try {
     const r = await apiFetch("/camera/select", {

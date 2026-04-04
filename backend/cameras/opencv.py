@@ -84,3 +84,22 @@ class OpenCVCamera(BaseCamera):
 
     def set_white_balance_ratio(self, channel: str, value: float) -> None:
         pass  # OpenCV does not support hardware white balance
+
+
+def list_opencv_cameras(max_index: int = 3) -> list[dict]:
+    """
+    Probe VideoCapture indices 0..max_index and return entries for cameras
+    that open successfully.  Each dict has the same shape as Aravis entries:
+    {"id": "opencv-N", "vendor": "Webcam", "label": "Webcam N+1"}.
+    """
+    cameras = []
+    for i in range(max_index + 1):
+        cap = cv2.VideoCapture(i)
+        if cap.isOpened():
+            cameras.append({
+                "id": f"opencv-{i}",
+                "vendor": "Webcam",
+                "label": f"Webcam {i + 1}",
+            })
+            cap.release()
+    return cameras

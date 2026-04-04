@@ -235,22 +235,23 @@ def make_camera_router(camera: BaseCamera, frame_store: SessionFrameStore, start
         if camera.is_null:
             return []
         from .cameras.aravis import list_aravis_cameras
-        cameras = await asyncio.to_thread(list_aravis_cameras)
-        if not cameras:
-            # OpenCV fallback — return a single non-selectable entry
-            cameras = [{"id": "opencv-0", "vendor": "OpenCV", "label": "OpenCV Camera"}]
-        return cameras
+        from .cameras.opencv import list_opencv_cameras
+        aravis = await asyncio.to_thread(list_aravis_cameras)
+        opencv = await asyncio.to_thread(list_opencv_cameras)
+        return aravis + opencv
 
     @router.post("/camera/select")
     async def select_camera(body: CameraSelectBody, request: Request):
         if camera.is_null:
             raise HTTPException(503, detail="No camera")
-        if body.camera_id == "opencv-0":
-            raise HTTPException(status_code=400,
-                detail="Camera selection is not supported on the OpenCV fallback.")
-        from .cameras.aravis import AravisCamera
         try:
-            new_cam = AravisCamera(device_id=body.camera_id)
+            if body.camera_id.startswith("opencv-"):
+                from .cameras.opencv import OpenCVCamera
+                idx = int(body.camera_id.split("-", 1)[1])
+                new_cam = OpenCVCamera(index=idx)
+            else:
+                from .cameras.aravis import AravisCamera
+                new_cam = AravisCamera(device_id=body.camera_id)
             await asyncio.to_thread(camera.switch_camera, new_cam)
         except Exception as e:
             raise HTTPException(400, detail=safe_error_detail(request, e, "Camera switch failed"))

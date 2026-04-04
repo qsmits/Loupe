@@ -139,8 +139,9 @@ def test_list_cameras_returns_list(client):
     assert "label" in data[0]
 
 
-def test_select_camera_opencv_id_rejected(client):
-    r = client.post("/camera/select", json={"camera_id": "opencv-0"})
+def test_select_camera_opencv_nonexistent_rejected(client):
+    # Index 99 will never open; switch_camera raises → 400
+    r = client.post("/camera/select", json={"camera_id": "opencv-99"})
     assert r.status_code == 400
 
 
