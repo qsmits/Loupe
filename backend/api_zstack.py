@@ -9,6 +9,7 @@ map.  Everything lives in memory; one active stack at a time.
 from __future__ import annotations
 
 import base64
+import math
 import threading
 import uuid
 from typing import List, Optional
@@ -50,10 +51,14 @@ class _ZStackSession:
         self.id: str = uuid.uuid4().hex
         self.frames: List[np.ndarray] = []
         self.result: Optional[dict] = None
+        # Multiplicative correction on mm-space Z values, applied at read time.
+        # A fresh compute resets this to 1.0.
+        self.z_scale: float = 1.0
 
     def reset(self) -> None:
         self.frames = []
         self.result = None
+        self.z_scale = 1.0
         self.id = uuid.uuid4().hex
 
 
@@ -86,6 +91,12 @@ class AreaRoughnessBody(BaseModel):
     detrend_scope: str = "roi"
 
 
+class CalibrateZBody(BaseModel):
+    scale: Optional[float] = Field(default=None, gt=0, le=100)
+    measured_mm: Optional[float] = Field(default=None)
+    known_mm: Optional[float] = Field(default=None)
+
+
 class ComputeBody(BaseModel):
     z_step_mm: float = Field(gt=0, le=10.0, description="Z delta between frames (mm)")
     z0_mm: float = Field(default=0.0, description="Absolute Z of first frame (mm)")
@@ -103,7 +114,24 @@ def make_zstack_router(camera: BaseCamera) -> APIRouter:
     def _require_result() -> dict:
         if session.result is None:
             raise HTTPException(status_code=404, detail="No computed z-stack. POST /zstack/compute first.")
-        return session.result
+        return _scaled_result(session)
+
+    def _scaled_result(sess) -> dict:
+        # Shallow copy of sess.result with mm-space fields multiplied by
+        # sess.z_scale.  composite / index_map / peak_focus / max_brightness
+        # are not in mm-space and pass through untouched.  Never mutates the
+        # stored result — the raw focus_stack output stays pristine so
+        # successive calibrations compose correctly.
+        r = sess.result
+        s = float(sess.z_scale)
+        if s == 1.0:
+            return r
+        out = dict(r)
+        out["height_map"] = r["height_map"] * s
+        out["min_z"] = float(r["min_z"]) * s
+        out["max_z"] = float(r["max_z"]) * s
+        out["z_values"] = [float(z) * s for z in r["z_values"]]
+        return out
 
     @router.post("/zstack/start")
     async def zstack_start():
@@ -163,7 +191,7 @@ def make_zstack_router(camera: BaseCamera) -> APIRouter:
         with lock:
             result_summary = None
             if session.result is not None:
-                r = session.result
+                r = _scaled_result(session)
                 h, w = r["composite"].shape[:2]
                 result_summary = {
                     "width": int(w),
@@ -177,6 +205,7 @@ def make_zstack_router(camera: BaseCamera) -> APIRouter:
                 "frame_count": len(session.frames),
                 "has_result": session.result is not None,
                 "result": result_summary,
+                "z_scale": float(session.z_scale),
                 "min_frames_to_compute": MIN_FRAMES_TO_COMPUTE,
                 "max_frames": MAX_FRAMES,
                 "hdr_supported": _hdr_supported(),
@@ -248,6 +277,7 @@ def make_zstack_router(camera: BaseCamera) -> APIRouter:
             except ValueError as e:
                 raise HTTPException(status_code=400, detail=str(e))
             session.result = result
+            session.z_scale = 1.0
             h, w = result["composite"].shape[:2]
             return {
                 "session_id": session.id,
@@ -478,6 +508,33 @@ def make_zstack_router(camera: BaseCamera) -> APIRouter:
             "width": int(frames[0].shape[1]),
             "height": int(frames[0].shape[0]),
         }
+
+    @router.post("/zstack/calibrate-z")
+    async def zstack_calibrate_z(body: CalibrateZBody):
+        with lock:
+            if session.result is None:
+                raise HTTPException(status_code=404, detail="No computed z-stack")
+            if body.scale is not None:
+                new_scale = float(body.scale)
+            elif body.measured_mm is not None and body.known_mm is not None:
+                if body.measured_mm == 0:
+                    raise HTTPException(status_code=400, detail="measured_mm cannot be zero")
+                # Compose on top of the current scale: the client's "measured" is
+                # read off whatever the backend currently returns, so the new
+                # scale is the existing one times the correction ratio.
+                new_scale = session.z_scale * float(body.known_mm) / float(body.measured_mm)
+            else:
+                raise HTTPException(status_code=400, detail="Provide either 'scale' or ('measured_mm' and 'known_mm')")
+            if new_scale <= 0 or not math.isfinite(new_scale):
+                raise HTTPException(status_code=400, detail="Invalid scale")
+            session.z_scale = new_scale
+            return {"session_id": session.id, "z_scale": session.z_scale}
+
+    @router.post("/zstack/calibrate-z/reset")
+    async def zstack_calibrate_z_reset():
+        with lock:
+            session.z_scale = 1.0
+            return {"session_id": session.id, "z_scale": 1.0}
 
     @router.post("/zstack/reset")
     async def zstack_reset():

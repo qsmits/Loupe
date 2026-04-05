@@ -232,6 +232,10 @@ function initScene(modal, payload) {
         alert('Height map grid size changed unexpectedly; close and reopen the 3D view.');
         return;
       }
+      if (typeof p.z_step_mm === 'number' && p.z_step_mm > 0) {
+        effectiveZStep = p.z_step_mm;
+        renderCalibReadout();
+      }
       let mn = Infinity, mx = -Infinity;
       for (let i = 0; i < vertexCount; i++) {
         const v = p.data[i];
@@ -364,10 +368,11 @@ function initScene(modal, payload) {
     geometry.computeBoundingSphere();
   });
 
-  // Settings: Z calibration via two-point pick on the mesh.  Lets the user
-  // click two features of known height difference (e.g. a gauge block step)
-  // to derive an effective `z_step_mm` correction factor.  Purely a
-  // readout — does not change the rendered shape, only the reported mm.
+  // Settings: Z calibration via two-point pick on the mesh.  Posts the
+  // measured vs. known mm delta to /zstack/calibrate-z; on success the
+  // viewer re-fetches heightmap.raw (which now has the backend scale
+  // applied to z_step_mm) and rebuilds the mesh, keeping the 3D view and
+  // all other mm-space readouts (profile, roughness) in sync.
   const calibRow = document.createElement('div');
   calibRow.className = 'zstack-3d-row zstack-3d-calib-row';
   const calibBtn = document.createElement('button');
@@ -376,21 +381,23 @@ function initScene(modal, payload) {
   calibBtn.textContent = 'Calibrate Z…';
   const calibReadout = document.createElement('div');
   calibReadout.className = 'zstack-3d-calib-readout';
-  calibReadout.textContent = `z_step: ${z_step_mm.toFixed(4)} mm (nominal)`;
   const calibReset = document.createElement('button');
   calibReset.type = 'button';
   calibReset.className = 'zstack-3d-calib-reset';
-  calibReset.textContent = 'Reset';
-  calibReset.hidden = true;
+  calibReset.textContent = 'Reset cal';
   calibRow.appendChild(calibBtn);
   calibRow.appendChild(calibReset);
   calibRow.appendChild(calibReadout);
   rowsEl.appendChild(calibRow);
 
-  // Effective z_step (mm/index) after calibration — starts at the nominal
-  // value the user entered when building the stack.
+  // Effective z_step (mm/index) — re-fetched from the backend after any
+  // calibration, so successive picks compose through the session's z_scale.
   let effectiveZStep = z_step_mm;
-  let calibCorrection = 1.0;
+
+  function renderCalibReadout() {
+    calibReadout.textContent = `z_step: ${effectiveZStep.toFixed(4)} mm`;
+  }
+  renderCalibReadout();
 
   const raycaster = new THREE.Raycaster();
   const ndc = new THREE.Vector2();
@@ -481,16 +488,20 @@ function initScene(modal, payload) {
     }
   }
 
-  function finalizeCalibration() {
+  async function finalizeCalibration() {
     const dIdx = Math.abs(pickedPoints[1].rawIdx - pickedPoints[0].rawIdx);
     if (dIdx < 0.5) {
       alert('The two points are at (essentially) the same focus level — pick points with a visible height difference.');
       clearMarkers();
       return;
     }
-    const observedMm = dIdx * z_step_mm;
+    // The rawIdx values came from the most recent heightmap.raw fetch, so
+    // multiplying by the same payload's z_step_mm yields the mm delta in
+    // whatever calibration is currently active on the server.  The backend
+    // will then compose: new_scale = current * known / measured.
+    const observedMm = dIdx * effectiveZStep;
     const knownStr = window.prompt(
-      `Observed Δ (nominal): ${observedMm.toFixed(4)} mm (Δindex = ${dIdx.toFixed(2)})\n\nEnter the KNOWN height difference in mm:`,
+      `Observed Δ: ${observedMm.toFixed(4)} mm (Δindex = ${dIdx.toFixed(2)})\n\nEnter the KNOWN height difference in mm:`,
       observedMm.toFixed(3),
     );
     if (knownStr == null) { clearMarkers(); return; }
@@ -500,22 +511,39 @@ function initScene(modal, payload) {
       clearMarkers();
       return;
     }
-    calibCorrection = known / observedMm;
-    effectiveZStep = z_step_mm * calibCorrection;
-    calibReadout.innerHTML =
-      `z_step: <b>${effectiveZStep.toFixed(4)} mm</b> (${calibCorrection.toFixed(3)}×)`;
-    calibReset.hidden = false;
+    try {
+      const resp = await apiFetch('/zstack/calibrate-z', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ measured_mm: observedMm, known_mm: known }),
+      });
+      if (!resp.ok) {
+        alert('Calibration failed: ' + resp.status);
+        clearMarkers();
+        return;
+      }
+    } catch (err) {
+      alert('Calibration failed: ' + err.message);
+      clearMarkers();
+      return;
+    }
+    clearMarkers();
+    await reloadWithDetrend(levelSelect.value);
   }
 
   calibBtn.addEventListener('click', () => {
     if (!pickMode) enterPickMode();
   });
-  calibReset.addEventListener('click', () => {
-    calibCorrection = 1.0;
-    effectiveZStep = z_step_mm;
-    calibReadout.textContent = `z_step: ${z_step_mm.toFixed(4)} mm (nominal)`;
-    calibReset.hidden = true;
+  calibReset.addEventListener('click', async () => {
+    try {
+      const resp = await apiFetch('/zstack/calibrate-z/reset', { method: 'POST' });
+      if (!resp.ok) { alert('Reset failed: ' + resp.status); return; }
+    } catch (err) {
+      alert('Reset failed: ' + err.message);
+      return;
+    }
     clearMarkers();
+    await reloadWithDetrend(levelSelect.value);
   });
   renderer.domElement.addEventListener('click', onCanvasClick);
 

@@ -42,6 +42,12 @@ const zs = {
     p1: null,
     data: null,       // last /zstack/area-roughness response
   },
+  calibZ: {
+    active: false,
+    p0: null,
+    p1: null,
+  },
+  zScale: 1.0,
 };
 
 function $(id) { return document.getElementById(id); }
@@ -59,7 +65,7 @@ function buildDialog() {
         <span class="dialog-title">3D Z-Stack (Depth-from-Focus)</span>
         <button class="dialog-close" id="btn-zstack-close">✕</button>
       </div>
-      <div style="padding:14px 18px">
+      <div style="padding:14px 18px;flex:1;min-height:0;overflow-y:auto">
         <p style="margin:0 0 10px;opacity:0.85;font-size:13px">
           Manually advance the Z axis by a fixed amount between captures,
           just like the Keyence VHX "3D" mode. Collect 10–15 frames for
@@ -124,19 +130,24 @@ function buildDialog() {
             </div>
           </div>
 
-          <div id="zstack-profile-section" hidden style="margin-top:12px;padding:8px 10px;background:#161616;border:1px solid #2a2a2a;border-radius:3px">
+          <div style="margin-top:12px;padding:8px 10px;background:#161616;border:1px solid #2a2a2a;border-radius:3px">
             <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;flex-wrap:wrap">
-              <strong style="font-size:12px">Profile</strong>
+              <strong style="font-size:12px">Profile &amp; Roughness</strong>
               <button class="detect-btn" id="btn-zstack-profile-draw" style="margin-left:8px">Draw profile</button>
-              <button class="detect-btn" id="btn-zstack-profile-clear">Clear</button>
               <button class="detect-btn" id="btn-zstack-area-draw">Measure area</button>
+              <button class="detect-btn" id="btn-zstack-calib-z">Calibrate Z</button>
+              <button class="detect-btn" id="btn-zstack-profile-clear">Clear</button>
+              <span id="zstack-zscale-readout" style="margin-left:8px;font-size:11px;font-variant-numeric:tabular-nums">Z scale: 1.00×</span>
+              <button class="detect-btn" id="btn-zstack-zscale-reset" style="padding:2px 6px;font-size:11px" hidden>Reset</button>
               <span id="zstack-profile-status" style="opacity:0.75;font-size:11px"></span>
             </div>
-            <canvas id="zstack-profile-chart" style="width:100%;height:200px;background:#0b0b0b;border:1px solid #333;display:block"></canvas>
-            <div id="zstack-profile-readout" style="margin-top:6px;font-size:12px;opacity:0.9;font-variant-numeric:tabular-nums"></div>
-            <div id="zstack-roughness-full" style="margin-top:4px;font-size:12px;opacity:0.9;font-variant-numeric:tabular-nums"></div>
-            <div id="zstack-roughness-range" style="margin-top:2px;font-size:12px;opacity:0.9;font-variant-numeric:tabular-nums"></div>
-            <div id="zstack-roughness-area" style="margin-top:4px;font-size:12px;opacity:0.9;font-variant-numeric:tabular-nums"></div>
+            <div id="zstack-profile-section" hidden>
+              <canvas id="zstack-profile-chart" style="width:100%;height:200px;background:#0b0b0b;border:1px solid #333;display:block"></canvas>
+              <div id="zstack-profile-readout" style="margin-top:6px;font-size:12px;opacity:0.9;font-variant-numeric:tabular-nums"></div>
+              <div id="zstack-roughness-full" style="margin-top:4px;font-size:12px;opacity:0.9;font-variant-numeric:tabular-nums"></div>
+              <div id="zstack-roughness-range" style="margin-top:2px;font-size:12px;opacity:0.9;font-variant-numeric:tabular-nums"></div>
+              <div id="zstack-roughness-area" style="margin-top:4px;font-size:12px;opacity:0.9;font-variant-numeric:tabular-nums"></div>
+            </div>
           </div>
           <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
             <button class="detect-btn" id="btn-zstack-use-composite">Use composite as working image</button>
@@ -194,6 +205,18 @@ function buildDialog() {
     setProfileStatus("Click two points on the height map.");
   });
   $("btn-zstack-profile-clear").addEventListener("click", () => { clearProfile(); clearArea(); });
+  $("btn-zstack-calib-z").addEventListener("click", () => {
+    if (!zs.computed) return;
+    zs.profile.active = false;
+    zs.area.active = false;
+    zs.area.drawing = false;
+    zs.calibZ.active = true;
+    zs.calibZ.p0 = null;
+    zs.calibZ.p1 = null;
+    $("zstack-heightmap-img").style.cursor = "crosshair";
+    setProfileStatus("Click two points that span a known height difference.");
+  });
+  $("btn-zstack-zscale-reset").addEventListener("click", resetZScale);
   $("btn-zstack-area-draw").addEventListener("click", () => {
     if (!zs.computed) return;
     // cancel any profile-draw mode — only one drawing mode at a time
@@ -258,15 +281,28 @@ function clearProfile() {
 }
 
 function onHeightmapClick(e) {
-  if (!zs.profile.active || !zs.computed) return;
+  if (!zs.computed) return;
   const img = e.currentTarget;
   const rect = img.getBoundingClientRect();
   if (rect.width <= 0 || rect.height <= 0) return;
-  // <img> is rendered at 100% of its column; scale CSS-px → full-res image-px.
   const scaleX = zs.computed.width / rect.width;
   const scaleY = zs.computed.height / rect.height;
   const x = (e.clientX - rect.left) * scaleX;
   const y = (e.clientY - rect.top) * scaleY;
+  if (zs.calibZ.active) {
+    if (!zs.calibZ.p0) {
+      zs.calibZ.p0 = { x, y };
+      setProfileStatus("Click the second point.");
+    } else {
+      zs.calibZ.p1 = { x, y };
+      zs.calibZ.active = false;
+      img.style.cursor = "";
+      setProfileStatus("");
+      finalizeCalibZ();
+    }
+    return;
+  }
+  if (!zs.profile.active) return;
   if (!zs.profile.p0) {
     zs.profile.p0 = { x, y };
     setProfileStatus("Click the second point.");
@@ -277,6 +313,108 @@ function onHeightmapClick(e) {
     setProfileStatus("");
     fetchProfile();
   }
+}
+
+async function finalizeCalibZ() {
+  const { p0, p1 } = zs.calibZ;
+  zs.calibZ.p0 = null;
+  zs.calibZ.p1 = null;
+  if (!p0 || !p1) return;
+  // Sample a profile between the two picks in the current detrend mode;
+  // its full z range is our "measured" delta.
+  const detrend = $("zstack-detrend") ? $("zstack-detrend").value : "none";
+  let measured_mm = 0;
+  try {
+    const r = await apiFetch("/zstack/profile", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ x0: p0.x, y0: p0.y, x1: p1.x, y1: p1.y, detrend }),
+    });
+    if (!r.ok) { setProfileStatus("Calibrate failed: " + r.status); return; }
+    const data = await r.json();
+    const z = data.z_mm;
+    if (!z || z.length < 2) { setProfileStatus("Calibrate failed: no profile"); return; }
+    measured_mm = Math.abs(z[z.length - 1] - z[0]);
+  } catch (err) {
+    setProfileStatus("Calibrate error: " + err.message);
+    return;
+  }
+  if (!(measured_mm > 1e-9)) {
+    setProfileStatus("Pick two points at different heights.");
+    return;
+  }
+  const knownStr = window.prompt(
+    `Measured Δ: ${measured_mm.toFixed(4)} mm\n\nKnown Z difference in mm?`,
+    measured_mm.toFixed(3),
+  );
+  if (knownStr == null) { setProfileStatus(""); return; }
+  const known = parseFloat(knownStr);
+  if (!Number.isFinite(known) || known <= 0) {
+    setProfileStatus("Invalid value.");
+    return;
+  }
+  try {
+    const r = await apiFetch("/zstack/calibrate-z", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ measured_mm, known_mm: known }),
+    });
+    if (!r.ok) { setProfileStatus("Calibrate failed: " + r.status); return; }
+    const body = await r.json();
+    setZScale(body.z_scale);
+    await refreshAfterScaleChange();
+  } catch (err) {
+    setProfileStatus("Calibrate error: " + err.message);
+  }
+}
+
+async function resetZScale() {
+  try {
+    const r = await apiFetch("/zstack/calibrate-z/reset", { method: "POST" });
+    if (!r.ok) { setProfileStatus("Reset failed: " + r.status); return; }
+    const body = await r.json();
+    setZScale(body.z_scale);
+    await refreshAfterScaleChange();
+  } catch (err) {
+    setProfileStatus("Reset error: " + err.message);
+  }
+}
+
+function setZScale(s) {
+  const v = Number.isFinite(s) ? s : 1.0;
+  zs.zScale = v;
+  const el = $("zstack-zscale-readout");
+  const resetBtn = $("btn-zstack-zscale-reset");
+  if (el) {
+    el.textContent = `Z scale: ${v.toFixed(2)}×`;
+    el.style.color = Math.abs(v - 1.0) > 1e-9 ? "#ff9a3c" : "";
+  }
+  if (resetBtn) resetBtn.hidden = Math.abs(v - 1.0) < 1e-9;
+}
+
+// Re-fetch the heightmap PNG (cache-busted) and any active profile / area
+// so the UI reflects a new server-side scale factor.
+async function refreshAfterScaleChange() {
+  if (!zs.computed) return;
+  const detrend = $("zstack-detrend") ? $("zstack-detrend").value : "none";
+  const url = `/zstack/heightmap.png?detrend=${encodeURIComponent(detrend)}&t=${Date.now()}`;
+  $("zstack-heightmap-img").src = url;
+  $("zstack-heightmap-dl").href = url;
+  // Pull fresh min/max from status so the z-range label is correct.
+  try {
+    const sr = await apiFetch("/zstack/status");
+    if (sr.ok) {
+      const st = await sr.json();
+      if (st.result) {
+        zs.computed.minZ = st.result.min_z;
+        zs.computed.maxZ = st.result.max_z;
+        $("zstack-zrange").textContent =
+          `Z ${zs.computed.minZ.toFixed(3)} → ${zs.computed.maxZ.toFixed(3)} mm`;
+      }
+    }
+  } catch {}
+  if (zs.profile.p0 && zs.profile.p1) await fetchProfile();
+  if (zs.area.p0 && zs.area.p1) await fetchAreaRoughness();
 }
 
 async function fetchProfile() {
@@ -755,6 +893,7 @@ function applyHdrCapability(status) {
 // a built Z-stack.
 function rehydrateResult(status) {
   if (!status || !status.result) return;
+  setZScale(typeof status.z_scale === "number" ? status.z_scale : 1.0);
   const r = status.result;
   zs.computed = {
     compositeUrl: "/zstack/composite.png?t=" + Date.now(),
@@ -855,6 +994,7 @@ async function compute() {
     if (detrendSel) detrendSel.value = "none";
     clearProfile();
     clearArea();
+    setZScale(1.0);
     $("zstack-composite-img").src = zs.computed.compositeUrl;
     $("zstack-heightmap-img").src = zs.computed.heightmapUrl;
     $("zstack-composite-dl").href = zs.computed.compositeUrl;

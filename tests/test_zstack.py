@@ -508,3 +508,109 @@ def test_area_roughness_requires_result(client: TestClient):
         "x0": 0.0, "y0": 0.0, "x1": 100.0, "y1": 100.0,
     })
     assert r.status_code == 404
+
+
+# ---- Z calibration ----
+
+
+def _compute_for_calib(client: TestClient) -> None:
+    assert client.post("/zstack/start").status_code == 200
+    for _ in range(4):
+        assert client.post("/zstack/capture").status_code == 200
+    assert client.post("/zstack/compute", json={"z_step_mm": 0.02}).status_code == 200
+
+
+def test_calibrate_z_direct_scale(client: TestClient):
+    _compute_for_calib(client)
+    pr_before = client.post("/zstack/profile", json={
+        "x0": 10.0, "y0": 10.0, "x1": 200.0, "y1": 150.0,
+    }).json()
+    r = client.post("/zstack/calibrate-z", json={"scale": 2.0})
+    assert r.status_code == 200
+    assert r.json()["z_scale"] == pytest.approx(2.0)
+    assert client.get("/zstack/status").json()["z_scale"] == pytest.approx(2.0)
+    pr_after = client.post("/zstack/profile", json={
+        "x0": 10.0, "y0": 10.0, "x1": 200.0, "y1": 150.0,
+    }).json()
+    # Every z value should double.  FakeCamera is uniform so all z's may be
+    # zero; assert range ratio instead to cover both cases.
+    z_before = pr_before["z_max_mm"] - pr_before["z_min_mm"]
+    z_after = pr_after["z_max_mm"] - pr_after["z_min_mm"]
+    if z_before > 1e-12:
+        assert z_after == pytest.approx(2.0 * z_before, rel=1e-6)
+    # Bounds scale even when flat (z_min/z_max themselves are scaled).
+    assert pr_after["z_min_mm"] == pytest.approx(2.0 * pr_before["z_min_mm"], abs=1e-9)
+    assert pr_after["z_max_mm"] == pytest.approx(2.0 * pr_before["z_max_mm"], abs=1e-9)
+
+
+def test_calibrate_z_measured_known_math(client: TestClient):
+    _compute_for_calib(client)
+    r = client.post("/zstack/calibrate-z", json={"measured_mm": 0.02, "known_mm": 0.01})
+    assert r.status_code == 200
+    assert r.json()["z_scale"] == pytest.approx(0.5)
+    # Second call composes on top: 0.5 * (0.02 / 0.01) = 1.0
+    r = client.post("/zstack/calibrate-z", json={"measured_mm": 0.01, "known_mm": 0.02})
+    assert r.status_code == 200
+    assert r.json()["z_scale"] == pytest.approx(1.0, abs=1e-12)
+
+
+def test_calibrate_z_resets_on_compute(client: TestClient):
+    _compute_for_calib(client)
+    assert client.post("/zstack/calibrate-z", json={"scale": 3.5}).status_code == 200
+    assert client.get("/zstack/status").json()["z_scale"] == pytest.approx(3.5)
+    # Recompute on the same frames — scale should be wiped.
+    assert client.post("/zstack/compute", json={"z_step_mm": 0.02}).status_code == 200
+    assert client.get("/zstack/status").json()["z_scale"] == pytest.approx(1.0)
+
+
+def test_calibrate_z_reset_endpoint(client: TestClient):
+    _compute_for_calib(client)
+    assert client.post("/zstack/calibrate-z", json={"scale": 4.0}).status_code == 200
+    r = client.post("/zstack/calibrate-z/reset")
+    assert r.status_code == 200
+    assert r.json()["z_scale"] == pytest.approx(1.0)
+    assert client.get("/zstack/status").json()["z_scale"] == pytest.approx(1.0)
+
+
+def test_calibrate_z_requires_result(client: TestClient):
+    assert client.post("/zstack/reset").status_code == 200
+    r = client.post("/zstack/calibrate-z", json={"scale": 2.0})
+    assert r.status_code == 404
+
+
+def test_calibrate_z_invalid_inputs(client: TestClient):
+    _compute_for_calib(client)
+    # Nothing provided
+    r = client.post("/zstack/calibrate-z", json={})
+    assert r.status_code == 400
+    # measured_mm == 0
+    r = client.post("/zstack/calibrate-z", json={"measured_mm": 0.0, "known_mm": 0.01})
+    assert r.status_code == 400
+    # Negative scale — pydantic rejects at gt=0
+    r = client.post("/zstack/calibrate-z", json={"scale": -1.0})
+    assert r.status_code == 422
+
+
+def test_area_roughness_uses_scale(client: TestClient):
+    _compute_for_calib(client)
+    body = {"x0": 50.0, "y0": 40.0, "x1": 300.0, "y1": 260.0}
+    base = client.post("/zstack/area-roughness", json=body).json()
+    assert client.post("/zstack/calibrate-z", json={"scale": 3.0}).status_code == 200
+    scaled = client.post("/zstack/area-roughness", json=body).json()
+    # All mm-space roughness metrics multiply by the scale factor.
+    for key in ("Sa", "Sq", "Sp", "Sv", "Sz"):
+        if base[key] > 1e-12:
+            assert scaled[key] == pytest.approx(3.0 * base[key], rel=1e-6)
+        else:
+            assert scaled[key] == pytest.approx(0.0, abs=1e-9)
+    # z bounds also scale
+    assert scaled["z_min_mm"] == pytest.approx(3.0 * base["z_min_mm"], abs=1e-9)
+    assert scaled["z_max_mm"] == pytest.approx(3.0 * base["z_max_mm"], abs=1e-9)
+
+
+def test_heightmap_raw_reflects_scale(client: TestClient):
+    _compute_for_calib(client)
+    base = client.get("/zstack/heightmap.raw").json()
+    assert client.post("/zstack/calibrate-z", json={"scale": 2.0}).status_code == 200
+    scaled = client.get("/zstack/heightmap.raw").json()
+    assert scaled["z_step_mm"] == pytest.approx(2.0 * base["z_step_mm"], rel=1e-9)
