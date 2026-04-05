@@ -11,6 +11,7 @@ import { setTool } from './tools.js';
 import { initSubModeSelector } from './sub-mode-selector.js';
 import { initDxfHandlers, measurementsAsDxf } from './dxf.js';
 import { doFreeze, initDetectHandlers } from './detect.js';
+import { initCompareHandlers } from './compare.js';
 import { saveSession, loadSession, exportAnnotatedImage, exportCsv, exportDxf, autoSave, tryAutoRestore } from './session.js';
 import { viewport, clampPan, fitToWindow, setImageSize, imageWidth, imageHeight } from './viewport.js';
 import { cacheImageData } from './subpixel-js.js';
@@ -1081,6 +1082,7 @@ document.getElementById("template-input")?.addEventListener("change", async (e) 
 
 initDxfHandlers();
 initDetectHandlers();
+initCompareHandlers();
 initLensCal();
 initTiltCal();
 initCalProfiles();
