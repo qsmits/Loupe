@@ -12,6 +12,7 @@ import { img, showStatus, resizeCanvas } from './render.js';
 import { setImageSize, viewport } from './viewport.js';
 import { cacheImageData } from './subpixel-js.js';
 import { updateFreezeUI } from './sidebar.js';
+import { openZstack3dView } from './zstack-3d.js';
 
 // Local UI state (scoped — does NOT touch core `state`)
 const zs = {
@@ -77,8 +78,9 @@ function buildDialog() {
               <a id="zstack-heightmap-dl" download="zstack-heightmap.png" class="detect-btn" style="display:inline-block;margin-top:6px;text-decoration:none">Download PNG</a>
             </div>
           </div>
-          <div style="margin-top:10px">
+          <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
             <button class="detect-btn" id="btn-zstack-use-composite">Use composite as working image</button>
+            <button class="detect-btn" id="btn-zstack-open-3d">Open 3D view</button>
           </div>
         </div>
       </div>
@@ -98,6 +100,7 @@ function buildDialog() {
   $("btn-zstack-compute").addEventListener("click", compute);
   $("btn-zstack-reset").addEventListener("click", resetStack);
   $("btn-zstack-use-composite").addEventListener("click", useCompositeAsWorkingImage);
+  $("btn-zstack-open-3d").addEventListener("click", () => { openZstack3dView(); });
 }
 
 function updateInstruction() {
