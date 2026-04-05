@@ -142,3 +142,32 @@ def test_zstack_http_workflow(client: TestClient):
     assert r.status_code == 200
     r = client.get("/zstack/composite.png")
     assert r.status_code == 404
+
+
+def test_zstack_heightmap_raw(client: TestClient):
+    # Rebuild a fresh session and run the full flow
+    r = client.post("/zstack/start")
+    assert r.status_code == 200
+    for _ in range(4):
+        r = client.post("/zstack/capture")
+        assert r.status_code == 200
+    r = client.post("/zstack/compute", json={"z_step_mm": 0.02, "z0_mm": 0.0})
+    assert r.status_code == 200
+
+    r = client.get("/zstack/heightmap.raw")
+    assert r.status_code == 200
+    payload = r.json()
+    assert set(payload.keys()) == {"width", "height", "data", "z_step_mm", "frame_count"}
+    assert isinstance(payload["width"], int) and payload["width"] > 0
+    assert isinstance(payload["height"], int) and payload["height"] > 0
+    assert payload["width"] <= 256 and payload["height"] <= 256
+    assert len(payload["data"]) == payload["width"] * payload["height"]
+    assert payload["z_step_mm"] == pytest.approx(0.02, abs=1e-9)
+    assert payload["frame_count"] == 4
+    assert all(isinstance(v, (int, float)) for v in payload["data"][:8])
+
+    # After reset, should 404
+    r = client.post("/zstack/reset")
+    assert r.status_code == 200
+    r = client.get("/zstack/heightmap.raw")
+    assert r.status_code == 404

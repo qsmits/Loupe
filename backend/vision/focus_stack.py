@@ -142,6 +142,24 @@ def colorize_height_map(height_map: np.ndarray) -> np.ndarray:
     return cv2.applyColorMap(norm, cv2.COLORMAP_VIRIDIS)
 
 
+def downsample_index_map(index_map: np.ndarray, max_side: int = 256) -> np.ndarray:
+    """Downsample a raw focus-index map to at most ``max_side`` on the longest edge.
+
+    Used by the 3D viewer endpoint to keep JSON payloads small while preserving
+    the surface shape.  Uses ``cv2.INTER_AREA`` which averages pixel neighbourhoods
+    and is appropriate for shrinking.  Returns a float32 array.
+    """
+    h, w = index_map.shape[:2]
+    longest = max(h, w)
+    if longest <= max_side:
+        return index_map.astype(np.float32)
+    scale = max_side / float(longest)
+    new_w = max(1, int(round(w * scale)))
+    new_h = max(1, int(round(h * scale)))
+    src = index_map.astype(np.float32)
+    return cv2.resize(src, (new_w, new_h), interpolation=cv2.INTER_AREA)
+
+
 def encode_png(image_bgr: np.ndarray) -> bytes:
     """Encode a BGR image to PNG bytes."""
     ok, buf = cv2.imencode(".png", image_bgr)

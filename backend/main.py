@@ -143,11 +143,11 @@ def create_app(camera: BaseCamera | None = None, no_camera: bool = False) -> Fas
                 response = await call_next(request)
                 response.headers["Content-Security-Policy"] = (
                     "default-src 'self'; "
-                    "script-src 'self'; "
+                    "script-src 'self' https://esm.sh; "
                     "style-src 'self' 'unsafe-inline'; "
                     "img-src 'self' data: blob:; "
                     "media-src 'self' blob:; "
-                    "connect-src 'self'; "
+                    "connect-src 'self' https://esm.sh; "
                     "frame-ancestors 'none'"
                 )
                 response.headers["Permissions-Policy"] = "camera=self"

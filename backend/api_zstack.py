@@ -21,6 +21,7 @@ from .cameras.base import BaseCamera
 from .vision.focus_stack import (
     colorize_height_map,
     compute_focus_stack,
+    downsample_index_map,
     encode_png,
 )
 
@@ -141,6 +142,33 @@ def make_zstack_router(camera: BaseCamera) -> APIRouter:
             viz = colorize_height_map(result["height_map"])
             png = encode_png(viz)
         return Response(content=png, media_type="image/png")
+
+    @router.get("/zstack/heightmap.raw")
+    async def zstack_heightmap_raw():
+        """Raw downsampled focus-index map for the 3D viewer.
+
+        Returns the per-pixel best-focus frame index (before colormap) as a
+        flat float array, plus metadata needed to reconstruct world-space Z.
+        Downsampled to at most 256x256 to keep the JSON payload small.
+        """
+        with lock:
+            result = _require_result()
+            index_map = result["index_map"]
+            z_values = result["z_values"]
+            frame_count = len(z_values)
+            if frame_count >= 2:
+                z_step_mm = float(z_values[1] - z_values[0])
+            else:
+                z_step_mm = 0.0
+            down = downsample_index_map(index_map, max_side=256)
+        h, w = down.shape[:2]
+        return {
+            "width": int(w),
+            "height": int(h),
+            "data": down.reshape(-1).tolist(),
+            "z_step_mm": z_step_mm,
+            "frame_count": int(frame_count),
+        }
 
     @router.post("/zstack/reset")
     async def zstack_reset():

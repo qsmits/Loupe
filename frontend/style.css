@@ -1680,3 +1680,99 @@ body.no-camera .camera-section { display: none; }
 }
 .compare-clear-btn:hover { background: #ff453a; color: #fff; border-color: #ff453a; }
 
+/* 3D Z-stack viewer modal — full-screen with floating settings card. */
+#zstack-3d-modal {
+  position: fixed;
+  inset: 0;
+  background: #000;
+  z-index: 9000;
+  font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+  color: #f2f2f2;
+}
+#zstack-3d-canvas-host {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+}
+#zstack-3d-canvas-host canvas {
+  display: block;
+  width: 100% !important;
+  height: 100% !important;
+}
+#zstack-3d-close {
+  position: absolute;
+  top: 14px;
+  left: 14px;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: rgba(20, 20, 20, 0.78);
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  font-size: 16px;
+  cursor: pointer;
+  z-index: 2;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+#zstack-3d-close:hover { background: rgba(255, 69, 58, 0.85); border-color: #ff453a; }
+#zstack-3d-settings {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  min-width: 240px;
+  max-width: 280px;
+  background: rgba(22, 22, 22, 0.82);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 8px;
+  padding: 12px 14px;
+  z-index: 2;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+}
+.zstack-3d-settings-header {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #c8c8c8;
+  margin-bottom: 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+}
+.zstack-3d-settings-rows { display: flex; flex-direction: column; gap: 10px; }
+.zstack-3d-row {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 4px;
+  font-size: 12px;
+}
+.zstack-3d-row label {
+  color: #c8c8c8;
+  font-size: 11px;
+}
+.zstack-3d-row input[type="range"] {
+  width: 100%;
+  accent-color: #00c8ff;
+}
+.zstack-3d-value {
+  color: #00c8ff;
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+  align-self: flex-end;
+}
+#zstack-3d-loading {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  background: rgba(20, 20, 20, 0.85);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 6px;
+  padding: 12px 18px;
+  font-size: 13px;
+  color: #f2f2f2;
+  z-index: 3;
+}
+
