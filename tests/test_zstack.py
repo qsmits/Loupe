@@ -157,11 +157,13 @@ def test_zstack_heightmap_raw(client: TestClient):
     r = client.get("/zstack/heightmap.raw")
     assert r.status_code == 200
     payload = r.json()
-    assert set(payload.keys()) == {"width", "height", "data", "z_step_mm", "frame_count"}
+    assert set(payload.keys()) == {"width", "height", "data", "confidence", "brightness", "z_step_mm", "frame_count"}
     assert isinstance(payload["width"], int) and payload["width"] > 0
     assert isinstance(payload["height"], int) and payload["height"] > 0
     assert payload["width"] <= 256 and payload["height"] <= 256
     assert len(payload["data"]) == payload["width"] * payload["height"]
+    assert len(payload["confidence"]) == payload["width"] * payload["height"]
+    assert all(0.0 <= v <= 1.0 for v in payload["confidence"][:16])
     assert payload["z_step_mm"] == pytest.approx(0.02, abs=1e-9)
     assert payload["frame_count"] == 4
     assert all(isinstance(v, (int, float)) for v in payload["data"][:8])

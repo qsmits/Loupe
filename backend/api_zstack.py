@@ -21,6 +21,7 @@ from .cameras.base import BaseCamera
 from .vision.focus_stack import (
     colorize_height_map,
     compute_focus_stack,
+    downsample_float_map,
     downsample_index_map,
     encode_png,
 )
@@ -154,6 +155,8 @@ def make_zstack_router(camera: BaseCamera) -> APIRouter:
         with lock:
             result = _require_result()
             index_map = result["index_map"]
+            peak_focus = result.get("peak_focus")
+            max_bright = result.get("max_brightness")
             z_values = result["z_values"]
             frame_count = len(z_values)
             if frame_count >= 2:
@@ -161,11 +164,30 @@ def make_zstack_router(camera: BaseCamera) -> APIRouter:
             else:
                 z_step_mm = 0.0
             down = downsample_index_map(index_map, max_side=256)
+            # Confidence: per-pixel peak sharpness, normalized to [0,1] against
+            # the 99th percentile (robust to a few noise spikes).
+            if peak_focus is not None:
+                conf_down = downsample_float_map(peak_focus, max_side=256)
+                p99 = float(np.percentile(conf_down, 99.0)) or 1.0
+                conf_norm = np.clip(conf_down / p99, 0.0, 1.0).astype(np.float32)
+                confidence_list = conf_norm.reshape(-1).tolist()
+            else:
+                confidence_list = None
+            # Per-pixel peak brightness, normalized 0..1.  Lets the 3D viewer
+            # override confidence for overexposed regions via a slider.
+            if max_bright is not None:
+                bright_down = downsample_float_map(max_bright, max_side=256)
+                bright_norm = np.clip(bright_down / 255.0, 0.0, 1.0).astype(np.float32)
+                brightness_list = bright_norm.reshape(-1).tolist()
+            else:
+                brightness_list = None
         h, w = down.shape[:2]
         return {
             "width": int(w),
             "height": int(h),
             "data": down.reshape(-1).tolist(),
+            "confidence": confidence_list,
+            "brightness": brightness_list,
             "z_step_mm": z_step_mm,
             "frame_count": int(frame_count),
         }

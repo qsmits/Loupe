@@ -34,7 +34,7 @@ function buildDialog() {
   dlg.className = "dialog-overlay";
   dlg.hidden = true;
   dlg.innerHTML = `
-    <div class="dialog-content" style="max-width:780px">
+    <div class="dialog-content" style="max-width:960px;width:92vw">
       <div class="dialog-header">
         <span class="dialog-title">3D Z-Stack (Depth-from-Focus)</span>
         <button class="dialog-close" id="btn-zstack-close">✕</button>
@@ -44,6 +44,7 @@ function buildDialog() {
           Manually advance the Z axis by a fixed amount between captures,
           just like the Keyence VHX "3D" mode. Collect 10–15 frames for
           best results, then build the height map.
+          <span style="opacity:0.7">Tip: press <kbd style="font-family:inherit;padding:1px 5px;border:1px solid #555;border-radius:3px;background:#222">Space</kbd> to capture.</span>
         </p>
 
         <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
@@ -53,14 +54,14 @@ function buildDialog() {
           <span id="zstack-instruction" style="opacity:0.8;font-size:12px"></span>
         </div>
 
-        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">
-          <button class="detect-btn" id="btn-zstack-capture">Capture frame</button>
-          <button class="detect-btn" id="btn-zstack-compute" disabled>Build height map</button>
-          <button class="detect-btn" id="btn-zstack-reset">Reset</button>
-          <span id="zstack-count" style="align-self:center;opacity:0.85;font-size:12px">0 / suggested 10–15</span>
+        <div style="display:flex;gap:8px;margin-bottom:6px;flex-shrink:0">
+          <button class="detect-btn" id="btn-zstack-capture" style="flex-shrink:0;min-width:150px">Capture frame</button>
+          <button class="detect-btn" id="btn-zstack-compute" style="flex-shrink:0;min-width:160px" disabled>Build height map</button>
+          <button class="detect-btn" id="btn-zstack-reset" style="flex-shrink:0;min-width:80px">Reset</button>
         </div>
+        <div id="zstack-count" style="opacity:0.85;font-size:12px;margin-bottom:8px">0 / suggested 10–15</div>
 
-        <div id="zstack-thumbs" style="display:flex;flex-wrap:wrap;gap:4px;max-height:70px;overflow-y:auto;margin-bottom:10px"></div>
+        <div id="zstack-thumbs" style="display:flex;flex-wrap:wrap;gap:4px;max-height:160px;overflow-y:auto;margin-bottom:10px;padding:4px;background:#0f0f0f;border:1px solid #2a2a2a;border-radius:3px"></div>
 
         <div id="zstack-result" hidden>
           <div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:6px">
@@ -258,16 +259,32 @@ async function useCompositeAsWorkingImage() {
   }
 }
 
+// Spacebar → capture while the dialog is open.  Installed on openZstackDialog,
+// removed on closeDialog.  Ignores key repeats and typing in number inputs.
+function onZstackKey(e) {
+  if (e.key !== " " && e.code !== "Space") return;
+  const dlg = $("zstack-dialog");
+  if (!dlg || dlg.hidden) return;
+  const t = e.target;
+  if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA")) return;
+  if (e.repeat) return;
+  e.preventDefault();
+  e.stopPropagation();
+  captureFrame();
+}
+
 export async function openZstackDialog() {
   buildDialog();
   const dlg = $("zstack-dialog");
   dlg.hidden = false;
+  window.addEventListener("keydown", onZstackKey, true);
   await startSession();
 }
 
 function closeDialog() {
   const dlg = $("zstack-dialog");
   if (dlg) dlg.hidden = true;
+  window.removeEventListener("keydown", onZstackKey, true);
 }
 
 export function initZstack() {

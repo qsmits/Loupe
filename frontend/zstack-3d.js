@@ -96,7 +96,7 @@ function initScene(modal, payload) {
   const closeBtn = modal.querySelector('#zstack-3d-close');
   const rowsEl = modal.querySelector('.zstack-3d-settings-rows');
 
-  const { width: cols, height: rows, data, z_step_mm } = payload;
+  const { width: cols, height: rows, data, confidence, brightness, z_step_mm } = payload;
 
   // World-space plane: longest side = 1.
   const aspect = cols / rows;
@@ -139,19 +139,45 @@ function initScene(modal, payload) {
   const idxRange = Math.max(1e-6, maxIdx - minIdx);
   const midIdx = (minIdx + maxIdx) * 0.5;
   const RELIEF_AT_UNIT = 0.10;  // 1× → Z range is 10% of longest XY side
-  // Normalized Z: centered on 0, spans [-0.5, 0.5] * RELIEF_AT_UNIT at 1×.
-  const baseZ = new Float32Array(vertexCount);
+  // Natural Z: centered on 0, spans [-0.5, 0.5] * RELIEF_AT_UNIT at 1×.
+  const naturalZ = new Float32Array(vertexCount);
   for (let i = 0; i < vertexCount; i++) {
-    baseZ[i] = (rawIdx[i] - midIdx) / idxRange * RELIEF_AT_UNIT;
+    naturalZ[i] = (rawIdx[i] - midIdx) / idxRange * RELIEF_AT_UNIT;
+  }
+  const floorZ = -0.5 * RELIEF_AT_UNIT;  // sink low-confidence pixels here
+
+  // Confidence array (per vertex, 0..1).  When the threshold slider is
+  // raised, pixels below it are clamped to `floorZ` in `maskedZ` so holes
+  // and textureless regions don't float at whatever random frame index
+  // argmax happened to pick.
+  const conf = new Float32Array(vertexCount);
+  if (Array.isArray(confidence) && confidence.length === vertexCount) {
+    for (let i = 0; i < vertexCount; i++) conf[i] = confidence[i];
+  } else {
+    for (let i = 0; i < vertexCount; i++) conf[i] = 1.0;  // no data → keep all
+  }
+  // Per-pixel peak brightness across the stack (0..1).  Used by the
+  // saturation override slider: overexposed / specular pixels have very
+  // low Laplacian gradient and would otherwise be masked out, but they
+  // usually do sit on a real surface — the slider lets the user force
+  // them back in.
+  const bright = new Float32Array(vertexCount);
+  if (Array.isArray(brightness) && brightness.length === vertexCount) {
+    for (let i = 0; i < vertexCount; i++) bright[i] = brightness[i];
+  } else {
+    for (let i = 0; i < vertexCount; i++) bright[i] = 0.0;
   }
 
-  // `smoothedZ` is the XY-blurred version of `baseZ`, recomputed whenever
-  // the smoothing slider changes.  `applyZ` always reads from it.
+  // Pipeline: naturalZ → maskedZ (by confidence) → smoothedZ (blur) → positions * exaggeration
+  const maskedZ = new Float32Array(vertexCount);
   const smoothedZ = new Float32Array(vertexCount);
-  smoothedZ.set(baseZ);
+  maskedZ.set(naturalZ);
+  smoothedZ.set(naturalZ);
 
   const defaultExaggeration = 1.0;
   const defaultSmoothing = 0;
+  const defaultConfThreshold = 0.0;
+  const defaultSatOverride = 0.98;  // brightness ≥ 0.98 → force-keep the pixel
   applyZ(positions, smoothedZ, defaultExaggeration);
   geometry.attributes.position.needsUpdate = true;
   geometry.computeBoundingSphere();
@@ -200,16 +226,82 @@ function initScene(modal, payload) {
   smoothValueSpan.textContent = String(defaultSmoothing);
   addSettingRow(rowsEl, 'XY smoothing', smoothInput, smoothValueSpan);
 
-  function updateSmoothing() {
+  // Settings: Confidence threshold.  Pixels whose peak sharpness response
+  // (normalized 0..1) is below this are considered "never in focus" and
+  // sunk to `floorZ`, so holes / textureless regions don't float at
+  // whatever random frame argmax happened to pick.
+  const confInput = document.createElement('input');
+  confInput.type = 'range';
+  confInput.min = '0';
+  confInput.max = '1';
+  confInput.step = '0.01';
+  confInput.value = String(defaultConfThreshold);
+  const confValueSpan = document.createElement('span');
+  confValueSpan.className = 'zstack-3d-value';
+  confValueSpan.textContent = defaultConfThreshold.toFixed(2);
+  addSettingRow(rowsEl, 'Confidence cutoff', confInput, confValueSpan);
+
+  // Settings: Saturation override.  Pixels whose peak brightness across the
+  // stack is >= this threshold bypass the confidence cutoff — useful for
+  // specular highlights and overexposed surfaces that have low Laplacian
+  // response but are still real surface.  Set to 1.0 to disable (nothing
+  // passes), ≤0 to keep every pixel regardless of confidence.
+  const satInput = document.createElement('input');
+  satInput.type = 'range';
+  satInput.min = '0';
+  satInput.max = '1';
+  satInput.step = '0.01';
+  satInput.value = String(defaultSatOverride);
+  const satValueSpan = document.createElement('span');
+  satValueSpan.className = 'zstack-3d-value';
+  satValueSpan.textContent = defaultSatOverride.toFixed(2);
+  addSettingRow(rowsEl, 'Saturation override', satInput, satValueSpan);
+
+  function applyMask() {
+    const thr = parseFloat(confInput.value);
+    const satThr = parseFloat(satInput.value);
+    for (let i = 0; i < vertexCount; i++) {
+      const keep = conf[i] >= thr || bright[i] >= satThr;
+      maskedZ[i] = keep ? naturalZ[i] : floorZ;
+    }
+  }
+
+  function updateFromPipeline() {
     const passes = parseInt(smoothInput.value, 10) || 0;
-    smoothValueSpan.textContent = String(passes);
-    blurHeightField(baseZ, smoothedZ, cols, rows, passes);
+    blurHeightField(maskedZ, smoothedZ, cols, rows, passes);
     applyZ(positions, smoothedZ, parseFloat(zInput.value));
     geometry.attributes.position.needsUpdate = true;
     geometry.computeBoundingSphere();
     geometry.computeVertexNormals();
   }
+
+  function updateSmoothing() {
+    const passes = parseInt(smoothInput.value, 10) || 0;
+    smoothValueSpan.textContent = String(passes);
+    updateFromPipeline();
+  }
   smoothInput.addEventListener('input', updateSmoothing);
+
+  confInput.addEventListener('input', () => {
+    const thr = parseFloat(confInput.value);
+    confValueSpan.textContent = thr.toFixed(2);
+    applyMask();
+    updateFromPipeline();
+  });
+
+  satInput.addEventListener('input', () => {
+    const s = parseFloat(satInput.value);
+    satValueSpan.textContent = s.toFixed(2);
+    applyMask();
+    updateFromPipeline();
+  });
+
+  // Initialize mask with defaults so the first render honours the override.
+  applyMask();
+  blurHeightField(maskedZ, smoothedZ, cols, rows, defaultSmoothing);
+  applyZ(positions, smoothedZ, defaultExaggeration);
+  geometry.attributes.position.needsUpdate = true;
+  geometry.computeVertexNormals();
 
   zInput.addEventListener('input', () => {
     const ex = parseFloat(zInput.value);
@@ -218,6 +310,161 @@ function initScene(modal, payload) {
     geometry.attributes.position.needsUpdate = true;
     geometry.computeBoundingSphere();
   });
+
+  // Settings: Z calibration via two-point pick on the mesh.  Lets the user
+  // click two features of known height difference (e.g. a gauge block step)
+  // to derive an effective `z_step_mm` correction factor.  Purely a
+  // readout — does not change the rendered shape, only the reported mm.
+  const calibRow = document.createElement('div');
+  calibRow.className = 'zstack-3d-row zstack-3d-calib-row';
+  const calibBtn = document.createElement('button');
+  calibBtn.type = 'button';
+  calibBtn.className = 'zstack-3d-calib-btn';
+  calibBtn.textContent = 'Calibrate Z…';
+  const calibReadout = document.createElement('div');
+  calibReadout.className = 'zstack-3d-calib-readout';
+  calibReadout.textContent = `z_step: ${z_step_mm.toFixed(4)} mm (nominal)`;
+  const calibReset = document.createElement('button');
+  calibReset.type = 'button';
+  calibReset.className = 'zstack-3d-calib-reset';
+  calibReset.textContent = 'Reset';
+  calibReset.hidden = true;
+  calibRow.appendChild(calibBtn);
+  calibRow.appendChild(calibReset);
+  calibRow.appendChild(calibReadout);
+  rowsEl.appendChild(calibRow);
+
+  // Effective z_step (mm/index) after calibration — starts at the nominal
+  // value the user entered when building the stack.
+  let effectiveZStep = z_step_mm;
+  let calibCorrection = 1.0;
+
+  const raycaster = new THREE.Raycaster();
+  const ndc = new THREE.Vector2();
+  let pickMode = false;
+  let pickStage = 0;  // 0 = idle, 1 = waiting for point 1, 2 = waiting for point 2
+  const pickedPoints = [];  // [{ worldPoint: Vector3, idxRow, idxCol, rawZ }]
+  const markerGroup = new THREE.Group();
+  scene.add(markerGroup);
+
+  function clearMarkers() {
+    while (markerGroup.children.length) {
+      const child = markerGroup.children[0];
+      markerGroup.remove(child);
+      if (child.geometry) child.geometry.dispose();
+      if (child.material) child.material.dispose();
+    }
+  }
+
+  function addMarker(worldPoint, color) {
+    const geo = new THREE.SphereGeometry(0.012, 16, 12);
+    const mat = new THREE.MeshBasicMaterial({ color, depthTest: false });
+    const sphere = new THREE.Mesh(geo, mat);
+    sphere.position.copy(worldPoint);
+    sphere.renderOrder = 999;
+    markerGroup.add(sphere);
+    return sphere;
+  }
+
+  function addLine(p1, p2, color) {
+    const geo = new THREE.BufferGeometry().setFromPoints([p1, p2]);
+    const mat = new THREE.LineBasicMaterial({ color, depthTest: false });
+    const line = new THREE.Line(geo, mat);
+    line.renderOrder = 999;
+    markerGroup.add(line);
+    return line;
+  }
+
+  function enterPickMode() {
+    pickMode = true;
+    pickStage = 1;
+    pickedPoints.length = 0;
+    clearMarkers();
+    controls.enabled = false;
+    renderer.domElement.style.cursor = 'crosshair';
+    calibBtn.textContent = 'Pick point 1…';
+    calibBtn.disabled = true;
+  }
+
+  function exitPickMode() {
+    pickMode = false;
+    pickStage = 0;
+    controls.enabled = true;
+    renderer.domElement.style.cursor = '';
+    calibBtn.textContent = 'Calibrate Z…';
+    calibBtn.disabled = false;
+  }
+
+  function onCanvasClick(e) {
+    if (!pickMode) return;
+    const rect = renderer.domElement.getBoundingClientRect();
+    ndc.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+    ndc.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+    raycaster.setFromCamera(ndc, camera);
+    const hits = raycaster.intersectObject(mesh);
+    if (!hits.length) return;
+    const hit = hits[0];
+    // Map UV → grid index → raw focus index
+    const uv = hit.uv;
+    if (!uv) return;
+    const col = Math.min(cols - 1, Math.max(0, Math.round(uv.x * (cols - 1))));
+    const rowIdx = Math.min(rows - 1, Math.max(0, Math.round((1 - uv.y) * (rows - 1))));
+    const flatIdx = rowIdx * cols + col;
+    pickedPoints.push({
+      worldPoint: hit.point.clone(),
+      col, row: rowIdx,
+      rawIdx: rawIdx[flatIdx],
+    });
+    addMarker(hit.point, pickStage === 1 ? 0xff4455 : 0x44ff88);
+
+    if (pickStage === 1) {
+      pickStage = 2;
+      calibBtn.textContent = 'Pick point 2…';
+    } else {
+      // Second point — finish.
+      addLine(pickedPoints[0].worldPoint, pickedPoints[1].worldPoint, 0xffff00);
+      exitPickMode();
+      finalizeCalibration();
+    }
+  }
+
+  function finalizeCalibration() {
+    const dIdx = Math.abs(pickedPoints[1].rawIdx - pickedPoints[0].rawIdx);
+    if (dIdx < 0.5) {
+      alert('The two points are at (essentially) the same focus level — pick points with a visible height difference.');
+      clearMarkers();
+      return;
+    }
+    const observedMm = dIdx * z_step_mm;
+    const knownStr = window.prompt(
+      `Observed Δ (nominal): ${observedMm.toFixed(4)} mm (Δindex = ${dIdx.toFixed(2)})\n\nEnter the KNOWN height difference in mm:`,
+      observedMm.toFixed(3),
+    );
+    if (knownStr == null) { clearMarkers(); return; }
+    const known = parseFloat(knownStr);
+    if (!Number.isFinite(known) || known <= 0) {
+      alert('Invalid value.');
+      clearMarkers();
+      return;
+    }
+    calibCorrection = known / observedMm;
+    effectiveZStep = z_step_mm * calibCorrection;
+    calibReadout.innerHTML =
+      `z_step: <b>${effectiveZStep.toFixed(4)} mm</b> (${calibCorrection.toFixed(3)}×)`;
+    calibReset.hidden = false;
+  }
+
+  calibBtn.addEventListener('click', () => {
+    if (!pickMode) enterPickMode();
+  });
+  calibReset.addEventListener('click', () => {
+    calibCorrection = 1.0;
+    effectiveZStep = z_step_mm;
+    calibReadout.textContent = `z_step: ${z_step_mm.toFixed(4)} mm (nominal)`;
+    calibReset.hidden = true;
+    clearMarkers();
+  });
+  renderer.domElement.addEventListener('click', onCanvasClick);
 
   // <!-- Future settings rows (wireframe toggle, lighting, colormap) go here -->
 
@@ -249,6 +496,8 @@ function initScene(modal, payload) {
     cancelAnimationFrame(rafId);
     window.removeEventListener('resize', onResize);
     window.removeEventListener('keydown', onKey);
+    renderer.domElement.removeEventListener('click', onCanvasClick);
+    clearMarkers();
     controls.dispose();
     geometry.dispose();
     material.dispose();
@@ -260,7 +509,16 @@ function initScene(modal, payload) {
     if (modal.parentNode) modal.parentNode.removeChild(modal);
     _active = null;
   }
-  function onKey(e) { if (e.key === 'Escape') close(); }
+  function onKey(e) {
+    if (e.key !== 'Escape') return;
+    if (pickMode) {
+      // Cancel the in-progress calibration pick without closing the viewer.
+      clearMarkers();
+      exitPickMode();
+      return;
+    }
+    close();
+  }
   closeBtn.addEventListener('click', close);
   window.addEventListener('keydown', onKey);
 

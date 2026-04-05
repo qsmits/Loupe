@@ -1762,6 +1762,43 @@ body.no-camera .camera-section { display: none; }
   font-size: 11px;
   align-self: flex-end;
 }
+.zstack-3d-calib-row {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  margin-top: 4px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+.zstack-3d-calib-btn,
+.zstack-3d-calib-reset {
+  background: rgba(0, 200, 255, 0.15);
+  color: #e6f8ff;
+  border: 1px solid rgba(0, 200, 255, 0.45);
+  border-radius: 4px;
+  padding: 5px 10px;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.zstack-3d-calib-btn:hover:not(:disabled),
+.zstack-3d-calib-reset:hover { background: rgba(0, 200, 255, 0.28); }
+.zstack-3d-calib-btn:disabled { opacity: 0.6; cursor: default; }
+.zstack-3d-calib-reset {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.2);
+  color: #f2f2f2;
+  align-self: flex-start;
+  padding: 3px 8px;
+  font-size: 11px;
+}
+.zstack-3d-calib-readout {
+  font-size: 11px;
+  color: #d0d0d0;
+  font-variant-numeric: tabular-nums;
+}
+.zstack-3d-calib-readout b { color: #00c8ff; font-weight: 600; }
+
 #zstack-3d-loading {
   position: absolute;
   left: 50%;

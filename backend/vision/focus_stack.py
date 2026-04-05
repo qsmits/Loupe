@@ -99,6 +99,17 @@ def compute_focus_stack(
 
     # For each pixel, index of the frame with max focus response
     index_map = np.argmax(fm_stack, axis=0).astype(np.int32)
+    # Per-pixel peak sharpness response — used as a confidence signal so the
+    # 3D viewer can mask out pixels that were never truly in focus (holes,
+    # textureless regions) instead of having them pinned to whichever frame
+    # happened to have the largest noise spike.
+    peak_focus = fm_stack.max(axis=0).astype(np.float32)
+    # Per-pixel peak brightness across the stack.  Shipped alongside
+    # peak_focus so the 3D viewer can interactively override confidence for
+    # overexposed / specular regions (which have near-zero gradient so the
+    # Laplacian confidence is misleadingly low for them).
+    gray_stack = np.stack(gray_frames, axis=0)  # (N, H, W) uint8
+    max_bright = gray_stack.max(axis=0).astype(np.float32)
 
     # Median-filter the index map to knock out isolated spikes.  Keep it small;
     # bigger windows blur feature edges in the final height map.
@@ -120,6 +131,8 @@ def compute_focus_stack(
         "height_map": height_map,
         "composite": composite,
         "index_map": index_map,
+        "peak_focus": peak_focus,
+        "max_brightness": max_bright,
         "min_z": float(height_map.min()),
         "max_z": float(height_map.max()),
         "z_values": z_values,
@@ -140,6 +153,22 @@ def colorize_height_map(height_map: np.ndarray) -> np.ndarray:
     else:
         norm = ((height_map - hmin) / (hmax - hmin) * 255.0).astype(np.uint8)
     return cv2.applyColorMap(norm, cv2.COLORMAP_VIRIDIS)
+
+
+def downsample_float_map(arr: np.ndarray, max_side: int = 256) -> np.ndarray:
+    """Downsample any 2D float array to at most ``max_side`` on the longest edge.
+
+    Shared helper for both the focus-index map and the per-pixel confidence
+    map.  Uses ``cv2.INTER_AREA`` (appropriate for shrinking).  Returns float32.
+    """
+    h, w = arr.shape[:2]
+    longest = max(h, w)
+    if longest <= max_side:
+        return arr.astype(np.float32)
+    scale = max_side / float(longest)
+    new_w = max(1, int(round(w * scale)))
+    new_h = max(1, int(round(h * scale)))
+    return cv2.resize(arr.astype(np.float32), (new_w, new_h), interpolation=cv2.INTER_AREA)
 
 
 def downsample_index_map(index_map: np.ndarray, max_side: int = 256) -> np.ndarray:
