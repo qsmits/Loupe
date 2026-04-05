@@ -16,6 +16,8 @@ from fastapi.testclient import TestClient
 
 from backend.vision.focus_stack import compute_focus_stack, colorize_height_map
 from backend.vision.heightmap_analysis import (
+    compute_roughness_1d,
+    compute_roughness_2d,
     detrend as detrend_height_map,
     fit_plane,
     fit_poly2,
@@ -366,5 +368,143 @@ def test_profile_endpoint_requires_result(client: TestClient):
     assert client.post("/zstack/reset").status_code == 200
     r = client.post("/zstack/profile", json={
         "x0": 0.0, "y0": 0.0, "x1": 10.0, "y1": 10.0,
+    })
+    assert r.status_code == 404
+
+
+# ---- Phase 3: roughness ----
+
+
+def test_compute_roughness_1d_flat_is_zero():
+    z = np.full(200, 1.234, dtype=np.float32)
+    r = compute_roughness_1d(z)
+    assert r["Ra"] == pytest.approx(0.0, abs=1e-12)
+    assert r["Rq"] == pytest.approx(0.0, abs=1e-12)
+    assert r["Rz"] == pytest.approx(0.0, abs=1e-12)
+    assert r["Rp"] == pytest.approx(0.0, abs=1e-12)
+    assert r["Rv"] == pytest.approx(0.0, abs=1e-12)
+    assert r["count"] == 200
+
+
+def test_compute_roughness_1d_sinusoid():
+    # Analytic truth: Ra = 2A/pi, Rq = A/sqrt(2) for a pure sine wave.
+    A = 0.01
+    x = np.linspace(0.0, 20.0 * np.pi, 5000)
+    z = A * np.sin(x)
+    r = compute_roughness_1d(z)
+    assert r["Ra"] == pytest.approx(2.0 * A / np.pi, rel=0.05)
+    assert r["Rq"] == pytest.approx(A / np.sqrt(2.0), rel=0.05)
+    assert r["Rp"] == pytest.approx(A, rel=0.05)
+    assert r["Rv"] == pytest.approx(A, rel=0.05)
+
+
+def test_compute_roughness_1d_step():
+    h = 0.5
+    z = np.concatenate([np.zeros(100), np.full(100, h)])
+    r = compute_roughness_1d(z)
+    assert r["Rt"] == pytest.approx(h, abs=1e-9)
+    assert r["Ra"] == pytest.approx(h / 2.0, abs=1e-9)
+    assert r["Rq"] == pytest.approx(h / 2.0, abs=1e-9)
+
+
+def test_compute_roughness_2d_flat_is_zero():
+    z = np.full((50, 60), 2.5, dtype=np.float32)
+    r = compute_roughness_2d(z)
+    assert r["Sa"] == pytest.approx(0.0, abs=1e-12)
+    assert r["Sq"] == pytest.approx(0.0, abs=1e-12)
+    assert r["Sz"] == pytest.approx(0.0, abs=1e-12)
+    assert r["count"] == 50 * 60
+
+
+def test_compute_roughness_2d_tilted_without_detrend():
+    # A pure tilt has nonzero Sa if you don't detrend it first — this is
+    # exactly why detrend_scope exists at the HTTP boundary.
+    h, w = 40, 60
+    ys, xs = np.indices((h, w), dtype=np.float32)
+    tilted = 0.01 * xs + 0.005 * ys
+    r = compute_roughness_2d(tilted)
+    assert r["Sa"] > 0.01
+    assert r["Sq"] > 0.01
+
+
+def test_profile_endpoint_includes_roughness(client: TestClient):
+    _compute_for_profile(client)
+    r = client.post("/zstack/profile", json={
+        "x0": 10.0, "y0": 10.0, "x1": 200.0, "y1": 150.0,
+    })
+    assert r.status_code == 200
+    body = r.json()
+    assert "roughness" in body
+    rough = body["roughness"]
+    for key in ("Ra", "Rq", "Rp", "Rv", "Rt", "Rz", "Rsk", "Rku", "count"):
+        assert key in rough
+    assert rough["count"] == body["samples"]
+
+
+def _compute_for_area(client: TestClient) -> None:
+    assert client.post("/zstack/start").status_code == 200
+    for _ in range(4):
+        assert client.post("/zstack/capture").status_code == 200
+    assert client.post("/zstack/compute", json={"z_step_mm": 0.02}).status_code == 200
+
+
+def test_area_roughness_endpoint(client: TestClient):
+    _compute_for_area(client)
+    r = client.post("/zstack/area-roughness", json={
+        "x0": 50.0, "y0": 40.0, "x1": 300.0, "y1": 260.0,
+    })
+    assert r.status_code == 200, r.text
+    body = r.json()
+    for key in ("x0", "y0", "x1", "y1", "width_px", "height_px",
+                "detrend", "detrend_scope", "Sa", "Sq", "Sp", "Sv", "Sz",
+                "count", "z_min_mm", "z_max_mm"):
+        assert key in body
+    assert body["width_px"] == 250
+    assert body["height_px"] == 220
+    assert body["detrend"] == "none"
+    assert body["detrend_scope"] == "roi"
+
+
+def test_area_roughness_detrend_roi_vs_global(client: TestClient):
+    _compute_for_area(client)
+    for scope in ("roi", "global"):
+        for mode in ("none", "plane", "poly2"):
+            r = client.post("/zstack/area-roughness", json={
+                "x0": 20.0, "y0": 20.0, "x1": 400.0, "y1": 300.0,
+                "detrend": mode, "detrend_scope": scope,
+            })
+            assert r.status_code == 200, f"{scope}/{mode}: {r.text}"
+
+
+def test_area_roughness_invalid_detrend(client: TestClient):
+    _compute_for_area(client)
+    r = client.post("/zstack/area-roughness", json={
+        "x0": 0.0, "y0": 0.0, "x1": 100.0, "y1": 100.0, "detrend": "bogus",
+    })
+    assert r.status_code == 400
+    r = client.post("/zstack/area-roughness", json={
+        "x0": 0.0, "y0": 0.0, "x1": 100.0, "y1": 100.0, "detrend_scope": "bogus",
+    })
+    assert r.status_code == 400
+
+
+def test_area_roughness_degenerate_rect(client: TestClient):
+    _compute_for_area(client)
+    # 1x1 pixel
+    r = client.post("/zstack/area-roughness", json={
+        "x0": 10.0, "y0": 10.0, "x1": 10.5, "y1": 10.5,
+    })
+    assert r.status_code == 400
+    # negative / zero
+    r = client.post("/zstack/area-roughness", json={
+        "x0": 20.0, "y0": 20.0, "x1": 20.0, "y1": 20.0,
+    })
+    assert r.status_code == 400
+
+
+def test_area_roughness_requires_result(client: TestClient):
+    assert client.post("/zstack/reset").status_code == 200
+    r = client.post("/zstack/area-roughness", json={
+        "x0": 0.0, "y0": 0.0, "x1": 100.0, "y1": 100.0,
     })
     assert r.status_code == 404

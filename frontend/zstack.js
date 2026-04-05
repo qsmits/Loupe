@@ -35,6 +35,13 @@ const zs = {
     markerB: 0.75,
     dragging: null,   // "A" | "B" | null
   },
+  area: {
+    active: false,    // rect-draw mode
+    drawing: false,
+    p0: null,         // {x, y} in full-res image px
+    p1: null,
+    data: null,       // last /zstack/area-roughness response
+  },
 };
 
 function $(id) { return document.getElementById(id); }
@@ -122,10 +129,14 @@ function buildDialog() {
               <strong style="font-size:12px">Profile</strong>
               <button class="detect-btn" id="btn-zstack-profile-draw" style="margin-left:8px">Draw profile</button>
               <button class="detect-btn" id="btn-zstack-profile-clear">Clear</button>
+              <button class="detect-btn" id="btn-zstack-area-draw">Measure area</button>
               <span id="zstack-profile-status" style="opacity:0.75;font-size:11px"></span>
             </div>
             <canvas id="zstack-profile-chart" style="width:100%;height:200px;background:#0b0b0b;border:1px solid #333;display:block"></canvas>
             <div id="zstack-profile-readout" style="margin-top:6px;font-size:12px;opacity:0.9;font-variant-numeric:tabular-nums"></div>
+            <div id="zstack-roughness-full" style="margin-top:4px;font-size:12px;opacity:0.9;font-variant-numeric:tabular-nums"></div>
+            <div id="zstack-roughness-range" style="margin-top:2px;font-size:12px;opacity:0.9;font-variant-numeric:tabular-nums"></div>
+            <div id="zstack-roughness-area" style="margin-top:4px;font-size:12px;opacity:0.9;font-variant-numeric:tabular-nums"></div>
           </div>
           <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
             <button class="detect-btn" id="btn-zstack-use-composite">Use composite as working image</button>
@@ -167,11 +178,14 @@ function buildDialog() {
     // Re-fetch the profile against the new level so the chart matches
     // whatever the user is looking at.
     if (zs.profile.p0 && zs.profile.p1) fetchProfile();
+    if (zs.area.p0 && zs.area.p1) fetchAreaRoughness();
   });
 
   // Profile controls
   $("btn-zstack-profile-draw").addEventListener("click", () => {
     if (!zs.computed) return;
+    zs.area.active = false;
+    zs.area.drawing = false;
     zs.profile.active = true;
     zs.profile.p0 = null;
     zs.profile.p1 = null;
@@ -179,17 +193,34 @@ function buildDialog() {
     $("zstack-heightmap-img").style.cursor = "crosshair";
     setProfileStatus("Click two points on the height map.");
   });
-  $("btn-zstack-profile-clear").addEventListener("click", clearProfile);
+  $("btn-zstack-profile-clear").addEventListener("click", () => { clearProfile(); clearArea(); });
+  $("btn-zstack-area-draw").addEventListener("click", () => {
+    if (!zs.computed) return;
+    // cancel any profile-draw mode — only one drawing mode at a time
+    zs.profile.active = false;
+    zs.area.active = true;
+    zs.area.drawing = false;
+    zs.area.p0 = null;
+    zs.area.p1 = null;
+    $("zstack-profile-section").hidden = false;
+    $("zstack-heightmap-img").style.cursor = "crosshair";
+    setProfileStatus("Drag a rectangle on the height map.");
+  });
 
   const hmImg = $("zstack-heightmap-img");
   hmImg.addEventListener("click", onHeightmapClick);
+  hmImg.addEventListener("mousedown", onHeightmapMouseDown);
+  window.addEventListener("mousemove", onHeightmapMouseMove);
+  window.addEventListener("mouseup", onHeightmapMouseUp);
   hmImg.addEventListener("load", () => {
     if (zs.profile.data) drawProfileOverlay();
+    drawAreaOverlay();
   });
   // Re-render overlay on resize so the SVG line tracks the image.
   window.addEventListener("resize", () => {
     if (zs.profile.data) drawProfileOverlay();
     if (zs.profile.data) drawProfileChart();
+    drawAreaOverlay();
   });
 
   const chart = $("zstack-profile-chart");
@@ -219,6 +250,11 @@ function clearProfile() {
   setProfileStatus("");
   const readout = $("zstack-profile-readout");
   if (readout) readout.textContent = "";
+  const full = $("zstack-roughness-full");
+  if (full) full.textContent = "";
+  const rng = $("zstack-roughness-range");
+  if (rng) rng.textContent = "";
+  drawAreaOverlay();
 }
 
 function onHeightmapClick(e) {
@@ -274,23 +310,8 @@ async function fetchProfile() {
 }
 
 function drawProfileOverlay() {
-  const svg = $("zstack-profile-overlay");
-  const img = $("zstack-heightmap-img");
-  if (!svg || !img || !zs.profile.data || !zs.computed) return;
-  const data = zs.profile.data;
-  const rect = img.getBoundingClientRect();
-  if (rect.width <= 0 || rect.height <= 0) return;
-  const sx = rect.width / zs.computed.width;
-  const sy = rect.height / zs.computed.height;
-  const xs = data.x_px, ys = data.y_px;
-  if (!xs || !ys || xs.length < 2) return;
-  const x0 = xs[0] * sx, y0 = ys[0] * sy;
-  const x1 = xs[xs.length - 1] * sx, y1 = ys[ys.length - 1] * sy;
-  svg.setAttribute("viewBox", `0 0 ${rect.width} ${rect.height}`);
-  svg.innerHTML =
-    `<line x1="${x0}" y1="${y0}" x2="${x1}" y2="${y1}" stroke="#ffcc00" stroke-width="2" />` +
-    `<circle cx="${x0}" cy="${y0}" r="4" fill="#ffcc00" stroke="#000" stroke-width="1" />` +
-    `<circle cx="${x1}" cy="${y1}" r="4" fill="#ffcc00" stroke="#000" stroke-width="1" />`;
+  // Unified SVG overlay: profile line + area rect share the same SVG element.
+  drawAreaOverlay();
 }
 
 // Plain-canvas side-view chart.  Small enough that hand-rolled axes beat
@@ -421,6 +442,216 @@ function updateProfileReadout() {
   }
   const el = $("zstack-profile-readout");
   if (el) el.textContent = parts.join("    ");
+
+  updateRoughnessReadout(idxA, idxB);
+}
+
+// Auto-unit a length in mm: sub-0.1mm → µm, else mm. 2-3 sig figs.
+function fmtLen(mm) {
+  if (!Number.isFinite(mm)) return "—";
+  if (Math.abs(mm) < 0.1) return (mm * 1000).toFixed(2) + " µm";
+  return mm.toFixed(4) + " mm";
+}
+
+// Client-side mirror of compute_roughness_1d for the marker sub-range readout.
+// Matches the backend math so end-to-end values agree at the range limits.
+function computeRoughness1d(z) {
+  const n = z.length;
+  if (n < 2) return { Ra: 0, Rq: 0, Rp: 0, Rv: 0, Rt: 0, Rz: 0, Rsk: 0, Rku: 0, count: n };
+  let mu = 0;
+  for (let i = 0; i < n; i++) mu += z[i];
+  mu /= n;
+  let sa = 0, sq = 0, s3 = 0, s4 = 0, mx = -Infinity, mn = Infinity;
+  for (let i = 0; i < n; i++) {
+    const d = z[i] - mu;
+    sa += Math.abs(d);
+    const d2 = d * d;
+    sq += d2;
+    s3 += d2 * d;
+    s4 += d2 * d2;
+    if (d > mx) mx = d;
+    if (d < mn) mn = d;
+  }
+  const Ra = sa / n;
+  const Rq = Math.sqrt(sq / n);
+  const Rp = mx;
+  const Rv = -mn;
+  const Rt = Rp + Rv;
+  let Rsk = 0, Rku = 0;
+  if (Rq > 1e-15) {
+    Rsk = (s3 / n) / (Rq ** 3);
+    Rku = (s4 / n) / (Rq ** 4) - 3.0;
+  }
+  return { Ra, Rq, Rp, Rv, Rt, Rz: Rt, Rsk, Rku, count: n };
+}
+
+function fmtRoughnessLine(label, r) {
+  return `${label}  Ra ${fmtLen(r.Ra)}   Rq ${fmtLen(r.Rq)}   Rz ${fmtLen(r.Rz)}   ` +
+         `Rsk ${r.Rsk.toFixed(2)}   Rku ${r.Rku.toFixed(2)}   (${r.count} samples)`;
+}
+
+function updateRoughnessReadout(idxA, idxB) {
+  const data = zs.profile.data;
+  const fullEl = $("zstack-roughness-full");
+  const rngEl = $("zstack-roughness-range");
+  if (!data || !fullEl || !rngEl) return;
+  const r = data.roughness;
+  if (r) {
+    fullEl.textContent = fmtRoughnessLine("Full line:", {
+      Ra: r.Ra, Rq: r.Rq, Rz: r.Rz, Rsk: r.Rsk, Rku: r.Rku, count: r.count,
+    });
+  } else {
+    fullEl.textContent = "";
+  }
+  // Marker-range roughness is client-side over the z slice between A and B,
+  // so dragging the markers is instant and can focus on a single feature.
+  const lo = Math.min(idxA, idxB), hi = Math.max(idxA, idxB);
+  const slice = data.z_mm.slice(lo, hi + 1);
+  if (slice.length >= 2) {
+    const rr = computeRoughness1d(slice);
+    rngEl.textContent = fmtRoughnessLine("Marker A→B:", rr);
+  } else {
+    rngEl.textContent = "Marker A→B:  (select a wider range)";
+  }
+}
+
+// ---- Area roughness ----
+
+function hmImgToFullRes(e) {
+  const img = $("zstack-heightmap-img");
+  const rect = img.getBoundingClientRect();
+  if (rect.width <= 0 || rect.height <= 0 || !zs.computed) return null;
+  const sx = zs.computed.width / rect.width;
+  const sy = zs.computed.height / rect.height;
+  return {
+    x: (e.clientX - rect.left) * sx,
+    y: (e.clientY - rect.top) * sy,
+  };
+}
+
+function onHeightmapMouseDown(e) {
+  if (!zs.area.active || !zs.computed) return;
+  const pt = hmImgToFullRes(e);
+  if (!pt) return;
+  zs.area.drawing = true;
+  zs.area.p0 = pt;
+  zs.area.p1 = pt;
+  drawAreaOverlay();
+  e.preventDefault();
+}
+
+function onHeightmapMouseMove(e) {
+  if (!zs.area.drawing) return;
+  const pt = hmImgToFullRes(e);
+  if (!pt) return;
+  zs.area.p1 = pt;
+  drawAreaOverlay();
+}
+
+function onHeightmapMouseUp(e) {
+  if (!zs.area.drawing) return;
+  zs.area.drawing = false;
+  zs.area.active = false;
+  $("zstack-heightmap-img").style.cursor = "";
+  setProfileStatus("");
+  if (!zs.area.p0 || !zs.area.p1) return;
+  const w = Math.abs(zs.area.p1.x - zs.area.p0.x);
+  const h = Math.abs(zs.area.p1.y - zs.area.p0.y);
+  if (w < 2 || h < 2) {
+    clearArea();
+    return;
+  }
+  fetchAreaRoughness();
+}
+
+async function fetchAreaRoughness() {
+  if (!zs.area.p0 || !zs.area.p1) return;
+  const detrend = $("zstack-detrend") ? $("zstack-detrend").value : "none";
+  const body = {
+    x0: zs.area.p0.x, y0: zs.area.p0.y,
+    x1: zs.area.p1.x, y1: zs.area.p1.y,
+    detrend, detrend_scope: "roi",
+  };
+  try {
+    const r = await apiFetch("/zstack/area-roughness", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!r.ok) {
+      setProfileStatus("Area roughness failed: " + r.status);
+      return;
+    }
+    zs.area.data = await r.json();
+    updateAreaReadout();
+    drawAreaOverlay();
+  } catch (err) {
+    setProfileStatus("Area error: " + err.message);
+  }
+}
+
+function updateAreaReadout() {
+  const el = $("zstack-roughness-area");
+  if (!el) return;
+  const d = zs.area.data;
+  if (!d) { el.textContent = ""; return; }
+  el.textContent =
+    `Area (${d.width_px}×${d.height_px} px):  ` +
+    `Sa ${fmtLen(d.Sa)}   Sq ${fmtLen(d.Sq)}   Sz ${fmtLen(d.Sz)}   ` +
+    `[scope ${d.detrend_scope}/${d.detrend}]`;
+}
+
+function drawAreaOverlay() {
+  const svg = $("zstack-profile-overlay");
+  const img = $("zstack-heightmap-img");
+  if (!svg || !img || !zs.computed) return;
+  // Preserve any existing profile line content, then add/replace the rect.
+  // Simplest: rebuild from both states.
+  let content = "";
+  if (zs.profile.data) {
+    const data = zs.profile.data;
+    const rect = img.getBoundingClientRect();
+    if (rect.width > 0 && rect.height > 0) {
+      const sx = rect.width / zs.computed.width;
+      const sy = rect.height / zs.computed.height;
+      const xs = data.x_px, ys = data.y_px;
+      if (xs && ys && xs.length >= 2) {
+        const x0 = xs[0] * sx, y0 = ys[0] * sy;
+        const x1 = xs[xs.length - 1] * sx, y1 = ys[ys.length - 1] * sy;
+        content +=
+          `<line x1="${x0}" y1="${y0}" x2="${x1}" y2="${y1}" stroke="#ffcc00" stroke-width="2" />` +
+          `<circle cx="${x0}" cy="${y0}" r="4" fill="#ffcc00" stroke="#000" stroke-width="1" />` +
+          `<circle cx="${x1}" cy="${y1}" r="4" fill="#ffcc00" stroke="#000" stroke-width="1" />`;
+      }
+    }
+  }
+  const rect = img.getBoundingClientRect();
+  if (rect.width > 0 && rect.height > 0) {
+    svg.setAttribute("viewBox", `0 0 ${rect.width} ${rect.height}`);
+    if (zs.area.p0 && zs.area.p1) {
+      const sx = rect.width / zs.computed.width;
+      const sy = rect.height / zs.computed.height;
+      const x0 = Math.min(zs.area.p0.x, zs.area.p1.x) * sx;
+      const y0 = Math.min(zs.area.p0.y, zs.area.p1.y) * sy;
+      const w = Math.abs(zs.area.p1.x - zs.area.p0.x) * sx;
+      const h = Math.abs(zs.area.p1.y - zs.area.p0.y) * sy;
+      content +=
+        `<rect x="${x0}" y="${y0}" width="${w}" height="${h}" ` +
+        `fill="rgba(124,255,124,0.08)" stroke="#7cff7c" stroke-width="2" stroke-dasharray="5,3" />`;
+    }
+  }
+  svg.innerHTML = content;
+}
+
+function clearArea() {
+  zs.area.active = false;
+  zs.area.drawing = false;
+  zs.area.p0 = null;
+  zs.area.p1 = null;
+  zs.area.data = null;
+  const el = $("zstack-roughness-area");
+  if (el) el.textContent = "";
+  drawAreaOverlay();
 }
 
 function chartXToT(e) {
@@ -600,6 +831,7 @@ async function compute() {
     const detrendSel = $("zstack-detrend");
     if (detrendSel) detrendSel.value = "none";
     clearProfile();
+    clearArea();
     $("zstack-composite-img").src = zs.computed.compositeUrl;
     $("zstack-heightmap-img").src = zs.computed.heightmapUrl;
     $("zstack-composite-dl").href = zs.computed.compositeUrl;
@@ -618,6 +850,7 @@ async function resetStack() {
   zs.frameCount = 0;
   zs.computed = null;
   clearProfile();
+  clearArea();
   const resultEl = $("zstack-result");
   if (resultEl) resultEl.hidden = true;
   renderThumbs();

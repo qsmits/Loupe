@@ -124,3 +124,53 @@ def sample_profile(
         "z_mm": z.astype(np.float32),
         "length_px": length_px,
     }
+
+
+def compute_roughness_1d(z: np.ndarray) -> dict:
+    """ISO 4287 1D roughness on an already-detrended profile.
+
+    Rz here is reported as Rt (max peak-to-valley over the whole profile)
+    rather than the true ten-point mean over sampling lengths — fine for
+    small-part metrology where the profile is already a selected feature.
+    Skewness/kurtosis use the plain moment definitions (no N/(N-1) bias
+    correction — at our typical 100-1000 samples the difference is noise).
+    """
+    z = np.asarray(z, dtype=np.float64).reshape(-1)
+    n = int(z.size)
+    if n < 2:
+        return {"Ra": 0.0, "Rq": 0.0, "Rp": 0.0, "Rv": 0.0, "Rt": 0.0,
+                "Rz": 0.0, "Rsk": 0.0, "Rku": 0.0, "count": n}
+    mu = float(z.mean())
+    d = z - mu
+    Ra = float(np.abs(d).mean())
+    Rq = float(np.sqrt((d * d).mean()))
+    Rp = float(d.max())
+    Rv = float(-d.min())
+    Rt = Rp + Rv
+    sigma = Rq
+    if sigma > 1e-15:
+        Rsk = float((d ** 3).mean() / (sigma ** 3))
+        Rku = float((d ** 4).mean() / (sigma ** 4) - 3.0)
+    else:
+        Rsk = 0.0
+        Rku = 0.0
+    return {
+        "Ra": Ra, "Rq": Rq, "Rp": Rp, "Rv": Rv, "Rt": Rt,
+        "Rz": Rt, "Rsk": Rsk, "Rku": Rku, "count": n,
+    }
+
+
+def compute_roughness_2d(z: np.ndarray) -> dict:
+    """Sa / Sq (ISO 25178 areal) on an already-detrended HxW region."""
+    z = np.asarray(z, dtype=np.float64)
+    n = int(z.size)
+    if n < 2:
+        return {"Sa": 0.0, "Sq": 0.0, "Sp": 0.0, "Sv": 0.0, "Sz": 0.0, "count": n}
+    mu = float(z.mean())
+    d = z - mu
+    Sa = float(np.abs(d).mean())
+    Sq = float(np.sqrt((d * d).mean()))
+    Sp = float(d.max())
+    Sv = float(-d.min())
+    Sz = Sp + Sv
+    return {"Sa": Sa, "Sq": Sq, "Sp": Sp, "Sv": Sv, "Sz": Sz, "count": n}

@@ -29,6 +29,8 @@ from .vision.focus_stack import (
     encode_png,
 )
 from .vision.heightmap_analysis import (
+    compute_roughness_1d,
+    compute_roughness_2d,
     detrend as detrend_height_map,
     sample_profile,
 )
@@ -73,6 +75,15 @@ class ProfileBody(BaseModel):
     samples: Optional[int] = None
     detrend: str = "none"
     px_per_mm: Optional[float] = None
+
+
+class AreaRoughnessBody(BaseModel):
+    x0: float
+    y0: float
+    x1: float
+    y1: float
+    detrend: str = "none"
+    detrend_scope: str = "roi"
 
 
 class ComputeBody(BaseModel):
@@ -345,8 +356,7 @@ def make_zstack_router(camera: BaseCamera) -> APIRouter:
             distances = t * length_px
             distances_unit = "px"
         z_mm = prof["z_mm"]
-        # Phase 3 slot: compute roughness from (distances, z_mm) here and add
-        # a "roughness" key to the response.
+        roughness = compute_roughness_1d(z_mm)
         def _round_list(a, nd=4):
             return [round(float(v), nd) for v in a]
         return {
@@ -361,6 +371,50 @@ def make_zstack_router(camera: BaseCamera) -> APIRouter:
             "z_min_mm": round(float(z_mm.min()), 6),
             "z_max_mm": round(float(z_mm.max()), 6),
             "detrend": body.detrend,
+            "roughness": {k: (int(v) if k == "count" else round(float(v), 9))
+                          for k, v in roughness.items()},
+        }
+
+    @router.post("/zstack/area-roughness")
+    async def zstack_area_roughness(body: AreaRoughnessBody):
+        if body.detrend not in _DETREND_MODES:
+            raise HTTPException(status_code=400, detail=f"Unknown detrend mode: {body.detrend}")
+        if body.detrend_scope not in ("roi", "global"):
+            raise HTTPException(status_code=400, detail=f"Unknown detrend_scope: {body.detrend_scope}")
+        with lock:
+            result = _require_result()
+            hm_full = result["height_map"]
+            H, W = hm_full.shape[:2]
+            x0 = int(round(min(body.x0, body.x1)))
+            x1 = int(round(max(body.x0, body.x1)))
+            y0 = int(round(min(body.y0, body.y1)))
+            y1 = int(round(max(body.y0, body.y1)))
+            x0 = max(0, min(W, x0))
+            x1 = max(0, min(W, x1))
+            y0 = max(0, min(H, y0))
+            y1 = max(0, min(H, y1))
+            if (x1 - x0) < 2 or (y1 - y0) < 2:
+                raise HTTPException(status_code=400, detail="ROI must be at least 2x2 pixels")
+            if body.detrend_scope == "global":
+                hm = detrend_height_map(hm_full, body.detrend)
+                roi = hm[y0:y1, x0:x1]
+            else:
+                roi = detrend_height_map(hm_full[y0:y1, x0:x1], body.detrend)
+        r = compute_roughness_2d(roi)
+        return {
+            "x0": x0, "y0": y0, "x1": x1, "y1": y1,
+            "width_px": int(x1 - x0),
+            "height_px": int(y1 - y0),
+            "detrend": body.detrend,
+            "detrend_scope": body.detrend_scope,
+            "Sa": round(r["Sa"], 9),
+            "Sq": round(r["Sq"], 9),
+            "Sp": round(r["Sp"], 9),
+            "Sv": round(r["Sv"], 9),
+            "Sz": round(r["Sz"], 9),
+            "count": int(r["count"]),
+            "z_min_mm": round(float(roi.min()), 9),
+            "z_max_mm": round(float(roi.max()), 9),
         }
 
     @router.get("/zstack/test-hdr-bracket")
