@@ -139,6 +139,160 @@ def compute_focus_stack(
     }
 
 
+def _build_gaussian_pyramid(img: np.ndarray, levels: int) -> List[np.ndarray]:
+    """Build a Gaussian pyramid of ``levels`` images (level 0 is the input)."""
+    pyr = [img]
+    cur = img
+    for _ in range(levels - 1):
+        cur = cv2.pyrDown(cur)
+        pyr.append(cur)
+    return pyr
+
+
+def _build_laplacian_pyramid(img: np.ndarray, levels: int) -> List[np.ndarray]:
+    """Build a Laplacian pyramid of ``levels`` images.
+
+    Levels 0..L-2 are band-pass (full_res - upsampled_next), level L-1 is the
+    Gaussian residual (low-pass).  Collapsing just re-sums the levels from
+    coarse to fine.
+    """
+    gauss = _build_gaussian_pyramid(img, levels)
+    lap: List[np.ndarray] = []
+    for i in range(levels - 1):
+        up = cv2.pyrUp(gauss[i + 1], dstsize=(gauss[i].shape[1], gauss[i].shape[0]))
+        lap.append(gauss[i] - up)
+    lap.append(gauss[-1])  # low-pass residual
+    return lap
+
+
+def _collapse_laplacian_pyramid(lap: List[np.ndarray]) -> np.ndarray:
+    """Collapse a Laplacian pyramid back into a single image."""
+    cur = lap[-1]
+    for i in range(len(lap) - 2, -1, -1):
+        up = cv2.pyrUp(cur, dstsize=(lap[i].shape[1], lap[i].shape[0]))
+        cur = up + lap[i]
+    return cur
+
+
+def compute_focus_stack_pyramid(
+    frames: List[np.ndarray],
+    z_step_mm: float,
+    z0_mm: float = 0.0,
+    levels: int = 6,
+) -> dict:
+    """Focus stacking via Laplacian pyramid fusion (Enfuse / Helicon "Method B").
+
+    For each level of the pyramid and each pixel, pick the coefficient from
+    the frame with the largest *absolute* luminance response.  Different
+    frequency bands at the same pixel can come from different frames, which
+    preserves edge and texture detail that the hard per-pixel argmax version
+    blurs across focus-plane transitions.
+
+    The returned dict has the same shape as :func:`compute_focus_stack` so the
+    API / UI don't need to care which mode was used.  ``index_map`` /
+    ``height_map`` are computed from the finest-band argmax — the frame that
+    dominates the sharpest details — which stays consistent with the surface
+    you see in the 3D view.
+    """
+    if len(frames) < 2:
+        raise ValueError("Need at least 2 frames for a focus stack")
+
+    shapes = {f.shape for f in frames}
+    if len(shapes) != 1:
+        raise ValueError(f"All frames must have identical shape; got {shapes}")
+
+    h, w = frames[0].shape[:2]
+    n = len(frames)
+
+    # Auto-shrink pyramid depth so the smallest level is still sensible
+    min_side = min(h, w)
+    max_levels = 1
+    while (min_side >> max_levels) >= 16 and max_levels < levels:
+        max_levels += 1
+    levels = max(2, max_levels)
+
+    # Normalize to float32 BGR
+    bgr_frames: List[np.ndarray] = []
+    gray_frames: List[np.ndarray] = []
+    for f in frames:
+        if f.ndim == 2:
+            bgr = cv2.cvtColor(f, cv2.COLOR_GRAY2BGR)
+            gray = f
+        else:
+            bgr = f
+            gray = cv2.cvtColor(f, cv2.COLOR_BGR2GRAY)
+        bgr_frames.append(bgr.astype(np.float32))
+        gray_frames.append(gray)
+
+    # Per-frame pyramids.  Colour: one Laplacian pyramid per channel (stored
+    # as 3-channel float arrays).  Selection: a parallel *luminance* Laplacian
+    # pyramid drives which frame wins at each (level, pixel), so the three
+    # channels stay phase-locked and we don't introduce chroma fringing.
+    color_pyramids: List[List[np.ndarray]] = []
+    lum_pyramids: List[List[np.ndarray]] = []
+    for bgr_f, gray_f in zip(bgr_frames, gray_frames):
+        color_pyramids.append(_build_laplacian_pyramid(bgr_f, levels))
+        lum_pyramids.append(_build_laplacian_pyramid(gray_f.astype(np.float32), levels))
+
+    # Fuse each band: pick the frame with the max |luminance-laplacian|.
+    fused_color: List[np.ndarray] = []
+    finest_winner: np.ndarray | None = None  # (H, W) int32 of winning frame at band 0
+    for lvl in range(levels):
+        lum_stack = np.stack([lp[lvl] for lp in lum_pyramids], axis=0)  # (N, h, w)
+        # For the low-pass residual (last level), winner-takes-all by magnitude
+        # would chase the brightest frame; average it instead to keep global
+        # tone stable.
+        if lvl == levels - 1:
+            fused = np.mean(
+                np.stack([cp[lvl] for cp in color_pyramids], axis=0), axis=0
+            )
+        else:
+            winners = np.argmax(np.abs(lum_stack), axis=0)  # (h, w) int
+            if lvl == 0:
+                finest_winner = winners.astype(np.int32)
+            color_stack = np.stack([cp[lvl] for cp in color_pyramids], axis=0)  # (N,h,w,3)
+            yy, xx = np.indices(winners.shape)
+            fused = color_stack[winners, yy, xx]  # (h,w,3)
+        fused_color.append(fused.astype(np.float32))
+
+    composite_f = _collapse_laplacian_pyramid(fused_color)
+    composite = np.clip(composite_f, 0, 255).astype(np.uint8)
+
+    # Build index_map / height_map from the finest-band winner.  Also compute
+    # a small smoothing pass so isolated spikes don't poke through.
+    if finest_winner is None:
+        # Defensive: only possible if levels < 2, but we clamp to 2 above.
+        finest_winner = np.zeros((h, w), dtype=np.int32)
+    index_map = finest_winner
+    if n <= 255:
+        index_map = cv2.medianBlur(index_map.astype(np.uint8), 5).astype(np.int32)
+
+    z_values = [z0_mm + i * z_step_mm for i in range(n)]
+    z_arr = np.array(z_values, dtype=np.float32)
+    height_map = z_arr[index_map]
+
+    # Confidence / brightness signals — reuse the same definitions as the
+    # argmax path so downstream consumers (3D view sliders) work unchanged.
+    fm_stack = np.empty((n, h, w), dtype=np.float32)
+    for i, g in enumerate(gray_frames):
+        fm_stack[i] = _focus_measure(g, window=9)
+    peak_focus = fm_stack.max(axis=0).astype(np.float32)
+    gray_stack = np.stack(gray_frames, axis=0)
+    max_bright = gray_stack.max(axis=0).astype(np.float32)
+
+    return {
+        "height_map": height_map,
+        "composite": composite,
+        "index_map": index_map,
+        "peak_focus": peak_focus,
+        "max_brightness": max_bright,
+        "min_z": float(height_map.min()),
+        "max_z": float(height_map.max()),
+        "z_values": z_values,
+        "fusion_mode": "pyramid",
+    }
+
+
 def colorize_height_map(height_map: np.ndarray) -> np.ndarray:
     """Return a uint8 HxWx3 BGR visualisation of a height map.
 

@@ -22,6 +22,10 @@ const zs = {
   suggestedMin: 10,
   suggestedMax: 15,
   computed: null, // { compositeUrl, heightmapUrl, minZ, maxZ, width, height }
+  hdrSupported: false,
+  hdrEnabled: false,
+  hdrStops: [-2.0, 0.0, 2.0],
+  fusionMode: "pyramid", // "argmax" | "pyramid"
 };
 
 function $(id) { return document.getElementById(id); }
@@ -47,11 +51,26 @@ function buildDialog() {
           <span style="opacity:0.7">Tip: press <kbd style="font-family:inherit;padding:1px 5px;border:1px solid #555;border-radius:3px;background:#222">Space</kbd> to capture.</span>
         </p>
 
-        <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap">
           <label style="font-size:13px">Z step (mm):</label>
           <input type="number" id="zstack-step" step="0.001" min="0.001" value="0.05"
                  style="width:100px" />
+          <label style="font-size:13px;margin-left:12px">Fusion:</label>
+          <select id="zstack-fusion" style="padding:3px 6px;background:#1a1a1a;color:#eee;border:1px solid #444;border-radius:3px">
+            <option value="pyramid" selected>Pyramid (preserves more detail)</option>
+            <option value="argmax">Argmax (per-pixel best-focus)</option>
+          </select>
           <span id="zstack-instruction" style="opacity:0.8;font-size:12px"></span>
+        </div>
+
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;padding:6px 8px;background:#161616;border:1px solid #2a2a2a;border-radius:3px">
+          <label style="font-size:13px;display:flex;align-items:center;gap:6px;cursor:pointer" id="zstack-hdr-label">
+            <input type="checkbox" id="zstack-hdr-toggle" />
+            HDR bracket (−2 / 0 / +2 EV)
+          </label>
+          <span id="zstack-hdr-note" style="opacity:0.7;font-size:11px">
+            Captures 3 exposures per slice and fuses them — ~0.5 s slower per frame.
+          </span>
         </div>
 
         <div style="display:flex;gap:8px;margin-bottom:6px;flex-shrink:0">
@@ -98,6 +117,13 @@ function buildDialog() {
     }
   });
   $("btn-zstack-capture").addEventListener("click", captureFrame);
+  $("zstack-hdr-toggle").addEventListener("change", e => {
+    zs.hdrEnabled = !!e.target.checked;
+    updateInstruction();
+  });
+  $("zstack-fusion").addEventListener("change", e => {
+    zs.fusionMode = e.target.value === "pyramid" ? "pyramid" : "argmax";
+  });
   $("btn-zstack-compute").addEventListener("click", compute);
   $("btn-zstack-reset").addEventListener("click", resetStack);
   $("btn-zstack-use-composite").addEventListener("click", useCompositeAsWorkingImage);
@@ -140,6 +166,31 @@ async function startSession() {
   zs.sessionId = data.session_id;
   zs.frameCount = 0;
   zs.computed = null;
+  // Probe HDR capability of the active camera
+  try {
+    const sr = await apiFetch("/zstack/status");
+    if (sr.ok) {
+      const sdata = await sr.json();
+      zs.hdrSupported = !!sdata.hdr_supported;
+      if (Array.isArray(sdata.hdr_default_stops) && sdata.hdr_default_stops.length >= 2) {
+        zs.hdrStops = sdata.hdr_default_stops;
+      }
+    }
+  } catch {}
+  const toggle = $("zstack-hdr-toggle");
+  const label = $("zstack-hdr-label");
+  const note = $("zstack-hdr-note");
+  if (toggle) {
+    toggle.disabled = !zs.hdrSupported;
+    if (!zs.hdrSupported) {
+      toggle.checked = false;
+      zs.hdrEnabled = false;
+    }
+  }
+  if (label) label.style.opacity = zs.hdrSupported ? "1" : "0.5";
+  if (note && !zs.hdrSupported) {
+    note.textContent = "Not supported on this camera (needs Aravis/GigE).";
+  }
   const resultEl = $("zstack-result");
   if (resultEl) resultEl.hidden = true;
   renderThumbs();
@@ -150,9 +201,22 @@ async function startSession() {
 
 async function captureFrame() {
   const btn = $("btn-zstack-capture");
-  if (btn) btn.disabled = true;
+  const origLabel = btn ? btn.textContent : "";
+  if (btn) {
+    btn.disabled = true;
+    if (zs.hdrEnabled) btn.textContent = "Bracketing…";
+  }
   try {
-    const r = await apiFetch("/zstack/capture", { method: "POST" });
+    let r;
+    if (zs.hdrEnabled && zs.hdrSupported) {
+      r = await apiFetch("/zstack/capture-hdr", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ stops: zs.hdrStops }),
+      });
+    } else {
+      r = await apiFetch("/zstack/capture", { method: "POST" });
+    }
     if (!r.ok) {
       const msg = await r.text();
       showStatus("Capture failed: " + msg);
@@ -164,7 +228,10 @@ async function captureFrame() {
     updateCount();
     updateInstruction();
   } finally {
-    if (btn) btn.disabled = false;
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = origLabel || "Capture frame";
+    }
   }
 }
 
@@ -175,7 +242,7 @@ async function compute() {
     const r = await apiFetch("/zstack/compute", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ z_step_mm: zs.zStepMm }),
+      body: JSON.stringify({ z_step_mm: zs.zStepMm, mode: zs.fusionMode }),
     });
     if (!r.ok) {
       const msg = await r.text();

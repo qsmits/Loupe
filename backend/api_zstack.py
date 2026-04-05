@@ -8,12 +8,14 @@ map.  Everything lives in memory; one active stack at a time.
 
 from __future__ import annotations
 
+import base64
 import threading
 import uuid
 from typing import List, Optional
 
+import cv2
 import numpy as np
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
@@ -21,6 +23,7 @@ from .cameras.base import BaseCamera
 from .vision.focus_stack import (
     colorize_height_map,
     compute_focus_stack,
+    compute_focus_stack_pyramid,
     downsample_float_map,
     downsample_index_map,
     encode_png,
@@ -45,9 +48,23 @@ class _ZStackSession:
         self.id = uuid.uuid4().hex
 
 
+DEFAULT_HDR_STOPS = [-2.0, 0.0, 2.0]
+
+
+class CaptureHdrBody(BaseModel):
+    stops: Optional[List[float]] = Field(
+        default=None,
+        description="EV stops for the bracket. Defaults to [-2, 0, +2].",
+    )
+
+
 class ComputeBody(BaseModel):
     z_step_mm: float = Field(gt=0, le=10.0, description="Z delta between frames (mm)")
     z0_mm: float = Field(default=0.0, description="Absolute Z of first frame (mm)")
+    mode: str = Field(
+        default="pyramid",
+        description="Fusion mode: 'pyramid' (Laplacian pyramid fusion, default — preserves more detail) or 'argmax' (per-pixel best-focus)",
+    )
 
 
 def make_zstack_router(camera: BaseCamera) -> APIRouter:
@@ -89,6 +106,30 @@ def make_zstack_router(camera: BaseCamera) -> APIRouter:
                 "frame_count": len(session.frames),
             }
 
+    def _hdr_supported() -> bool:
+        # Any camera wrapper that exposes capture_hdr_bracket (i.e. CameraReader
+        # around a real hardware camera).  NullCamera wrappers still expose the
+        # method, so also check is_null.
+        if not hasattr(camera, "capture_hdr_bracket"):
+            return False
+        try:
+            if getattr(camera, "is_null", False):
+                return False
+        except Exception:
+            pass
+        # Only Aravis exposes usable microsecond-precision exposure control;
+        # OpenCV's CAP_PROP_EXPOSURE is unreliable (esp. on macOS).
+        try:
+            info = camera.get_info()
+            model = str(info.get("model", "")).lower()
+        except Exception:
+            return False
+        # Heuristic: treat anything with a non-trivial exposure value as supported,
+        # and explicitly exclude OpenCV webcams which report model "opencv".
+        if "opencv" in model or "webcam" in model:
+            return False
+        return True
+
     @router.get("/zstack/status")
     async def zstack_status():
         with lock:
@@ -98,6 +139,46 @@ def make_zstack_router(camera: BaseCamera) -> APIRouter:
                 "has_result": session.result is not None,
                 "min_frames_to_compute": MIN_FRAMES_TO_COMPUTE,
                 "max_frames": MAX_FRAMES,
+                "hdr_supported": _hdr_supported(),
+                "hdr_default_stops": DEFAULT_HDR_STOPS,
+            }
+
+    @router.post("/zstack/capture-hdr")
+    async def zstack_capture_hdr(body: CaptureHdrBody):
+        """Capture one Z slice with HDR exposure bracketing.
+
+        Captures N frames at different exposures, Mertens-fuses them into a
+        single LDR frame, and appends that fused frame to the session — so
+        downstream focus stacking treats an HDR slice exactly like a normal
+        one.
+        """
+        if not _hdr_supported():
+            raise HTTPException(status_code=501, detail="Active camera does not support HDR bracketing")
+        stops = body.stops if body.stops else DEFAULT_HDR_STOPS
+        if not stops or len(stops) < 2:
+            raise HTTPException(status_code=400, detail="Need at least 2 stops for HDR")
+        with lock:
+            if len(session.frames) >= MAX_FRAMES:
+                raise HTTPException(status_code=400, detail=f"Frame limit reached ({MAX_FRAMES})")
+            try:
+                brackets = camera.capture_hdr_bracket(stops)
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=f"HDR bracket failed: {e}")
+            try:
+                merger = cv2.createMergeMertens()
+                fused_f = merger.process(brackets)  # float32, roughly [0,1]
+                fused_u8 = np.clip(fused_f * 255.0, 0, 255).astype(np.uint8)
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=f"Mertens merge failed: {e}")
+            session.frames.append(fused_u8)
+            session.result = None
+            return {
+                "session_id": session.id,
+                "frame_index": len(session.frames) - 1,
+                "frame_count": len(session.frames),
+                "hdr": True,
+                "stops": list(stops),
+                "bracket_count": len(brackets),
             }
 
     @router.post("/zstack/compute")
@@ -108,12 +189,22 @@ def make_zstack_router(camera: BaseCamera) -> APIRouter:
                     status_code=400,
                     detail=f"Need at least {MIN_FRAMES_TO_COMPUTE} frames (have {len(session.frames)})",
                 )
+            mode = (body.mode or "argmax").lower()
+            if mode not in ("argmax", "pyramid"):
+                raise HTTPException(status_code=400, detail=f"Unknown fusion mode: {mode}")
             try:
-                result = compute_focus_stack(
-                    session.frames,
-                    z_step_mm=body.z_step_mm,
-                    z0_mm=body.z0_mm,
-                )
+                if mode == "pyramid":
+                    result = compute_focus_stack_pyramid(
+                        session.frames,
+                        z_step_mm=body.z_step_mm,
+                        z0_mm=body.z0_mm,
+                    )
+                else:
+                    result = compute_focus_stack(
+                        session.frames,
+                        z_step_mm=body.z_step_mm,
+                        z0_mm=body.z0_mm,
+                    )
             except ValueError as e:
                 raise HTTPException(status_code=400, detail=str(e))
             session.result = result
@@ -127,6 +218,7 @@ def make_zstack_router(camera: BaseCamera) -> APIRouter:
                 "frame_count": len(session.frames),
                 "composite_url": "/zstack/composite.png",
                 "heightmap_url": "/zstack/heightmap.png",
+                "mode": mode,
             }
 
     @router.get("/zstack/composite.png")
@@ -190,6 +282,56 @@ def make_zstack_router(camera: BaseCamera) -> APIRouter:
             "brightness": brightness_list,
             "z_step_mm": z_step_mm,
             "frame_count": int(frame_count),
+        }
+
+    @router.get("/zstack/test-hdr-bracket")
+    async def zstack_test_hdr_bracket(
+        stops: str = Query("-2,0,2", description="Comma-separated EV stops"),
+    ):
+        """Debug helper: capture an HDR bracket synchronously and return the
+        raw frames + their Mertens merge as base64 PNGs, plus the exposures
+        used.  Used to verify reader-thread timing on real hardware before
+        wiring this into the full /zstack/capture-hdr workflow.
+        """
+        try:
+            stop_list = [float(s.strip()) for s in stops.split(",") if s.strip()]
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid stops list")
+        if not stop_list:
+            raise HTTPException(status_code=400, detail="At least one stop required")
+        if not hasattr(camera, "capture_hdr_bracket"):
+            raise HTTPException(status_code=501, detail="Active camera does not support HDR bracket")
+
+        try:
+            info_before = camera.get_info()
+            baseline = float(info_before.get("exposure", 0.0))
+            frames = camera.capture_hdr_bracket(stop_list)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"HDR bracket failed: {e}")
+
+        def _to_png_b64(img: np.ndarray) -> str:
+            ok, buf = cv2.imencode(".png", img)
+            if not ok:
+                raise RuntimeError("PNG encode failed")
+            return base64.b64encode(buf.tobytes()).decode("ascii")
+
+        # Mertens exposure fusion — expects a list of uint8 BGR/gray frames.
+        try:
+            merger = cv2.createMergeMertens()
+            fused_f = merger.process(frames)  # float32 HxWx3, roughly [0,1]
+            fused_u8 = np.clip(fused_f * 255.0, 0, 255).astype(np.uint8)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Mertens merge failed: {e}")
+
+        return {
+            "baseline_exposure_us": baseline,
+            "stops": stop_list,
+            "exposures_us": [baseline * (2.0 ** s) for s in stop_list],
+            "mean_intensity": [float(f.mean()) for f in frames],
+            "frames_png_b64": [_to_png_b64(f) for f in frames],
+            "merged_png_b64": _to_png_b64(fused_u8),
+            "width": int(frames[0].shape[1]),
+            "height": int(frames[0].shape[0]),
         }
 
     @router.post("/zstack/reset")

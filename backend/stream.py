@@ -59,6 +59,74 @@ class CameraReader(BaseCamera):
     def set_exposure(self, microseconds: float) -> None:
         self._camera.set_exposure(microseconds)
 
+    def capture_hdr_bracket(
+        self,
+        stops: list[float],
+        settle_s: float = 0.15,
+        drain_frames: int = 3,
+    ) -> list[np.ndarray]:
+        """Synchronously capture a bracket of frames at different exposures.
+
+        Pauses the reader thread so this method owns the camera, then for each
+        EV stop in ``stops``:
+          1. sets exposure = baseline * 2**stop
+          2. sleeps ``settle_s`` to let the new exposure take effect
+          3. drains ``drain_frames`` buffered frames (which may still be at the
+             old exposure) and keeps the last fresh one
+        The baseline exposure is restored in a try/finally so a failure can't
+        leave the camera at a bracketed value.  The reader thread is restarted
+        on return.
+
+        Returns a list of BGR numpy frames, one per stop, in the same order.
+        """
+        with self._format_lock:
+            if self._thread is None:
+                raise RuntimeError("CameraReader is not open")
+            # Read baseline exposure up-front — if this fails, don't touch the reader.
+            info = self._camera.get_info()
+            baseline = float(info.get("exposure", 0.0))
+            if baseline <= 0.0:
+                raise RuntimeError("Could not read baseline exposure")
+
+            # Stop reader so we have exclusive access to the camera.
+            self._stop.set()
+            if self._thread is not None:
+                self._thread.join(timeout=2)
+                if self._thread.is_alive():
+                    raise RuntimeError(
+                        "Reader thread did not stop within 2 s; aborting HDR bracket."
+                    )
+
+            frames: list[np.ndarray] = []
+            try:
+                for stop in stops:
+                    target = baseline * (2.0 ** float(stop))
+                    self._camera.set_exposure(target)
+                    # Wait for the exposure change to take effect.  Sleep must
+                    # exceed the new exposure duration, otherwise the next
+                    # buffer will still be integrating at the old value.
+                    settle = max(settle_s, (target / 1_000_000.0) * 1.5)
+                    time.sleep(settle)
+                    # Drain stale buffers queued before the exposure change.
+                    last: np.ndarray | None = None
+                    for _ in range(max(1, drain_frames)):
+                        last = self._camera.get_frame()
+                    if last is None:
+                        raise RuntimeError("Camera returned no frame during bracket")
+                    frames.append(last.copy())
+            finally:
+                # Always restore baseline, even if a shot failed.
+                try:
+                    self._camera.set_exposure(baseline)
+                except Exception as e:
+                    _log.warning("Failed to restore baseline exposure: %s", e)
+                # Restart reader thread.
+                self._stop.clear()
+                self._thread = threading.Thread(target=self._run, daemon=True)
+                self._thread.start()
+
+            return frames
+
     def set_gain(self, db: float) -> None:
         self._camera.set_gain(db)
 
