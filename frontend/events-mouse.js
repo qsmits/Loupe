@@ -9,8 +9,8 @@ import { addAnnotation, deleteSelected, elevateSelected, isDetection,
          clearDxfOverlay, clearAll } from './annotations.js';
 import { setTool, handleToolClick, handleSelectDown, handleDrag,
          canvasPoint, snapPoint, collectDxfSnapPoints,
-         projectConstrained, hitTestDxfEntity,
-         promptArcFitChoice, finalizeArcFit, finalizeArea, finalizeSpline } from './tools.js';
+         projectConstrained, hitTestDxfEntity, findSnapLine,
+         promptArcFitChoice, finalizeArcFit, finalizeArea, finalizeSpline, finalizeFitLine } from './tools.js';
 import { fitCircle } from './math.js';
 import { exitDxfAlignMode, openFeatureTolPopover } from './dxf.js';
 import { viewport, screenToImage, clampPan, fitToWindow, zoomOneToOne,
@@ -22,12 +22,14 @@ import { drawLoupe } from './render-hud.js';
 import { isLensCalMode, lensCalClick, lensCalMouseMove } from './lens-cal.js';
 import { isTiltCalMode, tiltCalClick, tiltCalMouseMove } from './tilt-cal.js';
 import { refinePointJS } from './subpixel-js.js';
+import { openCommentEditor } from './comment-editor.js';
+import { hitTestAnnotation } from './hit-test.js';
 
 // ── Sub-pixel snap preview (debounced) ────────────────────────────────────────
 let _subpixelDebounce = null;
 const _SNAP_PREVIEW_TOOLS = new Set([
   "distance", "angle", "circle", "arc-fit", "arc-measure",
-  "perp-dist", "para-dist", "area", "calibrate", "spline",
+  "perp-dist", "para-dist", "area", "calibrate", "spline", "fit-line",
 ]);
 
 function _updateSubpixelPreview(pt, altKey = false) {
@@ -113,8 +115,14 @@ async function onMouseDown(e) {
     }
   }
 
-  // Pan: middle-mouse always, or left-click in pan tool
+  // Pan: middle-mouse always, or left-click in pan tool. Only meaningful in
+  // frozen mode (live camera fills the viewport so panning just shifts the
+  // annotations out from under the image).
   if (e.button === 1 || (e.button === 0 && state.tool === "pan")) {
+    if (!state.frozen) {
+      e.preventDefault();
+      return;
+    }
     e.preventDefault();
     state._panStart = { x: e.clientX, y: e.clientY, panX: viewport.panX, panY: viewport.panY };
     canvas.style.cursor = "grabbing";
@@ -208,6 +216,12 @@ async function onMouseDown(e) {
             const offset = ann.labelOffset || { dx: 0, dy: 0 };
             state._labelDrag = { annId: box.annId, startX: pt.x, startY: pt.y,
                                  origDx: offset.dx, origDy: offset.dy };
+            // Comments: clicking the label selects the annotation too.
+            if (ann.type === "comment") {
+              state.selected = new Set([ann.id]);
+              renderSidebar();
+              redraw();
+            }
             return;
           }
         }
@@ -327,6 +341,19 @@ export function initMouseHandlers() {
       _finalizePickInspection();
       return;
     }
+    // Double-click on a comment annotation → reopen editor to edit text.
+    {
+      const pt = canvasPoint(e);
+      for (let i = state.annotations.length - 1; i >= 0; i--) {
+        const ann = state.annotations[i];
+        if (ann.type !== "comment") continue;
+        if (hitTestAnnotation(ann, pt)) {
+          e.preventDefault();
+          openCommentEditor({ x: ann.x, y: ann.y }, ann);
+          return;
+        }
+      }
+    }
     // Multi-point tools: dblclick fires after 2 mousedowns (which each added a point).
     // Pop the duplicate from the second mousedown before finalizing.
     if (state.tool === "spline" && state.pendingPoints.length >= 3) {
@@ -345,6 +372,12 @@ export function initMouseHandlers() {
       e.preventDefault();
       state.pendingPoints.pop();
       finalizeArea();
+      return;
+    }
+    if (state.tool === "fit-line" && state.pendingPoints.length >= 3) {
+      e.preventDefault();
+      state.pendingPoints.pop();
+      finalizeFitLine();
       return;
     }
   });
@@ -447,6 +480,7 @@ export function initMouseHandlers() {
           if (r.perp_dev_mm != null) {
             lines.push(`Deviation: \u22a5 ${r.perp_dev_mm.toFixed(4)} mm`);
             if (r.angle_error_deg != null) lines.push(`Angle: ${r.angle_error_deg.toFixed(2)}\xb0`);
+            if (r.profile_mm != null) lines.push(`Profile: \u23e5 ${r.profile_mm.toFixed(4)} mm`);
           }
           if (r.center_dev_mm != null) lines.push(`Center dev: ${r.center_dev_mm.toFixed(4)} mm`);
           if (r.radius_dev_mm != null) lines.push(`Radius dev: ${r.radius_dev_mm.toFixed(4)} mm`);
@@ -469,6 +503,14 @@ export function initMouseHandlers() {
     if (state.tool !== "select" && state.tool !== "calibrate" && state.tool !== "center-dist") {
       const { pt: snappedPt, snapped } = snapPoint(rawPt, e.altKey);
       state.snapTarget = (snapped && !e.altKey) ? snappedPt : null;
+      // Angle tool: highlight the line that would be captured on click.
+      if (state.tool === "angle") {
+        const hover = findSnapLine(pt);
+        // Don't highlight the already-captured first line.
+        state.hoverRefLine = (hover && hover !== state.pendingRefLine) ? hover : null;
+      } else if (state.hoverRefLine) {
+        state.hoverRefLine = null;
+      }
       redraw();
     }
     if (state.pendingPoints.length > 0 && state.tool !== "select"
@@ -497,8 +539,14 @@ export function initMouseHandlers() {
             // collinear — no preview
           }
         } else if (state.tool === "arc-measure" && state.pendingPoints.length === 2) {
-          const [p1, p2] = state.pendingPoints;
-          const p3 = snappedPt;
+          // In sequential mode pendingPoints = [p1, p2] and the mouse is p3.
+          // In ends-first mode pendingPoints = [end1, end2] and the mouse is the mid point.
+          let p1, p2, p3;
+          if (state.arcMeasureMode === "ends-first") {
+            [p1, p2, p3] = [state.pendingPoints[0], snappedPt, state.pendingPoints[1]];
+          } else {
+            [p1, p2, p3] = [state.pendingPoints[0], state.pendingPoints[1], snappedPt];
+          }
           const ax = p2.x - p1.x, ay = p2.y - p1.y;
           const bx = p3.x - p1.x, by = p3.y - p1.y;
           const D = 2 * (ax * by - ay * bx);
@@ -508,9 +556,16 @@ export function initMouseHandlers() {
             const pcx = p1.x + ux, pcy = p1.y + uy;
             const pr  = Math.hypot(ux, uy);
             const pa1 = Math.atan2(p1.y - pcy, p1.x - pcx);
+            const pa2 = Math.atan2(p2.y - pcy, p2.x - pcx);
             const pa3 = Math.atan2(p3.y - pcy, p3.x - pcx);
+            // Draw the arc from p1 to p3 in the direction that passes through p2.
+            const twoPi = 2 * Math.PI;
+            const norm = x => ((x % twoPi) + twoPi) % twoPi;
+            const ccw13 = norm(pa3 - pa1);
+            const ccw12 = norm(pa2 - pa1);
+            const ccw    = ccw12 < ccw13;  // CCW sweep passes through p2?
             ctx.beginPath();
-            ctx.arc(pcx, pcy, pr, pa1, pa3);
+            ctx.arc(pcx, pcy, pr, pa1, pa3, !ccw);
             ctx.strokeStyle = "rgba(191,90,242,0.6)";
             ctx.lineWidth = pw(1.5);
             ctx.setLineDash([pw(5), pw(4)]);

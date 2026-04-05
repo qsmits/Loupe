@@ -23,6 +23,40 @@ export function drawDistance(ann, sel) {
 
 export function drawAngle(ann, sel) {
   const c = _annColor(ann, sel, "#a78bfa");
+  if (ann.fromLines) {
+    // Line-to-line angle: dashed arc centered at the true intersection,
+    // passing through (by default) the two click points. Radius is draggable.
+    const a1 = Math.atan2(ann.p1.y - ann.vertex.y, ann.p1.x - ann.vertex.x);
+    const a3 = Math.atan2(ann.p3.y - ann.vertex.y, ann.p3.x - ann.vertex.x);
+    let delta = a3 - a1;
+    while (delta >  Math.PI) delta -= 2 * Math.PI;
+    while (delta < -Math.PI) delta += 2 * Math.PI;
+    const start = delta >= 0 ? a1 : a3;
+    const end   = delta >= 0 ? a3 : a1;
+    const r = ann.arcRadius || 40 / viewport.zoom;
+    // Mid-sweep angle for the radius handle / label placement.
+    let mid = start + (end - start) / 2;
+    if (end < start) mid += Math.PI;
+    // Dashed arc
+    ctx.save();
+    ctx.strokeStyle = c;
+    ctx.lineWidth = pw(1.5);
+    ctx.setLineDash([pw(5), pw(4)]);
+    ctx.beginPath();
+    ctx.arc(ann.vertex.x, ann.vertex.y, r, start, end, false);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.restore();
+    // Drag handle on the arc midpoint (for radius adjustment)
+    const hx = ann.vertex.x + Math.cos(mid) * r;
+    const hy = ann.vertex.y + Math.sin(mid) * r;
+    if (sel) drawHandle({ x: hx, y: hy }, "#60a5fa");
+    // Label just outside the arc midpoint
+    const lx = ann.vertex.x + Math.cos(mid) * (r + 10 / viewport.zoom);
+    const ly = ann.vertex.y + Math.sin(mid) * (r + 10 / viewport.zoom);
+    drawMeasurementLabel(ann, measurementLabel(ann), lx, ly, hx, hy);
+    return;
+  }
   drawLine(ann.p1, ann.vertex, c, sel ? 2 : 1.5);
   drawLine(ann.vertex, ann.p3, c, sel ? 2 : 1.5);
   if (sel) { [ann.p1, ann.vertex, ann.p3].forEach(p => (p.snapped ? drawDiamondHandle : drawHandle)(p, "#60a5fa")); }
@@ -364,6 +398,45 @@ export function drawArea(ann, sel) {
   drawLabel(measurementLabel(ann), cx + 4, cy);
 }
 
+export function drawFitLine(ann, sel) {
+  if (!ann.points || ann.points.length < 2) return;
+  const color = _annColor(ann, sel, "#f59e0b");
+
+  // Draw best-fit line
+  ctx.save();
+  ctx.beginPath();
+  ctx.moveTo(ann.x1, ann.y1);
+  ctx.lineTo(ann.x2, ann.y2);
+  ctx.strokeStyle = color;
+  ctx.lineWidth = sel ? pw(2) : pw(1.5);
+  ctx.stroke();
+
+  // Draw bilateral zone lines at actual data extents
+  if (ann.zoneMin !== undefined && ann.zoneMax !== undefined && ann.zoneWidth > 0) {
+    const nx = -ann.dy, ny = ann.dx;
+    const drawZoneLine = (offset) => {
+      ctx.beginPath();
+      ctx.moveTo(ann.x1 + nx * offset, ann.y1 + ny * offset);
+      ctx.lineTo(ann.x2 + nx * offset, ann.y2 + ny * offset);
+      ctx.stroke();
+    };
+    ctx.strokeStyle = color;
+    ctx.lineWidth = pw(1);
+    ctx.globalAlpha = 0.4;
+    ctx.setLineDash([pw(4), pw(3)]);
+    drawZoneLine(ann.zoneMax);
+    drawZoneLine(ann.zoneMin);
+    ctx.setLineDash([]);
+  }
+  ctx.restore();
+
+  // Input point handles when selected
+  if (sel) ann.points.forEach(p => drawHandle(p, "#60a5fa"));
+
+  const mx = (ann.x1 + ann.x2) / 2, my = (ann.y1 + ann.y2) / 2;
+  drawMeasurementLabel(ann, measurementLabel(ann), mx + 5, my - 5, mx, my);
+}
+
 export function drawAreaPreview(pts, cursor) {
   if (pts.length === 0) return;
   const all = [...pts, cursor];
@@ -422,6 +495,74 @@ export function drawOrigin(ann, sel) {
   ctx.restore();
 
   drawHandle(xTip, sel ? "#60a5fa" : "#facc15");
+}
+
+export function drawComment(ann, sel) {
+  const PIN_COLOR = "#fbbf24";  // amber
+  const offset = ann.labelOffset || { dx: 0, dy: 0 };
+  const lx = ann.x + 12 + offset.dx;
+  const ly = ann.y - 12 + offset.dy;
+  const lines = String(ann.text || "").split("\n");
+
+  // Measure
+  const fontSize = pw(12);
+  ctx.save();
+  ctx.font = `bold ${fontSize}px ui-monospace, monospace`;
+  let maxW = 0;
+  for (const ln of lines) maxW = Math.max(maxW, ctx.measureText(ln).width);
+  const lineH = pw(16);
+  const padX = pw(2);
+  const padTop = pw(13);
+  const boxX = lx - padX;
+  const boxY = ly - padTop;
+  const boxW = maxW + pw(4);
+  const boxH = lineH * lines.length;
+
+  // Leader line when offset
+  if (offset.dx !== 0 || offset.dy !== 0) {
+    ctx.strokeStyle = "rgba(200, 200, 200, 0.6)";
+    ctx.lineWidth = pw(0.75);
+    ctx.setLineDash([pw(4), pw(3)]);
+    ctx.beginPath();
+    ctx.moveTo(ann.x, ann.y);
+    // Aim at center of box
+    ctx.lineTo(boxX + boxW / 2, boxY + boxH / 2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  // Box background
+  ctx.fillStyle = sel ? "rgba(30, 50, 90, 0.85)" : "rgba(0, 0, 0, 0.72)";
+  ctx.fillRect(boxX, boxY, boxW, boxH);
+  if (sel) {
+    ctx.strokeStyle = "#60a5fa";
+    ctx.lineWidth = pw(1);
+    ctx.strokeRect(boxX, boxY, boxW, boxH);
+  }
+
+  // Text lines
+  ctx.fillStyle = "#fff";
+  for (let i = 0; i < lines.length; i++) {
+    ctx.fillText(lines[i], lx, ly + i * lineH);
+  }
+  ctx.restore();
+
+  // Pin dot
+  ctx.beginPath();
+  ctx.arc(ann.x, ann.y, pw(5), 0, Math.PI * 2);
+  ctx.fillStyle = sel ? "#60a5fa" : PIN_COLOR;
+  ctx.fill();
+  ctx.strokeStyle = "#fff";
+  ctx.lineWidth = pw(1);
+  ctx.stroke();
+
+  // Register label hitbox for dragging via the existing _labelDrag machinery.
+  _labelHitBoxes.push({
+    annId: ann.id,
+    handle: null,
+    x: boxX, y: boxY, w: boxW, h: boxH,
+    refX: ann.x, refY: ann.y,
+  });
 }
 
 /**
@@ -496,6 +637,8 @@ export function drawAnnotations(redrawFn, dxfFns) {
     else if (ann.type === "arc-measure")    drawArcMeasure(ann, sel);
     else if (ann.type === "arc-fit")        drawArcFit(ann, sel);
     else if (ann.type === "spline")         drawSpline(ann, sel);
+    else if (ann.type === "fit-line")       drawFitLine(ann, sel);
+    else if (ann.type === "comment")        drawComment(ann, sel);
 
     if (sel && flashActive) {
       let fx, fy;
@@ -520,6 +663,29 @@ export function drawAnnotations(redrawFn, dxfFns) {
   });
   if (flashActive) {
     requestAnimationFrame(() => redrawFn());
+  }
+
+  // Angle tool: highlight the line under the cursor (captured on click) and
+  // the already-picked first line, so the user knows what they're selecting.
+  const _highlightLine = (ann, color) => {
+    const ep = getLineEndpoints(ann);
+    if (!ep) return;
+    ctx.save();
+    ctx.strokeStyle = color;
+    ctx.lineWidth = pw(4);
+    ctx.lineCap = "round";
+    ctx.globalAlpha = 0.6;
+    ctx.beginPath();
+    ctx.moveTo(ep.a.x, ep.a.y);
+    ctx.lineTo(ep.b.x, ep.b.y);
+    ctx.stroke();
+    ctx.restore();
+  };
+  if (state.tool === "angle" && state.pendingRefLine) {
+    _highlightLine(state.pendingRefLine, "#60a5fa");
+  }
+  if (state.tool === "angle" && state.hoverRefLine) {
+    _highlightLine(state.hoverRefLine, "#fbbf24");
   }
 
   if (state._selectRect) {

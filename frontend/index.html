@@ -16,19 +16,12 @@
     <div class="menu-group">
       <button class="menu-btn" id="btn-menu-measure">Measure ▾</button>
       <div class="dropdown" id="dropdown-measure" hidden>
-        <button class="dropdown-item" data-tool="distance">Distance</button>
-        <button class="dropdown-item" data-tool="angle">Angle</button>
-        <button class="dropdown-item" data-tool="circle">Circle</button>
-        <button class="dropdown-item" data-tool="arc-fit">Fit Arc</button>
-        <button class="dropdown-item" data-tool="arc-measure">Arc Measure</button>
-        <button class="dropdown-item" data-tool="center-dist">Center Dist</button>
-        <button class="dropdown-item" data-tool="para-dist">Para</button>
-        <button class="dropdown-item" data-tool="perp-dist">Perp</button>
-        <button class="dropdown-item" data-tool="area">Area</button>
-        <button class="dropdown-item" data-tool="pt-circle-dist">Pt-Circle</button>
-        <button class="dropdown-item" data-tool="intersect">Intersect</button>
-        <button class="dropdown-item" data-tool="slot-dist">Slot</button>
-        <button class="dropdown-item" data-tool="spline">Spline</button>
+        <button class="dropdown-item" data-tool="distance" data-top-level="distance">Distance</button>
+        <button class="dropdown-item" data-tool="angle" data-top-level="angle">Angle</button>
+        <button class="dropdown-item" data-tool="circle" data-top-level="circle">Circle / Arc</button>
+        <button class="dropdown-item" data-tool="fit-line" data-top-level="flatness">Flatness</button>
+        <button class="dropdown-item" data-tool="area" data-top-level="area">Area</button>
+        <button class="dropdown-item" data-tool="intersect" data-top-level="intersect">Intersect</button>
       </div>
     </div>
 
@@ -129,6 +122,10 @@
           </div>
         </div>
       </div>
+    </div>
+
+    <div class="menu-group">
+      <button class="menu-btn" id="btn-menu-note" title="Note (T) — place a text comment">📌 Note</button>
     </div>
 
     <div class="menu-group">
@@ -303,6 +300,9 @@
       <!-- Calibration warning border -->
       <div id="cal-indicator" hidden></div>
 
+      <!-- Sub-mode selector (horizontal segmented control, sits above tool strip) -->
+      <div id="sub-mode-selector" hidden></div>
+
       <!-- Floating tool strip -->
       <div id="tool-strip">
         <div id="tool-strip-main">
@@ -314,19 +314,12 @@
           <div class="strip-group">
             <button class="strip-btn group-btn" id="btn-strip-measure">Measure ▾</button>
             <div class="strip-flyout" id="strip-flyout-measure" hidden>
-              <button class="strip-btn flyout-item" data-tool="distance">Distance <span class="flyout-key">D</span></button>
-              <button class="strip-btn flyout-item" data-tool="angle">Angle <span class="flyout-key">A</span></button>
-              <button class="strip-btn flyout-item" data-tool="circle">Circle <span class="flyout-key">O</span></button>
-              <button class="strip-btn flyout-item" data-tool="arc-fit">Fit Arc <span class="flyout-key">F</span></button>
-              <button class="strip-btn flyout-item" data-tool="arc-measure">Arc Measure</button>
-              <button class="strip-btn flyout-item" data-tool="center-dist">Center Dist <span class="flyout-key">M</span></button>
-              <button class="strip-btn flyout-item" data-tool="para-dist">Para Dist <span class="flyout-key">L</span></button>
-              <button class="strip-btn flyout-item" data-tool="perp-dist">Perp Dist <span class="flyout-key">P</span></button>
-              <button class="strip-btn flyout-item" data-tool="area">Area <span class="flyout-key">R</span></button>
-              <button class="strip-btn flyout-item" data-tool="pt-circle-dist">Pt-Circle <span class="flyout-key">G</span></button>
-              <button class="strip-btn flyout-item" data-tool="intersect">Intersect <span class="flyout-key">I</span></button>
-              <button class="strip-btn flyout-item" data-tool="slot-dist">Slot Dist <span class="flyout-key">W</span></button>
-              <button class="strip-btn flyout-item" data-tool="spline">Spline <span class="flyout-key">B</span></button>
+              <button class="strip-btn flyout-item" data-tool="distance" data-top-level="distance">Distance <span class="flyout-key">D</span></button>
+              <button class="strip-btn flyout-item" data-tool="angle" data-top-level="angle">Angle <span class="flyout-key">A</span></button>
+              <button class="strip-btn flyout-item" data-tool="circle" data-top-level="circle">Circle / Arc <span class="flyout-key">O</span></button>
+              <button class="strip-btn flyout-item" data-tool="fit-line" data-top-level="flatness">Flatness <span class="flyout-key">L</span></button>
+              <button class="strip-btn flyout-item" data-tool="area" data-top-level="area">Area <span class="flyout-key">R</span></button>
+              <button class="strip-btn flyout-item" data-tool="intersect" data-top-level="intersect">Intersect <span class="flyout-key">I</span></button>
             </div>
           </div>
 

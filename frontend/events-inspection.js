@@ -223,6 +223,7 @@ export async function _finalizePickInspection() {
         dy_px: result.dy_px ?? null,
         center_dev_mm: result.center_dev_mm ?? null,
         radius_dev_mm: result.radius_dev_mm ?? null,
+        profile_mm: result.profile_mm ?? null,
       };
       const sIdx = state.inspectionResults.findIndex(r => r.handle === entity.handle);
       if (sIdx >= 0) state.inspectionResults[sIdx] = sr;

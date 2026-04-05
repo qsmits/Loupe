@@ -4,20 +4,36 @@ import { state, TOOL_STATUS, pushUndo } from './state.js';
 import { redraw, canvas, showStatus, getLineEndpoints, lineAngleDeg, listEl } from './render.js';
 import { dxfToCanvas } from './render-dxf.js';
 import { addAnnotation, applyCalibration, elevateAnnotation } from './annotations.js';
-import { fitCircle, fitCircleAlgebraic, splineArcLength, parseDistanceInput, distPointToSegment } from './math.js';
+import { fitCircle, fitCircleAlgebraic, fitLine, splineArcLength, parseDistanceInput, distPointToSegment } from './math.js';
 import { renderSidebar } from './sidebar.js';
 import { viewport, screenToImage, imageWidth, imageHeight } from './viewport.js';
 import { hitTestAnnotation, hitTestDxfEntity } from './hit-test.js';
+import { openCommentEditor } from './comment-editor.js';
 
 // Re-export for backward compatibility (other modules import these from tools.js)
 export { hitTestAnnotation, hitTestDxfEntity } from './hit-test.js';
 
+// Optional hook set by sub-mode-selector.js to keep the segmented control in sync.
+let _subModeSelectorSync = null;
+export function registerSubModeSelectorSync(fn) { _subModeSelectorSync = fn; }
+
 export function setTool(name) {
+  // Pan is only meaningful in frozen mode (live camera fills the viewport, so
+  // panning would just shift annotations out from under the fixed image).
+  if (name === "pan" && !state.frozen) {
+    showStatus("Pan is only available on a frozen image");
+    return;
+  }
   state.tool = name;
+  // Track the top-level measure group so the sub-mode selector can stay visible.
+  const topLevel = _TOOL_TO_TOP_LEVEL[name] ?? null;
+  state._topLevelTool = topLevel;
   state.pendingPoints = [];
   state.pendingCenterCircle = null;
   state.pendingRefLine = null;
+  state.pendingRefLineClick = null;
   state.pendingCircleRef = null;
+  state.hoverRefLine = null;
   state.snapTarget = null;
   // Exit any modal modes that would intercept clicks
   if (state.dxfAlignMode) {
@@ -52,13 +68,94 @@ export function setTool(name) {
 
 const _MEASURE_TOOLS = new Set([
   "distance","angle","circle","arc-fit","arc-measure","center-dist",
-  "para-dist","perp-dist","area","pt-circle-dist","intersect","slot-dist","spline",
+  "para-dist","perp-dist","area","pt-circle-dist","intersect","slot-dist","spline","fit-line",
 ]);
+
+// ── Top-level measure-tool groups (6-entry consolidated menu) ────────────────
+// Each top-level tool has sub-modes that map to underlying tool strings.
+// The first sub-mode in each group is the default.
+export const MEASURE_TOP_LEVEL = {
+  distance: {
+    label: "Distance",
+    subModes: [
+      { id: "direct",       label: "Direct",        tool: "distance" },
+      { id: "parallel",     label: "Parallel",      tool: "para-dist" },
+      { id: "perpendicular",label: "Perpendicular", tool: "perp-dist" },
+      { id: "slot",         label: "Slot",          tool: "slot-dist" },
+      { id: "pt-circle",    label: "Pt-Circle",     tool: "pt-circle-dist" },
+      { id: "center-center",label: "Center-Center", tool: "center-dist" },
+    ],
+  },
+  angle: {
+    label: "Angle",
+    subModes: [
+      // Both sub-modes trigger the same underlying tool; angle tool chooses
+      // two-lines vs three-points based on whether the first click hits a line.
+      { id: "two-lines",   label: "Two lines",   tool: "angle", angleMode: "two-lines" },
+      { id: "three-points",label: "Three points",tool: "angle", angleMode: "three-points" },
+    ],
+  },
+  circle: {
+    label: "Circle / Arc",
+    subModes: [
+      { id: "3-point",       label: "3-point",     tool: "circle",      circleMode: "3-point" },
+      { id: "center-edge",   label: "Center+edge", tool: "circle",      circleMode: "center-edge" },
+      { id: "best-fit-circ", label: "Best-fit circle",tool: "arc-fit",  arcFitMode: "circle" },
+      { id: "best-fit-arc",  label: "Best-fit arc",   tool: "arc-fit",  arcFitMode: "arc" },
+      { id: "arc-sequential",label: "Arc (seq)",   tool: "arc-measure", arcMeasureMode: "sequential" },
+      { id: "arc-ends-first",label: "Arc (ends)",  tool: "arc-measure", arcMeasureMode: "ends-first" },
+    ],
+  },
+  flatness: {
+    label: "Flatness",
+    subModes: [
+      { id: "flatness", label: "Flatness", tool: "fit-line" },
+    ],
+  },
+  area: {
+    label: "Area",
+    subModes: [
+      { id: "polygon", label: "Polygon", tool: "area" },
+      { id: "spline",  label: "Spline",  tool: "spline" },
+    ],
+  },
+  intersect: {
+    label: "Intersect",
+    subModes: [
+      { id: "intersect", label: "Intersect", tool: "intersect" },
+    ],
+  },
+};
+
+// Reverse lookup: underlying tool string → top-level key.
+// For tools shared across groups we pick the canonical parent.
+const _TOOL_TO_TOP_LEVEL = {
+  "distance":       "distance",
+  "para-dist":      "distance",
+  "perp-dist":      "distance",
+  "slot-dist":      "distance",
+  "pt-circle-dist": "distance",
+  "center-dist":    "distance",
+  "angle":          "angle",
+  "circle":         "circle",
+  "arc-fit":        "circle",
+  "arc-measure":    "circle",
+  "fit-line":       "flatness",
+  "area":           "area",
+  "spline":         "area",
+  "intersect":      "intersect",
+};
+
+export function topLevelOfTool(tool) {
+  return _TOOL_TO_TOP_LEVEL[tool] ?? null;
+}
+
 const _TOOL_LABELS = {
-  "distance":"Distance","angle":"Angle","circle":"Circle","arc-fit":"Fit Arc",
-  "arc-measure":"Arc Meas","center-dist":"Center Dist","para-dist":"Para Dist",
-  "perp-dist":"Perp Dist","area":"Area","pt-circle-dist":"Pt-Circle",
-  "intersect":"Intersect","slot-dist":"Slot Dist","spline":"Spline",
+  "distance":"Distance","angle":"Angle","circle":"Circle / Arc","arc-fit":"Circle / Arc",
+  "arc-measure":"Circle / Arc","center-dist":"Distance","para-dist":"Distance",
+  "perp-dist":"Distance","area":"Area","pt-circle-dist":"Distance",
+  "intersect":"Intersect","slot-dist":"Distance","spline":"Area",
+  "fit-line":"Flatness",
   "calibrate":"Calibrate",
 };
 
@@ -68,20 +165,24 @@ function _updateStripGroups(name) {
   const optsBar    = document.getElementById("tool-options-bar");
   if (measureBtn) {
     const inGroup = _MEASURE_TOOLS.has(name);
-    measureBtn.textContent = inGroup ? (_TOOL_LABELS[name] ?? name) + " ▾" : "Measure ▾";
+    const topKey = _TOOL_TO_TOP_LEVEL[name];
+    const topLabel = topKey ? MEASURE_TOP_LEVEL[topKey].label : null;
+    measureBtn.textContent = inGroup ? (topLabel ?? _TOOL_LABELS[name] ?? name) + " ▾" : "Measure ▾";
     measureBtn.classList.toggle("active", inGroup);
   }
   if (setupBtn) {
     setupBtn.classList.toggle("active", name === "calibrate");
   }
   if (optsBar) {
-    const showOpts = name === "arc-measure" || name === "circle";
-    optsBar.hidden = !showOpts;
+    // All measure sub-options now live in the bottom-center sub-mode selector.
+    // Keep the legacy inline bar hidden.
+    optsBar.hidden = true;
     const arcOpts = document.getElementById("tool-opts-arc-measure");
     const circleOpts = document.getElementById("tool-opts-circle");
-    if (arcOpts) arcOpts.hidden = name !== "arc-measure";
-    if (circleOpts) circleOpts.hidden = name !== "circle";
+    if (arcOpts) arcOpts.hidden = true;
+    if (circleOpts) circleOpts.hidden = true;
   }
+  if (_subModeSelectorSync) _subModeSelectorSync();
 }
 
 export function canvasPoint(e) {
@@ -120,7 +221,7 @@ export function snapPoint(rawPt, bypass = false) {
       }
     } else if (["circle", "arc-fit", "detected-circle"].includes(ann.type)) {
       targets.push({ x: ann.cx, y: ann.cy });
-    } else if (ann.type === "spline") {
+    } else if (ann.type === "spline" || ann.type === "fit-line") {
       (ann.points || []).forEach(p => targets.push(p));
     } else if (ann.type === "origin") {
       targets.push({ x: ann.x, y: ann.y });
@@ -245,11 +346,47 @@ export async function handleToolClick(rawPt, e = {}) {
   }
 
   if (tool === "angle") {
+    // Sub-mode: user explicitly chose "two-lines" or "three-points" in the
+    // sub-mode selector. Honor that choice strictly — no silent fallback.
+    if (state.angleMode === "two-lines") {
+      if (!state.pendingRefLine) {
+        const refAnn = findSnapLine(pt);
+        if (!refAnn) {
+          showStatus("Angle (two lines) — click on a line");
+          return;
+        }
+        state.pendingRefLine = refAnn;
+        state.pendingRefLineClick = { x: pt.x, y: pt.y };
+        showStatus("Angle — click a second line to measure the angle between them");
+        redraw();
+        return;
+      }
+      const secondAnn = findSnapLine(pt);
+      if (!secondAnn || secondAnn.id === state.pendingRefLine.id) {
+        showStatus("Angle (two lines) — click on a different line");
+        return;
+      }
+      const ann = _angleFromLines(
+        state.pendingRefLine, secondAnn,
+        state.pendingRefLineClick, { x: pt.x, y: pt.y },
+      );
+      state.pendingRefLine = null;
+      state.pendingRefLineClick = null;
+      if (ann) {
+        addAnnotation(ann);
+        setTool("select");
+      } else {
+        showStatus("Angle — lines are parallel, no intersection");
+      }
+      return;
+    }
+    // Three-points mode.
     state.pendingPoints.push(pt);
     if (state.pendingPoints.length === 3) {
       const [p1, vertex, p3] = state.pendingPoints;
       addAnnotation({ type: "angle", p1, vertex, p3 });
       state.pendingPoints = [];
+      setTool("select");
     }
     updateToolStatus();
     redraw();
@@ -292,6 +429,13 @@ export async function handleToolClick(rawPt, e = {}) {
   }
 
   if (tool === "spline") {
+    state.pendingPoints.push(pt);
+    updateToolStatus();
+    redraw();
+    return;
+  }
+
+  if (tool === "fit-line") {
     state.pendingPoints.push(pt);
     updateToolStatus();
     redraw();
@@ -473,6 +617,11 @@ export async function handleToolClick(rawPt, e = {}) {
     setTool("select");
     return;
   }
+  if (tool === "comment") {
+    // Open inline editor at click location; on commit, create annotation.
+    openCommentEditor(pt, null);
+    return;
+  }
   if (tool === "slot-dist") {
     const snapped = findSnapLine(pt);
     if (!state.pendingRefLine) {
@@ -552,7 +701,23 @@ export function getHandles(ann) {
   if (ann.type === "distance" ||
       ann.type === "perp-dist" || ann.type === "para-dist" ||
       ann.type === "parallelism") return { a: ann.a, b: ann.b };
-  if (ann.type === "angle")    return { p1: ann.p1, vertex: ann.vertex, p3: ann.p3 };
+  if (ann.type === "angle") {
+    if (ann.fromLines) {
+      // Radius drag handle at arc midpoint
+      const a1 = Math.atan2(ann.p1.y - ann.vertex.y, ann.p1.x - ann.vertex.x);
+      const a3 = Math.atan2(ann.p3.y - ann.vertex.y, ann.p3.x - ann.vertex.x);
+      let delta = a3 - a1;
+      while (delta >  Math.PI) delta -= 2 * Math.PI;
+      while (delta < -Math.PI) delta += 2 * Math.PI;
+      const start = delta >= 0 ? a1 : a3;
+      const end   = delta >= 0 ? a3 : a1;
+      let mid = start + (end - start) / 2;
+      if (end < start) mid += Math.PI;
+      const r = ann.arcRadius || 40 / viewport.zoom;
+      return { radius: { x: ann.vertex.x + Math.cos(mid) * r, y: ann.vertex.y + Math.sin(mid) * r } };
+    }
+    return { p1: ann.p1, vertex: ann.vertex, p3: ann.p3 };
+  }
   if (ann.type === "circle")   return { center: { x: ann.cx, y: ann.cy }, edge: { x: ann.cx + ann.r, y: ann.cy } };
   if (ann.type === "calibration") {
     if (ann.x1 !== undefined) return { a: { x: ann.x1, y: ann.y1 }, b: { x: ann.x2, y: ann.y2 } };
@@ -576,11 +741,12 @@ export function getHandles(ann) {
   }
   if (ann.type === "arc-measure") return { p1: ann.p1, p2: ann.p2, p3: ann.p3 };
   if (ann.type === "arc-fit") return { center: { x: ann.cx, y: ann.cy }, edge: { x: ann.cx + ann.r, y: ann.cy } };
-  if (ann.type === "spline") {
+  if (ann.type === "spline" || ann.type === "fit-line") {
     const handles = {};
     (ann.points || []).forEach((p, i) => { handles[`v${i}`] = p; });
     return handles;
   }
+  if (ann.type === "comment") return { pin: { x: ann.x, y: ann.y } };
   if (ann.type === "pt-circle-dist") return { pt: { x: ann.px, y: ann.py } };
   if (ann.type === "intersect") return {};
   if (ann.type === "slot-dist") return {};
@@ -647,7 +813,18 @@ export function handleDrag(pt) {
     else { ann.a.x+=dx; ann.a.y+=dy; ann.b.x+=dx; ann.b.y+=dy; }
   }
   else if (ann.type === "angle") {
-    if (handleKey === "p1")     { ann.p1.x+=dx; ann.p1.y+=dy; }
+    if (ann.fromLines) {
+      if (handleKey === "radius") {
+        // Set radius to the distance from vertex to the pointer.
+        ann.arcRadius = Math.max(5, Math.hypot(pt.x - ann.vertex.x, pt.y - ann.vertex.y));
+      } else {
+        // Body drag: translate vertex and arm points together (keeps directions & radius).
+        ann.p1.x+=dx; ann.p1.y+=dy;
+        ann.vertex.x+=dx; ann.vertex.y+=dy;
+        ann.p3.x+=dx; ann.p3.y+=dy;
+      }
+    }
+    else if (handleKey === "p1")     { ann.p1.x+=dx; ann.p1.y+=dy; }
     else if (handleKey === "p3") { ann.p3.x+=dx; ann.p3.y+=dy; }
     else if (handleKey === "vertex") { ann.vertex.x+=dx; ann.vertex.y+=dy; }
     else { ann.p1.x+=dx; ann.p1.y+=dy; ann.vertex.x+=dx; ann.vertex.y+=dy; ann.p3.x+=dx; ann.p3.y+=dy; }
@@ -728,8 +905,37 @@ export function handleDrag(pt) {
     }
     ann.length_px = splineArcLength(ann.points);
   }
+  else if (ann.type === "fit-line") {
+    if (handleKey === "body") {
+      ann.points.forEach(p => { p.x += dx; p.y += dy; });
+      ann.cx += dx; ann.cy += dy;
+      ann.x1 += dx; ann.y1 += dy;
+      ann.x2 += dx; ann.y2 += dy;
+    } else if (handleKey.startsWith("v")) {
+      const i = parseInt(handleKey.slice(1));
+      ann.points[i].x += dx; ann.points[i].y += dy;
+    }
+    // Recompute fit and zone
+    const fit = fitLine(ann.points);
+    if (fit) {
+      ann.cx = fit.cx; ann.cy = fit.cy;
+      ann.dx = fit.dx; ann.dy = fit.dy;
+      ann.x1 = fit.x1; ann.y1 = fit.y1;
+      ann.x2 = fit.x2; ann.y2 = fit.y2;
+      const fnx = -fit.dy, fny = fit.dx;
+      const dists = ann.points.map(p => (p.x - fit.cx) * fnx + (p.y - fit.cy) * fny);
+      ann.zoneMin = Math.min(...dists);
+      ann.zoneMax = Math.max(...dists);
+      ann.zoneWidth = ann.zoneMax - ann.zoneMin;
+    }
+  }
   else if (ann.type === "pt-circle-dist") {
     ann.px += dx; ann.py += dy;
+  }
+  else if (ann.type === "comment") {
+    // Body drag (and pin handle drag) translate the pin; labelOffset is
+    // modified only via the label-drag machinery.
+    ann.x += dx; ann.y += dy;
   }
 
   renderSidebar();
@@ -738,14 +944,12 @@ export function handleDrag(pt) {
 
 // ── Multi-point tool finalization ─────────────────────────────────────────────
 
-/** Show the Arc / Circle chooser. Called from dblclick and Enter handlers. */
+/** Finalize arc-fit directly using the current state.arcFitMode. */
 export function promptArcFitChoice() {
   if (state.pendingPoints.length < 3) return;
   const fit = fitCircleAlgebraic(state.pendingPoints);
   if (!fit) { showStatus("Could not fit circle — points may be collinear"); return; }
-  const chooser = document.getElementById("arc-fit-chooser");
-  if (!chooser) { finalizeArcFit(false); return; }
-  chooser.hidden = false;
+  finalizeArcFit(state.arcFitMode === "circle");
 }
 
 /** Called by the Arc / Circle chooser buttons. */
@@ -756,12 +960,13 @@ export function finalizeArcFit(asCircle) {
   const fit = fitCircleAlgebraic(state.pendingPoints);
   if (!fit) { showStatus("Could not fit circle — points may be collinear"); return; }
 
+  const savedPoints = [...state.pendingPoints];
   let ann;
   if (asCircle) {
-    ann = { type: "arc-fit", cx: fit.cx, cy: fit.cy, r: fit.r };
+    ann = { type: "arc-fit", cx: fit.cx, cy: fit.cy, r: fit.r, points: savedPoints };
   } else {
     const { startAngle, endAngle, anticlockwise } = _arcAngles(state.pendingPoints, fit.cx, fit.cy);
-    ann = { type: "arc-fit", cx: fit.cx, cy: fit.cy, r: fit.r, startAngle, endAngle, anticlockwise };
+    ann = { type: "arc-fit", cx: fit.cx, cy: fit.cy, r: fit.r, startAngle, endAngle, anticlockwise, points: savedPoints };
   }
   addAnnotation(ann);
   state.pendingPoints = [];
@@ -800,6 +1005,69 @@ export function finalizeSpline() {
   state.pendingPoints = [];
   setTool("select");
   return true;
+}
+
+export function finalizeFitLine() {
+  if (state.pendingPoints.length < 2) return false;
+  const fit = fitLine(state.pendingPoints);
+  if (!fit) return false;
+  const pts = state.pendingPoints;
+  const { cx, cy, dx, dy } = fit;
+  const nx = -dy, ny = dx;
+  const dists = pts.map(p => (p.x - cx) * nx + (p.y - cy) * ny);
+  const zoneMin = Math.min(...dists);
+  const zoneMax = Math.max(...dists);
+  const zoneWidth = zoneMax - zoneMin;
+  addAnnotation({
+    type: "fit-line", points: [...pts],
+    cx, cy, dx, dy,
+    x1: fit.x1, y1: fit.y1, x2: fit.x2, y2: fit.y2,
+    zoneWidth, zoneMin, zoneMax,
+  });
+  state.pendingPoints = [];
+  setTool("select");
+  return true;
+}
+
+// ── Line-to-line angle ────────────────────────────────────────────────────────
+// Given two line-like annotations and the points the user clicked on them,
+// compute the intersection vertex and return an angle annotation.
+// The arc is centered at the true intersection and passes through the
+// projected click points by default; the user can drag the radius handle to
+// move the arc in/out along the angle bisector.
+function _angleFromLines(annA, annB, clickA, clickB) {
+  const epA = getLineEndpoints(annA);
+  const epB = getLineEndpoints(annB);
+  if (!epA || !epB) return null;
+
+  const dx_a = epA.b.x - epA.a.x, dy_a = epA.b.y - epA.a.y;
+  const dx_b = epB.b.x - epB.a.x, dy_b = epB.b.y - epB.a.y;
+  const denom = dx_a * dy_b - dy_a * dx_b;
+  if (Math.abs(denom) < 1e-6) return null; // parallel
+
+  const t = ((epB.a.x - epA.a.x) * dy_b - (epB.a.y - epA.a.y) * dx_b) / denom;
+  const vertex = {
+    x: epA.a.x + t * dx_a,
+    y: epA.a.y + t * dy_a,
+  };
+
+  // Project each click onto its line so the arm endpoint lies exactly on it.
+  function _project(pt, ep) {
+    const dx = ep.b.x - ep.a.x, dy = ep.b.y - ep.a.y;
+    const l2 = dx*dx + dy*dy;
+    if (l2 < 1e-10) return { x: ep.a.x, y: ep.a.y };
+    const u = ((pt.x - ep.a.x) * dx + (pt.y - ep.a.y) * dy) / l2;
+    return { x: ep.a.x + u * dx, y: ep.a.y + u * dy };
+  }
+  const p1 = _project(clickA, epA);
+  const p3 = _project(clickB, epB);
+
+  // Default arc radius = average distance from intersection to the two clicks.
+  const rA = Math.hypot(p1.x - vertex.x, p1.y - vertex.y);
+  const rB = Math.hypot(p3.x - vertex.x, p3.y - vertex.y);
+  const arcRadius = (rA + rB) / 2;
+
+  return { type: "angle", fromLines: true, vertex, p1, p3, arcRadius };
 }
 
 // ── Dynamic step status ───────────────────────────────────────────────────────
@@ -844,6 +1112,11 @@ export function updateToolStatus() {
   if (tool === 'spline') {
     if (n < 2) showStatus(`Spline — ${n} anchor placed, need ${2 - n} more`);
     else       showStatus(`Spline — ${n} anchors · double-click or Enter to finish`);
+    return;
+  }
+  if (tool === 'fit-line') {
+    if (n < 2) showStatus(`Fit Line — ${n} point placed, need ${2 - n} more`);
+    else       showStatus(`Fit Line — ${n} points · double-click or Enter to finish`);
     return;
   }
 }
@@ -894,6 +1167,8 @@ function _nudgeAnn(ann, dx, dy) {
     ann.cx += dx; ann.cy += dy;
   } else if (ann.type === 'pt-circle-dist') {
     ann.px += dx; ann.py += dy;
+  } else if (ann.type === 'comment') {
+    ann.x += dx; ann.y += dy;
   }
   // intersect, slot-dist: reference-based — skip individual nudge
   // detected-*: skip

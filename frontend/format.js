@@ -78,19 +78,41 @@ export function measurementLabel(ann, ctx) {
   }
   if (ann.type === "arc-fit") {
     const isArc = ann.startAngle !== undefined;
+    // Roundness: range of radii from fit points to fit center
+    let roundnessStr = "";
+    if (ann.points && ann.points.length >= 3) {
+      const radii = ann.points.map(p => Math.hypot(p.x - ann.cx, p.y - ann.cy));
+      const roundnessPx = Math.max(...radii) - Math.min(...radii);
+      if (cal) {
+        const roundnessMm = roundnessPx / cal.pixelsPerMm;
+        roundnessStr = cal.displayUnit === "\u00b5m"
+          ? `  \u25cb ${(roundnessMm * 1000).toFixed(2)} \u00b5m`
+          : `  \u25cb ${roundnessMm.toFixed(3)} mm`;
+      } else {
+        roundnessStr = `  \u25cb ${roundnessPx.toFixed(1)} px`;
+      }
+    }
     if (isArc) {
-      if (!cal) return `R ${ann.r.toFixed(1)} px`;
+      if (!cal) return `R ${ann.r.toFixed(1)} px${roundnessStr}`;
       const mm = ann.r / cal.pixelsPerMm;
       return cal.displayUnit === "\u00b5m"
-        ? `R ${(mm * 1000).toFixed(2)} \u00b5m`
-        : `R ${mm.toFixed(3)} mm`;
+        ? `R ${(mm * 1000).toFixed(2)} \u00b5m${roundnessStr}`
+        : `R ${mm.toFixed(3)} mm${roundnessStr}`;
     } else {
-      if (!cal) return `\u2300 ${(ann.r * 2).toFixed(1)} px`;
+      if (!cal) return `\u2300 ${(ann.r * 2).toFixed(1)} px${roundnessStr}`;
       const mm = (ann.r * 2) / cal.pixelsPerMm;
       return cal.displayUnit === "\u00b5m"
-        ? `\u2300 ${(mm * 1000).toFixed(2)} \u00b5m`
-        : `\u2300 ${mm.toFixed(3)} mm`;
+        ? `\u2300 ${(mm * 1000).toFixed(2)} \u00b5m${roundnessStr}`
+        : `\u2300 ${mm.toFixed(3)} mm${roundnessStr}`;
     }
+  }
+  if (ann.type === "fit-line") {
+    const zoneWidth = ann.zoneWidth || 0;
+    if (!cal) return `\u23e5 ${zoneWidth.toFixed(1)} px`;
+    const mm = zoneWidth / cal.pixelsPerMm;
+    return cal.displayUnit === "\u00b5m"
+      ? `\u23e5 ${(mm * 1000).toFixed(2)} \u00b5m`
+      : `\u23e5 ${mm.toFixed(3)} mm`;
   }
   if (ann.type === "detected-circle") {
     const sx = ctx.imageWidth / ann.frameWidth;
@@ -318,6 +340,9 @@ export function formatCsvValue(ann, calibration, imgWidth) {
   }
   if (ann.type === "arc-fit") {
     return distResult(ann.r * 2);
+  }
+  if (ann.type === "fit-line") {
+    return distResult(ann.zoneWidth || 0);
   }
   if (ann.type === "arc-measure") {
     const ppm = cal ? cal.pixelsPerMm : 1;

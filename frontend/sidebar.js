@@ -27,7 +27,13 @@ function _createMeasurementRow(ann, number) {
   nameInput.placeholder = "Label…";
   const valSpan = document.createElement("span");
   valSpan.className = "measurement-value";
-  valSpan.textContent = measurementLabel(ann, _mctx());
+  if (ann.type === "comment") {
+    const txt = String(ann.text || "").replace(/\n/g, " ");
+    valSpan.textContent = txt.length > 40 ? txt.slice(0, 37) + "…" : txt;
+    valSpan.style.color = "#fbbf24";
+  } else {
+    valSpan.textContent = measurementLabel(ann, _mctx());
+  }
   const delBtn = document.createElement("button");
   delBtn.className = "del-btn";
   delBtn.dataset.id = ann.id;
@@ -756,9 +762,15 @@ export function renderInspectionTable() {
           if (r.tp_dev_mm != null) {
               deviationText += `  TP \u2300${r.tp_dev_mm.toFixed(4)}`;
           }
+          if (r.profile_mm != null) {
+              deviationText += `  \u23e5${r.profile_mm.toFixed(4)}`;
+          }
       }
 
       let deviationTitle = "";
+      if (r.profile_mm != null) {
+          deviationTitle += `Profile of a line: \u23e5${r.profile_mm.toFixed(4)} mm\n`;
+      }
       if (r.tp_dev_mm != null && r.dx_px != null) {
           const angle = state.origin?.angle ?? 0;
           const cosA = Math.cos(-angle);
@@ -766,7 +778,7 @@ export function renderInspectionTable() {
           const ppm = state.calibration?.pixelsPerMm || 1;
           const datumDx = (r.dx_px * cosA - r.dy_px * sinA) / ppm;
           const datumDy = -(r.dx_px * sinA + r.dy_px * cosA) / ppm;  // Y-flip: image Y-down → drawing Y-up
-          deviationTitle = `True Position: \u2300${r.tp_dev_mm.toFixed(4)} mm\n` +
+          deviationTitle += `True Position: \u2300${r.tp_dev_mm.toFixed(4)} mm\n` +
               `Center: ${r.deviation_mm.toFixed(4)} mm\n` +
               `Datum X: ${datumDx >= 0 ? "+" : ""}${datumDx.toFixed(4)} mm\n` +
               `Datum Y: ${datumDy >= 0 ? "+" : ""}${datumDy.toFixed(4)} mm`;

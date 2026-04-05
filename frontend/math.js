@@ -123,6 +123,15 @@ export function splineArcLength(points) {
   return total;
 }
 
+/**
+ * Signed perpendicular distance from pt to infinite line through (cx,cy) with direction (dx,dy).
+ * Positive on the left side of the direction vector.
+ */
+export function signedDistPointToLine(pt, cx, cy, dx, dy) {
+  const nx = -dy, ny = dx;
+  return (pt.x - cx) * nx + (pt.y - cy) * ny;
+}
+
 export function fitLine(points) {
   if (points.length < 2) return null;
   const n = points.length;

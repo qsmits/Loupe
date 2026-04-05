@@ -388,7 +388,8 @@ export function drawDeviations(ann) {
     } else {
       const devText = `⊥ ${r.perp_dev_mm?.toFixed(3)} mm`;
       const angText = r.angle_error_deg != null ? `  ∠ ${r.angle_error_deg.toFixed(1)}°` : "";
-      const text = `${devText}${angText}`;
+      const profText = r.profile_mm != null ? `  ⏥${r.profile_mm.toFixed(3)}` : "";
+      const text = `${devText}${angText}${profText}`;
       ctx.fillText(text, nominal.x + pw(4), nominal.y - pw(4));
       const textW = ctx.measureText(text).width;
       _deviationHitBoxes.push({ handle: r.handle, x: nominal.x + pw(4), y: nominal.y - pw(14), w: textW, h: pw(14) });

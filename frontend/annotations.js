@@ -223,7 +223,7 @@ export function clearDetections() {
 
 export function clearMeasurements() {
   pushUndo();
-  const KEEP = new Set([...DETECTION_TYPES, ...OVERLAY_TYPES, "calibration", "origin", "dxf-overlay"]);
+  const KEEP = new Set([...DETECTION_TYPES, ...OVERLAY_TYPES, "calibration", "origin", "dxf-overlay", "comment"]);
   state.annotations = state.annotations.filter(a => KEEP.has(a.type));
   state.selected = new Set();
   renderSidebar();

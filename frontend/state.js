@@ -14,6 +14,8 @@ export const state = {
   pendingPoints: [],
   pendingCenterCircle: null,
   pendingRefLine: null,
+  pendingRefLineClick: null,
+  hoverRefLine: null,  // annotation the angle tool would capture on click
   pendingCircleRef: null,
   origin: null,
   dragState: null,
@@ -57,8 +59,11 @@ export const state = {
   _subpixelSnapTarget: null, // { x, y } — live preview of where sub-pixel snap would place a point
   lensK1: 0,                 // radial distortion coefficient (applied in-place to frozenBackground)
   arcMeasureMode: "sequential", // "sequential" | "ends-first"
+  arcFitMode: "arc",           // "arc" | "circle" — whether Best-fit yields a partial arc or full circle
+  angleMode: "two-lines",      // "two-lines" | "three-points"
   circleMode: "3-point",       // "3-point" | "center-edge"
   surfaceMode: "edm",          // "edm" | "lathe" | "print"
+  _topLevelTool: null,      // non-persistent: "distance"|"angle"|"circle"|"flatness"|"area"|"intersect" when a measure tool is active
   _noCamera: false,         // was let _noCamera (line 36)
   _dirty: false,
   _savedManually: true,
@@ -91,20 +96,22 @@ export function pushUndo() {
 export const TOOL_STATUS = {
   "select":         "Select",
   "calibrate":      "Click — place two points or select a circle",
-  "distance":       "Click — place point 1",
-  "angle":          "Click — place point 1",
-  "circle":         "Click — place point 1 (3-point mode)",
-  "arc-fit":        "Click — place points (double-click to confirm)",
-  "center-dist":    "Click — select a circle",
+  "distance":       "Distance · Direct — click to place point 1",
+  "angle":          "Angle — click a line (two-lines) or empty space (three-points)",
+  "circle":         "Circle/Arc · 3-point — click to place point 1",
+  "arc-fit":        "Circle/Arc · Best-fit — place points (double-click to confirm)",
+  "center-dist":    "Distance · Center-Center — click to select a circle",
   "detect":         "Click — detect features",
-  "perp-dist":      "Click — select a reference line",
-  "para-dist":      "Click — select a reference line",
-  "area":           "Click — place points (double-click to confirm)",
-  "pt-circle-dist": "Click — select a circle to measure from",
-  "intersect":      "Click — select a reference line",
-  "slot-dist":      "Click — select a reference line",
-  "arc-measure":    "Click — place 3 points on arc (double-click or 3rd click to confirm)",
-  "spline":         "Click — place anchor points (double-click or Enter to finish)",
+  "perp-dist":      "Distance · Perpendicular — click to select a reference line",
+  "para-dist":      "Distance · Parallel — click to select a reference line",
+  "area":           "Area · Polygon — click to place points (double-click to confirm)",
+  "pt-circle-dist": "Distance · Pt-Circle — click to select a circle",
+  "intersect":      "Intersect — click to select a reference line",
+  "slot-dist":      "Distance · Slot — click to select a reference line",
+  "arc-measure":    "Circle/Arc · Arc measure — place 3 points on arc",
+  "spline":         "Area · Spline — place anchor points (double-click or Enter to finish)",
+  "fit-line":       "Flatness — place points on a line (double-click or Enter to confirm)",
+  "comment":        "Click — place a note on the canvas",
 };
 
 // ── TRANSIENT_TYPES (moved from line 3062) ───────────────────────────────────

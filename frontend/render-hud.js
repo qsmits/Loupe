@@ -10,7 +10,7 @@ import { ctx, canvas, pw, drawHandle } from './render.js';
 const _LOUPE_TOOLS = new Set([
   "distance", "angle", "circle", "arc-fit", "arc-measure",
   "perp-dist", "para-dist", "center-dist", "pt-circle-dist",
-  "intersect", "slot-dist", "area", "calibrate", "spline",
+  "intersect", "slot-dist", "area", "calibrate", "spline", "fit-line",
 ]);
 
 export function drawGrid() {

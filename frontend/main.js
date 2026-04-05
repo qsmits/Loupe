@@ -8,6 +8,7 @@ import { renderSidebar, loadCameraInfo, loadUiConfig, loadTolerances,
 import { deleteAnnotation, addAnnotation, elevateSelected, clearDetections, clearMeasurements, clearDxfOverlay, clearAll } from './annotations.js';
 import { assembleTemplate, downloadTemplate, readTemplateFile } from './template.js';
 import { setTool } from './tools.js';
+import { initSubModeSelector } from './sub-mode-selector.js';
 import { initDxfHandlers, measurementsAsDxf } from './dxf.js';
 import { doFreeze, initDetectHandlers } from './detect.js';
 import { saveSession, loadSession, exportAnnotatedImage, exportCsv, exportDxf, autoSave, tryAutoRestore } from './session.js';
@@ -78,6 +79,11 @@ document.getElementById("btn-menu-overlay").addEventListener("click", e => {
 document.getElementById("btn-menu-clear").addEventListener("click", e => {
   e.stopPropagation();
   toggleDropdown("btn-menu-clear", "dropdown-clear");
+});
+document.getElementById("btn-menu-note")?.addEventListener("click", e => {
+  e.stopPropagation();
+  closeAllDropdowns();
+  setTool("comment");
 });
 document.getElementById("btn-menu-camera").addEventListener("click", e => {
   e.stopPropagation();
@@ -1099,6 +1105,7 @@ window.addEventListener("resize", resizeCanvas);
 document.querySelectorAll("#tool-strip .strip-btn[data-tool]").forEach(btn => {
   btn.addEventListener("click", () => setTool(btn.dataset.tool));
 });
+initSubModeSelector();   // wires the segmented control under the tool strip
 setTool(state.tool);  // sync initial active state via setTool
 
 loadCameraInfo();

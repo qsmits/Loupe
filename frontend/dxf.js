@@ -469,6 +469,7 @@ export function initDxfHandlers() {
         dy_px: r.dy_px ?? null,
         center_dev_mm: r.center_dev_mm ?? null,
         radius_dev_mm: r.radius_dev_mm ?? null,
+        profile_mm: r.profile_mm ?? null,
       }));
 
       // Capture inspection frame

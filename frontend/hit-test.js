@@ -6,8 +6,32 @@ import { state } from './state.js';
 import { getLineEndpoints, lineAngleDeg } from './format.js';
 import { distPointToSegment, catmullRomControlPoints } from './math.js';
 import { viewport, imageWidth, imageHeight } from './viewport.js';
-import { canvas } from './render.js';
+import { canvas, ctx, pw } from './render.js';
 import { dxfToCanvas } from './render-dxf.js';
+
+// Bounding box of a comment's text box in image coords (matches drawComment layout).
+export function commentLabelBox(ann) {
+  const z = viewport.zoom;
+  const offset = ann.labelOffset || { dx: 0, dy: 0 };
+  const lx = ann.x + 12 + offset.dx;
+  const ly = ann.y - 12 + offset.dy;
+  const lines = String(ann.text || "").split("\n");
+  // Match drawLabel font metrics
+  const fontSize = pw(12);
+  ctx.save();
+  ctx.font = `bold ${fontSize}px ui-monospace, monospace`;
+  let maxW = 0;
+  for (const ln of lines) maxW = Math.max(maxW, ctx.measureText(ln).width);
+  ctx.restore();
+  const lineH = pw(16);
+  const padX = pw(2);
+  const padTop = pw(13);
+  const boxX = lx - padX;
+  const boxY = ly - padTop;
+  const boxW = maxW + pw(4);
+  const boxH = lineH * lines.length;
+  return { x: boxX, y: boxY, w: boxW, h: boxH };
+}
 
 export function hitTestAnnotation(ann, pt) {
   const z = viewport.zoom;
@@ -17,6 +41,23 @@ export function hitTestAnnotation(ann, pt) {
     return distPointToSegment(pt, ann.a, ann.b) < 8 / z;
   }
   if (ann.type === "angle") {
+    if (ann.fromLines) {
+      // Hit on the arc ring (radius = ann.arcRadius) within the angle span.
+      const d = Math.hypot(pt.x - ann.vertex.x, pt.y - ann.vertex.y);
+      const r = ann.arcRadius || 40 / z;
+      if (Math.abs(d - r) > 8 / z) return false;
+      const a  = Math.atan2(pt.y - ann.vertex.y, pt.x - ann.vertex.x);
+      const a1 = Math.atan2(ann.p1.y - ann.vertex.y, ann.p1.x - ann.vertex.x);
+      const a3 = Math.atan2(ann.p3.y - ann.vertex.y, ann.p3.x - ann.vertex.x);
+      const norm = x => ((x % (2*Math.PI)) + 2*Math.PI) % (2*Math.PI);
+      let delta = a3 - a1;
+      while (delta >  Math.PI) delta -= 2 * Math.PI;
+      while (delta < -Math.PI) delta += 2 * Math.PI;
+      const start = delta >= 0 ? a1 : a3;
+      const span  = Math.abs(delta);
+      const off   = norm(a - start);
+      return off <= span + 0.05;
+    }
     return distPointToSegment(pt, ann.p1, ann.vertex) < 8 / z ||
            distPointToSegment(pt, ann.vertex, ann.p3) < 8 / z;
   }
@@ -133,6 +174,10 @@ export function hitTestAnnotation(ann, pt) {
     if (Math.hypot(pt.x - ann.p3.x, pt.y - ann.p3.y) < 8 / z) return true;
     return false;
   }
+  if (ann.type === "fit-line") {
+    if (!ann.x1 && !ann.x2) return false;
+    return distPointToSegment(pt, { x: ann.x1, y: ann.y1 }, { x: ann.x2, y: ann.y2 }) < 8 / z;
+  }
   if (ann.type === "spline") {
     const pts = ann.points;
     if (!pts || pts.length < 2) return false;
@@ -154,6 +199,14 @@ export function hitTestAnnotation(ann, pt) {
       }
     }
     return false;
+  }
+  if (ann.type === "comment") {
+    // Pin hit
+    if (Math.hypot(pt.x - ann.x, pt.y - ann.y) < 10 / z) return true;
+    // Text box hit
+    const box = commentLabelBox(ann);
+    return pt.x >= box.x && pt.x <= box.x + box.w &&
+           pt.y >= box.y && pt.y <= box.y + box.h;
   }
   if (ann.type === "detected-circle") {
     const sx = ann.frameWidth ? imageWidth / ann.frameWidth : 1;

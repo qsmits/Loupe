@@ -58,6 +58,7 @@ def _unmatched(entity: dict, reason: str) -> dict:
         "tp_dev_mm": None,
         "dx_px": None,
         "dy_px": None,
+        "profile_mm": None,
         "pass_fail": None,
         "reason": reason,
     }
@@ -181,6 +182,12 @@ def _inspect_line(entity, edge_xy, ppm, tx, ty, angle_rad,
     cov = centered.T @ centered
     eigenvalues, eigenvectors = np.linalg.eigh(cov)
     direction = eigenvectors[:, 1]
+    fit_normal = eigenvectors[:, 0]
+
+    # Profile of a line: bilateral zone (max - min signed distance from fit line)
+    signed_dists = centered @ fit_normal
+    profile_px = float(signed_dists.max() - signed_dists.min()) if len(inlier_pts) >= 2 else 0.0
+    profile_mm = profile_px / ppm
 
     # Deviation = perpendicular distance from fitted centroid to nominal line
     perp_dev_px = (centroid[0] - x1_px) * nx + (centroid[1] - y1_px) * ny
@@ -211,6 +218,7 @@ def _inspect_line(entity, edge_xy, ppm, tx, ty, angle_rad,
         "tp_dev_mm": None,
         "dx_px": None,
         "dy_px": None,
+        "profile_mm": round(profile_mm, 4),
         "tolerance_warn": tol_warn,
         "tolerance_fail": tol_fail,
         "pass_fail": pf,
@@ -382,6 +390,7 @@ def _inspect_arc_circle(entity, edge_xy, ppm, tx, ty, angle_rad,
         "tp_dev_mm": round(2.0 * center_dev_mm, 4),
         "dx_px": round(float(fit_cx - cx_px), 2),
         "dy_px": round(float(fit_cy - cy_px), 2),
+        "profile_mm": None,
         "tolerance_warn": tol_warn,
         "tolerance_fail": tol_fail,
         "pass_fail": pf,
@@ -527,6 +536,12 @@ def fit_manual_points(
         cov = centered.T @ centered
         eigenvalues, eigenvectors = np.linalg.eigh(cov)
         direction = eigenvectors[:, 1]
+        fit_normal = eigenvectors[:, 0]
+
+        # Profile of a line: bilateral zone of points vs fitted line
+        signed_dists = centered @ fit_normal
+        profile_px = float(signed_dists.max() - signed_dists.min()) if len(pts) >= 2 else 0.0
+        profile_mm = profile_px / pixels_per_mm
 
         perp_dev_px = (centroid[0] - x1_px) * nx + (centroid[1] - y1_px) * ny
         perp_dev_mm = perp_dev_px / pixels_per_mm
@@ -554,6 +569,7 @@ def fit_manual_points(
             "tp_dev_mm": None,
             "dx_px": None,
             "dy_px": None,
+            "profile_mm": round(profile_mm, 4),
             "tolerance_warn": tol_w,
             "tolerance_fail": tol_f,
             "pass_fail": pf,
@@ -612,6 +628,7 @@ def fit_manual_points(
             "tp_dev_mm": round(2.0 * center_dev_mm, 4),
             "dx_px": round(float(fit_cx - cx_px), 2),
             "dy_px": round(float(fit_cy - cy_px), 2),
+            "profile_mm": None,
             "tolerance_warn": tol_w,
             "tolerance_fail": tol_f,
             "pass_fail": pf,
