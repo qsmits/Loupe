@@ -26,6 +26,15 @@ const zs = {
   hdrEnabled: false,
   hdrStops: [-2.0, 0.0, 2.0],
   fusionMode: "pyramid", // "argmax" | "pyramid"
+  profile: {
+    active: false,    // "click two points" mode
+    p0: null,         // {x, y} in full-res image px
+    p1: null,
+    data: null,       // last /zstack/profile response
+    markerA: 0.25,
+    markerB: 0.75,
+    dragging: null,   // "A" | "B" | null
+  },
 };
 
 function $(id) { return document.getElementById(id); }
@@ -100,9 +109,23 @@ function buildDialog() {
                   </select>
                 </label>
               </div>
-              <img id="zstack-heightmap-img" style="width:100%;border:1px solid #444;background:#111" />
+              <div id="zstack-heightmap-wrap" style="position:relative;line-height:0">
+                <img id="zstack-heightmap-img" style="width:100%;border:1px solid #444;background:#111;display:block" />
+                <svg id="zstack-profile-overlay" style="position:absolute;left:0;top:0;width:100%;height:100%;pointer-events:none"></svg>
+              </div>
               <a id="zstack-heightmap-dl" download="zstack-heightmap.png" class="detect-btn" style="display:inline-block;margin-top:6px;text-decoration:none">Download PNG</a>
             </div>
+          </div>
+
+          <div id="zstack-profile-section" hidden style="margin-top:12px;padding:8px 10px;background:#161616;border:1px solid #2a2a2a;border-radius:3px">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;flex-wrap:wrap">
+              <strong style="font-size:12px">Profile</strong>
+              <button class="detect-btn" id="btn-zstack-profile-draw" style="margin-left:8px">Draw profile</button>
+              <button class="detect-btn" id="btn-zstack-profile-clear">Clear</button>
+              <span id="zstack-profile-status" style="opacity:0.75;font-size:11px"></span>
+            </div>
+            <canvas id="zstack-profile-chart" style="width:100%;height:200px;background:#0b0b0b;border:1px solid #333;display:block"></canvas>
+            <div id="zstack-profile-readout" style="margin-top:6px;font-size:12px;opacity:0.9;font-variant-numeric:tabular-nums"></div>
           </div>
           <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
             <button class="detect-btn" id="btn-zstack-use-composite">Use composite as working image</button>
@@ -141,7 +164,308 @@ function buildDialog() {
     const url = `${base}?detrend=${encodeURIComponent(mode)}&t=${Date.now()}`;
     $("zstack-heightmap-img").src = url;
     $("zstack-heightmap-dl").href = url;
+    // Re-fetch the profile against the new level so the chart matches
+    // whatever the user is looking at.
+    if (zs.profile.p0 && zs.profile.p1) fetchProfile();
   });
+
+  // Profile controls
+  $("btn-zstack-profile-draw").addEventListener("click", () => {
+    if (!zs.computed) return;
+    zs.profile.active = true;
+    zs.profile.p0 = null;
+    zs.profile.p1 = null;
+    $("zstack-profile-section").hidden = false;
+    $("zstack-heightmap-img").style.cursor = "crosshair";
+    setProfileStatus("Click two points on the height map.");
+  });
+  $("btn-zstack-profile-clear").addEventListener("click", clearProfile);
+
+  const hmImg = $("zstack-heightmap-img");
+  hmImg.addEventListener("click", onHeightmapClick);
+  hmImg.addEventListener("load", () => {
+    if (zs.profile.data) drawProfileOverlay();
+  });
+  // Re-render overlay on resize so the SVG line tracks the image.
+  window.addEventListener("resize", () => {
+    if (zs.profile.data) drawProfileOverlay();
+    if (zs.profile.data) drawProfileChart();
+  });
+
+  const chart = $("zstack-profile-chart");
+  chart.addEventListener("mousedown", onChartMouseDown);
+  window.addEventListener("mousemove", onChartMouseMove);
+  window.addEventListener("mouseup", onChartMouseUp);
+}
+
+function setProfileStatus(msg) {
+  const el = $("zstack-profile-status");
+  if (el) el.textContent = msg || "";
+}
+
+function clearProfile() {
+  zs.profile.active = false;
+  zs.profile.p0 = null;
+  zs.profile.p1 = null;
+  zs.profile.data = null;
+  zs.profile.markerA = 0.25;
+  zs.profile.markerB = 0.75;
+  const section = $("zstack-profile-section");
+  if (section) section.hidden = true;
+  const img = $("zstack-heightmap-img");
+  if (img) img.style.cursor = "";
+  const svg = $("zstack-profile-overlay");
+  if (svg) svg.innerHTML = "";
+  setProfileStatus("");
+  const readout = $("zstack-profile-readout");
+  if (readout) readout.textContent = "";
+}
+
+function onHeightmapClick(e) {
+  if (!zs.profile.active || !zs.computed) return;
+  const img = e.currentTarget;
+  const rect = img.getBoundingClientRect();
+  if (rect.width <= 0 || rect.height <= 0) return;
+  // <img> is rendered at 100% of its column; scale CSS-px → full-res image-px.
+  const scaleX = zs.computed.width / rect.width;
+  const scaleY = zs.computed.height / rect.height;
+  const x = (e.clientX - rect.left) * scaleX;
+  const y = (e.clientY - rect.top) * scaleY;
+  if (!zs.profile.p0) {
+    zs.profile.p0 = { x, y };
+    setProfileStatus("Click the second point.");
+  } else {
+    zs.profile.p1 = { x, y };
+    zs.profile.active = false;
+    img.style.cursor = "";
+    setProfileStatus("");
+    fetchProfile();
+  }
+}
+
+async function fetchProfile() {
+  const p0 = zs.profile.p0, p1 = zs.profile.p1;
+  if (!p0 || !p1) return;
+  const detrend = $("zstack-detrend") ? $("zstack-detrend").value : "none";
+  const body = {
+    x0: p0.x, y0: p0.y, x1: p1.x, y1: p1.y,
+    detrend,
+  };
+  // pixelsPerMm is our frontend calibration field — only send if positive.
+  if (state.calibration && state.calibration.pixelsPerMm > 0) {
+    body.px_per_mm = state.calibration.pixelsPerMm;
+  }
+  try {
+    const r = await apiFetch("/zstack/profile", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!r.ok) {
+      setProfileStatus("Profile failed: " + r.status);
+      return;
+    }
+    zs.profile.data = await r.json();
+    drawProfileOverlay();
+    drawProfileChart();
+  } catch (err) {
+    setProfileStatus("Profile error: " + err.message);
+  }
+}
+
+function drawProfileOverlay() {
+  const svg = $("zstack-profile-overlay");
+  const img = $("zstack-heightmap-img");
+  if (!svg || !img || !zs.profile.data || !zs.computed) return;
+  const data = zs.profile.data;
+  const rect = img.getBoundingClientRect();
+  if (rect.width <= 0 || rect.height <= 0) return;
+  const sx = rect.width / zs.computed.width;
+  const sy = rect.height / zs.computed.height;
+  const xs = data.x_px, ys = data.y_px;
+  if (!xs || !ys || xs.length < 2) return;
+  const x0 = xs[0] * sx, y0 = ys[0] * sy;
+  const x1 = xs[xs.length - 1] * sx, y1 = ys[ys.length - 1] * sy;
+  svg.setAttribute("viewBox", `0 0 ${rect.width} ${rect.height}`);
+  svg.innerHTML =
+    `<line x1="${x0}" y1="${y0}" x2="${x1}" y2="${y1}" stroke="#ffcc00" stroke-width="2" />` +
+    `<circle cx="${x0}" cy="${y0}" r="4" fill="#ffcc00" stroke="#000" stroke-width="1" />` +
+    `<circle cx="${x1}" cy="${y1}" r="4" fill="#ffcc00" stroke="#000" stroke-width="1" />`;
+}
+
+// Plain-canvas side-view chart.  Small enough that hand-rolled axes beat
+// pulling in a chart library.
+function drawProfileChart() {
+  const canvas = $("zstack-profile-chart");
+  const data = zs.profile.data;
+  if (!canvas || !data) return;
+  const cssW = canvas.clientWidth || 600;
+  const cssH = canvas.clientHeight || 200;
+  const dpr = window.devicePixelRatio || 1;
+  if (canvas.width !== Math.round(cssW * dpr) || canvas.height !== Math.round(cssH * dpr)) {
+    canvas.width = Math.round(cssW * dpr);
+    canvas.height = Math.round(cssH * dpr);
+  }
+  const ctx = canvas.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, cssW, cssH);
+
+  const padL = 46, padR = 12, padT = 10, padB = 22;
+  const plotW = cssW - padL - padR;
+  const plotH = cssH - padT - padB;
+  const dist = data.distances;
+  const z = data.z_mm;
+  const n = z.length;
+  if (n < 2 || plotW <= 0 || plotH <= 0) return;
+
+  const distMin = dist[0], distMax = dist[n - 1];
+  const distSpan = Math.max(1e-9, distMax - distMin);
+  let zMin = data.z_min_mm, zMax = data.z_max_mm;
+  const zSpanRaw = zMax - zMin;
+  if (zSpanRaw < 1e-6) { zMin -= 5e-4; zMax += 5e-4; }  // avoid degenerate flat line
+  // 5% headroom so the polyline doesn't clip the frame
+  const pad = (zMax - zMin) * 0.05;
+  zMin -= pad; zMax += pad;
+  const zSpan = zMax - zMin;
+
+  const xToPx = x => padL + (x - distMin) / distSpan * plotW;
+  const zToPx = v => padT + (1 - (v - zMin) / zSpan) * plotH;
+
+  // Frame
+  ctx.strokeStyle = "#444";
+  ctx.lineWidth = 1;
+  ctx.strokeRect(padL + 0.5, padT + 0.5, plotW, plotH);
+
+  // Axis labels
+  ctx.fillStyle = "#aaa";
+  ctx.font = "11px sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "top";
+  const xUnit = data.distances_unit;
+  const distMid = (distMin + distMax) / 2;
+  ctx.fillText(distMin.toFixed(xUnit === "mm" ? 3 : 0), xToPx(distMin), padT + plotH + 3);
+  ctx.fillText(distMid.toFixed(xUnit === "mm" ? 3 : 0), xToPx(distMid), padT + plotH + 3);
+  ctx.fillText(distMax.toFixed(xUnit === "mm" ? 3 : 0) + " " + xUnit, xToPx(distMax), padT + plotH + 3);
+  ctx.textAlign = "right";
+  ctx.textBaseline = "middle";
+  ctx.fillText(zMax.toFixed(4), padL - 4, zToPx(zMax));
+  ctx.fillText(((zMin + zMax) / 2).toFixed(4), padL - 4, zToPx((zMin + zMax) / 2));
+  ctx.fillText(zMin.toFixed(4) + " mm", padL - 4, zToPx(zMin));
+
+  // Profile polyline
+  ctx.strokeStyle = "#00c8ff";
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  for (let i = 0; i < n; i++) {
+    const px = xToPx(dist[i]);
+    const py = zToPx(z[i]);
+    if (i === 0) ctx.moveTo(px, py);
+    else ctx.lineTo(px, py);
+  }
+  ctx.stroke();
+
+  // Markers
+  const drawMarker = (t, colour, label) => {
+    const x = padL + t * plotW;
+    ctx.strokeStyle = colour;
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(x, padT);
+    ctx.lineTo(x, padT + plotH);
+    ctx.stroke();
+    ctx.fillStyle = colour;
+    ctx.beginPath();
+    ctx.moveTo(x - 5, padT);
+    ctx.lineTo(x + 5, padT);
+    ctx.lineTo(x, padT + 7);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = "#000";
+    ctx.font = "bold 9px sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(label, x, padT + 2);
+  };
+  drawMarker(zs.profile.markerA, "#ff4d6d", "A");
+  drawMarker(zs.profile.markerB, "#7cff7c", "B");
+
+  // Cache plot geometry for hit-testing on mousedown.
+  zs.profile._plot = { padL, padT, plotW, plotH };
+
+  updateProfileReadout();
+}
+
+function updateProfileReadout() {
+  const data = zs.profile.data;
+  if (!data) return;
+  const n = data.z_mm.length;
+  const idxA = Math.max(0, Math.min(n - 1, Math.round(zs.profile.markerA * (n - 1))));
+  const idxB = Math.max(0, Math.min(n - 1, Math.round(zs.profile.markerB * (n - 1))));
+  const zA = data.z_mm[idxA], zB = data.z_mm[idxB];
+  const dZmm = Math.abs(zB - zA);
+  const unit = data.distances_unit;
+  const dX = Math.abs(data.distances[idxB] - data.distances[idxA]);
+  // Auto-unit for ΔZ: below 100 µm → µm, else mm.  3 sig figs.
+  let dZstr;
+  if (dZmm < 0.1) dZstr = (dZmm * 1000).toPrecision(3) + " µm";
+  else dZstr = dZmm.toPrecision(3) + " mm";
+  let parts = [
+    `ΔX: ${dX.toPrecision(4)} ${unit}`,
+    `ΔZ: ${dZstr}`,
+    `zA: ${zA.toFixed(4)} mm`,
+    `zB: ${zB.toFixed(4)} mm`,
+  ];
+  if (unit === "mm" && dX > 1e-9) {
+    const slopeDeg = Math.atan2(zB - zA, data.distances[idxB] - data.distances[idxA]) * 180 / Math.PI;
+    parts.push(`slope: ${slopeDeg.toFixed(2)}°`);
+  }
+  const el = $("zstack-profile-readout");
+  if (el) el.textContent = parts.join("    ");
+}
+
+function chartXToT(e) {
+  const canvas = $("zstack-profile-chart");
+  const plot = zs.profile._plot;
+  if (!canvas || !plot) return null;
+  const rect = canvas.getBoundingClientRect();
+  const x = e.clientX - rect.left;
+  const t = (x - plot.padL) / plot.plotW;
+  return Math.max(0, Math.min(1, t));
+}
+
+function onChartMouseDown(e) {
+  if (!zs.profile.data || !zs.profile._plot) return;
+  const canvas = e.currentTarget;
+  const rect = canvas.getBoundingClientRect();
+  const plot = zs.profile._plot;
+  const x = e.clientX - rect.left;
+  const xA = plot.padL + zs.profile.markerA * plot.plotW;
+  const xB = plot.padL + zs.profile.markerB * plot.plotW;
+  const dA = Math.abs(x - xA), dB = Math.abs(x - xB);
+  if (dA < dB && dA < 10) zs.profile.dragging = "A";
+  else if (dB < 10) zs.profile.dragging = "B";
+  else {
+    // Click elsewhere → snap nearest marker to click
+    const t = chartXToT(e);
+    if (t == null) return;
+    if (dA < dB) { zs.profile.markerA = t; zs.profile.dragging = "A"; }
+    else { zs.profile.markerB = t; zs.profile.dragging = "B"; }
+    drawProfileChart();
+  }
+  e.preventDefault();
+}
+
+function onChartMouseMove(e) {
+  if (!zs.profile.dragging) return;
+  const t = chartXToT(e);
+  if (t == null) return;
+  if (zs.profile.dragging === "A") zs.profile.markerA = t;
+  else zs.profile.markerB = t;
+  drawProfileChart();
+}
+
+function onChartMouseUp() {
+  zs.profile.dragging = null;
 }
 
 function updateInstruction() {
@@ -275,6 +599,7 @@ async function compute() {
 
     const detrendSel = $("zstack-detrend");
     if (detrendSel) detrendSel.value = "none";
+    clearProfile();
     $("zstack-composite-img").src = zs.computed.compositeUrl;
     $("zstack-heightmap-img").src = zs.computed.heightmapUrl;
     $("zstack-composite-dl").href = zs.computed.compositeUrl;
@@ -292,6 +617,7 @@ async function resetStack() {
   await apiFetch("/zstack/reset", { method: "POST" });
   zs.frameCount = 0;
   zs.computed = null;
+  clearProfile();
   const resultEl = $("zstack-result");
   if (resultEl) resultEl.hidden = true;
   renderThumbs();

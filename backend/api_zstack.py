@@ -28,7 +28,10 @@ from .vision.focus_stack import (
     downsample_index_map,
     encode_png,
 )
-from .vision.heightmap_analysis import detrend as detrend_height_map
+from .vision.heightmap_analysis import (
+    detrend as detrend_height_map,
+    sample_profile,
+)
 
 
 _DETREND_MODES = ("none", "plane", "poly2")
@@ -60,6 +63,16 @@ class CaptureHdrBody(BaseModel):
         default=None,
         description="EV stops for the bracket. Defaults to [-2, 0, +2].",
     )
+
+
+class ProfileBody(BaseModel):
+    x0: float
+    y0: float
+    x1: float
+    y1: float
+    samples: Optional[int] = None
+    detrend: str = "none"
+    px_per_mm: Optional[float] = None
 
 
 class ComputeBody(BaseModel):
@@ -304,6 +317,50 @@ def make_zstack_router(camera: BaseCamera) -> APIRouter:
             "brightness": brightness_list,
             "z_step_mm": z_step_mm,
             "frame_count": int(frame_count),
+        }
+
+    @router.post("/zstack/profile")
+    async def zstack_profile(body: ProfileBody):
+        if body.detrend not in _DETREND_MODES:
+            raise HTTPException(status_code=400, detail=f"Unknown detrend mode: {body.detrend}")
+        with lock:
+            result = _require_result()
+            hm = detrend_height_map(result["height_map"], body.detrend)
+        # Sampling is pure-numpy and doesn't need the session lock held.
+        prof = sample_profile(
+            hm,
+            (body.x0, body.y0),
+            (body.x1, body.y1),
+            samples=body.samples,
+        )
+        length_px = prof["length_px"]
+        t = prof["t"]
+        ppm = body.px_per_mm
+        if ppm is not None and ppm > 0:
+            length_mm = length_px / ppm
+            distances = (t * length_px / ppm)
+            distances_unit = "mm"
+        else:
+            length_mm = None
+            distances = t * length_px
+            distances_unit = "px"
+        z_mm = prof["z_mm"]
+        # Phase 3 slot: compute roughness from (distances, z_mm) here and add
+        # a "roughness" key to the response.
+        def _round_list(a, nd=4):
+            return [round(float(v), nd) for v in a]
+        return {
+            "length_px": round(float(length_px), 4),
+            "length_mm": None if length_mm is None else round(float(length_mm), 6),
+            "samples": int(len(z_mm)),
+            "distances": _round_list(distances, 6),
+            "distances_unit": distances_unit,
+            "z_mm": _round_list(z_mm, 6),
+            "x_px": _round_list(prof["x_px"], 3),
+            "y_px": _round_list(prof["y_px"], 3),
+            "z_min_mm": round(float(z_mm.min()), 6),
+            "z_max_mm": round(float(z_mm.max()), 6),
+            "detrend": body.detrend,
         }
 
     @router.get("/zstack/test-hdr-bracket")

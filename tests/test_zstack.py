@@ -15,7 +15,12 @@ import pytest
 from fastapi.testclient import TestClient
 
 from backend.vision.focus_stack import compute_focus_stack, colorize_height_map
-from backend.vision.heightmap_analysis import detrend as detrend_height_map, fit_plane, fit_poly2
+from backend.vision.heightmap_analysis import (
+    detrend as detrend_height_map,
+    fit_plane,
+    fit_poly2,
+    sample_profile,
+)
 
 
 def _make_textured(h: int, w: int, seed: int) -> np.ndarray:
@@ -255,3 +260,111 @@ def test_heightmap_png_detrend_param(client: TestClient):
 
     r = client.get("/zstack/heightmap.png?detrend=bogus")
     assert r.status_code == 400
+
+
+def test_sample_profile_horizontal():
+    h, w = 20, 100
+    # Linear gradient along X: z = 0.01 * x (mm).  A horizontal profile should
+    # recover that gradient exactly under bilinear sampling.
+    xs = np.arange(w, dtype=np.float32)
+    hm = np.broadcast_to(0.01 * xs, (h, w)).astype(np.float32)
+    prof = sample_profile(hm, (0.0, 10.0), (99.0, 10.0), samples=100)
+    assert prof["z_mm"].shape == (100,)
+    assert prof["length_px"] == pytest.approx(99.0, abs=1e-4)
+    # First and last samples match the endpoints of the gradient.
+    assert float(prof["z_mm"][0]) == pytest.approx(0.0, abs=1e-5)
+    assert float(prof["z_mm"][-1]) == pytest.approx(0.99, abs=1e-5)
+    # Monotonic
+    diffs = np.diff(prof["z_mm"])
+    assert float(diffs.min()) >= -1e-6
+
+
+def test_sample_profile_step():
+    h, w = 40, 100
+    hm = np.zeros((h, w), dtype=np.float32)
+    hm[:, 50:] = 1.0
+    prof = sample_profile(hm, (0.0, 20.0), (99.0, 20.0), samples=200)
+    z = prof["z_mm"]
+    # Left end is on the low plateau, right end on the high plateau.
+    assert float(z[0]) == pytest.approx(0.0, abs=1e-4)
+    assert float(z[-1]) == pytest.approx(1.0, abs=1e-4)
+    # The transition should live somewhere in the middle of the sample array.
+    mid_idx = int(np.argmax(z > 0.5))
+    assert 80 < mid_idx < 120
+
+
+def _compute_for_profile(client: TestClient) -> None:
+    assert client.post("/zstack/start").status_code == 200
+    for _ in range(4):
+        assert client.post("/zstack/capture").status_code == 200
+    assert client.post("/zstack/compute", json={"z_step_mm": 0.02}).status_code == 200
+
+
+def test_profile_endpoint(client: TestClient):
+    _compute_for_profile(client)
+    r = client.post("/zstack/profile", json={
+        "x0": 10.0, "y0": 10.0, "x1": 200.0, "y1": 150.0,
+    })
+    assert r.status_code == 200, r.text
+    body = r.json()
+    for key in ("length_px", "length_mm", "samples", "distances", "distances_unit",
+                "z_mm", "x_px", "y_px", "z_min_mm", "z_max_mm", "detrend"):
+        assert key in body
+    n = body["samples"]
+    assert n >= 2
+    assert len(body["distances"]) == n
+    assert len(body["z_mm"]) == n
+    assert len(body["x_px"]) == n
+    assert len(body["y_px"]) == n
+    assert body["distances_unit"] == "px"
+    assert body["length_mm"] is None
+    assert body["detrend"] == "none"
+
+
+def test_profile_endpoint_with_detrend(client: TestClient):
+    _compute_for_profile(client)
+    r_none = client.post("/zstack/profile", json={
+        "x0": 5.0, "y0": 5.0, "x1": 300.0, "y1": 200.0, "detrend": "none",
+    })
+    r_plane = client.post("/zstack/profile", json={
+        "x0": 5.0, "y0": 5.0, "x1": 300.0, "y1": 200.0, "detrend": "plane",
+    })
+    assert r_none.status_code == 200
+    assert r_plane.status_code == 200
+    assert r_plane.json()["detrend"] == "plane"
+    # FakeCamera frames are uniform so detrend may not change values at all;
+    # just assert both responses have matching sample counts and the plane
+    # response is well-formed.
+    assert r_plane.json()["samples"] == r_none.json()["samples"]
+
+
+def test_profile_endpoint_calibrated(client: TestClient):
+    _compute_for_profile(client)
+    r = client.post("/zstack/profile", json={
+        "x0": 0.0, "y0": 0.0, "x1": 100.0, "y1": 0.0,
+        "px_per_mm": 100.0,
+    })
+    assert r.status_code == 200
+    body = r.json()
+    assert body["distances_unit"] == "mm"
+    assert body["length_mm"] == pytest.approx(1.0, abs=1e-6)
+    # First sample at 0 mm, last sample at length_mm.
+    assert body["distances"][0] == pytest.approx(0.0, abs=1e-6)
+    assert body["distances"][-1] == pytest.approx(1.0, abs=1e-4)
+
+
+def test_profile_endpoint_invalid_detrend(client: TestClient):
+    _compute_for_profile(client)
+    r = client.post("/zstack/profile", json={
+        "x0": 0.0, "y0": 0.0, "x1": 10.0, "y1": 10.0, "detrend": "bogus",
+    })
+    assert r.status_code == 400
+
+
+def test_profile_endpoint_requires_result(client: TestClient):
+    # Fresh session, nothing computed yet.
+    assert client.post("/zstack/reset").status_code == 200
+    r = client.post("/zstack/profile", json={
+        "x0": 0.0, "y0": 0.0, "x1": 10.0, "y1": 10.0,
+    })
+    assert r.status_code == 404

@@ -11,6 +11,7 @@ Phase 3 (roughness) can reuse these fits with a mask argument.
 
 from __future__ import annotations
 
+import cv2
 import numpy as np
 
 
@@ -82,3 +83,44 @@ def detrend(height_map: np.ndarray, mode: str, mask: np.ndarray | None = None) -
         raise ValueError(f"Unknown detrend mode: {mode}")
     original_mean = float(height_map.mean())
     return (height_map.astype(np.float32) - fit + original_mean).astype(np.float32)
+
+
+def sample_profile(
+    height_map: np.ndarray,
+    p0: tuple[float, float],
+    p1: tuple[float, float],
+    samples: int | None = None,
+) -> dict:
+    h, w = height_map.shape
+    # Clamp endpoints so cv2.remap never falls off the edge; a click on the
+    # extreme right/bottom pixel is still valid.
+    x0 = float(np.clip(p0[0], 0.0, w - 1))
+    y0 = float(np.clip(p0[1], 0.0, h - 1))
+    x1 = float(np.clip(p1[0], 0.0, w - 1))
+    y1 = float(np.clip(p1[1], 0.0, h - 1))
+    length_px = float(np.hypot(x1 - x0, y1 - y0))
+    if samples is None:
+        # One sample per pixel of line length keeps the profile at native
+        # resolution without over- or under-sampling.
+        samples = max(2, int(round(length_px)) + 1)
+    samples = max(2, int(samples))
+
+    t = np.linspace(0.0, 1.0, samples, dtype=np.float32)
+    xs = (x0 + (x1 - x0) * t).astype(np.float32)
+    ys = (y0 + (y1 - y0) * t).astype(np.float32)
+
+    # cv2.remap expects map shape (H_out, W_out) float32; use (1, samples) so
+    # output is a 1xN row of bilinear-interpolated heights.
+    map_x = xs.reshape(1, -1)
+    map_y = ys.reshape(1, -1)
+    src = height_map.astype(np.float32)
+    z = cv2.remap(src, map_x, map_y, interpolation=cv2.INTER_LINEAR,
+                  borderMode=cv2.BORDER_REPLICATE).reshape(-1)
+
+    return {
+        "t": t,
+        "x_px": xs,
+        "y_px": ys,
+        "z_mm": z.astype(np.float32),
+        "length_px": length_px,
+    }
