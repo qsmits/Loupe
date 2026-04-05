@@ -90,9 +90,15 @@ function buildDialog() {
               <a id="zstack-composite-dl" download="zstack-composite.png" class="detect-btn" style="display:inline-block;margin-top:6px;text-decoration:none">Download PNG</a>
             </div>
             <div style="flex:1;min-width:260px">
-              <div style="font-size:12px;opacity:0.85;margin-bottom:4px">
-                Height map
-                (<span id="zstack-zrange">—</span>)
+              <div style="font-size:12px;opacity:0.85;margin-bottom:4px;display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+                <span>Height map (<span id="zstack-zrange">—</span>)</span>
+                <label style="margin-left:auto">Level:
+                  <select id="zstack-detrend" style="padding:2px 5px;background:#1a1a1a;color:#eee;border:1px solid #444;border-radius:3px">
+                    <option value="none" selected>None</option>
+                    <option value="plane">Plane</option>
+                    <option value="poly2">Poly² (removes lens curvature)</option>
+                  </select>
+                </label>
               </div>
               <img id="zstack-heightmap-img" style="width:100%;border:1px solid #444;background:#111" />
               <a id="zstack-heightmap-dl" download="zstack-heightmap.png" class="detect-btn" style="display:inline-block;margin-top:6px;text-decoration:none">Download PNG</a>
@@ -128,6 +134,14 @@ function buildDialog() {
   $("btn-zstack-reset").addEventListener("click", resetStack);
   $("btn-zstack-use-composite").addEventListener("click", useCompositeAsWorkingImage);
   $("btn-zstack-open-3d").addEventListener("click", () => { openZstack3dView(); });
+  $("zstack-detrend").addEventListener("change", e => {
+    if (!zs.computed) return;
+    const mode = e.target.value;
+    const base = "/zstack/heightmap.png";
+    const url = `${base}?detrend=${encodeURIComponent(mode)}&t=${Date.now()}`;
+    $("zstack-heightmap-img").src = url;
+    $("zstack-heightmap-dl").href = url;
+  });
 }
 
 function updateInstruction() {
@@ -259,6 +273,8 @@ async function compute() {
       height: data.height,
     };
 
+    const detrendSel = $("zstack-detrend");
+    if (detrendSel) detrendSel.value = "none";
     $("zstack-composite-img").src = zs.computed.compositeUrl;
     $("zstack-heightmap-img").src = zs.computed.heightmapUrl;
     $("zstack-composite-dl").href = zs.computed.compositeUrl;

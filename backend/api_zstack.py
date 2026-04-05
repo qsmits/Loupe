@@ -28,6 +28,10 @@ from .vision.focus_stack import (
     downsample_index_map,
     encode_png,
 )
+from .vision.heightmap_analysis import detrend as detrend_height_map
+
+
+_DETREND_MODES = ("none", "plane", "poly2")
 
 
 MIN_FRAMES_TO_COMPUTE = 3
@@ -229,21 +233,31 @@ def make_zstack_router(camera: BaseCamera) -> APIRouter:
         return Response(content=png, media_type="image/png")
 
     @router.get("/zstack/heightmap.png")
-    async def zstack_heightmap():
+    async def zstack_heightmap(detrend: str = Query("none")):
+        if detrend not in _DETREND_MODES:
+            raise HTTPException(status_code=400, detail=f"Unknown detrend mode: {detrend}")
         with lock:
             result = _require_result()
-            viz = colorize_height_map(result["height_map"])
+            hm = detrend_height_map(result["height_map"], detrend)
+            viz = colorize_height_map(hm)
             png = encode_png(viz)
         return Response(content=png, media_type="image/png")
 
     @router.get("/zstack/heightmap.raw")
-    async def zstack_heightmap_raw():
+    async def zstack_heightmap_raw(detrend: str = Query("none")):
         """Raw downsampled focus-index map for the 3D viewer.
 
         Returns the per-pixel best-focus frame index (before colormap) as a
         flat float array, plus metadata needed to reconstruct world-space Z.
         Downsampled to at most 256x256 to keep the JSON payload small.
+
+        ``detrend`` removes stage tilt (``plane``) or tilt + lens curvature
+        (``poly2``) from the full-resolution height map before downsampling.
+        The fit is subtracted in mm-space, then converted back to index-units
+        so the 3D viewer's calibrate-Z math (Δindex × z_step_mm) still works.
         """
+        if detrend not in _DETREND_MODES:
+            raise HTTPException(status_code=400, detail=f"Unknown detrend mode: {detrend}")
         with lock:
             result = _require_result()
             index_map = result["index_map"]
@@ -255,7 +269,15 @@ def make_zstack_router(camera: BaseCamera) -> APIRouter:
                 z_step_mm = float(z_values[1] - z_values[0])
             else:
                 z_step_mm = 0.0
-            down = downsample_index_map(index_map, max_side=256)
+            if detrend != "none" and z_step_mm > 0:
+                # Detrend in mm-space at full resolution, then re-express as
+                # a float index map so the rest of the pipeline is unchanged.
+                hm = detrend_height_map(result["height_map"], detrend)
+                z0 = float(z_values[0])
+                idx_full = (hm - z0) / z_step_mm
+                down = downsample_float_map(idx_full.astype(np.float32), max_side=256)
+            else:
+                down = downsample_index_map(index_map, max_side=256)
             # Confidence: per-pixel peak sharpness, normalized to [0,1] against
             # the 99th percentile (robust to a few noise spikes).
             if peak_focus is not None:

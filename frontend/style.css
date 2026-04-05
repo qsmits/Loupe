@@ -1756,6 +1756,15 @@ body.no-camera .camera-section { display: none; }
   width: 100%;
   accent-color: #00c8ff;
 }
+.zstack-3d-select {
+  width: 100%;
+  padding: 3px 6px;
+  background: #1a1a1a;
+  color: #eee;
+  border: 1px solid #444;
+  border-radius: 3px;
+  font-size: 12px;
+}
 .zstack-3d-value {
   color: #00c8ff;
   font-variant-numeric: tabular-nums;

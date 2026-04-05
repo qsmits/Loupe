@@ -15,6 +15,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from backend.vision.focus_stack import compute_focus_stack, colorize_height_map
+from backend.vision.heightmap_analysis import detrend as detrend_height_map, fit_plane, fit_poly2
 
 
 def _make_textured(h: int, w: int, seed: int) -> np.ndarray:
@@ -173,3 +174,84 @@ def test_zstack_heightmap_raw(client: TestClient):
     assert r.status_code == 200
     r = client.get("/zstack/heightmap.raw")
     assert r.status_code == 404
+
+
+def test_fit_plane_removes_tilt():
+    h, w = 40, 60
+    ys, xs = np.indices((h, w), dtype=np.float32)
+    # Tilted plane plus a DC offset — no curvature, no noise.
+    tilted = (0.03 * xs - 0.02 * ys + 5.0).astype(np.float32)
+    out = detrend_height_map(tilted, "plane")
+    # After removing the plane, the surface is flat to numerical precision
+    # and the original DC offset is preserved (mean add-back).
+    assert float(out.std()) < 1e-4
+    assert float(out.mean()) == pytest.approx(float(tilted.mean()), abs=1e-4)
+
+
+def test_fit_poly2_removes_curvature():
+    h, w = 50, 70
+    half = max(h, w) / 2.0
+    ys, xs = np.indices((h, w), dtype=np.float32)
+    nx = (xs - (w - 1) / 2.0) / half
+    ny = (ys - (h - 1) / 2.0) / half
+    # Bowl + mild tilt + constant — exactly what the current optics produce
+    # on a flat part (spherical bias plus stage tilt).
+    surface = (0.5 * (nx * nx + ny * ny) + 0.04 * nx - 0.01 * ny + 2.0).astype(np.float32)
+    out = detrend_height_map(surface, "poly2")
+    # Poly2 is a superset of the true generator → residual should be ~0.
+    assert float(out.std()) < 1e-4
+    # Plane fit alone should NOT flatten it (curvature remains)
+    out_plane = detrend_height_map(surface, "plane")
+    assert float(out_plane.std()) > 0.05
+
+
+def test_detrend_none_is_copy():
+    hm = np.array([[1.0, 2.0], [3.0, 4.0]], dtype=np.float32)
+    out = detrend_height_map(hm, "none")
+    assert np.array_equal(out, hm)
+    assert out is not hm  # must not alias
+
+
+def test_heightmap_raw_detrend_param(client: TestClient):
+    r = client.post("/zstack/start")
+    assert r.status_code == 200
+    for _ in range(4):
+        assert client.post("/zstack/capture").status_code == 200
+    r = client.post("/zstack/compute", json={"z_step_mm": 0.02})
+    assert r.status_code == 200
+
+    # Default (no param) matches explicit detrend=none
+    r_default = client.get("/zstack/heightmap.raw")
+    r_none = client.get("/zstack/heightmap.raw?detrend=none")
+    assert r_default.status_code == 200
+    assert r_none.status_code == 200
+    assert r_default.json()["data"] == r_none.json()["data"]
+
+    for mode in ("plane", "poly2"):
+        r = client.get(f"/zstack/heightmap.raw?detrend={mode}")
+        assert r.status_code == 200, f"{mode}: {r.text}"
+        payload = r.json()
+        expected_keys = {"width", "height", "data", "confidence", "brightness", "z_step_mm", "frame_count"}
+        assert set(payload.keys()) == expected_keys
+        assert len(payload["data"]) == payload["width"] * payload["height"]
+
+    # Unknown mode → 400
+    r = client.get("/zstack/heightmap.raw?detrend=bogus")
+    assert r.status_code == 400
+
+
+def test_heightmap_png_detrend_param(client: TestClient):
+    r = client.post("/zstack/start")
+    assert r.status_code == 200
+    for _ in range(4):
+        assert client.post("/zstack/capture").status_code == 200
+    assert client.post("/zstack/compute", json={"z_step_mm": 0.02}).status_code == 200
+
+    for mode in ("none", "plane", "poly2"):
+        r = client.get(f"/zstack/heightmap.png?detrend={mode}")
+        assert r.status_code == 200
+        assert r.headers["content-type"] == "image/png"
+        assert len(r.content) > 0
+
+    r = client.get("/zstack/heightmap.png?detrend=bogus")
+    assert r.status_code == 400

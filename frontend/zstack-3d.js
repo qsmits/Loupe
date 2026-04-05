@@ -29,7 +29,7 @@ export async function openZstack3dView() {
   // bail out before touching the DOM.
   let payload;
   try {
-    const resp = await apiFetch('/zstack/heightmap.raw');
+    const resp = await apiFetch('/zstack/heightmap.raw?detrend=none');
     if (resp.status === 404) {
       alert('No Z-stack result available yet. Build the height map first.');
       return;
@@ -200,6 +200,59 @@ function initScene(modal, payload) {
   controls.dampingFactor = 0.08;
   controls.target.set(0, 0, 0);
   controls.update();
+
+  // Settings: Level (detrend mode).  Re-fetches the raw heightmap with the
+  // chosen fit subtracted server-side; the grid dimensions stay identical so
+  // we can refill rawIdx / naturalZ in place and re-run the existing
+  // mask → blur → exaggerate pipeline without rebuilding the mesh.
+  const levelSelect = document.createElement('select');
+  levelSelect.className = 'zstack-3d-select';
+  for (const [val, label] of [
+    ['none', 'None'],
+    ['plane', 'Plane'],
+    ['poly2', 'Poly² (lens curvature)'],
+  ]) {
+    const opt = document.createElement('option');
+    opt.value = val;
+    opt.textContent = label;
+    levelSelect.appendChild(opt);
+  }
+  levelSelect.value = 'none';
+  addSettingRow(rowsEl, 'Level', levelSelect, null);
+
+  async function reloadWithDetrend(mode) {
+    try {
+      const resp = await apiFetch('/zstack/heightmap.raw?detrend=' + encodeURIComponent(mode));
+      if (!resp.ok) {
+        alert('Failed to reload height map: ' + resp.status);
+        return;
+      }
+      const p = await resp.json();
+      if (p.width !== cols || p.height !== rows) {
+        alert('Height map grid size changed unexpectedly; close and reopen the 3D view.');
+        return;
+      }
+      let mn = Infinity, mx = -Infinity;
+      for (let i = 0; i < vertexCount; i++) {
+        const v = p.data[i];
+        rawIdx[i] = v;
+        if (v < mn) mn = v;
+        if (v > mx) mx = v;
+      }
+      const range = Math.max(1e-6, mx - mn);
+      const mid = (mn + mx) * 0.5;
+      for (let i = 0; i < vertexCount; i++) {
+        naturalZ[i] = (rawIdx[i] - mid) / range * RELIEF_AT_UNIT;
+      }
+      applyMask();
+      updateFromPipeline();
+    } catch (err) {
+      alert('Reload failed: ' + err.message);
+    }
+  }
+  levelSelect.addEventListener('change', () => {
+    reloadWithDetrend(levelSelect.value);
+  });
 
   // Settings: Z exaggeration
   const zInput = document.createElement('input');
