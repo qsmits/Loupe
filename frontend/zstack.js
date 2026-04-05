@@ -728,24 +728,12 @@ function renderThumbs() {
   }
 }
 
-async function startSession() {
-  const r = await apiFetch("/zstack/start", { method: "POST" });
-  if (!r.ok) { showStatus("Z-stack start failed"); return false; }
-  const data = await r.json();
-  zs.sessionId = data.session_id;
-  zs.frameCount = 0;
-  zs.computed = null;
-  // Probe HDR capability of the active camera
-  try {
-    const sr = await apiFetch("/zstack/status");
-    if (sr.ok) {
-      const sdata = await sr.json();
-      zs.hdrSupported = !!sdata.hdr_supported;
-      if (Array.isArray(sdata.hdr_default_stops) && sdata.hdr_default_stops.length >= 2) {
-        zs.hdrStops = sdata.hdr_default_stops;
-      }
-    }
-  } catch {}
+// Applies HDR-support info from /zstack/status to the UI toggle.
+function applyHdrCapability(status) {
+  zs.hdrSupported = !!status.hdr_supported;
+  if (Array.isArray(status.hdr_default_stops) && status.hdr_default_stops.length >= 2) {
+    zs.hdrStops = status.hdr_default_stops;
+  }
   const toggle = $("zstack-hdr-toggle");
   const label = $("zstack-hdr-label");
   const note = $("zstack-hdr-note");
@@ -760,6 +748,41 @@ async function startSession() {
   if (note && !zs.hdrSupported) {
     note.textContent = "Not supported on this camera (needs Aravis/GigE).";
   }
+}
+
+// Rehydrate the result panel from a /zstack/status response that has result!=null.
+// Lets the user close + reopen the dialog (or reload the page) without losing
+// a built Z-stack.
+function rehydrateResult(status) {
+  if (!status || !status.result) return;
+  const r = status.result;
+  zs.computed = {
+    compositeUrl: "/zstack/composite.png?t=" + Date.now(),
+    heightmapUrl: "/zstack/heightmap.png?t=" + Date.now(),
+    minZ: r.min_z,
+    maxZ: r.max_z,
+    width: r.width,
+    height: r.height,
+  };
+  const detrendSel = $("zstack-detrend");
+  if (detrendSel) detrendSel.value = "none";
+  $("zstack-composite-img").src = zs.computed.compositeUrl;
+  $("zstack-heightmap-img").src = zs.computed.heightmapUrl;
+  $("zstack-composite-dl").href = zs.computed.compositeUrl;
+  $("zstack-heightmap-dl").href = zs.computed.heightmapUrl;
+  $("zstack-zrange").textContent =
+    `Z ${zs.computed.minZ.toFixed(3)} → ${zs.computed.maxZ.toFixed(3)} mm`;
+  $("zstack-result").hidden = false;
+}
+
+// Fresh session on the backend: wipes frames and any computed result.
+async function startFreshSession() {
+  const r = await apiFetch("/zstack/start", { method: "POST" });
+  if (!r.ok) { showStatus("Z-stack start failed"); return false; }
+  const data = await r.json();
+  zs.sessionId = data.session_id;
+  zs.frameCount = 0;
+  zs.computed = null;
   const resultEl = $("zstack-result");
   if (resultEl) resultEl.hidden = true;
   renderThumbs();
@@ -920,7 +943,48 @@ export async function openZstackDialog() {
   const dlg = $("zstack-dialog");
   dlg.hidden = false;
   window.addEventListener("keydown", onZstackKey, true);
-  await startSession();
+
+  // Probe backend state first — if there's an existing session with frames
+  // or a computed result, keep it.  Closing and reopening the dialog (e.g.
+  // to get back to the 3D view) must not wipe the user's work.
+  let status = null;
+  try {
+    const sr = await apiFetch("/zstack/status");
+    if (sr.ok) status = await sr.json();
+  } catch {}
+
+  if (status) applyHdrCapability(status);
+
+  if (status && (status.has_result || status.frame_count > 0)) {
+    // Adopt the existing session — no reset.
+    zs.sessionId = status.session_id;
+    zs.frameCount = status.frame_count;
+    renderThumbs();
+    updateCount();
+    updateInstruction();
+    if (status.has_result) rehydrateResult(status);
+  } else {
+    await startFreshSession();
+  }
+}
+
+// Called by the toolbar "Surface view" button.  Opens the 3D viewer
+// directly if the backend has a computed Z-stack, otherwise falls back
+// to opening the capture dialog.
+export async function openZstack3dFromToolbar() {
+  try {
+    const sr = await apiFetch("/zstack/status");
+    if (sr.ok) {
+      const status = await sr.json();
+      if (status.has_result) {
+        const { openZstack3dView } = await import("./zstack-3d.js");
+        await openZstack3dView();
+        return;
+      }
+    }
+  } catch {}
+  showStatus("Build a Z-stack first");
+  openZstackDialog();
 }
 
 function closeDialog() {
@@ -932,4 +996,20 @@ function closeDialog() {
 export function initZstack() {
   const btn = $("btn-zstack");
   if (btn) btn.addEventListener("click", openZstackDialog);
+  const viewBtn = $("btn-zstack-3d-view");
+  if (viewBtn) {
+    viewBtn.addEventListener("click", openZstack3dFromToolbar);
+    // Poll /zstack/status periodically so the button enables itself once
+    // a result exists and disables itself after a reset.  Cheap call.
+    const refresh = async () => {
+      try {
+        const sr = await apiFetch("/zstack/status");
+        if (!sr.ok) return;
+        const status = await sr.json();
+        viewBtn.disabled = !status.has_result;
+      } catch {}
+    };
+    refresh();
+    setInterval(refresh, 5000);
+  }
 }

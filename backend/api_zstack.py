@@ -161,10 +161,22 @@ def make_zstack_router(camera: BaseCamera) -> APIRouter:
     @router.get("/zstack/status")
     async def zstack_status():
         with lock:
+            result_summary = None
+            if session.result is not None:
+                r = session.result
+                h, w = r["composite"].shape[:2]
+                result_summary = {
+                    "width": int(w),
+                    "height": int(h),
+                    "min_z": float(r["min_z"]),
+                    "max_z": float(r["max_z"]),
+                    "frame_count": len(session.frames),
+                }
             return {
                 "session_id": session.id,
                 "frame_count": len(session.frames),
                 "has_result": session.result is not None,
+                "result": result_summary,
                 "min_frames_to_compute": MIN_FRAMES_TO_COMPUTE,
                 "max_frames": MAX_FRAMES,
                 "hdr_supported": _hdr_supported(),
