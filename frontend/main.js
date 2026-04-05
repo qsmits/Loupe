@@ -26,11 +26,11 @@ import { finalizeArcFit } from './tools.js';
 
 // ─── Dropdown helpers ─────��──────────────────────────────────────────────────
 function closeAllDropdowns() {
-  ["dropdown-measure","dropdown-detect","dropdown-overlay","dropdown-clear","dropdown-camera"].forEach(id => {
+  ["dropdown-detect","dropdown-overlay","dropdown-clear","dropdown-camera"].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.hidden = true;
   });
-  ["btn-menu-measure","btn-menu-detect","btn-menu-overlay","btn-menu-clear","btn-menu-camera"].forEach(id => {
+  ["btn-menu-detect","btn-menu-overlay","btn-menu-clear","btn-menu-camera"].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.classList.remove("open");
   });
@@ -64,10 +64,6 @@ initMouseHandlers();
 initKeyboard(closeAllDropdowns);
 
 // ── Dropdown menu wiring ───────────────────────────��─────────────────────────
-document.getElementById("btn-menu-measure").addEventListener("click", e => {
-  e.stopPropagation();
-  toggleDropdown("btn-menu-measure", "dropdown-measure");
-});
 document.getElementById("btn-menu-detect").addEventListener("click", e => {
   e.stopPropagation();
   toggleDropdown("btn-menu-detect", "dropdown-detect");
@@ -96,13 +92,6 @@ document.getElementById("btn-clear-detections")?.addEventListener("click", () =>
 document.getElementById("btn-clear-measurements")?.addEventListener("click", () => { closeAllDropdowns(); clearMeasurements(); });
 document.getElementById("btn-clear-dxf")?.addEventListener("click", () => { closeAllDropdowns(); clearDxfOverlay(); });
 document.getElementById("btn-clear-all")?.addEventListener("click", () => { closeAllDropdowns(); clearAll(); });
-
-document.querySelectorAll("#dropdown-measure .dropdown-item[data-tool]").forEach(item => {
-  item.addEventListener("click", () => {
-    setTool(item.dataset.tool);
-    closeAllDropdowns();
-  });
-});
 
 ["btn-load-dxf","btn-export","btn-export-csv","btn-crosshair","btn-set-origin"]
   .forEach(id => {

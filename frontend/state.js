@@ -105,6 +105,7 @@ export const TOOL_STATUS = {
   "perp-dist":      "Distance · Perpendicular — click to select a reference line",
   "para-dist":      "Distance · Parallel — click to select a reference line",
   "area":           "Area · Polygon — click to place points (double-click to confirm)",
+  "area-shape":     "Area · From shape — click a closed shape or a segment of a closed loop",
   "pt-circle-dist": "Distance · Pt-Circle — click to select a circle",
   "intersect":      "Intersect — click to select a reference line",
   "slot-dist":      "Distance · Slot — click to select a reference line",

@@ -4,7 +4,7 @@ import { state, TOOL_STATUS, pushUndo } from './state.js';
 import { redraw, canvas, showStatus, getLineEndpoints, lineAngleDeg, listEl } from './render.js';
 import { dxfToCanvas } from './render-dxf.js';
 import { addAnnotation, applyCalibration, elevateAnnotation } from './annotations.js';
-import { fitCircle, fitCircleAlgebraic, fitLine, splineArcLength, parseDistanceInput, distPointToSegment } from './math.js';
+import { fitCircle, fitCircleAlgebraic, fitLine, splineArcLength, parseDistanceInput, distPointToSegment, polygonArea, catmullRomControlPoints } from './math.js';
 import { renderSidebar } from './sidebar.js';
 import { viewport, screenToImage, imageWidth, imageHeight } from './viewport.js';
 import { hitTestAnnotation, hitTestDxfEntity } from './hit-test.js';
@@ -68,7 +68,7 @@ export function setTool(name) {
 
 const _MEASURE_TOOLS = new Set([
   "distance","angle","circle","arc-fit","arc-measure","center-dist",
-  "para-dist","perp-dist","area","pt-circle-dist","intersect","slot-dist","spline","fit-line",
+  "para-dist","perp-dist","area","area-shape","pt-circle-dist","intersect","slot-dist","spline","fit-line",
 ]);
 
 // ── Top-level measure-tool groups (6-entry consolidated menu) ────────────────
@@ -106,23 +106,24 @@ export const MEASURE_TOP_LEVEL = {
       { id: "arc-ends-first",label: "Arc (ends)",  tool: "arc-measure", arcMeasureMode: "ends-first" },
     ],
   },
-  flatness: {
-    label: "Flatness",
-    subModes: [
-      { id: "flatness", label: "Flatness", tool: "fit-line" },
-    ],
-  },
   area: {
     label: "Area",
     subModes: [
       { id: "polygon", label: "Polygon", tool: "area" },
-      { id: "spline",  label: "Spline",  tool: "spline" },
+      { id: "shape",   label: "From shape", tool: "area-shape" },
     ],
   },
   intersect: {
     label: "Intersect",
     subModes: [
       { id: "intersect", label: "Intersect", tool: "intersect" },
+    ],
+  },
+  misc: {
+    label: "Misc",
+    subModes: [
+      { id: "flatness", label: "Flatness", tool: "fit-line" },
+      { id: "spline",   label: "Spline",   tool: "spline" },
     ],
   },
 };
@@ -140,9 +141,10 @@ const _TOOL_TO_TOP_LEVEL = {
   "circle":         "circle",
   "arc-fit":        "circle",
   "arc-measure":    "circle",
-  "fit-line":       "flatness",
+  "fit-line":       "misc",
   "area":           "area",
-  "spline":         "area",
+  "area-shape":     "area",
+  "spline":         "misc",
   "intersect":      "intersect",
 };
 
@@ -154,8 +156,8 @@ const _TOOL_LABELS = {
   "distance":"Distance","angle":"Angle","circle":"Circle / Arc","arc-fit":"Circle / Arc",
   "arc-measure":"Circle / Arc","center-dist":"Distance","para-dist":"Distance",
   "perp-dist":"Distance","area":"Area","pt-circle-dist":"Distance",
-  "intersect":"Intersect","slot-dist":"Distance","spline":"Area",
-  "fit-line":"Flatness",
+  "intersect":"Intersect","slot-dist":"Distance","spline":"Misc",
+  "fit-line":"Misc",
   "calibrate":"Calibrate",
 };
 
@@ -478,6 +480,41 @@ export async function handleToolClick(rawPt, e = {}) {
     state.pendingPoints.push(pt);
     updateToolStatus();
     redraw();
+    return;
+  }
+
+  if (tool === "area-shape") {
+    // Click once on a closed shape (single annotation) or a segment of a closed loop
+    // built from connected line/arc/spline annotations. Creates an `area` annotation.
+    let hitAnn = null;
+    for (let i = state.annotations.length - 1; i >= 0; i--) {
+      const a = state.annotations[i];
+      if (a.type === "dxf-overlay" || a.type === "edges-overlay" || a.type === "preprocessed-overlay") continue;
+      if (hitTestAnnotation(a, pt)) { hitAnn = a; break; }
+    }
+    if (!hitAnn) {
+      showStatus("Click a closed shape (or a segment of a closed loop)");
+      return;
+    }
+    const singleVerts = _singleClosedVertices(hitAnn);
+    if (singleVerts) {
+      const area = polygonArea(singleVerts);
+      addAnnotation({ type: "area", points: singleVerts, sourceAnnIds: [hitAnn.id] });
+      state._flashExpiry = Date.now() + 400;
+      showStatus(`Area captured (${area.toFixed(1)} px²)`);
+      setTool("select");
+      return;
+    }
+    const loop = _traverseLoop(hitAnn);
+    if (!loop) {
+      showStatus("Not a closed shape");
+      return;
+    }
+    const area = polygonArea(loop.points);
+    addAnnotation({ type: "area", points: loop.points, sourceAnnIds: loop.ids });
+    state._flashExpiry = Date.now() + 400;
+    showStatus(`Area captured from ${loop.ids.length} segments (${area.toFixed(1)} px²)`);
+    setTool("select");
     return;
   }
 
@@ -1186,4 +1223,243 @@ export function collectDxfSnapPoints(ann) {
     }
   }
   return pts.map(p => ({ dxf: p, canvas: dxfToCanvas(p.x, p.y, ann) }));
+}
+
+// ── Area-shape: closed-shape detection + loop traversal ──────────────────────
+// Supported "segment" types (endpoint-chainable):
+//   distance, detected-line, detected-line-merged, arc-measure,
+//   detected-arc-partial, spline (open), arc-fit (partial).
+// Supported "single closed" types: circle, detected-circle, arc-fit (full
+// circle), area, spline (closed).
+
+function _areaShapeTol() {
+  return Math.max(0.5, 1 / (viewport.zoom || 1));
+}
+
+function _singleClosedVertices(ann) {
+  if (ann.type === "circle" || ann.type === "detected-circle") {
+    let cx, cy, r;
+    if (ann.type === "circle") { cx = ann.cx; cy = ann.cy; r = ann.r; }
+    else {
+      const sx = imageWidth / (ann.frameWidth || imageWidth);
+      const sy = imageHeight / (ann.frameHeight || imageHeight);
+      cx = ann.x * sx; cy = ann.y * sy; r = ann.radius * sx;
+    }
+    const n = Math.max(32, Math.ceil(2 * Math.PI * r / 2));
+    const pts = [];
+    for (let i = 0; i < n; i++) {
+      const t = (i / n) * 2 * Math.PI;
+      pts.push({ x: cx + r * Math.cos(t), y: cy + r * Math.sin(t) });
+    }
+    return pts;
+  }
+  if (ann.type === "arc-fit" && ann.startAngle === undefined) {
+    const n = Math.max(32, Math.ceil(2 * Math.PI * ann.r / 2));
+    const pts = [];
+    for (let i = 0; i < n; i++) {
+      const t = (i / n) * 2 * Math.PI;
+      pts.push({ x: ann.cx + ann.r * Math.cos(t), y: ann.cy + ann.r * Math.sin(t) });
+    }
+    return pts;
+  }
+  if (ann.type === "area") {
+    return (ann.points || []).map(p => ({ x: p.x, y: p.y }));
+  }
+  if (ann.type === "spline" && ann.points && ann.points.length >= 3) {
+    const pts = ann.points;
+    const first = pts[0], last = pts[pts.length - 1];
+    if (Math.hypot(first.x - last.x, first.y - last.y) < _areaShapeTol() * 2) {
+      return _sampleSpline(pts);
+    }
+  }
+  return null;
+}
+
+function _extractEndpoints(ann) {
+  if (ann.type === "distance") {
+    return { a: { x: ann.a.x, y: ann.a.y }, b: { x: ann.b.x, y: ann.b.y } };
+  }
+  if (ann.type === "detected-line" || ann.type === "detected-line-merged") {
+    const sx = imageWidth / (ann.frameWidth || imageWidth);
+    const sy = imageHeight / (ann.frameHeight || imageHeight);
+    return {
+      a: { x: ann.x1 * sx, y: ann.y1 * sy },
+      b: { x: ann.x2 * sx, y: ann.y2 * sy },
+    };
+  }
+  if (ann.type === "arc-measure") {
+    return { a: { x: ann.p1.x, y: ann.p1.y }, b: { x: ann.p3.x, y: ann.p3.y } };
+  }
+  if (ann.type === "detected-arc-partial") {
+    const sx = imageWidth / (ann.frameWidth || imageWidth);
+    const sy = imageHeight / (ann.frameHeight || imageHeight);
+    const cx = ann.cx * sx, cy = ann.cy * sy, r = ann.r * sx;
+    const a1 = ann.start_deg * Math.PI / 180;
+    const a2 = ann.end_deg * Math.PI / 180;
+    return {
+      a: { x: cx + r * Math.cos(a1), y: cy + r * Math.sin(a1) },
+      b: { x: cx + r * Math.cos(a2), y: cy + r * Math.sin(a2) },
+    };
+  }
+  if (ann.type === "arc-fit" && ann.startAngle !== undefined) {
+    return {
+      a: { x: ann.cx + ann.r * Math.cos(ann.startAngle), y: ann.cy + ann.r * Math.sin(ann.startAngle) },
+      b: { x: ann.cx + ann.r * Math.cos(ann.endAngle),   y: ann.cy + ann.r * Math.sin(ann.endAngle) },
+    };
+  }
+  if (ann.type === "spline" && ann.points && ann.points.length >= 2) {
+    const first = ann.points[0];
+    const last = ann.points[ann.points.length - 1];
+    if (Math.hypot(first.x - last.x, first.y - last.y) < _areaShapeTol() * 2) return null;
+    return { a: { x: first.x, y: first.y }, b: { x: last.x, y: last.y } };
+  }
+  return null;
+}
+
+function _sampleSpline(pts) {
+  const out = [];
+  const n = pts.length;
+  if (n < 2) return pts.slice();
+  const SAMPLES = 16;
+  for (let i = 0; i < n - 1; i++) {
+    const { cp1x, cp1y, cp2x, cp2y } = catmullRomControlPoints(pts, i);
+    const p1 = pts[i], p2 = pts[i + 1];
+    for (let j = 0; j < SAMPLES; j++) {
+      const t = j / SAMPLES, mt = 1 - t;
+      const bx = mt*mt*mt*p1.x + 3*mt*mt*t*cp1x + 3*mt*t*t*cp2x + t*t*t*p2.x;
+      const by = mt*mt*mt*p1.y + 3*mt*mt*t*cp1y + 3*mt*t*t*cp2y + t*t*t*p2.y;
+      out.push({ x: bx, y: by });
+    }
+  }
+  out.push({ x: pts[n - 1].x, y: pts[n - 1].y });
+  return out;
+}
+
+function _sampleSegment(ann, fromPt) {
+  const ep = _extractEndpoints(ann);
+  if (!ep) return [];
+  const fromIsA = Math.hypot(ep.a.x - fromPt.x, ep.a.y - fromPt.y) <=
+                  Math.hypot(ep.b.x - fromPt.x, ep.b.y - fromPt.y);
+  const start = fromIsA ? ep.a : ep.b;
+  const end = fromIsA ? ep.b : ep.a;
+
+  if (ann.type === "distance" || ann.type === "detected-line" || ann.type === "detected-line-merged") {
+    return [{ x: end.x, y: end.y }];
+  }
+  if (ann.type === "arc-measure" || ann.type === "detected-arc-partial" ||
+      (ann.type === "arc-fit" && ann.startAngle !== undefined)) {
+    let cx, cy, r;
+    if (ann.type === "arc-measure") { cx = ann.cx; cy = ann.cy; r = ann.r; }
+    else if (ann.type === "arc-fit") { cx = ann.cx; cy = ann.cy; r = ann.r; }
+    else {
+      const sx = imageWidth / (ann.frameWidth || imageWidth);
+      cx = ann.cx * sx;
+      cy = ann.cy * (imageHeight / (ann.frameHeight || imageHeight));
+      r = ann.r * sx;
+    }
+    const aStart = Math.atan2(start.y - cy, start.x - cx);
+    const aEnd = Math.atan2(end.y - cy, end.x - cx);
+    let sweep = aEnd - aStart;
+    if (ann.type === "arc-measure" && ann.p2) {
+      const aMid = Math.atan2(ann.p2.y - cy, ann.p2.x - cx);
+      const norm = x => ((x - aStart) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI);
+      const midFwd = norm(aMid);
+      const endFwd = norm(aEnd);
+      if (midFwd > endFwd) sweep = endFwd - 2 * Math.PI;
+      else sweep = endFwd;
+    } else {
+      while (sweep > Math.PI) sweep -= 2 * Math.PI;
+      while (sweep < -Math.PI) sweep += 2 * Math.PI;
+    }
+    const absSweep = Math.abs(sweep);
+    const N = Math.max(8, Math.ceil(absSweep * r / 2));
+    const out = [];
+    for (let i = 1; i <= N; i++) {
+      const t = aStart + sweep * (i / N);
+      out.push({ x: cx + r * Math.cos(t), y: cy + r * Math.sin(t) });
+    }
+    return out;
+  }
+  if (ann.type === "spline") {
+    const pts = fromIsA ? ann.points : ann.points.slice().reverse();
+    const sampled = _sampleSpline(pts);
+    return sampled.slice(1);
+  }
+  return [];
+}
+
+function _traverseLoop(startAnn) {
+  const startEp = _extractEndpoints(startAnn);
+  if (!startEp) return null;
+  const tol = _areaShapeTol();
+
+  const segs = [];
+  for (const a of state.annotations) {
+    if (a.id === startAnn.id) continue;
+    const ep = _extractEndpoints(a);
+    if (ep) segs.push({ ann: a, a: ep.a, b: ep.b });
+  }
+
+  const origin = { x: startEp.a.x, y: startEp.a.y };
+  let current = { x: startEp.b.x, y: startEp.b.y };
+  const chain = [startAnn.id];
+  const visited = new Set([startAnn.id]);
+  let prevDx = startEp.b.x - startEp.a.x;
+  let prevDy = startEp.b.y - startEp.a.y;
+
+  const MAX_STEPS = 256;
+  for (let step = 0; step < MAX_STEPS; step++) {
+    if (Math.hypot(current.x - origin.x, current.y - origin.y) <= tol * 2 && chain.length >= 3) {
+      const points = [{ x: origin.x, y: origin.y }];
+      let cursor = { x: origin.x, y: origin.y };
+      for (const id of chain) {
+        const ann = state.annotations.find(a => a.id === id);
+        const samp = _sampleSegment(ann, cursor);
+        if (samp.length === 0) return null;
+        for (const p of samp) points.push(p);
+        cursor = samp[samp.length - 1];
+      }
+      if (points.length > 1) {
+        const last = points[points.length - 1];
+        if (Math.hypot(last.x - origin.x, last.y - origin.y) <= tol * 2) points.pop();
+      }
+      if (points.length < 3) return null;
+      return { points, ids: chain.slice() };
+    }
+
+    const candidates = [];
+    for (const s of segs) {
+      if (visited.has(s.ann.id)) continue;
+      const dA = Math.hypot(s.a.x - current.x, s.a.y - current.y);
+      const dB = Math.hypot(s.b.x - current.x, s.b.y - current.y);
+      if (dA <= tol * 2 || dB <= tol * 2) {
+        const next = dA <= dB ? s.b : s.a;
+        candidates.push({ seg: s, next, matchDist: Math.min(dA, dB) });
+      }
+    }
+    if (candidates.length === 0) return null;
+
+    let chosen;
+    if (candidates.length === 1) {
+      chosen = candidates[0];
+    } else {
+      let best = null;
+      let bestScore = -Infinity;
+      for (const c of candidates) {
+        const ndx = c.next.x - current.x;
+        const ndy = c.next.y - current.y;
+        const cross = prevDx * ndy - prevDy * ndx;
+        const score = cross - c.matchDist * 1e-3;
+        if (score > bestScore) { bestScore = score; best = c; }
+      }
+      chosen = best;
+    }
+
+    visited.add(chosen.seg.ann.id);
+    chain.push(chosen.seg.ann.id);
+    prevDx = chosen.next.x - current.x;
+    prevDy = chosen.next.y - current.y;
+    current = { x: chosen.next.x, y: chosen.next.y };
+  }
+  return null;
 }
