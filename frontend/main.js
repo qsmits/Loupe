@@ -25,6 +25,8 @@ import { initCalProfiles, openCalProfiles } from './cal-profiles.js';
 import { isBrowserCameraActive, startBrowserCamera, stopBrowserCamera } from './browser-camera.js';
 import { finalizeArcFit } from './tools.js';
 import { initZstack } from './zstack.js';
+import { initStitch } from './stitch.js';
+import { initSuperRes } from './superres.js';
 
 // ─── Dropdown helpers ─────��──────────────────────────────────────────────────
 function closeAllDropdowns() {
@@ -1088,6 +1090,8 @@ initLensCal();
 initTiltCal();
 initCalProfiles();
 initZstack();
+initStitch();
+initSuperRes();
 document.getElementById("btn-arc-fit-arc")?.addEventListener("click", () => finalizeArcFit(false));
 document.getElementById("btn-arc-fit-circle")?.addEventListener("click", () => finalizeArcFit(true));
 
