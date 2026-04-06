@@ -21,7 +21,8 @@ const ss = {
   captured: new Set(),
   currentStep: 0,
   scanOrder: [],
-  stepMm: null,
+  stepXmm: null,
+  stepYmm: null,
   result: null, // { width, height, resultUrl }
 };
 
@@ -44,10 +45,10 @@ function computeScanOrder(cols, rows) {
 }
 
 function stepCoordsMm(col, row) {
-  if (!ss.stepMm) return null;
+  if (!ss.stepXmm || !ss.stepYmm) return null;
   return {
-    x: +(col * ss.stepMm).toFixed(3),
-    y: +(row * ss.stepMm).toFixed(3),
+    x: +(col * ss.stepXmm).toFixed(3),
+    y: +(row * ss.stepYmm).toFixed(3),
   };
 }
 
@@ -101,9 +102,9 @@ function renderInstructions() {
   const [col, row] = ss.scanOrder[ss.currentStep] || [0, 0];
   const coords = stepCoordsMm(col, row);
   if (coords) {
-    el.textContent = `Move X to ${coords.x.toFixed(3)} mm, Y to ${coords.y.toFixed(3)} mm`;
+    el.textContent = `Move X to ${coords.x.toFixed(3)} mm, Y to ${coords.y.toFixed(3)} mm  (step ${ss.currentStep + 1} of ${total})`;
   } else {
-    el.textContent = `Move to position [${col}, ${row}]`;
+    el.textContent = `Grid position [${col}, ${row}]  —  enter pixel pitch above for micrometer coordinates  (step ${ss.currentStep + 1} of ${total})`;
   }
 }
 
@@ -127,7 +128,13 @@ async function startSession() {
   const cols = parseInt($("stitch-cols").value) || 3;
   const rows = parseInt($("stitch-rows").value) || 2;
   const overlap = parseFloat($("stitch-overlap").value) || 20;
-  const pitch = $("stitch-pitch").value ? parseFloat($("stitch-pitch").value) : null;
+  // Use dialog input, or fall back to the global calibration from the sidebar
+  let pitch = $("stitch-pitch").value ? parseFloat($("stitch-pitch").value) : null;
+  if ((!pitch || pitch <= 0) && state.calibration && state.calibration.pixelsPerMm > 0) {
+    pitch = state.calibration.pixelsPerMm;
+    // Show the auto-filled value so the user knows where it came from
+    $("stitch-pitch").value = pitch.toFixed(1);
+  }
 
   const body = { cols, rows, overlap_pct: overlap };
   if (pitch && pitch > 0) body.px_per_mm = pitch;
@@ -151,7 +158,8 @@ async function startSession() {
   ss.overlapPct = overlap;
   ss.pxPerMm = pitch;
   ss.scanOrder = data.scan_order;
-  ss.stepMm = data.step_mm;
+  ss.stepXmm = data.step_x_mm;
+  ss.stepYmm = data.step_y_mm;
   ss.captured = new Set();
   ss.currentStep = 0;
   ss.result = null;
@@ -281,7 +289,8 @@ async function resetSession() {
   ss.captured = new Set();
   ss.currentStep = 0;
   ss.scanOrder = [];
-  ss.stepMm = null;
+  ss.stepXmm = null;
+  ss.stepYmm = null;
   ss.result = null;
   $("stitch-result-section").hidden = true;
   renderGrid();
@@ -524,6 +533,8 @@ async function rehydrateFromStatus() {
       ss.captured = new Set(data.captured.map(([c, r]) => capturedKey(c, r)));
       ss.scanOrder = computeScanOrder(ss.gridCols, ss.gridRows);
       ss.currentStep = ss.captured.size;
+      ss.stepXmm = data.step_x_mm;
+      ss.stepYmm = data.step_y_mm;
 
       // Update input fields
       const colsInp = $("stitch-cols");

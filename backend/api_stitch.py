@@ -85,24 +85,27 @@ def make_stitch_router(camera: BaseCamera) -> APIRouter:
             total = cols * rows
             scan_order = _serpentine_order(cols, rows)
 
-            step_mm = None
+            step_x_mm = None
+            step_y_mm = None
             if session.px_per_mm and session.px_per_mm > 0:
-                # We need the sensor width to compute step_mm, but we don't
-                # have a frame yet.  Grab one to determine sensor dimensions.
+                # Grab a frame to determine sensor dimensions.
                 frame = camera.get_frame()
                 if frame is not None:
                     session.sensor_shape = (frame.shape[0], frame.shape[1])
                     sensor_w = frame.shape[1]
-                    overlap_px = compute_overlap_px(sensor_w, session.overlap_frac)
-                    step_px = sensor_w - overlap_px
-                    step_mm = round(step_px / session.px_per_mm, 4)
+                    sensor_h = frame.shape[0]
+                    overlap_x_px = compute_overlap_px(sensor_w, session.overlap_frac)
+                    overlap_y_px = compute_overlap_px(sensor_h, session.overlap_frac)
+                    step_x_mm = round((sensor_w - overlap_x_px) / session.px_per_mm, 4)
+                    step_y_mm = round((sensor_h - overlap_y_px) / session.px_per_mm, 4)
 
             return {
                 "session_id": session.id,
                 "grid_shape": [cols, rows],
                 "total_tiles": total,
                 "scan_order": scan_order,
-                "step_mm": step_mm,
+                "step_x_mm": step_x_mm,
+                "step_y_mm": step_y_mm,
             }
 
     @router.post("/stitch/capture")
@@ -185,6 +188,15 @@ def make_stitch_router(camera: BaseCamera) -> APIRouter:
                 rh, rw = session.result.shape[:2]
                 result_dims = {"width": int(rw), "height": int(rh)}
 
+            step_x_mm = None
+            step_y_mm = None
+            if session.px_per_mm and session.px_per_mm > 0 and session.sensor_shape:
+                sensor_h, sensor_w = session.sensor_shape
+                overlap_x_px = compute_overlap_px(sensor_w, session.overlap_frac)
+                overlap_y_px = compute_overlap_px(sensor_h, session.overlap_frac)
+                step_x_mm = round((sensor_w - overlap_x_px) / session.px_per_mm, 4)
+                step_y_mm = round((sensor_h - overlap_y_px) / session.px_per_mm, 4)
+
             return {
                 "session_id": session.id,
                 "grid_shape": [cols, rows],
@@ -194,6 +206,8 @@ def make_stitch_router(camera: BaseCamera) -> APIRouter:
                 "result_dims": result_dims,
                 "overlap_pct": round(session.overlap_frac * 100, 1),
                 "px_per_mm": session.px_per_mm,
+                "step_x_mm": step_x_mm,
+                "step_y_mm": step_y_mm,
             }
 
     @router.post("/stitch/reset")
