@@ -16,11 +16,18 @@ from fastapi.testclient import TestClient
 
 from backend.vision.focus_stack import compute_focus_stack, colorize_height_map
 from backend.vision.heightmap_analysis import (
+    apply_sl_filter,
+    compute_bearing_ratio,
+    compute_noise_floor,
+    compute_psd_1d,
+    compute_psd_2d,
     compute_roughness_1d,
     compute_roughness_2d,
     detrend as detrend_height_map,
     fit_plane,
     fit_poly2,
+    gaussian_filter_profile,
+    gaussian_filter_surface,
     sample_profile,
 )
 
@@ -614,3 +621,225 @@ def test_heightmap_raw_reflects_scale(client: TestClient):
     assert client.post("/zstack/calibrate-z", json={"scale": 2.0}).status_code == 200
     scaled = client.get("/zstack/heightmap.raw").json()
     assert scaled["z_step_mm"] == pytest.approx(2.0 * base["z_step_mm"], rel=1e-9)
+
+
+def test_delete_frame(client: TestClient):
+    client.post("/zstack/start")
+    for _ in range(5):
+        client.post("/zstack/capture")
+    status = client.get("/zstack/status").json()
+    assert status["frame_count"] == 5
+
+    # Delete middle frame
+    r = client.delete("/zstack/frame/2")
+    assert r.status_code == 200
+    data = r.json()
+    assert data["frame_count"] == 4
+    assert data["deleted_index"] == 2
+
+    # Status reflects the deletion
+    assert client.get("/zstack/status").json()["frame_count"] == 4
+
+    # Out-of-range index → 404
+    r = client.delete("/zstack/frame/10")
+    assert r.status_code == 404
+
+    r = client.delete("/zstack/frame/-1")
+    assert r.status_code == 404
+
+
+def test_delete_frame_invalidates_result(client: TestClient):
+    client.post("/zstack/start")
+    for _ in range(4):
+        client.post("/zstack/capture")
+    r = client.post("/zstack/compute", json={"z_step_mm": 0.02})
+    assert r.status_code == 200
+    assert client.get("/zstack/status").json()["has_result"] is True
+
+    # Deleting a frame should invalidate the computed result
+    r = client.delete("/zstack/frame/0")
+    assert r.status_code == 200
+    assert client.get("/zstack/status").json()["has_result"] is False
+
+
+# ── ISO 25178-3: Gaussian S/L filter tests ────────────────────────────────
+
+def test_gaussian_filter_surface_no_effect_tiny_cutoff():
+    """Cutoff much smaller than spacing → no filtering."""
+    z = np.random.default_rng(42).standard_normal((50, 50)).astype(np.float32)
+    out = gaussian_filter_surface(z, cutoff_mm=0.001, spacing_mm=1.0)
+    np.testing.assert_allclose(out, z, atol=1e-5)
+
+
+def test_gaussian_filter_surface_smooths():
+    """Filter with large cutoff should reduce high-freq content."""
+    rng = np.random.default_rng(42)
+    z = rng.standard_normal((100, 100)).astype(np.float32)
+    out = gaussian_filter_surface(z, cutoff_mm=5.0, spacing_mm=0.1)
+    # Filtered output should have lower variance
+    assert float(out.var()) < float(z.var()) * 0.5
+
+
+def test_gaussian_filter_profile_smooths():
+    z = np.random.default_rng(42).standard_normal(200).astype(np.float32)
+    out = gaussian_filter_profile(z, cutoff_mm=2.0, spacing_mm=0.05)
+    assert float(out.var()) < float(z.var()) * 0.5
+
+
+def test_apply_sl_filter_l_removes_waviness():
+    """L-filter should remove low-frequency content, keeping roughness."""
+    x = np.linspace(0, 10, 500, dtype=np.float64)
+    # Waviness (long wavelength) + roughness (short wavelength)
+    z = np.sin(2 * np.pi * x / 5.0) + 0.1 * np.sin(2 * np.pi * x / 0.2)
+    spacing = float(x[1] - x[0])
+    filtered = apply_sl_filter(z.astype(np.float32), spacing, l_cutoff_mm=2.0, is_profile=True)
+    # The long-wave sinusoid should be significantly reduced
+    assert float(np.abs(filtered).max()) < float(np.abs(z).max()) * 0.7
+
+
+def test_profile_endpoint_with_sl_filter(client: TestClient):
+    """Profile endpoint accepts and applies S/L filter params."""
+    _compute_for_calib(client)
+    body = {"x0": 0, "y0": 100, "x1": 639, "y1": 100, "detrend": "none",
+            "px_per_mm": 100.0, "s_filter_mm": 0.001, "l_filter_mm": 0.5}
+    r = client.post("/zstack/profile", json=body)
+    assert r.status_code == 200
+    d = r.json()
+    assert "s_filter_mm" in d
+    assert "l_filter_mm" in d
+    assert d["s_filter_mm"] == 0.001
+    assert d["l_filter_mm"] == 0.5
+
+
+# ── Noise floor tests ────────────────────────────────────────────────────
+
+def test_compute_noise_floor_flat():
+    z = np.zeros((50, 50), dtype=np.float64)
+    nf = compute_noise_floor(z)
+    assert nf["Sq_noise"] == pytest.approx(0.0, abs=1e-12)
+    assert nf["pv_noise"] == pytest.approx(0.0, abs=1e-12)
+
+
+def test_compute_noise_floor_noisy():
+    rng = np.random.default_rng(42)
+    z = rng.standard_normal((100, 100))
+    nf = compute_noise_floor(z)
+    assert nf["Sq_noise"] > 0.5  # should be ~1.0 for standard normal
+    assert nf["pv_noise"] > nf["Sq_noise"]
+
+
+def test_noise_reference_endpoint(client: TestClient):
+    _compute_for_calib(client)
+    # Set noise reference
+    r = client.post("/zstack/noise-reference")
+    assert r.status_code == 200
+    nf = r.json()["noise_floor"]
+    assert "Sq_noise" in nf
+    assert "pv_noise" in nf
+    # Should appear in status
+    status = client.get("/zstack/status").json()
+    assert status["noise_floor"] is not None
+    # Should appear in profile response
+    body = {"x0": 0, "y0": 100, "x1": 639, "y1": 100, "detrend": "none"}
+    prof = client.post("/zstack/profile", json=body).json()
+    assert "noise_floor" in prof
+    # Reset
+    r = client.post("/zstack/noise-reference/reset")
+    assert r.status_code == 200
+    status = client.get("/zstack/status").json()
+    assert status["noise_floor"] is None
+
+
+# ── Bearing ratio tests ──────────────────────────────────────────────────
+
+def test_bearing_ratio_flat():
+    z = np.ones((50, 50), dtype=np.float64)
+    br = compute_bearing_ratio(z)
+    assert len(br["heights"]) > 0
+    assert len(br["ratios"]) > 0
+    assert br["Sk"] == pytest.approx(0.0, abs=1e-6)
+
+
+def test_bearing_ratio_step():
+    z = np.zeros((100, 100), dtype=np.float64)
+    z[:50, :] = 1.0  # top half is higher
+    br = compute_bearing_ratio(z)
+    # At height 0.5 (midway), roughly 50% of surface is above
+    mid_idx = len(br["heights"]) // 2
+    assert 0.3 < br["ratios"][mid_idx] < 0.7
+
+
+def test_profile_includes_bearing(client: TestClient):
+    _compute_for_calib(client)
+    body = {"x0": 0, "y0": 100, "x1": 639, "y1": 100, "detrend": "none"}
+    r = client.post("/zstack/profile", json=body)
+    assert r.status_code == 200
+    d = r.json()
+    assert "bearing" in d
+    assert "Spk" in d["bearing"]
+    assert "Sk" in d["bearing"]
+    assert "Svk" in d["bearing"]
+
+
+def test_area_roughness_includes_bearing(client: TestClient):
+    _compute_for_calib(client)
+    body = {"x0": 10, "y0": 10, "x1": 200, "y1": 200, "detrend": "none"}
+    r = client.post("/zstack/area-roughness", json=body)
+    assert r.status_code == 200
+    d = r.json()
+    assert "bearing" in d
+
+
+# ── PSD tests ────────────────────────────────────────────────────────────
+
+def test_psd_1d_sinusoid():
+    """PSD of a pure sinusoid should peak at its frequency."""
+    spacing = 0.01  # 10 µm spacing
+    x = np.arange(0, 10, spacing)
+    freq = 5.0  # 5 cycles/mm
+    z = np.sin(2 * np.pi * freq * x)
+    result = compute_psd_1d(z, spacing)
+    freqs = result["frequencies"]
+    psd_vals = result["psd"]
+    peak_idx = np.argmax(psd_vals)
+    assert abs(freqs[peak_idx] - freq) < 1.0  # within 1 cycle/mm
+
+
+def test_psd_2d_basic():
+    rng = np.random.default_rng(42)
+    z = rng.standard_normal((64, 64))
+    result = compute_psd_2d(z, spacing_x_mm=0.01)
+    assert len(result["frequencies"]) > 0
+    assert len(result["psd"]) > 0
+    assert result["unit"] == "mm^4"
+
+
+def test_profile_includes_psd(client: TestClient):
+    _compute_for_calib(client)
+    body = {"x0": 0, "y0": 100, "x1": 639, "y1": 100, "detrend": "none",
+            "px_per_mm": 100.0}
+    r = client.post("/zstack/profile", json=body)
+    assert r.status_code == 200
+    d = r.json()
+    assert "psd" in d
+    assert "frequencies" in d["psd"]
+
+
+# ── Lateral resolution reporting tests ───────────────────────────────────
+
+def test_profile_reports_lateral_resolution(client: TestClient):
+    _compute_for_calib(client)
+    body = {"x0": 0, "y0": 100, "x1": 639, "y1": 100, "detrend": "none",
+            "px_per_mm": 100.0}
+    r = client.post("/zstack/profile", json=body)
+    d = r.json()
+    assert "lateral_resolution_um" in d
+    assert d["lateral_resolution_um"] == pytest.approx(10.0, rel=0.01)  # 1000/100
+
+
+def test_profile_no_lateral_res_without_cal(client: TestClient):
+    _compute_for_calib(client)
+    body = {"x0": 0, "y0": 100, "x1": 639, "y1": 100, "detrend": "none"}
+    r = client.post("/zstack/profile", json=body)
+    d = r.json()
+    assert "lateral_resolution_um" not in d

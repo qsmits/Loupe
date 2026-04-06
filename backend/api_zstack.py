@@ -30,6 +30,11 @@ from .vision.focus_stack import (
     encode_png,
 )
 from .vision.heightmap_analysis import (
+    apply_sl_filter,
+    compute_bearing_ratio,
+    compute_noise_floor,
+    compute_psd_1d,
+    compute_psd_2d,
     compute_roughness_1d,
     compute_roughness_2d,
     detrend as detrend_height_map,
@@ -54,12 +59,15 @@ class _ZStackSession:
         # Multiplicative correction on mm-space Z values, applied at read time.
         # A fresh compute resets this to 1.0.
         self.z_scale: float = 1.0
+        # Noise floor: Sq measured on a known-flat surface (ISO 25178-606).
+        self.noise_floor: Optional[dict] = None
 
     def reset(self) -> None:
         self.frames = []
         self.result = None
         self.z_scale = 1.0
         self.id = uuid.uuid4().hex
+        # noise_floor intentionally survives reset — it's a system property
 
 
 DEFAULT_HDR_STOPS = [-2.0, 0.0, 2.0]
@@ -80,6 +88,8 @@ class ProfileBody(BaseModel):
     samples: Optional[int] = None
     detrend: str = "none"
     px_per_mm: Optional[float] = None
+    s_filter_mm: float = Field(default=0.0, ge=0, description="S-filter cutoff (mm) — removes short-wavelength noise")
+    l_filter_mm: float = Field(default=0.0, ge=0, description="L-filter cutoff (mm) — removes long-wavelength waviness")
 
 
 class AreaRoughnessBody(BaseModel):
@@ -89,6 +99,9 @@ class AreaRoughnessBody(BaseModel):
     y1: float
     detrend: str = "none"
     detrend_scope: str = "roi"
+    px_per_mm: Optional[float] = None
+    s_filter_mm: float = Field(default=0.0, ge=0)
+    l_filter_mm: float = Field(default=0.0, ge=0)
 
 
 class CalibrateZBody(BaseModel):
@@ -210,6 +223,7 @@ def make_zstack_router(camera: BaseCamera) -> APIRouter:
                 "max_frames": MAX_FRAMES,
                 "hdr_supported": _hdr_supported(),
                 "hdr_default_stops": DEFAULT_HDR_STOPS,
+                "noise_floor": session.noise_floor,
             }
 
     @router.post("/zstack/capture-hdr")
@@ -379,6 +393,7 @@ def make_zstack_router(camera: BaseCamera) -> APIRouter:
         with lock:
             result = _require_result()
             hm = detrend_height_map(result["height_map"], body.detrend)
+            noise = session.noise_floor
         # Sampling is pure-numpy and doesn't need the session lock held.
         prof = sample_profile(
             hm,
@@ -393,15 +408,27 @@ def make_zstack_router(camera: BaseCamera) -> APIRouter:
             length_mm = length_px / ppm
             distances = (t * length_px / ppm)
             distances_unit = "mm"
+            spacing_mm = 1.0 / ppm
         else:
             length_mm = None
             distances = t * length_px
             distances_unit = "px"
+            spacing_mm = 0.0
         z_mm = prof["z_mm"]
+        # Apply ISO 25178-3 S/L filtering if requested and spacing is known
+        if spacing_mm > 0 and (body.s_filter_mm > 0 or body.l_filter_mm > 0):
+            z_mm = apply_sl_filter(
+                z_mm, spacing_mm,
+                s_cutoff_mm=body.s_filter_mm,
+                l_cutoff_mm=body.l_filter_mm,
+                is_profile=True,
+            )
         roughness = compute_roughness_1d(z_mm)
+        bearing = compute_bearing_ratio(z_mm)
+        psd = compute_psd_1d(z_mm, spacing_mm) if spacing_mm > 0 else None
         def _round_list(a, nd=4):
             return [round(float(v), nd) for v in a]
-        return {
+        resp = {
             "length_px": round(float(length_px), 4),
             "length_mm": None if length_mm is None else round(float(length_mm), 6),
             "samples": int(len(z_mm)),
@@ -410,12 +437,22 @@ def make_zstack_router(camera: BaseCamera) -> APIRouter:
             "z_mm": _round_list(z_mm, 6),
             "x_px": _round_list(prof["x_px"], 3),
             "y_px": _round_list(prof["y_px"], 3),
-            "z_min_mm": round(float(z_mm.min()), 6),
-            "z_max_mm": round(float(z_mm.max()), 6),
+            "z_min_mm": round(float(np.asarray(z_mm).min()), 6),
+            "z_max_mm": round(float(np.asarray(z_mm).max()), 6),
             "detrend": body.detrend,
             "roughness": {k: (int(v) if k == "count" else round(float(v), 9))
                           for k, v in roughness.items()},
+            "bearing": bearing,
+            "s_filter_mm": body.s_filter_mm,
+            "l_filter_mm": body.l_filter_mm,
         }
+        if psd is not None:
+            resp["psd"] = psd
+        if ppm is not None and ppm > 0:
+            resp["lateral_resolution_um"] = round(1000.0 / ppm, 3)
+        if noise is not None:
+            resp["noise_floor"] = noise
+        return resp
 
     @router.post("/zstack/area-roughness")
     async def zstack_area_roughness(body: AreaRoughnessBody):
@@ -426,6 +463,7 @@ def make_zstack_router(camera: BaseCamera) -> APIRouter:
         with lock:
             result = _require_result()
             hm_full = result["height_map"]
+            noise = session.noise_floor
             H, W = hm_full.shape[:2]
             x0 = int(round(min(body.x0, body.x1)))
             x1 = int(round(max(body.x0, body.x1)))
@@ -442,8 +480,15 @@ def make_zstack_router(camera: BaseCamera) -> APIRouter:
                 roi = hm[y0:y1, x0:x1]
             else:
                 roi = detrend_height_map(hm_full[y0:y1, x0:x1], body.detrend)
+        # Apply S/L filter if spacing is known
+        ppm = body.px_per_mm
+        spacing_mm = (1.0 / ppm) if (ppm is not None and ppm > 0) else 0.0
+        if spacing_mm > 0 and (body.s_filter_mm > 0 or body.l_filter_mm > 0):
+            roi = apply_sl_filter(roi, spacing_mm, body.s_filter_mm, body.l_filter_mm)
         r = compute_roughness_2d(roi)
-        return {
+        bearing = compute_bearing_ratio(roi)
+        psd = compute_psd_2d(roi, spacing_mm) if spacing_mm > 0 else None
+        resp = {
             "x0": x0, "y0": y0, "x1": x1, "y1": y1,
             "width_px": int(x1 - x0),
             "height_px": int(y1 - y0),
@@ -457,7 +502,17 @@ def make_zstack_router(camera: BaseCamera) -> APIRouter:
             "count": int(r["count"]),
             "z_min_mm": round(float(roi.min()), 9),
             "z_max_mm": round(float(roi.max()), 9),
+            "bearing": bearing,
+            "s_filter_mm": body.s_filter_mm,
+            "l_filter_mm": body.l_filter_mm,
         }
+        if psd is not None:
+            resp["psd"] = psd
+        if ppm is not None and ppm > 0:
+            resp["lateral_resolution_um"] = round(1000.0 / ppm, 3)
+        if noise is not None:
+            resp["noise_floor"] = noise
+        return resp
 
     @router.get("/zstack/test-hdr-bracket")
     async def zstack_test_hdr_bracket(
@@ -535,6 +590,45 @@ def make_zstack_router(camera: BaseCamera) -> APIRouter:
         with lock:
             session.z_scale = 1.0
             return {"session_id": session.id, "z_scale": 1.0}
+
+    @router.post("/zstack/noise-reference")
+    async def zstack_noise_reference():
+        """Capture the current Z-stack result as a noise floor reference.
+
+        The user should run this with a known-flat surface (optical flat,
+        polished gauge block) under the scope. The Sq of the detrended
+        height map is stored as the system noise floor and reported
+        alongside all subsequent roughness measurements.
+        """
+        with lock:
+            if session.result is None:
+                raise HTTPException(status_code=404, detail="No computed z-stack. Build one on a flat surface first.")
+            hm = detrend_height_map(session.result["height_map"], "poly2")
+            nf = compute_noise_floor(hm)
+            session.noise_floor = nf
+            return {"session_id": session.id, "noise_floor": nf}
+
+    @router.post("/zstack/noise-reference/reset")
+    async def zstack_noise_reference_reset():
+        with lock:
+            session.noise_floor = None
+            return {"session_id": session.id, "noise_floor": None}
+
+    @router.delete("/zstack/frame/{index}")
+    async def zstack_delete_frame(index: int):
+        with lock:
+            if index < 0 or index >= len(session.frames):
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Frame index {index} out of range (have {len(session.frames)} frames)",
+                )
+            session.frames.pop(index)
+            session.result = None
+            return {
+                "session_id": session.id,
+                "frame_count": len(session.frames),
+                "deleted_index": index,
+            }
 
     @router.post("/zstack/reset")
     async def zstack_reset():

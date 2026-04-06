@@ -136,10 +136,19 @@ function buildDialog() {
               <button class="detect-btn" id="btn-zstack-profile-draw" style="margin-left:8px">Draw profile</button>
               <button class="detect-btn" id="btn-zstack-area-draw">Measure area</button>
               <button class="detect-btn" id="btn-zstack-calib-z">Calibrate Z</button>
+              <button class="detect-btn" id="btn-zstack-noise-ref">Set noise ref</button>
               <button class="detect-btn" id="btn-zstack-profile-clear">Clear</button>
               <span id="zstack-zscale-readout" style="margin-left:8px;font-size:11px;font-variant-numeric:tabular-nums">Z scale: 1.00×</span>
               <button class="detect-btn" id="btn-zstack-zscale-reset" style="padding:2px 6px;font-size:11px" hidden>Reset</button>
+              <span id="zstack-noise-readout" style="font-size:11px;opacity:0.75"></span>
               <span id="zstack-profile-status" style="opacity:0.75;font-size:11px"></span>
+            </div>
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;flex-wrap:wrap">
+              <label style="font-size:11px">S-filter (mm):</label>
+              <input type="number" id="zstack-s-filter" step="0.001" min="0" value="0" style="width:70px;font-size:11px" title="ISO 25178-3 S-filter cutoff — removes short-wavelength noise" />
+              <label style="font-size:11px;margin-left:6px">L-filter (mm):</label>
+              <input type="number" id="zstack-l-filter" step="0.01" min="0" value="0" style="width:70px;font-size:11px" title="ISO 25178-3 L-filter cutoff — removes long-wavelength waviness (typical: 0.8mm)" />
+              <span style="font-size:10px;opacity:0.6">(ISO 25178-3 Gaussian, typical L = 0.8mm)</span>
             </div>
             <div id="zstack-profile-section" hidden>
               <canvas id="zstack-profile-chart" style="width:100%;height:200px;background:#0b0b0b;border:1px solid #333;display:block"></canvas>
@@ -147,6 +156,18 @@ function buildDialog() {
               <div id="zstack-roughness-full" style="margin-top:4px;font-size:12px;opacity:0.9;font-variant-numeric:tabular-nums"></div>
               <div id="zstack-roughness-range" style="margin-top:2px;font-size:12px;opacity:0.9;font-variant-numeric:tabular-nums"></div>
               <div id="zstack-roughness-area" style="margin-top:4px;font-size:12px;opacity:0.9;font-variant-numeric:tabular-nums"></div>
+              <div id="zstack-lateral-res" style="margin-top:2px;font-size:11px;opacity:0.7"></div>
+              <div style="display:flex;gap:12px;margin-top:8px;flex-wrap:wrap">
+                <div style="flex:1;min-width:200px">
+                  <div style="font-size:11px;opacity:0.7;margin-bottom:3px">Bearing ratio (Abbott-Firestone)</div>
+                  <canvas id="zstack-bearing-chart" style="width:100%;height:140px;background:#0b0b0b;border:1px solid #333;display:block"></canvas>
+                  <div id="zstack-bearing-readout" style="margin-top:3px;font-size:11px;opacity:0.8;font-variant-numeric:tabular-nums"></div>
+                </div>
+                <div style="flex:1;min-width:200px">
+                  <div style="font-size:11px;opacity:0.7;margin-bottom:3px">Power spectral density</div>
+                  <canvas id="zstack-psd-chart" style="width:100%;height:140px;background:#0b0b0b;border:1px solid #333;display:block"></canvas>
+                </div>
+              </div>
             </div>
           </div>
           <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
@@ -217,6 +238,14 @@ function buildDialog() {
     setProfileStatus("Click two points that span a known height difference.");
   });
   $("btn-zstack-zscale-reset").addEventListener("click", resetZScale);
+  $("btn-zstack-noise-ref").addEventListener("click", captureNoiseReference);
+  // Re-fetch profile/area when S/L filters change
+  const refetchOnFilterChange = () => {
+    if (zs.profile.p0 && zs.profile.p1) fetchProfile();
+    if (zs.area.p0 && zs.area.p1) fetchAreaRoughness();
+  };
+  $("zstack-s-filter").addEventListener("change", refetchOnFilterChange);
+  $("zstack-l-filter").addEventListener("change", refetchOnFilterChange);
   $("btn-zstack-area-draw").addEventListener("click", () => {
     if (!zs.computed) return;
     // cancel any profile-draw mode — only one drawing mode at a time
@@ -421,9 +450,13 @@ async function fetchProfile() {
   const p0 = zs.profile.p0, p1 = zs.profile.p1;
   if (!p0 || !p1) return;
   const detrend = $("zstack-detrend") ? $("zstack-detrend").value : "none";
+  const sFilter = parseFloat($("zstack-s-filter")?.value) || 0;
+  const lFilter = parseFloat($("zstack-l-filter")?.value) || 0;
   const body = {
     x0: p0.x, y0: p0.y, x1: p1.x, y1: p1.y,
     detrend,
+    s_filter_mm: sFilter,
+    l_filter_mm: lFilter,
   };
   // pixelsPerMm is our frontend calibration field — only send if positive.
   if (state.calibration && state.calibration.pixelsPerMm > 0) {
@@ -442,6 +475,10 @@ async function fetchProfile() {
     zs.profile.data = await r.json();
     drawProfileOverlay();
     drawProfileChart();
+    drawBearingChart(zs.profile.data.bearing);
+    drawPsdChart(zs.profile.data.psd);
+    updateLateralResReadout(zs.profile.data);
+    updateNoiseReadout(zs.profile.data);
   } catch (err) {
     setProfileStatus("Profile error: " + err.message);
   }
@@ -705,11 +742,18 @@ function onHeightmapMouseUp(e) {
 async function fetchAreaRoughness() {
   if (!zs.area.p0 || !zs.area.p1) return;
   const detrend = $("zstack-detrend") ? $("zstack-detrend").value : "none";
+  const sFilter = parseFloat($("zstack-s-filter")?.value) || 0;
+  const lFilter = parseFloat($("zstack-l-filter")?.value) || 0;
   const body = {
     x0: zs.area.p0.x, y0: zs.area.p0.y,
     x1: zs.area.p1.x, y1: zs.area.p1.y,
     detrend, detrend_scope: "roi",
+    s_filter_mm: sFilter,
+    l_filter_mm: lFilter,
   };
+  if (state.calibration && state.calibration.pixelsPerMm > 0) {
+    body.px_per_mm = state.calibration.pixelsPerMm;
+  }
   try {
     const r = await apiFetch("/zstack/area-roughness", {
       method: "POST",
@@ -723,6 +767,10 @@ async function fetchAreaRoughness() {
     zs.area.data = await r.json();
     updateAreaReadout();
     drawAreaOverlay();
+    drawBearingChart(zs.area.data.bearing);
+    drawPsdChart(zs.area.data.psd);
+    updateLateralResReadout(zs.area.data);
+    updateNoiseReadout(zs.area.data);
   } catch (err) {
     setProfileStatus("Area error: " + err.message);
   }
@@ -733,10 +781,14 @@ function updateAreaReadout() {
   if (!el) return;
   const d = zs.area.data;
   if (!d) { el.textContent = ""; return; }
-  el.textContent =
+  let text =
     `Area (${d.width_px}×${d.height_px} px):  ` +
     `Sa ${fmtLen(d.Sa)}   Sq ${fmtLen(d.Sq)}   Sz ${fmtLen(d.Sz)}   ` +
     `[scope ${d.detrend_scope}/${d.detrend}]`;
+  if (d.s_filter_mm > 0 || d.l_filter_mm > 0) {
+    text += `   [S=${d.s_filter_mm}mm L=${d.l_filter_mm}mm]`;
+  }
+  el.textContent = text;
 }
 
 function drawAreaOverlay() {
@@ -790,6 +842,181 @@ function clearArea() {
   const el = $("zstack-roughness-area");
   if (el) el.textContent = "";
   drawAreaOverlay();
+}
+
+// ---- Bearing ratio chart (Abbott-Firestone) ----
+
+function drawBearingChart(bearing) {
+  const canvas = $("zstack-bearing-chart");
+  if (!canvas || !bearing || !bearing.ratios || bearing.ratios.length < 2) {
+    if (canvas) { const ctx = canvas.getContext("2d"); ctx.clearRect(0, 0, canvas.width, canvas.height); }
+    return;
+  }
+  const cssW = canvas.clientWidth || 300;
+  const cssH = canvas.clientHeight || 140;
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width = Math.round(cssW * dpr);
+  canvas.height = Math.round(cssH * dpr);
+  const ctx = canvas.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, cssW, cssH);
+
+  const padL = 10, padR = 46, padT = 8, padB = 20;
+  const plotW = cssW - padL - padR;
+  const plotH = cssH - padT - padB;
+  const ratios = bearing.ratios;
+  const heights = bearing.heights;
+  const n = ratios.length;
+  const hMin = heights[n - 1], hMax = heights[0];
+  const hSpan = Math.max(1e-9, hMax - hMin);
+
+  // Frame
+  ctx.strokeStyle = "#444";
+  ctx.lineWidth = 1;
+  ctx.strokeRect(padL + 0.5, padT + 0.5, plotW, plotH);
+
+  // Curve
+  ctx.strokeStyle = "#ff9f0a";
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  for (let i = 0; i < n; i++) {
+    const x = padL + ratios[i] * plotW;
+    const y = padT + (1 - (heights[i] - hMin) / hSpan) * plotH;
+    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+
+  // Axis labels
+  ctx.fillStyle = "#888";
+  ctx.font = "10px sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "top";
+  ctx.fillText("0%", padL, padT + plotH + 3);
+  ctx.fillText("50%", padL + plotW / 2, padT + plotH + 3);
+  ctx.fillText("100%", padL + plotW, padT + plotH + 3);
+  ctx.textAlign = "left";
+  ctx.textBaseline = "middle";
+  ctx.fillText(fmtLen(hMax), padL + plotW + 4, padT);
+  ctx.fillText(fmtLen(hMin), padL + plotW + 4, padT + plotH);
+
+  // Readout: Spk/Sk/Svk
+  const rd = $("zstack-bearing-readout");
+  if (rd) {
+    rd.textContent = `Spk ${fmtLen(bearing.Spk)}   Sk ${fmtLen(bearing.Sk)}   Svk ${fmtLen(bearing.Svk)}   Smr1 ${(bearing.Smr1 * 100).toFixed(1)}%   Smr2 ${(bearing.Smr2 * 100).toFixed(1)}%`;
+  }
+}
+
+// ---- PSD chart (power spectral density) ----
+
+function drawPsdChart(psd) {
+  const canvas = $("zstack-psd-chart");
+  if (!canvas || !psd || !psd.frequencies || psd.frequencies.length < 2) {
+    if (canvas) { const ctx = canvas.getContext("2d"); ctx.clearRect(0, 0, canvas.width, canvas.height); }
+    return;
+  }
+  const cssW = canvas.clientWidth || 300;
+  const cssH = canvas.clientHeight || 140;
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width = Math.round(cssW * dpr);
+  canvas.height = Math.round(cssH * dpr);
+  const ctx = canvas.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, cssW, cssH);
+
+  const padL = 46, padR = 10, padT = 8, padB = 20;
+  const plotW = cssW - padL - padR;
+  const plotH = cssH - padT - padB;
+  const freqs = psd.frequencies;
+  const vals = psd.psd;
+  const n = freqs.length;
+
+  // Log-log plot
+  const posVals = vals.filter(v => v > 0);
+  if (posVals.length < 2) return;
+  const fMin = Math.log10(Math.max(1e-6, freqs[0]));
+  const fMax = Math.log10(Math.max(1e-6, freqs[n - 1]));
+  const fSpan = Math.max(0.1, fMax - fMin);
+  const vMin = Math.log10(Math.min(...posVals));
+  const vMax = Math.log10(Math.max(...posVals));
+  const vSpan = Math.max(0.1, vMax - vMin);
+  const vPad = vSpan * 0.05;
+
+  // Frame
+  ctx.strokeStyle = "#444";
+  ctx.lineWidth = 1;
+  ctx.strokeRect(padL + 0.5, padT + 0.5, plotW, plotH);
+
+  // Curve
+  ctx.strokeStyle = "#0a84ff";
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  let started = false;
+  for (let i = 0; i < n; i++) {
+    if (vals[i] <= 0) continue;
+    const x = padL + (Math.log10(freqs[i]) - fMin) / fSpan * plotW;
+    const y = padT + (1 - (Math.log10(vals[i]) - (vMin - vPad)) / (vSpan + 2 * vPad)) * plotH;
+    if (!started) { ctx.moveTo(x, y); started = true; } else ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+
+  // Axis labels
+  ctx.fillStyle = "#888";
+  ctx.font = "10px sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "top";
+  ctx.fillText("1/mm", padL + plotW / 2, padT + plotH + 3);
+  ctx.textAlign = "right";
+  ctx.textBaseline = "middle";
+  ctx.fillText(psd.unit, padL - 3, padT + plotH / 2);
+}
+
+// ---- Lateral resolution readout ----
+
+function updateLateralResReadout(data) {
+  const el = $("zstack-lateral-res");
+  if (!el) return;
+  if (data && data.lateral_resolution_um) {
+    el.textContent = `Lateral resolution: ${data.lateral_resolution_um.toFixed(1)} µm/px`;
+  } else {
+    el.textContent = "";
+  }
+}
+
+// ---- Noise floor readout ----
+
+function updateNoiseReadout(data) {
+  const el = $("zstack-noise-readout");
+  if (!el) return;
+  if (data && data.noise_floor) {
+    const nf = data.noise_floor;
+    el.textContent = `Noise floor: Sq ${fmtLen(nf.Sq_noise)}, PV ${fmtLen(nf.pv_noise)}`;
+    el.style.color = "#ff9f0a";
+  } else {
+    el.textContent = "";
+  }
+}
+
+// ---- Noise reference capture ----
+
+async function captureNoiseReference() {
+  if (!zs.computed) {
+    setProfileStatus("Build a Z-stack on a flat surface first.");
+    return;
+  }
+  if (!confirm("Set the current Z-stack as the noise floor reference? Use a known-flat surface (optical flat, polished gauge block).")) return;
+  try {
+    const r = await apiFetch("/zstack/noise-reference", { method: "POST" });
+    if (!r.ok) {
+      const e = await r.json().catch(() => ({}));
+      setProfileStatus("Noise ref failed: " + (e.detail || r.status));
+      return;
+    }
+    const data = await r.json();
+    setProfileStatus(`Noise floor set: Sq = ${fmtLen(data.noise_floor.Sq_noise)}`);
+    updateNoiseReadout(data);
+  } catch (err) {
+    setProfileStatus("Noise ref error: " + err.message);
+  }
 }
 
 function chartXToT(e) {
@@ -860,10 +1087,31 @@ function renderThumbs() {
   wrap.innerHTML = "";
   for (let i = 0; i < zs.frameCount; i++) {
     const dot = document.createElement("div");
-    dot.style.cssText = "width:42px;height:42px;border:1px solid #555;border-radius:3px;display:flex;align-items:center;justify-content:center;font-size:11px;background:#1a1a1a;color:#aaa";
+    dot.style.cssText = "width:42px;height:42px;border:1px solid #555;border-radius:3px;display:flex;align-items:center;justify-content:center;font-size:11px;background:#1a1a1a;color:#aaa;position:relative";
     dot.textContent = `#${i + 1}`;
+    const del = document.createElement("button");
+    del.textContent = "×";
+    del.title = `Delete frame ${i + 1}`;
+    del.style.cssText = "position:absolute;top:-6px;right:-6px;width:16px;height:16px;border-radius:50%;border:none;background:#c44;color:#fff;font-size:11px;line-height:1;cursor:pointer;padding:0;display:none";
+    del.addEventListener("click", (e) => { e.stopPropagation(); deleteFrame(i); });
+    dot.addEventListener("mouseenter", () => { del.style.display = "block"; });
+    dot.addEventListener("mouseleave", () => { del.style.display = "none"; });
+    dot.appendChild(del);
     wrap.appendChild(dot);
   }
+}
+
+async function deleteFrame(index) {
+  try {
+    const r = await fetch(`/zstack/frame/${index}`, { method: "DELETE" });
+    if (!r.ok) { const e = await r.json(); alert(e.detail || "Delete failed"); return; }
+    const data = await r.json();
+    zs.frameCount = data.frame_count;
+    zs.result = null;
+    renderThumbs();
+    const cnt = $("zstack-count");
+    if (cnt) cnt.textContent = zs.frameCount;
+  } catch (err) { alert("Delete frame failed: " + err.message); }
 }
 
 // Applies HDR-support info from /zstack/status to the UI toggle.
