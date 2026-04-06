@@ -151,11 +151,8 @@ def make_stitch_router(camera: BaseCamera) -> APIRouter:
             if session.sensor_shape is None:
                 raise HTTPException(status_code=400, detail="No sensor shape available")
 
-            _h, w = session.sensor_shape
-            overlap_px = compute_overlap_px(w, session.overlap_frac)
-
             try:
-                result = stitch_grid(session.tiles, session.grid_shape, overlap_px)
+                result = stitch_grid(session.tiles, session.grid_shape, session.overlap_frac)
             except Exception as e:
                 raise HTTPException(status_code=500, detail=f"Stitching failed: {e}")
 

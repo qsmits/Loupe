@@ -76,14 +76,14 @@ def test_stitch_grid_2x1():
     """Two tiles side by side with known overlap. Verify output dimensions."""
     big = _make_textured_image(200, 400, seed=3)
     tile_w = 250
-    overlap = 100
-    step = tile_w - overlap
+    overlap_frac = 100 / tile_w  # 100px overlap on a 250px tile
+    step = tile_w - 100
 
     tile_a = big[:200, 0:tile_w].copy()
     tile_b = big[:200, step:step + tile_w].copy()
 
     tiles = {(0, 0): tile_a, (1, 0): tile_b}
-    result = stitch_grid(tiles, (2, 1), overlap)
+    result = stitch_grid(tiles, (2, 1), overlap_frac)
 
     assert result.ndim == 3
     assert result.shape[2] == 3
@@ -97,9 +97,9 @@ def test_stitch_grid_2x2():
     """2x2 grid from a larger image."""
     big = _make_textured_image(400, 500, seed=5)
     tile_h, tile_w = 250, 300
-    overlap = 100
-    step_x = tile_w - overlap
-    step_y = tile_h - overlap
+    overlap_frac = 100 / tile_w  # ~0.333
+    step_x = tile_w - compute_overlap_px(tile_w, overlap_frac)
+    step_y = tile_h - compute_overlap_px(tile_h, overlap_frac)
 
     tiles = {}
     for r in range(2):
@@ -108,7 +108,7 @@ def test_stitch_grid_2x2():
             x0 = c * step_x
             tiles[(c, r)] = big[y0:y0 + tile_h, x0:x0 + tile_w].copy()
 
-    result = stitch_grid(tiles, (2, 2), overlap)
+    result = stitch_grid(tiles, (2, 2), overlap_frac)
     assert result.ndim == 3
     # Expected ~ 500 x 400
     assert abs(result.shape[1] - 500) < 30
