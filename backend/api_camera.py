@@ -60,7 +60,7 @@ class LoadSnapshotBody(BaseModel):
     filename: str = Field(..., min_length=1, pattern=r'^[\w\-]+\.(jpg|jpeg|png)$')
 
 
-MAX_UPLOAD_BYTES = 20 * 1024 * 1024  # 20 MB
+MAX_UPLOAD_BYTES = 100 * 1024 * 1024  # 100 MB (stitched panoramas can be large)
 
 
 def make_camera_router(camera: BaseCamera, frame_store: SessionFrameStore, startup_warning: str | None = None) -> APIRouter:

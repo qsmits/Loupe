@@ -237,16 +237,18 @@ async function buildPanorama() {
 }
 
 async function useAsImage() {
-  if (!ss.result) return;
+  if (!ss.result) { showStatus("No panorama result to use"); return; }
+  showStatus("Loading panorama as working image...");
   try {
-    const resp = await fetch(ss.result.resultUrl);
-    if (!resp.ok) throw new Error("failed to fetch stitched image");
+    // Fetch the stitched PNG from the backend
+    const resp = await apiFetch("/stitch/result.png");
+    if (!resp.ok) throw new Error("Failed to fetch stitched image: " + resp.status);
     const blob = await resp.blob();
     const url = URL.createObjectURL(blob);
     const loadedImg = await new Promise((resolve, reject) => {
       const bmp = new Image();
       bmp.onload = () => resolve(bmp);
-      bmp.onerror = () => reject(new Error("decode failed"));
+      bmp.onerror = () => reject(new Error("Image decode failed"));
       bmp.src = url;
     });
 
@@ -254,7 +256,10 @@ async function useAsImage() {
     const fd = new FormData();
     fd.append("file", blob, "stitch-panorama.png");
     const up = await apiFetch("/load-image", { method: "POST", body: fd });
-    if (!up.ok) throw new Error("upload failed");
+    if (!up.ok) {
+      const errBody = await up.text().catch(() => "");
+      throw new Error("Upload failed (" + up.status + "): " + errBody);
+    }
     const { width, height } = await up.json();
 
     state.frozenSize = { w: width, h: height };
@@ -268,9 +273,10 @@ async function useAsImage() {
     cacheImageData(loadedImg, width, height);
     updateFreezeUI();
     resizeCanvas();
-    showStatus("Panorama loaded as working image");
+    showStatus("Panorama loaded as working image (" + width + "x" + height + ")");
     closeDialog();
   } catch (err) {
+    console.error("useAsImage error:", err);
     showStatus("Use panorama failed: " + err.message);
   }
 }

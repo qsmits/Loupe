@@ -178,11 +178,16 @@ def stitch_grid(
     positions: Dict[Tuple[int, int], Tuple[float, float]] = {}
     positions[(0, 0)] = (0.0, 0.0)
 
-    # Row 0: accumulate horizontal shifts
+    # Row 0: accumulate horizontal shifts.
+    # phaseCorrelate(strip_a, strip_b) returns the shift to map strip_b
+    # onto strip_a.  If the user moved too far (tile B content is further
+    # right), strip_b is shifted left → phaseCorrelate returns negative dx.
+    # But the tile position should be further right, so we SUBTRACT the
+    # correction.
     for c in range(1, cols):
         prev_x, prev_y = positions[(c - 1, 0)]
         dx_corr, dy_corr = x_shifts.get((c - 1, 0), (0.0, 0.0))
-        positions[(c, 0)] = (prev_x + step_x + dx_corr, prev_y + dy_corr)
+        positions[(c, 0)] = (prev_x + step_x - dx_corr, prev_y - dy_corr)
 
     # Subsequent rows: anchor from row above, then fill horizontally
     for r in range(1, rows):
@@ -194,17 +199,17 @@ def stitch_grid(
 
         above_x, above_y = positions[(anchor_c, r - 1)]
         dy_corr, dx_corr = y_shifts.get((anchor_c, r - 1), (0.0, 0.0))
-        positions[(anchor_c, r)] = (above_x + dx_corr, above_y + step_y + dy_corr)
+        positions[(anchor_c, r)] = (above_x - dx_corr, above_y + step_y - dy_corr)
 
         for c in range(anchor_c + 1, cols):
             prev_x, prev_y = positions[(c - 1, r)]
             dx_c, dy_c = x_shifts.get((c - 1, r), (0.0, 0.0))
-            positions[(c, r)] = (prev_x + step_x + dx_c, prev_y + dy_c)
+            positions[(c, r)] = (prev_x + step_x - dx_c, prev_y - dy_c)
 
         for c in range(anchor_c - 1, -1, -1):
             next_x, next_y = positions[(c + 1, r)]
             dx_c, dy_c = x_shifts.get((c, r), (0.0, 0.0))
-            positions[(c, r)] = (next_x - step_x - dx_c, next_y - dy_c)
+            positions[(c, r)] = (next_x - step_x + dx_c, next_y + dy_c)
 
     # Shift so minimum position is at (0, 0)
     min_x = min(p[0] for p in positions.values())
