@@ -16,7 +16,7 @@ from typing import List, Optional
 
 import cv2
 import numpy as np
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
@@ -37,6 +37,7 @@ from .vision.heightmap_analysis import (
     compute_psd_2d,
     compute_roughness_1d,
     compute_roughness_2d,
+    compute_texture_params,
     detrend as detrend_height_map,
     sample_profile,
 )
@@ -119,8 +120,13 @@ class ComputeBody(BaseModel):
     )
 
 
+def _reject_hosted(request: Request):
+    if getattr(request.app.state, "hosted", False):
+        raise HTTPException(403, detail="Z-stack is not available in hosted mode")
+
+
 def make_zstack_router(camera: BaseCamera) -> APIRouter:
-    router = APIRouter()
+    router = APIRouter(dependencies=[Depends(_reject_hosted)])
     session = _ZStackSession()
     lock = threading.Lock()
 
@@ -488,6 +494,7 @@ def make_zstack_router(camera: BaseCamera) -> APIRouter:
         r = compute_roughness_2d(roi)
         bearing = compute_bearing_ratio(roi)
         psd = compute_psd_2d(roi, spacing_mm) if spacing_mm > 0 else None
+        texture = compute_texture_params(roi, spacing_mm) if spacing_mm > 0 else None
         resp = {
             "x0": x0, "y0": y0, "x1": x1, "y1": y1,
             "width_px": int(x1 - x0),
@@ -499,6 +506,8 @@ def make_zstack_router(camera: BaseCamera) -> APIRouter:
             "Sp": round(r["Sp"], 9),
             "Sv": round(r["Sv"], 9),
             "Sz": round(r["Sz"], 9),
+            "Ssk": round(r["Ssk"], 6),
+            "Sku": round(r["Sku"], 6),
             "count": int(r["count"]),
             "z_min_mm": round(float(roi.min()), 9),
             "z_max_mm": round(float(roi.max()), 9),
@@ -508,6 +517,8 @@ def make_zstack_router(camera: BaseCamera) -> APIRouter:
         }
         if psd is not None:
             resp["psd"] = psd
+        if texture is not None:
+            resp["texture"] = texture
         if ppm is not None and ppm > 0:
             resp["lateral_resolution_um"] = round(1000.0 / ppm, 3)
         if noise is not None:

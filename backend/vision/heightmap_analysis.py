@@ -165,11 +165,15 @@ def compute_roughness_1d(z: np.ndarray) -> dict:
 
 
 def compute_roughness_2d(z: np.ndarray) -> dict:
-    """Sa / Sq (ISO 25178 areal) on an already-detrended HxW region."""
+    """ISO 25178-2 areal roughness on an already-detrended HxW region.
+
+    Returns height parameters Sa, Sq, Sp, Sv, Sz, Ssk, Sku.
+    """
     z = np.asarray(z, dtype=np.float64)
     n = int(z.size)
     if n < 2:
-        return {"Sa": 0.0, "Sq": 0.0, "Sp": 0.0, "Sv": 0.0, "Sz": 0.0, "count": n}
+        return {"Sa": 0.0, "Sq": 0.0, "Sp": 0.0, "Sv": 0.0, "Sz": 0.0,
+                "Ssk": 0.0, "Sku": 0.0, "count": n}
     mu = float(z.mean())
     d = z - mu
     Sa = float(np.abs(d).mean())
@@ -177,7 +181,14 @@ def compute_roughness_2d(z: np.ndarray) -> dict:
     Sp = float(d.max())
     Sv = float(-d.min())
     Sz = Sp + Sv
-    return {"Sa": Sa, "Sq": Sq, "Sp": Sp, "Sv": Sv, "Sz": Sz, "count": n}
+    if Sq > 1e-15:
+        Ssk = float((d ** 3).mean() / (Sq ** 3))
+        Sku = float((d ** 4).mean() / (Sq ** 4))
+    else:
+        Ssk = 0.0
+        Sku = 0.0
+    return {"Sa": Sa, "Sq": Sq, "Sp": Sp, "Sv": Sv, "Sz": Sz,
+            "Ssk": Ssk, "Sku": Sku, "count": n}
 
 
 # ── ISO 25178-3: Gaussian S-filter / L-filter ────────────────────────────────
@@ -429,4 +440,86 @@ def compute_psd_2d(z: np.ndarray, spacing_x_mm: float, spacing_y_mm: float = 0.0
         "frequencies": [round(float(f), 6) for f in f_centers[1:]],
         "psd": [float(p) for p in psd_radial[1:]],
         "unit": "mm^4",
+    }
+
+
+# ── ISO 25178-2: Spatial / texture parameters (Sal, Str, Std) ──────────────
+
+def compute_texture_params(
+    z: np.ndarray, spacing_mm: float
+) -> dict:
+    """ISO 25178-2 spatial texture parameters from the 2D autocorrelation.
+
+    Parameters
+    ----------
+    z : 2D height map (already detrended).
+    spacing_mm : lateral pixel spacing in mm.
+
+    Returns
+    -------
+    dict with Sal, Str, Std (or None where undetermined).
+      - Sal: fastest autocorrelation decay length to 0.2 (mm)
+      - Str: texture aspect ratio (0 = directional, 1 = isotropic)
+      - Std: dominant texture direction (degrees, 0–180)
+    """
+    z = np.asarray(z, dtype=np.float64)
+    h, w = z.shape
+    if h < 8 or w < 8 or spacing_mm <= 0:
+        return {"Sal": None, "Str": None, "Std": None}
+
+    z_centered = z - z.mean()
+
+    # 2D autocorrelation via FFT (Wiener-Khinchin)
+    fft2 = np.fft.fft2(z_centered)
+    acf = np.fft.ifft2(np.abs(fft2) ** 2).real
+    acf = np.fft.fftshift(acf)
+    # Normalize so center (zero-lag) = 1.0
+    center_val = acf[h // 2, w // 2]
+    if center_val < 1e-15:
+        return {"Sal": None, "Str": None, "Std": None}
+    acf /= center_val
+
+    # Build distance map from center (in mm)
+    cy, cx = h // 2, w // 2
+    ys, xs = np.indices((h, w), dtype=np.float64)
+    dist_mm = np.sqrt(((xs - cx) * spacing_mm) ** 2 + ((ys - cy) * spacing_mm) ** 2)
+
+    # Sal: shortest distance where ACF drops to <= 0.2
+    # Search radially in all directions — find per-direction decay, take minimum
+    threshold = 0.2
+    n_angles = 180
+    angles = np.linspace(0, np.pi, n_angles, endpoint=False)
+    max_radius_px = min(cx, cy)
+    decay_dists = []  # distance in mm where ACF first <= threshold, per angle
+
+    for angle in angles:
+        cos_a, sin_a = np.cos(angle), np.sin(angle)
+        for r in range(1, max_radius_px):
+            px = int(round(cx + r * cos_a))
+            py = int(round(cy + r * sin_a))
+            if 0 <= px < w and 0 <= py < h:
+                if acf[py, px] <= threshold:
+                    decay_dists.append((r * spacing_mm, angle))
+                    break
+
+    if not decay_dists:
+        return {"Sal": None, "Str": None, "Std": None}
+
+    dists_only = [d for d, _ in decay_dists]
+    Sal = float(min(dists_only))
+    max_decay = float(max(dists_only))
+    Str = float(Sal / max_decay) if max_decay > 0 else None
+
+    # Std: dominant texture direction from the angular PSD
+    # The direction with the slowest ACF decay (longest correlation) is the
+    # texture direction.  This corresponds to the angle where the PSD is
+    # strongest.
+    slowest_angle = max(decay_dists, key=lambda x: x[0])[1]
+    # Convert to degrees (0–180, measured from X axis)
+    Std = float(np.degrees(slowest_angle)) % 180.0
+
+    return {
+        "Sal": round(Sal, 6),
+        "Str": round(Str, 6) if Str is not None else None,
+        "Std": round(Std, 2),
     }

@@ -48,6 +48,7 @@ const zs = {
     p1: null,
   },
   zScale: 1.0,
+  noiseFloor: null,  // { Sq_noise, pv_noise } — persists across reset
 };
 
 function $(id) { return document.getElementById(id); }
@@ -143,7 +144,15 @@ function buildDialog() {
               <span id="zstack-noise-readout" style="font-size:11px;opacity:0.75"></span>
               <span id="zstack-profile-status" style="opacity:0.75;font-size:11px"></span>
             </div>
+            <div id="zstack-cal-warning" hidden style="margin-bottom:8px;padding:6px 10px;background:#3a2a0a;border:1px solid #8a6a1a;border-radius:3px;font-size:11px;color:#fbbf24;line-height:1.4">
+              <strong>Pixel calibration required.</strong> Surface roughness needs a set calibration to report values in real units and for the ISO 25178-3 S/L filters to work. Close this dialog and calibrate via <em>Setup &rarr; Calibrate</em> before using the roughness tools.
+            </div>
             <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;flex-wrap:wrap">
+              <label style="font-size:11px">Noise comp:</label>
+              <select id="zstack-noise-comp" style="font-size:11px" title="Subtract noise floor from roughness values (quadrature: Rq_corr = √(Rq² − Sq_noise²))">
+                <option value="off">Off</option>
+                <option value="quadrature">Quadrature</option>
+              </select>
               <label style="font-size:11px">S-filter (mm):</label>
               <input type="number" id="zstack-s-filter" step="0.001" min="0" value="0" style="width:70px;font-size:11px" title="ISO 25178-3 S-filter cutoff — removes short-wavelength noise" />
               <label style="font-size:11px;margin-left:6px">L-filter (mm):</label>
@@ -207,8 +216,13 @@ function buildDialog() {
     const url = `${base}?detrend=${encodeURIComponent(mode)}&t=${Date.now()}`;
     $("zstack-heightmap-img").src = url;
     $("zstack-heightmap-dl").href = url;
-    // Re-fetch the profile against the new level so the chart matches
-    // whatever the user is looking at.
+    // Re-fetch the profile against the new detrend so the chart matches.
+    // Recover points from cached data if lost (dialog reopen).
+    if (!zs.profile.p0 && zs.profile.data) {
+      const d = zs.profile.data;
+      zs.profile.p0 = { x: d.x_px[0], y: d.y_px[0] };
+      zs.profile.p1 = { x: d.x_px[d.x_px.length - 1], y: d.y_px[d.y_px.length - 1] };
+    }
     if (zs.profile.p0 && zs.profile.p1) fetchProfile();
     if (zs.area.p0 && zs.area.p1) fetchAreaRoughness();
   });
@@ -241,11 +255,24 @@ function buildDialog() {
   $("btn-zstack-noise-ref").addEventListener("click", captureNoiseReference);
   // Re-fetch profile/area when S/L filters change
   const refetchOnFilterChange = () => {
+    // Use existing data's coordinates if points were lost (e.g. dialog reopen)
+    if (!zs.profile.p0 && zs.profile.data) {
+      const d = zs.profile.data;
+      zs.profile.p0 = { x: d.x_px[0], y: d.y_px[0] };
+      zs.profile.p1 = { x: d.x_px[d.x_px.length - 1], y: d.y_px[d.y_px.length - 1] };
+    }
     if (zs.profile.p0 && zs.profile.p1) fetchProfile();
     if (zs.area.p0 && zs.area.p1) fetchAreaRoughness();
   };
   $("zstack-s-filter").addEventListener("change", refetchOnFilterChange);
+  $("zstack-s-filter").addEventListener("input", refetchOnFilterChange);
   $("zstack-l-filter").addEventListener("change", refetchOnFilterChange);
+  $("zstack-l-filter").addEventListener("input", refetchOnFilterChange);
+  $("zstack-noise-comp").addEventListener("change", () => {
+    // Noise compensation is display-side only — just refresh readouts
+    if (zs.profile.data) updateProfileReadout();
+    if (zs.area.data) updateAreaReadout();
+  });
   $("btn-zstack-area-draw").addEventListener("click", () => {
     if (!zs.computed) return;
     // cancel any profile-draw mode — only one drawing mode at a time
@@ -279,6 +306,22 @@ function buildDialog() {
   chart.addEventListener("mousedown", onChartMouseDown);
   window.addEventListener("mousemove", onChartMouseMove);
   window.addEventListener("mouseup", onChartMouseUp);
+
+  updateCalibrationWarning();
+}
+
+// Show the calibration warning banner + disable the S/L filter inputs
+// when pixel calibration is missing. Without calibration the backend
+// skips the filter branch entirely (it requires spacing_mm > 0), which
+// previously caused the spinners to silently do nothing.
+function updateCalibrationWarning() {
+  const hasCal = !!(state.calibration && state.calibration.pixelsPerMm > 0);
+  const warn = $("zstack-cal-warning");
+  if (warn) warn.hidden = hasCal;
+  const sFilter = $("zstack-s-filter");
+  const lFilter = $("zstack-l-filter");
+  if (sFilter) sFilter.disabled = !hasCal;
+  if (lFilter) lFilter.disabled = !hasCal;
 }
 
 function setProfileStatus(msg) {
@@ -660,6 +703,32 @@ function computeRoughness1d(z) {
   return { Ra, Rq, Rp, Rv, Rt, Rz: Rt, Rsk, Rku, count: n };
 }
 
+function getNoiseFloorSq() {
+  if (zs.noiseFloor?.Sq_noise) return zs.noiseFloor.Sq_noise;
+  return null;
+}
+
+function compensateRoughness(r) {
+  const mode = $("zstack-noise-comp")?.value || "off";
+  if (mode !== "quadrature") return r;
+  const sqNoise = getNoiseFloorSq();
+  if (!sqNoise || sqNoise <= 0 || !r.Rq || r.Rq <= 0) return r;
+  const rqCorr = Math.sqrt(Math.max(0, r.Rq * r.Rq - sqNoise * sqNoise));
+  if (r.Rq < 1e-15) return r;
+  const ratio = rqCorr / r.Rq;
+  return {
+    ...r,
+    Ra: r.Ra * ratio,
+    Rq: rqCorr,
+    Rp: r.Rp * ratio,
+    Rv: r.Rv * ratio,
+    Rz: r.Rz * ratio,
+    Rsk: r.Rsk,
+    Rku: r.Rku,
+    count: r.count,
+  };
+}
+
 function fmtRoughnessLine(label, r) {
   return `${label}  Ra ${fmtLen(r.Ra)}   Rq ${fmtLen(r.Rq)}   Rz ${fmtLen(r.Rz)}   ` +
          `Rsk ${r.Rsk.toFixed(2)}   Rku ${r.Rku.toFixed(2)}   (${r.count} samples)`;
@@ -672,9 +741,10 @@ function updateRoughnessReadout(idxA, idxB) {
   if (!data || !fullEl || !rngEl) return;
   const r = data.roughness;
   if (r) {
-    fullEl.textContent = fmtRoughnessLine("Full line:", {
+    const rc = compensateRoughness({
       Ra: r.Ra, Rq: r.Rq, Rz: r.Rz, Rsk: r.Rsk, Rku: r.Rku, count: r.count,
     });
+    fullEl.textContent = fmtRoughnessLine("Full line:", rc);
   } else {
     fullEl.textContent = "";
   }
@@ -683,7 +753,7 @@ function updateRoughnessReadout(idxA, idxB) {
   const lo = Math.min(idxA, idxB), hi = Math.max(idxA, idxB);
   const slice = data.z_mm.slice(lo, hi + 1);
   if (slice.length >= 2) {
-    const rr = computeRoughness1d(slice);
+    const rr = compensateRoughness(computeRoughness1d(slice));
     rngEl.textContent = fmtRoughnessLine("Marker A→B:", rr);
   } else {
     rngEl.textContent = "Marker A→B:  (select a wider range)";
@@ -776,17 +846,35 @@ async function fetchAreaRoughness() {
   }
 }
 
+function compensateAreaRoughness(d) {
+  const mode = $("zstack-noise-comp")?.value || "off";
+  if (mode !== "quadrature") return d;
+  const sqNoise = getNoiseFloorSq();
+  if (!sqNoise || sqNoise <= 0 || !d.Sq || d.Sq <= 0) return d;
+  const sqCorr = Math.sqrt(Math.max(0, d.Sq * d.Sq - sqNoise * sqNoise));
+  const ratio = sqCorr / d.Sq;
+  return { ...d, Sa: d.Sa * ratio, Sq: sqCorr, Sz: d.Sz * ratio };
+}
+
 function updateAreaReadout() {
   const el = $("zstack-roughness-area");
   if (!el) return;
   const d = zs.area.data;
   if (!d) { el.textContent = ""; return; }
+  const c = compensateAreaRoughness(d);
   let text =
     `Area (${d.width_px}×${d.height_px} px):  ` +
-    `Sa ${fmtLen(d.Sa)}   Sq ${fmtLen(d.Sq)}   Sz ${fmtLen(d.Sz)}   ` +
+    `Sa ${fmtLen(c.Sa)}   Sq ${fmtLen(c.Sq)}   Sz ${fmtLen(c.Sz)}   ` +
+    `Ssk ${(d.Ssk ?? 0).toFixed(2)}   Sku ${(d.Sku ?? 0).toFixed(2)}   ` +
     `[scope ${d.detrend_scope}/${d.detrend}]`;
   if (d.s_filter_mm > 0 || d.l_filter_mm > 0) {
     text += `   [S=${d.s_filter_mm}mm L=${d.l_filter_mm}mm]`;
+  }
+  if (d.texture) {
+    const t = d.texture;
+    if (t.Sal != null) text += `   Sal ${fmtLen(t.Sal)}`;
+    if (t.Str != null) text += `   Str ${t.Str.toFixed(3)}`;
+    if (t.Std != null) text += `   Std ${t.Std.toFixed(1)}°`;
   }
   el.textContent = text;
 }
@@ -988,10 +1076,11 @@ function updateNoiseReadout(data) {
   const el = $("zstack-noise-readout");
   if (!el) return;
   if (data && data.noise_floor) {
+    zs.noiseFloor = data.noise_floor;
     const nf = data.noise_floor;
     el.textContent = `Noise floor: Sq ${fmtLen(nf.Sq_noise)}, PV ${fmtLen(nf.pv_noise)}`;
     el.style.color = "#ff9f0a";
-  } else {
+  } else if (!zs.noiseFloor) {
     el.textContent = "";
   }
 }
@@ -1267,6 +1356,14 @@ async function resetStack() {
   renderThumbs();
   updateCount();
   updateInstruction();
+  // Noise floor survives reset on the backend — restore the readout
+  try {
+    const r = await apiFetch("/zstack/status");
+    if (r.ok) {
+      const status = await r.json();
+      updateNoiseReadout(status);
+    }
+  } catch {}
 }
 
 // Replace the live/frozen view with the all-in-focus composite so existing
@@ -1331,6 +1428,10 @@ export async function openZstackDialog() {
   const dlg = $("zstack-dialog");
   dlg.hidden = false;
   window.addEventListener("keydown", onZstackKey, true);
+
+  // Refresh the calibration banner — user may have calibrated since
+  // the last time the dialog was opened.
+  updateCalibrationWarning();
 
   // Probe backend state first — if there's an existing session with frames
   // or a computed result, keep it.  Closing and reopening the dialog (e.g.
