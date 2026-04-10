@@ -106,6 +106,20 @@ class MatchDxfArcsBody(BaseModel):
         return self
 
 
+class AnalyzeGearBody(BaseModel):
+    cx: float = Field(ge=0, le=100000)
+    cy: float = Field(ge=0, le=100000)
+    tip_r: float = Field(gt=0, le=100000)
+    root_r: float = Field(gt=0, le=100000)
+    n_teeth: int = Field(ge=6, le=300)
+
+    @model_validator(mode="after")
+    def tip_gt_root(self) -> "AnalyzeGearBody":
+        if self.tip_r <= self.root_r:
+            raise ValueError("tip_r must be greater than root_r")
+        return self
+
+
 def make_detection_router(frame_store: SessionFrameStore) -> APIRouter:
     router = APIRouter()
 
@@ -203,5 +217,24 @@ def make_detection_router(frame_store: SessionFrameStore) -> APIRouter:
                 r["pass_fail"] = "fail" if dev > body.tolerance_fail else (
                     "warn" if dev > body.tolerance_warn else "pass")
         return results
+
+    @router.post("/analyze-gear")
+    async def analyze_gear_route(body: AnalyzeGearBody, session_id: str = Depends(get_session_id_dep)):
+        import cv2
+        from .vision.gear_analysis import analyze_gear
+
+        frame = frame_store.get(session_id)
+        if frame is None:
+            raise HTTPException(status_code=400, detail="No frame stored. Call /freeze first.")
+        if frame.ndim == 3:
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        else:
+            gray = frame
+        return analyze_gear(
+            gray,
+            cx=body.cx, cy=body.cy,
+            tip_r=body.tip_r, root_r=body.root_r,
+            n_teeth=body.n_teeth,
+        )
 
     return router

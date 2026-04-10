@@ -243,3 +243,34 @@ def test_load_dxf_invalid_file(client):
         files={"file": ("bad.dxf", b"not a dxf file", "application/octet-stream")},
     )
     assert r.status_code == 400
+
+
+# --- Gear analysis ---
+
+
+def test_analyze_gear_requires_freeze_first(client):
+    r = client.post("/analyze-gear", json={
+        "cx": 320, "cy": 240, "tip_r": 100, "root_r": 80, "n_teeth": 17,
+    })
+    assert r.status_code == 400
+    assert "freeze" in r.json()["detail"].lower()
+
+
+def test_analyze_gear_after_freeze_returns_shape(client):
+    client.post("/freeze")
+    r = client.post("/analyze-gear", json={
+        "cx": 320, "cy": 240, "tip_r": 100, "root_r": 80, "n_teeth": 17,
+    })
+    assert r.status_code == 200
+    body = r.json()
+    assert "pcd_radius_px" in body
+    assert "teeth" in body
+    assert isinstance(body["teeth"], list)
+
+
+def test_analyze_gear_rejects_bad_radii(client):
+    client.post("/freeze")
+    r = client.post("/analyze-gear", json={
+        "cx": 320, "cy": 240, "tip_r": 50, "root_r": 80, "n_teeth": 17,
+    })
+    assert r.status_code == 422
