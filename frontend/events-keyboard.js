@@ -143,6 +143,34 @@ export function initKeyboard(closeAllDropdowns) {
       resizeCanvas();
       return;
     }
+    // Shift+P: export the raw frozen frame as PNG (no overlays).
+    // Useful for handing off reference frames to algorithm work.
+    if (e.key === "P" && e.shiftKey && !e.ctrlKey && !e.metaKey) {
+      if (!state.frozen || !state.frozenBackground) {
+        showStatus("Freeze a frame first to export it");
+        return;
+      }
+      const img = state.frozenBackground;
+      const off = document.createElement("canvas");
+      off.width = img.naturalWidth || img.width;
+      off.height = img.naturalHeight || img.height;
+      off.getContext("2d").drawImage(img, 0, 0);
+      off.toBlob((blob) => {
+        if (!blob) {
+          showStatus("Failed to encode frame as PNG");
+          return;
+        }
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        const ts = new Date().toISOString().slice(0, 19).replace(/[-:]/g, "").replace("T", "-");
+        a.download = `frame-${ts}.png`;
+        a.click();
+        URL.revokeObjectURL(url);
+        showStatus(`Exported raw frame: ${a.download}`);
+      }, "image/png");
+      return;
+    }
     if (e.key === "`" && !e.ctrlKey && !e.metaKey) {
       state.showGrid = !state.showGrid;
       document.getElementById("btn-grid")?.classList.toggle("active", state.showGrid);
