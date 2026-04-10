@@ -92,6 +92,13 @@ export function initKeyboard(closeAllDropdowns) {
         redraw();
         return;
       }
+      if (state.gearPickMode) {
+        state.gearPickMode = null;
+        state.gearPickBuffer = null;
+        showStatus("Gear analysis cancelled");
+        redraw();
+        return;
+      }
       hideContextMenu();
       closeAllDropdowns();
       if (state.dxfDragMode) {
