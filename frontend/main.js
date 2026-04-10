@@ -27,6 +27,7 @@ import { finalizeArcFit } from './tools.js';
 import { initZstack } from './zstack.js';
 import { initStitch } from './stitch.js';
 import { initSuperRes } from './superres.js';
+import { initGear } from './gear.js';
 
 // ─── Dropdown helpers ─────��──────────────────────────────────────────────────
 function closeAllDropdowns() {
@@ -1262,6 +1263,7 @@ initGlobalVisToggle();
 initZstack();
 initStitch();
 initSuperRes();
+initGear();
 document.getElementById("btn-arc-fit-arc")?.addEventListener("click", () => finalizeArcFit(false));
 document.getElementById("btn-arc-fit-circle")?.addEventListener("click", () => finalizeArcFit(true));
 

@@ -68,6 +68,10 @@ export const state = {
   _dirty: false,
   _savedManually: true,
   _hideAllAnnotations: false,  // global visibility toggle — overrides ann.hidden when true
+  // Gear analysis PoC
+  gearPickMode: null,      // null | "pick-tip" | "pick-root"
+  gearPickBuffer: null,    // { tipCircle?, rootCircle? }
+  gearAnalysis: null,      // null | { pcd_radius_px, teeth, material_is_dark, cx, cy }
 };
 
 // Active camera's exposure and gain bounds — refreshed from /camera/info

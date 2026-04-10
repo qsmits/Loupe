@@ -191,6 +191,54 @@ const _dxfFns = {
   drawPreprocessedOverlay,
 };
 
+function drawGearAnalysis() {
+  const ga = state.gearAnalysis;
+  if (!ga || !ga.teeth || ga.teeth.length === 0) return;
+  const cx = ga.cx;
+  const cy = ga.cy;
+  const r = ga.pcd_radius_px;
+
+  ctx.save();
+
+  // PCD circle (dashed cyan)
+  ctx.strokeStyle = "#00e5ff";
+  ctx.lineWidth = pw(1);
+  ctx.setLineDash([pw(4), pw(4)]);
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  // Per-tooth L→R arcs on the PCD (solid yellow)
+  ctx.strokeStyle = "#ffeb3b";
+  ctx.lineWidth = pw(3);
+  for (const t of ga.teeth) {
+    const lRad = (t.l_angle_deg * Math.PI) / 180;
+    const rRad = (t.r_angle_deg * Math.PI) / 180;
+    let startA = lRad;
+    let endA = rRad;
+    if (endA < startA) endA += Math.PI * 2;
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, startA, endA, false);
+    ctx.stroke();
+  }
+
+  // Tooth index labels at center angle, outside the PCD
+  ctx.fillStyle = "#ffeb3b";
+  ctx.font = `${pw(12)}px sans-serif`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  const labelR = r * 1.12;
+  for (const t of ga.teeth) {
+    const cRad = (t.center_angle_deg * Math.PI) / 180;
+    const lx = cx + labelR * Math.cos(cRad);
+    const ly = cy + labelR * Math.sin(cRad);
+    ctx.fillText(`T${t.index}`, lx, ly);
+  }
+
+  ctx.restore();
+}
+
 export function redraw() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
@@ -344,6 +392,9 @@ export function redraw() {
     }
     ctx.restore();
   }
+
+  // Gear analysis overlay (PCD + per-tooth L→R arcs + labels)
+  drawGearAnalysis();
 
   ctx.restore();
   // ── End viewport transform ──

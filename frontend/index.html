@@ -257,6 +257,7 @@
       <button id="btn-superres" class="top-btn" title="Super-resolution from sub-pixel shifted captures">SR</button>
       <button id="btn-zstack" class="top-btn" title="3D Z-Stack (depth-from-focus)">3D</button>
       <button id="btn-zstack-3d-view" class="top-btn" title="Open 3D surface view (requires a built Z-stack)" disabled>Surface</button>
+      <button id="btn-analyze-gear" class="top-btn" title="Analyze gear tooth widths (PoC)">Gear</button>
       <button id="btn-freeze" class="top-btn freeze-btn freeze-live">❄ Live</button>
       <button id="btn-load" class="top-btn icon-btn" title="Load image">📁</button>
       <button id="btn-save-session" class="top-btn icon-btn" title="Save session">💾</button>
@@ -394,6 +395,14 @@
               <tbody id="inspection-tbody"></tbody>
             </table>
           </div>
+        </div>
+        <!-- Gear analysis results panel (PoC) -->
+        <div id="gear-results-panel" hidden>
+          <div class="inspection-header">
+            <span class="inspection-title">Gear Analysis</span>
+            <span class="inspection-count" id="gear-results-count"></span>
+          </div>
+          <div id="gear-results-body"></div>
         </div>
         <div id="compare-active-badge" class="compare-active-badge" hidden>
           <span class="compare-active-label">Profile:</span>

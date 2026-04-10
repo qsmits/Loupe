@@ -24,6 +24,7 @@ import { isTiltCalMode, tiltCalClick, tiltCalMouseMove } from './tilt-cal.js';
 import { refinePointJS } from './subpixel-js.js';
 import { openCommentEditor } from './comment-editor.js';
 import { hitTestAnnotation } from './hit-test.js';
+import { handleGearPickClick } from './gear.js';
 
 // ── Sub-pixel snap preview (debounced) ────────────────────────────────────────
 let _subpixelDebounce = null;
@@ -140,6 +141,13 @@ async function onMouseDown(e) {
     return;
   }
   const pt = canvasPoint(e);
+  // Gear analysis pick mode short-circuits tool dispatch.
+  if (state.gearPickMode && e.button === 0) {
+    if (handleGearPickClick(pt)) {
+      e.preventDefault();
+      return;
+    }
+  }
   if (state.dxfAlignMode) {
     const ann = state.annotations.find(a => a.type === "dxf-overlay");
     if (!ann) { exitDxfAlignMode(); return; }

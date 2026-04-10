@@ -3,6 +3,7 @@ import { state, DETECTION_TYPES, camBounds } from './state.js';
 import { redraw, resizeCanvas, showStatus, getStatus, canvas, listEl } from './render.js';
 import { measurementLabel } from './format.js';
 import { imageWidth, imageHeight, setImageSize, fitToWindow } from './viewport.js';
+import { renderGearResultsPanel } from './gear.js';
 
 const _mctx = () => ({
   calibration: state.calibration,
@@ -317,6 +318,7 @@ export function renderSidebar() {
   }
 
   updateTemplateDisplay();
+  renderGearResultsPanel();
 }
 
 // ── Template display ───────────────────────────────────────────────────────────
