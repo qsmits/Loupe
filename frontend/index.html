@@ -1037,6 +1037,64 @@
     </div>
   </div>
 
+  <!-- Gear generate/analyze dialog -->
+  <div id="gear-generate-dialog" class="dialog-overlay" hidden>
+    <div class="dialog-content">
+      <div class="dialog-header">
+        <span class="dialog-title">Gear parameters</span>
+        <button class="dialog-close" id="btn-gear-gen-close">✕</button>
+      </div>
+      <div class="settings-panel active" id="gear-generate-panel">
+        <div class="settings-row">
+          <label class="settings-label" for="gear-gen-n">Teeth (N)</label>
+          <input type="number" id="gear-gen-n" class="settings-input" min="6" max="300" step="1" value="17" />
+        </div>
+        <div class="settings-row">
+          <label class="settings-label" for="gear-gen-profile">Profile</label>
+          <select id="gear-gen-profile" class="settings-select">
+            <option value="cycloidal" selected>Cycloidal</option>
+            <option value="involute">Involute</option>
+          </select>
+        </div>
+        <div class="settings-row">
+          <span class="settings-label">Module</span>
+          <span class="settings-value" id="gear-gen-module-info">—</span>
+        </div>
+
+        <details id="gear-gen-advanced" style="margin-top:4px;">
+          <summary style="font-size:11px; color:var(--text-secondary); cursor:pointer; margin-bottom:8px;">Advanced</summary>
+          <div class="settings-row">
+            <label class="settings-label" for="gear-gen-addendum">Addendum</label>
+            <input type="number" id="gear-gen-addendum" class="settings-input" min="0.1" max="3.0" step="0.01" value="1.00" />
+          </div>
+          <div class="settings-row">
+            <label class="settings-label" for="gear-gen-dedendum">Dedendum</label>
+            <input type="number" id="gear-gen-dedendum" class="settings-input" min="0.1" max="3.0" step="0.01" value="1.25" />
+          </div>
+          <div class="settings-row" id="gear-gen-rolling-row">
+            <label class="settings-label" for="gear-gen-rolling">Rolling r/m</label>
+            <input type="number" id="gear-gen-rolling" class="settings-input" min="0.1" max="1.0" step="0.01" value="0.50" />
+          </div>
+          <div class="settings-row" id="gear-gen-pressure-row" hidden>
+            <label class="settings-label" for="gear-gen-pressure">Pressure °</label>
+            <input type="number" id="gear-gen-pressure" class="settings-input" min="5" max="35" step="0.5" value="20" />
+          </div>
+          <div class="settings-row">
+            <label class="settings-label" for="gear-gen-rotation">Rotation °</label>
+            <input type="number" id="gear-gen-rotation" class="settings-input" min="-360" max="360" step="0.1" value="0" />
+          </div>
+        </details>
+
+        <div class="settings-panel-spacer"></div>
+        <div style="display:flex; gap:8px;">
+          <button class="settings-save-btn" id="btn-gear-gen-widths" style="flex:1">Measure tooth widths</button>
+          <button class="settings-save-btn" id="btn-gear-gen-overlay" style="flex:1">Generate overlay</button>
+        </div>
+        <div id="gear-gen-status" class="settings-status"></div>
+      </div>
+    </div>
+  </div>
+
   <!-- Hidden file inputs -->
   <input type="file" id="file-input" accept="image/*" hidden />
   <input type="file" id="dxf-input" accept=".dxf" hidden />

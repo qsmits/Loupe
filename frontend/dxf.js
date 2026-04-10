@@ -666,8 +666,38 @@ export async function measurementsAsDxf() {
     return;
   }
 
-  // Set up the overlay exactly as the DXF file loader does.
-  // Overlay origin placed at the coordinate origin so entities land on the measurements.
+  setDxfOverlayFromEntities(entities, {
+    filename: "from measurements",
+    offsetX: originX,
+    offsetY: originY,
+    scale: ppm,
+    readyMessage: `Reference overlay created — ${entities.length} entities`,
+    alignedMessagePrefix: "Reference overlay ready",
+    fallbackMessage: "Reference overlay set — use Move DXF to fine-tune position",
+  });
+}
+
+
+/**
+ * Shared helper: replace any existing dxf-overlay with a new one from an
+ * in-memory entity list, update the dxf panel chrome, and (if frozen) run
+ * edge-based auto-align. Used by `measurementsAsDxf` and the gear overlay
+ * generator in gear.js. Keeps both callers in sync with the file-load path
+ * in dxf-input's change handler (same field names, same event dispatch).
+ *
+ * @param {Array} entities   DXF-format entity dicts (mm, Y-up).
+ * @param {Object} opts
+ * @param {string} opts.filename            displayed in the DXF panel
+ * @param {number} opts.offsetX             overlay origin x (image px)
+ * @param {number} opts.offsetY             overlay origin y (image px)
+ * @param {number} opts.scale               pixels per mm
+ * @param {string} opts.readyMessage        status shown after creation
+ * @param {string} [opts.alignedMessagePrefix]
+ * @param {string} [opts.fallbackMessage]
+ * @param {boolean} [opts.skipAutoAlign]    if true, don't run /align-dxf-edges
+ */
+export async function setDxfOverlayFromEntities(entities, opts) {
+  const ppm = opts.scale;
   const dxfScaleInput = document.getElementById("dxf-scale");
   if (dxfScaleInput) dxfScaleInput.value = ppm.toFixed(3);
   state.annotations = state.annotations.filter(a => a.type !== "dxf-overlay");
@@ -675,14 +705,14 @@ export async function measurementsAsDxf() {
   state.inspectionFrame = null;
   state._templateLoaded = false;
   state._templateName = null;
-  state.dxfFilename = "from measurements";
+  state.dxfFilename = opts.filename;
   renderInspectionTable();
   updateExportButtons();
   addAnnotation({
     type: "dxf-overlay",
     entities,
-    offsetX: originX,
-    offsetY: originY,
+    offsetX: opts.offsetX,
+    offsetY: opts.offsetY,
     scale: ppm,
     angle: 0,
     scaleManual: false,
@@ -693,32 +723,32 @@ export async function measurementsAsDxf() {
   if (dxfPanelEl) dxfPanelEl.style.display = "";
   updateDxfControlsVisibility();
   document.dispatchEvent(new CustomEvent("dxf-state-changed"));
-  showStatus(`Reference overlay created — ${entities.length} entities`);
+  showStatus(opts.readyMessage);
   redraw();
 
-  // Auto-align against actual image edges for robustness (same as DXF file load).
-  if (state.frozen) {
-    showStatus("Auto-aligning reference overlay…");
-    try {
-      const smoothing = parseInt(document.getElementById("adv-smoothing")?.value || "1");
-      const alignResp = await apiFetch("/align-dxf-edges", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ entities, pixels_per_mm: ppm, smoothing }),
-      });
-      if (alignResp.ok) {
-        const result = await alignResp.json();
-        const ann = state.annotations.find(a => a.type === "dxf-overlay");
-        if (ann) {
-          applyAlignmentResult(ann, result);
-          showStatus(`Reference overlay ready (score ${(result.score * 100).toFixed(0)}%)`);
-        }
-      } else {
-        showStatus("Reference overlay set — use Move DXF to fine-tune position");
+  if (opts.skipAutoAlign || !state.frozen) return;
+
+  showStatus("Auto-aligning overlay…");
+  try {
+    const smoothing = parseInt(document.getElementById("adv-smoothing")?.value || "1");
+    const alignResp = await apiFetch("/align-dxf-edges", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ entities, pixels_per_mm: ppm, smoothing }),
+    });
+    if (alignResp.ok) {
+      const result = await alignResp.json();
+      const ann = state.annotations.find(a => a.type === "dxf-overlay");
+      if (ann) {
+        applyAlignmentResult(ann, result);
+        const prefix = opts.alignedMessagePrefix || "Overlay aligned";
+        showStatus(`${prefix} (score ${(result.score * 100).toFixed(0)}%)`);
       }
-    } catch (_) {
-      showStatus("Reference overlay set — use Move DXF to fine-tune position");
+    } else {
+      showStatus(opts.fallbackMessage || "Overlay set — use Move DXF to fine-tune position");
     }
-    redraw();
+  } catch (_) {
+    showStatus(opts.fallbackMessage || "Overlay set — use Move DXF to fine-tune position");
   }
+  redraw();
 }
