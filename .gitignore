@@ -2,11 +2,26 @@ __pycache__/
 *.pyc
 .venv/
 config.json
-snapshots/*.jpg
-snapshots/*.png
+snapshots/
 tests/output/
 .superpowers/
 .vexp
 .server.log
+.server.pid
 .DS_Store
 .worktrees/
+.claude/
+
+# Runtime SQLite store for run history / SPC data
+data/
+
+# Proof-of-concept scratch work (detection experiments, old fixtures)
+poc_detection.py
+poc_output/
+
+# Ad-hoc DXF test fixtures kept locally
+demuth-vblock-cleaned.dxf
+
+# Local competitive/reporting artifacts — not for the public repo
+Loupe_Competitive_Analysis.*
+Loupe_Report.*
