@@ -69,6 +69,8 @@ export function setTool(name) {
   if (state.gearPickMode) {
     state.gearPickMode = null;
     state.gearPickBuffer = null;
+    state.gearPickHover = null;
+    canvas.style.cursor = "default";
   }
   document.querySelectorAll("#tool-strip .strip-btn[data-tool]").forEach(btn => {
     btn.classList.toggle("active", btn.dataset.tool === name);

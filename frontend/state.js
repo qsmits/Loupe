@@ -71,6 +71,7 @@ export const state = {
   // Gear analysis PoC
   gearPickMode: null,      // null | "pick-tip" | "pick-root"
   gearPickBuffer: null,    // { tipCircle?, rootCircle? }
+  gearPickHover: null,     // annotation id of circle currently under cursor in gear pick mode
   gearAnalysis: null,      // null | { pcd_radius_px, teeth, material_is_dark, cx, cy }
 };
 

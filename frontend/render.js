@@ -191,6 +191,35 @@ const _dxfFns = {
   drawPreprocessedOverlay,
 };
 
+function drawGearPickOverlay() {
+  if (!state.gearPickMode) return;
+  ctx.save();
+  for (const a of state.annotations) {
+    if (a.type !== "circle" && a.type !== "arc-fit") continue;
+    const isHover = state.gearPickHover === a.id;
+    const isPickedTip = state.gearPickBuffer && state.gearPickBuffer.tipCircle === a;
+    // Tip already picked: draw confirmed-green. Hover: bright yellow. Otherwise: dim yellow halo.
+    let color, width;
+    if (isPickedTip) { color = "#34d399"; width = pw(2.5); }
+    else if (isHover) { color = "#fde047"; width = pw(3); }
+    else { color = "rgba(250, 204, 21, 0.45)"; width = pw(1.5); }
+    ctx.strokeStyle = color;
+    ctx.lineWidth = width;
+    ctx.beginPath();
+    ctx.arc(a.cx, a.cy, a.r, 0, Math.PI * 2);
+    ctx.stroke();
+    if (isHover || isPickedTip) {
+      // Glow ring (slightly larger, low alpha) for emphasis.
+      ctx.strokeStyle = isPickedTip ? "rgba(52, 211, 153, 0.25)" : "rgba(253, 224, 71, 0.35)";
+      ctx.lineWidth = pw(6);
+      ctx.beginPath();
+      ctx.arc(a.cx, a.cy, a.r, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+  }
+  ctx.restore();
+}
+
 function drawGearAnalysis() {
   const ga = state.gearAnalysis;
   if (!ga || !ga.teeth || ga.teeth.length === 0) return;
@@ -392,6 +421,9 @@ export function redraw() {
     }
     ctx.restore();
   }
+
+  // Gear pick mode overlay: highlight circle annotations the user can click.
+  drawGearPickOverlay();
 
   // Gear analysis overlay (PCD + per-tooth L→R arcs + labels)
   drawGearAnalysis();

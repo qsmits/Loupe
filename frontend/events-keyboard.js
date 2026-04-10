@@ -95,6 +95,8 @@ export function initKeyboard(closeAllDropdowns) {
       if (state.gearPickMode) {
         state.gearPickMode = null;
         state.gearPickBuffer = null;
+        state.gearPickHover = null;
+        canvas.style.cursor = "default";
         showStatus("Gear analysis cancelled");
         redraw();
         return;

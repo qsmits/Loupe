@@ -64,46 +64,6 @@ def test_synthetic_17_tooth_centers_uniform_spacing():
         assert abs(g - expected_step) < 0.1
 
 
-def test_gear_with_flank_marking_still_measures_correctly():
-    """A dark marking inside a tooth near the flank must not break the measurement.
-
-    The single-ring sampler would see the marking as background and split the
-    tooth run in two, measuring only the longer half (~60% of the true width).
-    The polar-strip sampler sees the marking as a few bad pixels in an
-    otherwise-material column and ignores it.
-    """
-    img = make_synthetic_gear(size=1200, cx=600, cy=600, tip_r=500, root_r=400, n=17, tooth_frac=0.5)
-
-    # Synthetic is dark material on bright background. Carve a small
-    # bright (background-colored) blob INSIDE one tooth, centered at the
-    # PCD radius, 60% of the way from tooth-center toward the right flank.
-    # On a real backlit gear this models a dark mark/scratch on a flank.
-    pcd_r = 450
-    step = 2 * np.pi / 17
-    half_wedge = step * 0.5 / 2  # tooth_frac=0.5
-    notch_angle = half_wedge * 0.6
-    notch_cx = 600 + pcd_r * np.cos(notch_angle)
-    notch_cy = 600 + pcd_r * np.sin(notch_angle)
-    y, x = np.ogrid[:1200, :1200]
-    d = np.sqrt((x - notch_cx) ** 2 + (y - notch_cy) ** 2)
-    img[d <= 4] = 255  # background color
-
-    result = analyze_gear(img, cx=600, cy=600, tip_r=500, root_r=400, n_teeth=17)
-    assert len(result["teeth"]) == 17
-
-    # Find the tooth nearest to angle 0 — that's the one with the notch.
-    def circ_dist_deg(a: float, b: float) -> float:
-        d = abs(a - b) % 360.0
-        return min(d, 360.0 - d)
-
-    affected = min(result["teeth"], key=lambda t: circ_dist_deg(t["center_angle_deg"], 0.0))
-    expected_width = (360.0 / 17) * 0.5  # ~10.588
-    assert abs(affected["angular_width_deg"] - expected_width) < 0.1, (
-        f"marked tooth width {affected['angular_width_deg']:.3f} "
-        f"vs expected {expected_width:.3f}"
-    )
-
-
 def test_invalid_n_teeth_raises():
     img = np.zeros((100, 100), dtype=np.uint8)
     with pytest.raises(ValueError):

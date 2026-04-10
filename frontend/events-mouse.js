@@ -410,6 +410,22 @@ export function initMouseHandlers() {
       resizeCanvas();
       return;
     }
+    // Gear pick mode: hover-highlight circle annotations so the user can
+    // see which targets are valid instead of clicking blind.
+    if (state.gearPickMode) {
+      let hitId = null;
+      for (let i = state.annotations.length - 1; i >= 0; i--) {
+        const a = state.annotations[i];
+        if (a.type !== "circle" && a.type !== "arc-fit") continue;
+        if (hitTestAnnotation(a, pt)) { hitId = a.id; break; }
+      }
+      if (state.gearPickHover !== hitId) {
+        state.gearPickHover = hitId;
+        canvas.style.cursor = hitId ? "pointer" : "default";
+        redraw();
+      }
+      return;
+    }
     if (state.dxfDragMode && state.dxfDragOrigin) {
       const ann = state.annotations.find(a => a.type === "dxf-overlay");
       if (ann) {

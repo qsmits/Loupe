@@ -55,6 +55,8 @@ export function handleGearPickClick(pt) {
     }
     state.gearPickBuffer.rootCircle = hit;
     state.gearPickMode = null;
+    state.gearPickHover = null;
+    document.querySelector("#overlay-canvas").style.cursor = "default";
     promptForToothCountAndRun();
     return true;
   }
