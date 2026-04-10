@@ -1,3 +1,5 @@
+import math
+
 from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, File
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
@@ -71,6 +73,35 @@ class RefinePointBody(BaseModel):
     subpixel: str = Field(default="parabola", max_length=20)
 
 
+class GenerateGearBody(BaseModel):
+    """Inputs for /generate-gear-dxf.
+
+    Produces an ideal gear polyline (closed) and serialises it as DXF
+    entities in the same shape /load-dxf returns for LWPOLYLINE segments,
+    so the result can be loaded directly into the DXF overlay and pushed
+    through /inspect-guided.
+    """
+    n_teeth: int = Field(ge=6, le=300)
+    profile: str = Field(pattern="^(involute|cycloidal)$")
+    module: float = Field(gt=0, le=1e5)
+    cx: float = Field(ge=-1e6, le=1e6)
+    cy: float = Field(ge=-1e6, le=1e6)
+    addendum_coef: float = Field(default=1.0, ge=0.1, le=3.0)
+    dedendum_coef: float = Field(default=1.25, ge=0.1, le=3.0)
+    # Cycloidal only.
+    rolling_radius_coef: float = Field(default=0.5, ge=0.1, le=1.0)
+    # Involute only.
+    pressure_angle_deg: float = Field(default=20.0, ge=5.0, le=35.0)
+    profile_shift: float = Field(default=0.0, ge=-1.0, le=1.0)
+    rotation_deg: float = Field(default=0.0, ge=-360.0, le=360.0)
+    layer: str = Field(default="GEAR", max_length=64)
+    # Sampling density. Defaults match the generator defaults; the UI can
+    # dial these down if inspection performance becomes a concern.
+    points_per_flank: int = Field(default=30, ge=4, le=200)
+    points_per_tip: int = Field(default=10, ge=2, le=100)
+    points_per_root: int = Field(default=6, ge=2, le=100)
+
+
 # Module-level router for endpoints that don't need frame_store or camera
 router = APIRouter()
 
@@ -100,6 +131,73 @@ def export_dxf_route(body: ExportDxfBody):
         media_type="application/dxf",
         headers={"Content-Disposition": "attachment; filename=measurements.dxf"},
     )
+
+
+@router.post("/generate-gear-dxf")
+def generate_gear_dxf_route(body: GenerateGearBody):
+    """Generate an ideal gear and return it as DXF entities.
+
+    The gear_geometry generators produce closed polylines in gear-local
+    coordinates; we rotate by rotation_deg, translate to (cx, cy), then
+    emit one polyline_line dict per segment. All segments share a single
+    parent_handle so /inspect-guided groups them as one compound feature.
+    """
+    from .vision.gear_geometry import (
+        generate_cycloidal_gear,
+        generate_involute_gear,
+    )
+    try:
+        if body.profile == "cycloidal":
+            poly = generate_cycloidal_gear(
+                n_teeth=body.n_teeth,
+                module=body.module,
+                rolling_radius_coef=body.rolling_radius_coef,
+                addendum_coef=body.addendum_coef,
+                dedendum_coef=body.dedendum_coef,
+                points_per_flank=body.points_per_flank,
+                points_per_tip=body.points_per_tip,
+                points_per_root=body.points_per_root,
+            )
+        else:  # involute
+            poly = generate_involute_gear(
+                n_teeth=body.n_teeth,
+                module=body.module,
+                pressure_angle_deg=body.pressure_angle_deg,
+                addendum_coef=body.addendum_coef,
+                dedendum_coef=body.dedendum_coef,
+                profile_shift=body.profile_shift,
+                points_per_flank=body.points_per_flank,
+                points_per_tip=body.points_per_tip,
+                points_per_root=body.points_per_root,
+            )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f"gear: {exc}") from exc
+
+    phi = math.radians(body.rotation_deg)
+    c, s = math.cos(phi), math.sin(phi)
+    # Rotate in gear-local frame, then translate to the world center.
+    world = [
+        (body.cx + c * x - s * y, body.cy + s * x + c * y)
+        for (x, y) in poly
+    ]
+
+    parent = f"gear_{body.profile}_N{body.n_teeth}"
+    entities: list[dict] = []
+    # generate_*_gear returns a closed polyline (first == last), so we
+    # emit N-1 segments between consecutive points.
+    for i in range(len(world) - 1):
+        x1, y1 = world[i]
+        x2, y2 = world[i + 1]
+        entities.append({
+            "type": "polyline_line",
+            "x1": float(x1), "y1": float(y1),
+            "x2": float(x2), "y2": float(y2),
+            "handle": f"{parent}_s{i}",
+            "parent_handle": parent,
+            "segment_index": i,
+            "layer": body.layer,
+        })
+    return entities
 
 
 def make_inspection_router(frame_store: SessionFrameStore) -> APIRouter:

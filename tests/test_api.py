@@ -274,3 +274,160 @@ def test_analyze_gear_rejects_bad_radii(client):
         "cx": 320, "cy": 240, "tip_r": 50, "root_r": 80, "n_teeth": 17,
     })
     assert r.status_code == 422
+
+
+# --- /generate-gear-dxf: synthetic ideal gear → DXF entities ---
+#
+# These tests document the contract: the endpoint emits the same entity
+# dict shape as /load-dxf produces for an LWPOLYLINE (i.e. a sequence of
+# polyline_line segments sharing a parent_handle), so the result can be
+# loaded directly into the existing DXF overlay and pushed through
+# /inspect-guided without any special-case handling on either side.
+
+
+def _gear_req(**overrides):
+    body = {
+        "n_teeth": 17,
+        "profile": "cycloidal",
+        "module": 1.0,
+        "cx": 100.0,
+        "cy": 50.0,
+    }
+    body.update(overrides)
+    return body
+
+
+def test_generate_gear_dxf_cycloidal_returns_entities(client):
+    r = client.post("/generate-gear-dxf", json=_gear_req())
+    assert r.status_code == 200, r.text
+    entities = r.json()
+    assert isinstance(entities, list)
+    assert len(entities) > 17 * 4  # at least a handful of segments per tooth
+
+
+def test_generate_gear_dxf_involute_returns_entities(client):
+    r = client.post("/generate-gear-dxf", json=_gear_req(profile="involute", n_teeth=20))
+    assert r.status_code == 200, r.text
+    entities = r.json()
+    assert len(entities) > 20 * 4
+
+
+def test_generate_gear_dxf_emits_polyline_lines_only(client):
+    r = client.post("/generate-gear-dxf", json=_gear_req())
+    assert r.status_code == 200
+    entities = r.json()
+    assert all(e["type"] == "polyline_line" for e in entities)
+    for e in entities:
+        assert {"x1", "y1", "x2", "y2"} <= set(e)
+
+
+def test_generate_gear_dxf_segments_share_parent_handle(client):
+    # The existing /inspect-guided pipeline groups segments into compound
+    # features via parent_handle. A generated gear must be ONE compound
+    # feature so deviation results are aggregated per gear, not per tiny
+    # polyline segment.
+    r = client.post("/generate-gear-dxf", json=_gear_req())
+    entities = r.json()
+    parents = {e.get("parent_handle") for e in entities}
+    assert len(parents) == 1
+    assert next(iter(parents)) is not None
+
+
+def test_generate_gear_dxf_segments_have_unique_handles(client):
+    # parse_dxf gives each polyline segment a distinct handle suffix; we
+    # match the same convention so frontend hit-testing and toleranced
+    # selection by handle still work.
+    r = client.post("/generate-gear-dxf", json=_gear_req())
+    entities = r.json()
+    handles = [e["handle"] for e in entities]
+    assert len(handles) == len(set(handles))
+    assert all(h is not None for h in handles)
+
+
+def test_generate_gear_dxf_segments_indexed_sequentially(client):
+    r = client.post("/generate-gear-dxf", json=_gear_req())
+    entities = r.json()
+    for i, e in enumerate(entities):
+        assert e["segment_index"] == i
+
+
+def test_generate_gear_dxf_translates_to_center(client):
+    # The generator produces vertices in gear-local coords (origin at the
+    # gear center); the endpoint must translate them to (cx, cy) so they
+    # live in the DXF world frame.
+    import math
+    cx, cy = 500.0, -200.0
+    n, m = 17, 2.0
+    r = client.post("/generate-gear-dxf",
+                    json=_gear_req(cx=cx, cy=cy, module=m, n_teeth=n))
+    entities = r.json()
+    # Collect all unique vertices.
+    pts = set()
+    for e in entities:
+        pts.add((round(e["x1"], 6), round(e["y1"], 6)))
+        pts.add((round(e["x2"], 6), round(e["y2"], 6)))
+    # Max radius about (cx, cy) should match r_tip = r_pitch + module.
+    r_pitch = n * m / 2.0
+    r_tip = r_pitch + m * 1.0
+    max_r = max(math.hypot(x - cx, y - cy) for (x, y) in pts)
+    assert max_r == pytest.approx(r_tip, abs=1e-3)
+
+
+def test_generate_gear_dxf_applies_rotation(client):
+    # rotation_deg=90 puts the first tooth (default on +x axis) at +y,
+    # so the max-y vertex of the output should be near the tip radius.
+    import math
+    n, m = 17, 1.0
+    cx, cy = 0.0, 0.0
+    r_tip = n * m / 2.0 + m
+    r0 = client.post("/generate-gear-dxf",
+                     json=_gear_req(n_teeth=n, module=m, cx=cx, cy=cy,
+                                    rotation_deg=0.0))
+    r90 = client.post("/generate-gear-dxf",
+                      json=_gear_req(n_teeth=n, module=m, cx=cx, cy=cy,
+                                     rotation_deg=90.0))
+    e0 = r0.json()
+    e90 = r90.json()
+
+    def max_x(ents):
+        return max(max(e["x1"], e["x2"]) for e in ents)
+
+    def max_y(ents):
+        return max(max(e["y1"], e["y2"]) for e in ents)
+
+    # At rotation 0, tooth 0 center is on +x → max_x == r_tip.
+    # At rotation 90, the same tooth center sits on +y → max_y == r_tip.
+    assert max_x(e0) == pytest.approx(r_tip, abs=1e-3)
+    assert max_y(e90) == pytest.approx(r_tip, abs=1e-3)
+
+
+def test_generate_gear_dxf_includes_layer(client):
+    r = client.post("/generate-gear-dxf", json=_gear_req(layer="IDEAL_GEAR"))
+    entities = r.json()
+    assert all(e["layer"] == "IDEAL_GEAR" for e in entities)
+
+
+def test_generate_gear_dxf_rejects_bad_profile(client):
+    r = client.post("/generate-gear-dxf", json=_gear_req(profile="bogus"))
+    assert r.status_code == 422
+
+
+def test_generate_gear_dxf_rejects_bad_n_teeth(client):
+    r = client.post("/generate-gear-dxf", json=_gear_req(n_teeth=3))
+    assert r.status_code == 422
+
+
+def test_generate_gear_dxf_rejects_non_positive_module(client):
+    r = client.post("/generate-gear-dxf", json=_gear_req(module=0))
+    assert r.status_code == 422
+
+
+def test_generate_gear_dxf_surfaces_generator_error(client):
+    # A pathological combo (dedendum_coef large enough to drive r_root ≤ 0
+    # for this tooth count) bubbles out of the pure generator as
+    # ValueError — the endpoint should translate that into a 400, not 500.
+    # n=6, module=1.0, dedendum=3.0 → r_pitch=3, r_root=0.
+    r = client.post("/generate-gear-dxf",
+                    json=_gear_req(n_teeth=6, module=1.0, dedendum_coef=3.0))
+    assert r.status_code == 400
+    assert "root" in r.json()["detail"].lower() or "gear" in r.json()["detail"].lower()
