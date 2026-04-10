@@ -6,7 +6,7 @@ import { deleteSelected, elevateSelected } from './annotations.js';
 import { setTool, promptArcFitChoice, finalizeArcFit, finalizeArea, finalizeSpline, finalizeFitLine, nudgeSelected } from './tools.js';
 import { exitDxfAlignMode } from './dxf.js';
 import { saveSession } from './session.js';
-import { viewport, fitToWindow, zoomOneToOne, clampPan } from './viewport.js';
+import { viewport, fitToWindow, zoomOneToOne, clampPan, imageWidth, imageHeight } from './viewport.js';
 import { hideContextMenu } from './events-context-menu.js';
 import { _finalizePickInspection } from './events-inspection.js';
 
@@ -150,11 +150,18 @@ export function initKeyboard(closeAllDropdowns) {
         showStatus("Freeze a frame first to export it");
         return;
       }
+      // Draw through an offscreen canvas sized to imageWidth × imageHeight
+      // (the canonical annotation coordinate system). This matches what the
+      // user sees on the main canvas — the frozen background is drawn there
+      // stretched to imageWidth × imageHeight in render.js — so exported PNGs
+      // are always in the same coordinate system as saved session annotations.
       const img = state.frozenBackground;
+      const W = imageWidth || img.naturalWidth || img.width;
+      const H = imageHeight || img.naturalHeight || img.height;
       const off = document.createElement("canvas");
-      off.width = img.naturalWidth || img.width;
-      off.height = img.naturalHeight || img.height;
-      off.getContext("2d").drawImage(img, 0, 0);
+      off.width = W;
+      off.height = H;
+      off.getContext("2d").drawImage(img, 0, 0, W, H);
       off.toBlob((blob) => {
         if (!blob) {
           showStatus("Failed to encode frame as PNG");
