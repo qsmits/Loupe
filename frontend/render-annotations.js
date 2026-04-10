@@ -574,6 +574,12 @@ export function drawAnnotations(redrawFn, dxfFns) {
   _labelHitBoxes.length = 0;
   const flashActive = Date.now() < state._flashExpiry;
   state.annotations.forEach(ann => {
+    // User-toggled visibility (sidebar eye button). DXF overlays and
+    // detection overlays keep their existing visibility semantics via
+    // state.showDeviations and the TRANSIENT_TYPES skip lists, so this flag
+    // only matters for user-placed annotations. The global _hideAllAnnotations
+    // flag hides everything in one click without clobbering per-annotation state.
+    if (ann.hidden || state._hideAllAnnotations) return;
     const sel = state.selected.has(ann.id);
     const pendingHighlight = state.pendingCenterCircle && ann.id === state.pendingCenterCircle.id;
     if (ann.type === "distance")        drawDistance(ann, sel);

@@ -198,13 +198,19 @@
         <div class="camera-panel-section">
           <div class="detect-row">
             <label class="detect-label">Exposure</label>
-            <input type="range" id="exp-slider-top" min="100" max="100000" step="100" value="5000" />
-            <span class="detect-val" id="exp-value-top">5000 µs</span>
+            <input type="range" id="exp-slider-top" min="0" max="1000" step="1" value="567" />
+            <input type="number" id="exp-input-top" class="camera-num-input" min="100" max="100000" step="1" value="5000" />
+            <span class="camera-num-unit">µs</span>
           </div>
           <div class="detect-row">
             <label class="detect-label">Gain</label>
             <input type="range" id="gain-slider-top" min="0" max="24" step="0.1" value="0" />
-            <span class="detect-val" id="gain-value-top">0 dB</span>
+            <input type="number" id="gain-input-top" class="camera-num-input" min="0" max="24" step="0.1" value="0" />
+            <span class="camera-num-unit">dB</span>
+          </div>
+          <div class="camera-signal-row">
+            <canvas id="camera-histogram" width="180" height="28"></canvas>
+            <div class="camera-signal-stats" id="camera-signal-stats">—</div>
           </div>
           <div class="detect-row" id="gamma-row" hidden>
             <label class="detect-label">Gamma</label>
@@ -212,7 +218,7 @@
             <span class="detect-val" id="gamma-value">1.0</span>
           </div>
           <div class="camera-panel-buttons">
-            <button class="detect-btn" id="btn-auto-exposure" hidden>Auto Exposure</button>
+            <button class="detect-btn" id="btn-auto-exposure">Auto Exposure</button>
             <button class="detect-btn" id="btn-wb-auto-top">Auto WB</button>
           </div>
         </div>
@@ -363,7 +369,10 @@
 
       <!-- Measurements (fills available space) -->
       <div class="sidebar-section measurements-section">
-        <div class="section-label">Measurements</div>
+        <div class="section-label measurements-header">
+          <span>Measurements</span>
+          <button id="btn-vis-all" class="vis-btn vis-btn-all" title="Hide all annotations"></button>
+        </div>
         <!-- Inspection results panel -->
         <div id="inspection-panel" hidden>
           <div class="inspection-header" id="inspection-toggle">
@@ -481,6 +490,11 @@
       <button id="btn-cal-profiles-save" class="settings-save-btn">Save current</button>
     </div>
     <div id="cal-profiles-list" class="cal-profiles-list"></div>
+    <div class="cal-profiles-io-row">
+      <button id="btn-cal-profiles-export" class="settings-save-btn" title="Download all profiles as JSON">Export…</button>
+      <button id="btn-cal-profiles-import" class="settings-save-btn" title="Load profiles from a JSON file">Import…</button>
+      <input type="file" id="cal-profiles-import-input" accept="application/json,.json" hidden />
+    </div>
   </div>
 
   <!-- Settings dialog -->

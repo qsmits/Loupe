@@ -1,10 +1,10 @@
 import { apiFetch, getSessionId } from './api.js';
-import { state, TRANSIENT_TYPES } from './state.js';
+import { state, TRANSIENT_TYPES, camBounds } from './state.js';
 import { canvas, ctx, img, showStatus, redraw, resizeCanvas } from './render.js';
 import { renderSidebar, loadCameraInfo, loadUiConfig, loadTolerances,
          updateCalibrationButton, checkStartupWarning, updateFreezeUI,
          loadCameraList, renderInspectionTable, updateTemplateDisplay,
-         updateDxfControlsVisibility } from './sidebar.js';
+         updateDxfControlsVisibility, initGlobalVisToggle } from './sidebar.js';
 import { deleteAnnotation, addAnnotation, elevateSelected, clearDetections, clearMeasurements, clearDxfOverlay, clearAll } from './annotations.js';
 import { assembleTemplate, downloadTemplate, readTemplateFile } from './template.js';
 import { setTool } from './tools.js';
@@ -712,22 +712,104 @@ document.getElementById("crosshair-opacity").addEventListener("input", e => {
 });
 
 // ── Camera dropdown controls ────────────────────────────────────────────────
-// Exposure slider (top bar)
-document.getElementById("exp-slider-top")?.addEventListener("input", async e => {
-  const v = parseFloat(e.target.value);
-  document.getElementById("exp-value-top").textContent = `${v} µs`;
-  try {
-    await apiFetch("/camera/exposure", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ value: v }) });
-  } catch (err) { console.error("Failed to set exposure:", err); }
+// Log-scale mapping for exposure and gain. Bounds are camera-specific and get
+// refreshed from /camera/info whenever the camera panel is opened. Each slider
+// step is ~constant perceptual brightness change across the full range.
+const CAM_SLIDER_MAX = 1000;
+
+function logSliderToVal(pos, lo, hi) {
+  if (hi <= lo) return lo;
+  const p = Math.max(0, Math.min(CAM_SLIDER_MAX, Number(pos))) / CAM_SLIDER_MAX;
+  return lo * Math.pow(hi / lo, p);
+}
+function logValToSlider(val, lo, hi) {
+  if (hi <= lo) return 0;
+  const v = Math.max(lo, Math.min(hi, Number(val)));
+  return Math.round(Math.log(v / lo) / Math.log(hi / lo) * CAM_SLIDER_MAX);
+}
+
+// Exposure mapping uses whole µs.
+function expSliderToUs(pos) {
+  return Math.max(1, Math.round(logSliderToVal(pos, camBounds.expMin, camBounds.expMax)));
+}
+function expUsToSlider(us) {
+  return logValToSlider(us, camBounds.expMin, camBounds.expMax);
+}
+
+// Gain mapping preserves camera-native units (dB or linear multiplier).
+// Guard against camMin==0 which would break log scaling — use a tiny floor.
+function gainSliderToVal(pos) {
+  const lo = camBounds.gainMin > 0 ? camBounds.gainMin : 0.01;
+  return logSliderToVal(pos, lo, camBounds.gainMax);
+}
+function gainValToSlider(v) {
+  const lo = camBounds.gainMin > 0 ? camBounds.gainMin : 0.01;
+  return logValToSlider(v, lo, camBounds.gainMax);
+}
+// How many decimal places to show in the gain number input. Linear-multiplier
+// cameras (Baumer, gain_max ≈ 251) want 2 digits; dB cameras (max ≈ 24) want 1.
+function gainDecimals() { return camBounds.gainMax > 50 ? 2 : 1; }
+
+let _expPushTimer = null;
+function pushExposure(us) {
+  clearTimeout(_expPushTimer);
+  _expPushTimer = setTimeout(async () => {
+    try {
+      await apiFetch("/camera/exposure", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ value: us }),
+      });
+    } catch (err) { console.error("Failed to set exposure:", err); }
+  }, 40);
+}
+
+// Exposure slider (log scale)
+document.getElementById("exp-slider-top")?.addEventListener("input", e => {
+  const us = expSliderToUs(e.target.value);
+  const inp = document.getElementById("exp-input-top");
+  if (inp && document.activeElement !== inp) inp.value = us;
+  pushExposure(us);
 });
 
-// Gain slider (top bar)
-document.getElementById("gain-slider-top")?.addEventListener("input", async e => {
-  const v = parseFloat(e.target.value);
-  document.getElementById("gain-value-top").textContent = `${v} dB`;
-  try {
-    await apiFetch("/camera/gain", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ value: v }) });
-  } catch (err) { console.error("Failed to set gain:", err); }
+// Exposure number input — authoritative manual entry
+document.getElementById("exp-input-top")?.addEventListener("input", e => {
+  const us = Math.max(camBounds.expMin, Math.min(camBounds.expMax,
+    parseFloat(e.target.value) || camBounds.expMin));
+  const slider = document.getElementById("exp-slider-top");
+  if (slider) slider.value = expUsToSlider(us);
+  pushExposure(us);
+});
+
+let _gainPushTimer = null;
+function pushGain(v) {
+  clearTimeout(_gainPushTimer);
+  _gainPushTimer = setTimeout(async () => {
+    try {
+      await apiFetch("/camera/gain", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ value: v }),
+      });
+    } catch (err) { console.error("Failed to set gain:", err); }
+  }, 40);
+}
+
+// Gain slider (log scale, camera-native units)
+document.getElementById("gain-slider-top")?.addEventListener("input", e => {
+  const v = gainSliderToVal(e.target.value);
+  const inp = document.getElementById("gain-input-top");
+  if (inp && document.activeElement !== inp) inp.value = v.toFixed(gainDecimals());
+  pushGain(v);
+});
+
+// Gain number input (camera-native units)
+document.getElementById("gain-input-top")?.addEventListener("input", e => {
+  const lo = camBounds.gainMin, hi = camBounds.gainMax;
+  const v = Math.max(lo, Math.min(hi, parseFloat(e.target.value) || lo));
+  const slider = document.getElementById("gain-slider-top");
+  if (slider) slider.value = gainValToSlider(v);
+  pushGain(v);
 });
 
 // Gamma slider (debounced)
@@ -743,17 +825,100 @@ document.getElementById("gamma-slider")?.addEventListener("input", e => {
   }, 200);
 });
 
-// Auto Exposure
+// Auto Exposure (software) — iteratively adjusts exposure to drive mean luma
+// toward ~128. Works on any camera regardless of hardware ExposureAuto support.
+// Uses the same luma sampling as the histogram strip.
+async function measureMeanLuma() {
+  const streamImg = document.getElementById("stream-img");
+  if (!streamImg || !streamImg.naturalWidth) return null;
+  const c = document.createElement("canvas");
+  c.width = 160; c.height = 90;
+  const cx = c.getContext("2d", { willReadFrequently: true });
+  cx.drawImage(streamImg, 0, 0, c.width, c.height);
+  const data = cx.getImageData(0, 0, c.width, c.height).data;
+  let sum = 0, n = 0;
+  for (let i = 0; i < data.length; i += 4) {
+    sum += 0.2126 * data[i] + 0.7152 * data[i + 1] + 0.0722 * data[i + 2];
+    n++;
+  }
+  return n > 0 ? sum / n : null;
+}
+
+async function setExposureAndWait(us) {
+  await apiFetch("/camera/exposure", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ value: us }),
+  });
+  // Wait long enough for the new exposure to take effect AND for a fresh MJPEG
+  // frame to arrive. Need: exposure time (frame must integrate) + ~2 frame
+  // periods (@30 fps) for the stream to push the updated image.
+  const need = Math.max(120, Math.ceil(us / 1000) + 100);
+  await new Promise(r => setTimeout(r, need));
+}
+
+// Upper bound for exposure during auto-search. If mid-gray can't be reached
+// with ≤200 ms exposure at current gain, the answer is "raise gain" or "add
+// light", not "climb into multi-second territory while the user stares at a
+// frozen UI". This bounds total auto-exposure time to ~5 iterations × ~350 ms.
+const AUTO_EXP_MAX_US = 200_000;
+
 document.getElementById("btn-auto-exposure")?.addEventListener("click", async () => {
+  const btn = document.getElementById("btn-auto-exposure");
+  const origLabel = btn.textContent;
+  btn.disabled = true;
   try {
-    const r = await apiFetch("/camera/auto-exposure", { method: "POST" });
-    if (!r.ok) throw new Error(await r.text());
-    const data = await r.json();
-    if (data.exposure != null) {
-      document.getElementById("exp-slider-top").value = data.exposure;
-      document.getElementById("exp-value-top").textContent = `${data.exposure} µs`;
+    const target = 128;          // mid-gray
+    const tolerance = 8;         // ±8/255 ≈ ±3%
+    const maxIters = 5;
+    const searchMax = Math.min(AUTO_EXP_MAX_US, camBounds.expMax);
+    const searchMin = camBounds.expMin;
+    let us = parseFloat(document.getElementById("exp-input-top").value) || searchMin;
+    us = Math.max(searchMin, Math.min(searchMax, us));
+    let lastMean = null;
+    let cappedLow = false, cappedHigh = false;
+    for (let i = 0; i < maxIters; i++) {
+      btn.textContent = `Adjusting ${i + 1}/${maxIters}…`;
+      await setExposureAndWait(us);
+      const mean = await measureMeanLuma();
+      if (mean == null) break;
+      lastMean = mean;
+      if (Math.abs(mean - target) <= tolerance) break;
+      // Scale exposure by target/mean, damped 0.33×..3× per iteration to
+      // dodge overshoot on nonlinear sensors.
+      const ratio = Math.max(1 / 3, Math.min(3, target / Math.max(1, mean)));
+      const next = Math.round(us * ratio);
+      if (next >= searchMax) { us = searchMax; cappedHigh = true; break; }
+      if (next <= searchMin) { us = searchMin; cappedLow = true; break; }
+      us = next;
     }
-  } catch (err) { console.error("Auto exposure failed:", err); }
+    // Sync the UI to whatever we landed on.
+    const slider = document.getElementById("exp-slider-top");
+    const inp = document.getElementById("exp-input-top");
+    if (slider) slider.value = expUsToSlider(us);
+    if (inp) inp.value = us;
+    // Push the final exposure once more in case the loop exited on the cap
+    // without calling setExposureAndWait at the new value.
+    if (cappedHigh || cappedLow) {
+      await apiFetch("/camera/exposure", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ value: us }),
+      });
+    }
+    // User-facing diagnosis if we couldn't converge.
+    if (cappedHigh) {
+      showStatus(`Auto Exposure: too dark (mean ${Math.round(lastMean ?? 0)}/128). Raise gain or add light.`);
+    } else if (cappedLow) {
+      showStatus(`Auto Exposure: too bright (mean ${Math.round(lastMean ?? 255)}/128). Lower gain or reduce light.`);
+    }
+  } catch (err) {
+    console.error("Auto exposure failed:", err);
+    showStatus("Auto Exposure failed — see console.");
+  } finally {
+    btn.disabled = false;
+    btn.textContent = origLabel;
+  }
 });
 
 // Auto WB (top bar)
@@ -844,6 +1009,10 @@ document.getElementById("camera-select-top")?.addEventListener("change", async e
       body: JSON.stringify({ camera_id }),
     });
     if (!r.ok) throw new Error(await r.text());
+    // Reconnect the MJPEG stream — the persistent HTTP connection still
+    // points at the old reader thread's frame pipeline and won't auto-pick-up
+    // the new camera until a fresh /stream request is made.
+    img.src = "/stream?" + Date.now();
     await loadCameraInfo();
     await loadCameraList();
   } catch (err) {
@@ -1089,6 +1258,7 @@ initCompareHandlers();
 initLensCal();
 initTiltCal();
 initCalProfiles();
+initGlobalVisToggle();
 initZstack();
 initStitch();
 initSuperRes();
@@ -1165,3 +1335,78 @@ window.addEventListener("beforeunload", e => {
   }
 });
 updateFreezeUI();
+
+// ── Camera signal histogram ────────────────────────────────────────────────
+// Samples the live stream image at ~1 Hz whenever the camera panel is open
+// and draws a luma histogram + min/mean/max/clip stats. Pure client-side —
+// no backend round-trips.
+(function initCameraHistogram() {
+  const hist = document.getElementById("camera-histogram");
+  const stats = document.getElementById("camera-signal-stats");
+  const panel = document.getElementById("dropdown-camera");
+  const streamImg = document.getElementById("stream-img");
+  if (!hist || !stats || !panel || !streamImg) return;
+
+  const hctx = hist.getContext("2d");
+  const sample = document.createElement("canvas");
+  sample.width = 160;
+  sample.height = 90;
+  const sctx = sample.getContext("2d", { willReadFrequently: true });
+
+  function tick() {
+    if (panel.hidden) return;
+    if (streamImg.hidden || streamImg.style.display === "none") {
+      stats.textContent = "— stream not visible —";
+      hctx.clearRect(0, 0, hist.width, hist.height);
+      return;
+    }
+    if (!streamImg.naturalWidth) return;
+    try {
+      sctx.drawImage(streamImg, 0, 0, sample.width, sample.height);
+      const data = sctx.getImageData(0, 0, sample.width, sample.height).data;
+      const bins = new Uint32Array(32);
+      let lo = 255, hi = 0, sum = 0, n = 0;
+      let clipLo = 0, clipHi = 0;
+      for (let i = 0; i < data.length; i += 4) {
+        // Rec.709 luma
+        const y = (0.2126 * data[i] + 0.7152 * data[i + 1] + 0.0722 * data[i + 2]) | 0;
+        bins[y >> 3]++;
+        if (y < lo) lo = y;
+        if (y > hi) hi = y;
+        sum += y;
+        n++;
+        if (y === 0) clipLo++;
+        else if (y >= 254) clipHi++;
+      }
+      const mean = n > 0 ? sum / n : 0;
+      const clipLoPct = n > 0 ? (100 * clipLo / n) : 0;
+      const clipHiPct = n > 0 ? (100 * clipHi / n) : 0;
+
+      // Draw histogram
+      const W = hist.width, H = hist.height;
+      hctx.clearRect(0, 0, W, H);
+      let max = 0;
+      for (let i = 0; i < bins.length; i++) if (bins[i] > max) max = bins[i];
+      const barW = W / bins.length;
+      hctx.fillStyle = "#4a9eff";
+      for (let i = 0; i < bins.length; i++) {
+        const h = max > 0 ? Math.round((bins[i] / max) * (H - 2)) : 0;
+        hctx.fillRect(i * barW + 0.5, H - h - 1, barW - 1, h);
+      }
+      // Mean marker
+      hctx.fillStyle = "#ffcc00";
+      hctx.fillRect(Math.round((mean / 255) * W), 0, 1, H);
+
+      // Stats text with inline clip warnings
+      const loMark = clipLoPct > 1 ? `<span class="clip-lo">clip↓${clipLoPct.toFixed(0)}%</span>` : "";
+      const hiMark = clipHiPct > 1 ? `<span class="clip-hi">clip↑${clipHiPct.toFixed(0)}%</span>` : "";
+      stats.innerHTML =
+        `min ${lo} · mean ${mean.toFixed(0)} · max ${hi}` +
+        (loMark || hiMark ? `<br>${loMark} ${hiMark}` : "");
+    } catch (err) {
+      // Cross-origin or image not yet decoded — quietly skip
+      stats.textContent = "—";
+    }
+  }
+  setInterval(tick, 1000);
+})();

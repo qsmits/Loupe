@@ -138,7 +138,6 @@ class AravisCamera(BaseCamera):
         width = int(device.get_integer_feature_value("Width"))
         height = int(device.get_integer_feature_value("Height"))
         exposure = self._cam.get_exposure_time()
-        gain = self._cam.get_gain()
         model = device.get_string_feature_value("DeviceModelName")
         serial = device.get_string_feature_value("DeviceSerialNumber")
         pixel_format = str(device.get_string_feature_value("PixelFormat"))
@@ -149,20 +148,52 @@ class AravisCamera(BaseCamera):
             wb = {"red": 1.0, "green": 1.0, "blue": 1.0}
             wb_manual = False
 
-        def _probe(fn):
+        def _has_feature(name):
             try:
-                fn()
-                return True
+                return device.get_feature(name) is not None
+            except Exception:
+                return False
+
+        def _is_available(method_name):
+            m = getattr(self._cam, method_name, None)
+            if m is None:
+                return False
+            try:
+                return bool(m())
             except Exception:
                 return False
 
         supports = {
             "wb_manual": wb_manual,
-            "wb_auto": _probe(lambda: device.get_string_feature_value("BalanceWhiteAuto")),
-            "auto_exposure": _probe(lambda: device.get_string_feature_value("ExposureAuto")),
-            "gamma": _probe(lambda: device.get_float_feature_value("Gamma")),
-            "roi": _probe(lambda: device.get_integer_feature_value("OffsetX")),
+            "wb_auto": _has_feature("BalanceWhiteAuto"),
+            # Hardware auto-exposure: only advertise if the Aravis Camera API
+            # confirms the feature is both present and currently usable. We fall
+            # back to a client-side histogram-based auto-exposure in the frontend
+            # for cameras that return False here.
+            "auto_exposure": _is_available("is_exposure_auto_available"),
+            "gamma": _has_feature("Gamma"),
+            "roi": _has_feature("OffsetX"),
         }
+
+        # Gain bounds — gain units are camera-specific (dB on some models,
+        # linear multiplier on Baumer VCXU). Always pass the native range to
+        # the frontend so the slider can span the full usable range.
+        try:
+            gain = float(self._cam.get_gain())
+        except Exception:
+            gain = 0.0
+        try:
+            gain_min, gain_max = self._cam.get_gain_bounds()
+            gain_min, gain_max = float(gain_min), float(gain_max)
+        except Exception:
+            gain_min, gain_max = 0.0, 24.0
+
+        # Exposure bounds — µs. Same reasoning as gain.
+        try:
+            exposure_min, exposure_max = self._cam.get_exposure_time_bounds()
+            exposure_min, exposure_max = float(exposure_min), float(exposure_max)
+        except Exception:
+            exposure_min, exposure_max = 100.0, 100000.0
 
         # Gamma info
         gamma = self.get_gamma()
@@ -209,7 +240,11 @@ class AravisCamera(BaseCamera):
             "width": int(width),
             "height": int(height),
             "exposure": float(exposure),
+            "exposure_min": exposure_min,
+            "exposure_max": exposure_max,
             "gain": float(gain),
+            "gain_min": gain_min,
+            "gain_max": gain_max,
             "pixel_format": pixel_format,
             "device_id": self._device_id,
             "wb_red": wb["red"],

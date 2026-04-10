@@ -61,6 +61,76 @@ function _renderList(panel, profiles) {
   });
 }
 
+// Build a name that doesn't collide with any existing profile name. Appends
+// " (2)", " (3)", … until a free slot is found. Used on import so no existing
+// profile is ever overwritten silently.
+function _uniqueName(base, existing) {
+  const taken = new Set(existing.map(p => p.name));
+  if (!taken.has(base)) return base;
+  for (let i = 2; i < 10000; i++) {
+    const candidate = `${base} (${i})`;
+    if (!taken.has(candidate)) return candidate;
+  }
+  return `${base} (${Date.now()})`;
+}
+
+function _exportProfiles() {
+  const profiles = _loadProfiles();
+  const payload = {
+    schema: "loupe-cal-profiles",
+    version: 1,
+    exported_at: new Date().toISOString(),
+    profiles,
+  };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  const stamp = new Date().toISOString().slice(0, 10);
+  a.href = url;
+  a.download = `loupe-cal-profiles-${stamp}.json`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+async function _importProfilesFromFile(file, panel) {
+  let text;
+  try { text = await file.text(); }
+  catch { alert("Could not read file."); return; }
+  let parsed;
+  try { parsed = JSON.parse(text); }
+  catch { alert("Not a valid JSON file."); return; }
+
+  // Accept either the versioned export format or a bare array (so a
+  // hand-edited or legacy file also imports cleanly).
+  const incoming = Array.isArray(parsed) ? parsed
+                 : Array.isArray(parsed?.profiles) ? parsed.profiles
+                 : null;
+  if (!incoming) { alert("File doesn't look like an exported profiles list."); return; }
+
+  const existing = _loadProfiles();
+  let added = 0, skipped = 0;
+  for (const p of incoming) {
+    if (!p || typeof p.name !== "string" || typeof p.pixelsPerMm !== "number" || p.pixelsPerMm <= 0) {
+      skipped++;
+      continue;
+    }
+    existing.push({
+      name: _uniqueName(p.name.trim() || "Imported", existing),
+      pixelsPerMm: p.pixelsPerMm,
+      displayUnit: p.displayUnit || "mm",
+      lensK1: Number(p.lensK1) || 0,
+    });
+    added++;
+  }
+  _saveProfiles(existing);
+  _renderList(panel, existing);
+  const msg = `Imported ${added} profile${added === 1 ? "" : "s"}` +
+              (skipped ? ` (${skipped} skipped — missing name or scale)` : "");
+  alert(msg);
+}
+
 export function initCalProfiles() {
   const panel = document.getElementById("cal-profiles-panel");
   if (!panel) return;
@@ -87,6 +157,18 @@ export function initCalProfiles() {
     _saveProfiles(profiles);
     nameInput.value = "";
     _renderList(panel, profiles);
+  });
+
+  panel.querySelector("#btn-cal-profiles-export").addEventListener("click", _exportProfiles);
+
+  const fileInput = panel.querySelector("#cal-profiles-import-input");
+  panel.querySelector("#btn-cal-profiles-import").addEventListener("click", () => {
+    fileInput.value = "";  // allow re-selecting the same file back-to-back
+    fileInput.click();
+  });
+  fileInput.addEventListener("change", async () => {
+    const file = fileInput.files?.[0];
+    if (file) await _importProfilesFromFile(file, panel);
   });
 }
 

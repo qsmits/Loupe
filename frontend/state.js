@@ -67,6 +67,15 @@ export const state = {
   _noCamera: false,         // was let _noCamera (line 36)
   _dirty: false,
   _savedManually: true,
+  _hideAllAnnotations: false,  // global visibility toggle — overrides ann.hidden when true
+};
+
+// Active camera's exposure and gain bounds — refreshed from /camera/info
+// whenever the camera panel is opened. Used by the log-scale sliders so they
+// always span the camera's full usable range in its native units.
+export const camBounds = {
+  expMin: 100, expMax: 100000,
+  gainMin: 1.0, gainMax: 24.0,
 };
 
 export const undoStack = [];

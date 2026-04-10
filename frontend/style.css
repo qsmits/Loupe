@@ -213,6 +213,7 @@ input[type=range] { cursor: pointer; accent-color: var(--accent); }
   font-size: 12px;
 }
 .cal-profiles-list { max-height: 180px; overflow-y: auto; }
+.cal-profiles-io-row { display: flex; gap: 6px; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border); }
 .cal-profiles-empty { color: #888; font-size: 12px; padding: 6px 0; }
 .cal-profile-item {
   display: flex;
@@ -246,6 +247,52 @@ input[type=range] { cursor: pointer; accent-color: var(--accent); }
 .camera-info-line { font-size: 11px; color: var(--muted); margin-top: 4px; }
 .camera-panel-section { padding: 6px 10px; border-bottom: 1px solid var(--border); }
 .camera-panel-buttons { display: flex; gap: 6px; margin-top: 6px; }
+.camera-num-input {
+  width: 62px;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 1px 4px;
+  font-size: 11px;
+  text-align: right;
+  -moz-appearance: textfield;
+}
+.camera-num-input::-webkit-outer-spin-button,
+.camera-num-input::-webkit-inner-spin-button {
+  opacity: 1;
+  height: 16px;
+}
+.camera-num-unit {
+  font-size: 10px;
+  color: var(--text-secondary);
+  width: 18px;
+  flex-shrink: 0;
+}
+.camera-signal-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  padding-top: 6px;
+  border-top: 1px dashed var(--border);
+}
+#camera-histogram {
+  background: #0a0a0a;
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+.camera-signal-stats {
+  font-size: 10px;
+  color: var(--text-secondary);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  line-height: 1.3;
+  flex: 1;
+  min-width: 0;
+}
+.camera-signal-stats .clip-hi { color: #ff6666; }
+.camera-signal-stats .clip-lo { color: #66aaff; }
 
 /* ─── Main layout ───────────────────────────────────────────── */
 #main {
@@ -1485,6 +1532,33 @@ body.no-camera .camera-section { display: none; }
   margin-right: 2px;
 }
 .elevate-btn:hover { color: var(--text); background: var(--surface-3); }
+.vis-btn {
+  background: none;
+  border: none;
+  color: var(--muted);
+  padding: 2px 4px;
+  cursor: pointer;
+  line-height: 0;
+  opacity: 0.6;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.vis-btn svg { display: block; }
+.vis-btn:hover { color: var(--text); opacity: 1; }
+.vis-btn.active { color: var(--text); opacity: 1; }
+
+.measurements-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+.measurements-header .vis-btn-all { margin: -4px 0; }
+.measurement-item.annotation-hidden .measurement-name,
+.measurement-item.annotation-hidden .measurement-value,
+.measurement-item.annotation-hidden .measurement-number { opacity: 0.4; }
+.measurement-item.annotation-hidden .vis-btn { opacity: 1; color: var(--muted); }
 .meas-group-end {
   height: 2px;
   background: var(--border);

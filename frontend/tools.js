@@ -24,6 +24,15 @@ export function setTool(name) {
     showStatus("Pan is only available on a frozen image");
     return;
   }
+  // Block calibration until camera dimensions are known. Calibrating against
+  // a stale/fallback imageWidth (e.g. canvas CSS pixels, from the render.js
+  // resizeCanvas fallback) gives a scale that shifts the moment the real
+  // camera resolution arrives — usually at the next freeze. Forcing the user
+  // to wait is cheaper than silently producing a wrong calibration.
+  if (name === "calibrate" && (!imageWidth || !imageHeight)) {
+    showStatus("Camera info not ready yet — please wait a moment and try again");
+    return;
+  }
   state.tool = name;
   // Track the top-level measure group so the sub-mode selector can stay visible.
   const topLevel = _TOOL_TO_TOP_LEVEL[name] ?? null;
@@ -696,6 +705,7 @@ export function handleSelectDown(pt, e) {
   // Hit-test all annotations (reverse order = top first)
   for (let i = state.annotations.length - 1; i >= 0; i--) {
     const ann = state.annotations[i];
+    if (ann.hidden || state._hideAllAnnotations) continue;
     if (hitTestAnnotation(ann, pt)) {
       if (e.shiftKey) {
         // Shift+click: toggle in/out of selection

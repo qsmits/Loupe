@@ -1,5 +1,5 @@
 import { apiFetch } from './api.js';
-import { state, DETECTION_TYPES } from './state.js';
+import { state, DETECTION_TYPES, camBounds } from './state.js';
 import { redraw, resizeCanvas, showStatus, getStatus, canvas, listEl } from './render.js';
 import { measurementLabel } from './format.js';
 import { imageWidth, imageHeight, setImageSize, fitToWindow } from './viewport.js';
@@ -13,10 +13,45 @@ const _mctx = () => ({
   canvasHeight: canvas.height,
 });
 
+// Shared eye-icon markup used by the per-row and global visibility toggles.
+// kept in one place so the two controls stay visually identical.
+const EYE_OPEN_SVG =
+  '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" ' +
+  'stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+  '<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>' +
+  '<circle cx="12" cy="12" r="3"/></svg>';
+const EYE_OFF_SVG =
+  '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" ' +
+  'stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+  '<path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/>' +
+  '<path d="M14.12 14.12a3 3 0 1 1-4.24-4.24"/>' +
+  '<line x1="1" y1="1" x2="23" y2="23"/></svg>';
+
+export function updateGlobalVisButton() {
+  const btn = document.getElementById("btn-vis-all");
+  if (!btn) return;
+  const off = state._hideAllAnnotations;
+  btn.innerHTML = off ? EYE_OFF_SVG : EYE_OPEN_SVG;
+  btn.title = off ? "Show all annotations" : "Hide all annotations";
+  btn.classList.toggle("active", off);
+}
+
+export function initGlobalVisToggle() {
+  const btn = document.getElementById("btn-vis-all");
+  if (!btn) return;
+  btn.addEventListener("click", () => {
+    state._hideAllAnnotations = !state._hideAllAnnotations;
+    updateGlobalVisButton();
+    redraw();
+  });
+  updateGlobalVisButton();
+}
+
 // ── Sidebar rendering ──────────────────────────────────────────────────────────
 function _createMeasurementRow(ann, number) {
   const row = document.createElement("div");
   row.className = "measurement-item" + (state.selected.has(ann.id) ? " selected" : "");
+  if (ann.hidden) row.classList.add("annotation-hidden");
   row.dataset.id = ann.id;
   const numSpan = document.createElement("span");
   numSpan.className = "measurement-number";
@@ -34,11 +69,25 @@ function _createMeasurementRow(ann, number) {
   } else {
     valSpan.textContent = measurementLabel(ann, _mctx());
   }
+  // Visibility toggle — hides the annotation in the canvas without deleting it.
+  // Useful when a calibration line (or anything else) is cluttering the view
+  // but you still want to keep the underlying data.
+  const visBtn = document.createElement("button");
+  visBtn.className = "vis-btn";
+  visBtn.dataset.id = ann.id;
+  visBtn.innerHTML = ann.hidden ? EYE_OFF_SVG : EYE_OPEN_SVG;
+  visBtn.title = ann.hidden ? "Show on canvas" : "Hide on canvas";
+  visBtn.addEventListener("click", e => {
+    e.stopPropagation();
+    ann.hidden = !ann.hidden;
+    renderSidebar();
+    redraw();
+  });
   const delBtn = document.createElement("button");
   delBtn.className = "del-btn";
   delBtn.dataset.id = ann.id;
   delBtn.textContent = "✕";
-  row.append(numSpan, nameInput, valSpan, delBtn);
+  row.append(numSpan, nameInput, valSpan, visBtn, delBtn);
   nameInput.value = ann.name || "";
   nameInput.addEventListener("input", e => { ann.name = e.target.value; });
   nameInput.addEventListener("click", e => { e.stopPropagation(); });
@@ -322,6 +371,11 @@ export async function loadUiConfig() {
           if (opt) opt.hidden = true;
         });
       }
+      // Hide hardware-dependent features in hosted mode
+      ["btn-stitch", "btn-superres", "btn-zstack", "btn-zstack-3d-view"].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.style.display = "none";
+      });
     } else if (data.subpixel_method) {
       // Prefer the JS equivalent if a server-side method is configured
       const jsMethod = data.subpixel_method === "gaussian" ? "gaussian-js"
@@ -417,11 +471,48 @@ export async function loadCameraInfo() {
     // Resolution display
     if (el("camera-res-display")) el("camera-res-display").textContent = `${d.width} × ${d.height}`;
 
-    // Exposure & gain (top bar)
-    if (el("exp-slider-top")) { el("exp-slider-top").value = d.exposure; }
-    if (el("exp-value-top")) { el("exp-value-top").textContent = `${Math.round(d.exposure)} µs`; }
-    if (el("gain-slider-top")) { el("gain-slider-top").value = d.gain; }
-    if (el("gain-value-top")) { el("gain-value-top").textContent = `${Number(d.gain).toFixed(1)} dB`; }
+    // Exposure & gain (top bar) — log-scale slider + number input.
+    // Bounds come from the camera so the slider actually spans the usable range.
+    if (d.exposure_min != null && d.exposure_max != null && d.exposure_max > d.exposure_min) {
+      camBounds.expMin = d.exposure_min;
+      camBounds.expMax = d.exposure_max;
+    }
+    if (d.gain_min != null && d.gain_max != null && d.gain_max > d.gain_min) {
+      camBounds.gainMin = d.gain_min;
+      camBounds.gainMax = d.gain_max;
+    }
+
+    const expUs = Math.max(camBounds.expMin, Math.min(camBounds.expMax, Math.round(d.exposure || camBounds.expMin)));
+    if (el("exp-slider-top")) {
+      el("exp-slider-top").value = Math.round(
+        Math.log(expUs / camBounds.expMin) / Math.log(camBounds.expMax / camBounds.expMin) * 1000
+      );
+    }
+    if (el("exp-input-top") && document.activeElement !== el("exp-input-top")) {
+      el("exp-input-top").min = Math.round(camBounds.expMin);
+      el("exp-input-top").max = Math.round(camBounds.expMax);
+      el("exp-input-top").value = expUs;
+    }
+
+    const gainLo = camBounds.gainMin > 0 ? camBounds.gainMin : 0.01;
+    const gainHi = camBounds.gainMax;
+    const gainVal = Math.max(gainLo, Math.min(gainHi, Number(d.gain) || gainLo));
+    const gainDigits = gainHi > 50 ? 2 : 1;
+    if (el("gain-slider-top")) {
+      el("gain-slider-top").min = 0;
+      el("gain-slider-top").max = 1000;
+      el("gain-slider-top").step = 1;
+      el("gain-slider-top").value = Math.round(
+        Math.log(gainVal / gainLo) / Math.log(gainHi / gainLo) * 1000
+      );
+    }
+    if (el("gain-input-top") && document.activeElement !== el("gain-input-top")) {
+      el("gain-input-top").min = camBounds.gainMin;
+      el("gain-input-top").max = gainHi;
+      // Pick a sensible step for the number field based on range magnitude.
+      el("gain-input-top").step = gainHi > 50 ? 0.1 : 0.01;
+      el("gain-input-top").value = gainVal.toFixed(gainDigits);
+    }
 
     // Pixel format (top bar)
     if (el("pixel-format-top")) {
@@ -448,7 +539,9 @@ export async function loadCameraInfo() {
     // Capability-based visibility
     const sup = d.supports || {};
     if (el("gamma-row")) el("gamma-row").hidden = !sup.gamma;
-    if (el("btn-auto-exposure")) el("btn-auto-exposure").hidden = !sup.auto_exposure;
+    // Auto Exposure is always available — implemented client-side in main.js
+    // as a histogram-driven bisection loop. Works even on cameras that don't
+    // expose a hardware ExposureAuto feature.
     if (el("wb-section")) el("wb-section").hidden = !sup.wb_manual;
     if (el("btn-wb-auto-top")) el("btn-wb-auto-top").hidden = !(sup.wb_auto ?? true);
     if (el("roi-section")) el("roi-section").hidden = !sup.roi;
@@ -525,16 +618,28 @@ export async function loadCameraList() {
     const currentId = state.browserCamera?.active
       ? (activeDeviceId ? `browser-cam-${activeDeviceId}` : "browser-cam")
       : (info.device_id ?? "");
-    // Append browser camera entries — individual devices if enumerated, generic otherwise
+    // Group cameras by backend so the dropdown visually separates the "real"
+    // scientific camera from webcams and browser devices. Aravis cameras come
+    // from /cameras with non-"Webcam" vendors; OpenCV entries have id starting
+    // with "opencv-"; the rest are browser devices we synthesize locally.
+    const sciCams = cameras.filter(c => !c.id.startsWith("opencv-"));
+    const webCams = cameras.filter(c => c.id.startsWith("opencv-"));
     const browserDevices = state.browserCameraDevices;
     const browserEntries = browserDevices && browserDevices.length > 0
-      ? browserDevices.map(d => ({ id: `browser-cam-${d.deviceId}`, label: `Browser: ${d.label}` }))
-      : [{ id: "browser-cam", label: "Browser Camera (Webcam)" }];
-    const allCameras = [...cameras, ...browserEntries];
+      ? browserDevices.map(d => ({ id: `browser-cam-${d.deviceId}`, label: d.label }))
+      : [{ id: "browser-cam", label: "Default webcam" }];
+
     // When no hardware cameras are available and browser cam isn't active yet,
     // a placeholder forces the user to make a real selection — without it the
     // browser-cam entry is pre-selected and change never fires.
     const needsPlaceholder = cameras.length === 0 && !state.browserCamera?.active;
+
+    const groups = [
+      ["Scientific cameras", sciCams],
+      ["Webcams", webCams],
+      ["Browser cameras", browserEntries],
+    ];
+
     for (const target of [sel, selTop]) {
       if (!target) continue;
       target.innerHTML = "";
@@ -546,12 +651,18 @@ export async function loadCameraList() {
         ph.textContent = "Select camera…";
         target.appendChild(ph);
       }
-      for (const c of allCameras) {
-        const opt = document.createElement("option");
-        opt.value = c.id;
-        opt.textContent = c.label;
-        if (!needsPlaceholder && c.id === currentId) opt.selected = true;
-        target.appendChild(opt);
+      for (const [label, entries] of groups) {
+        if (entries.length === 0) continue;
+        const og = document.createElement("optgroup");
+        og.label = label;
+        for (const c of entries) {
+          const opt = document.createElement("option");
+          opt.value = c.id;
+          opt.textContent = c.label;
+          if (!needsPlaceholder && c.id === currentId) opt.selected = true;
+          og.appendChild(opt);
+        }
+        target.appendChild(og);
       }
       target.disabled = false;
     }
