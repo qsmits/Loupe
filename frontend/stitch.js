@@ -577,6 +577,13 @@ async function openStitchDialog() {
   const dlg = $("stitch-dialog");
   dlg.hidden = false;
   window.addEventListener("keydown", onStitchKey, true);
+
+  // Pre-fill pixel pitch from global calibration if the user hasn't entered one
+  const pitchInp = $("stitch-pitch");
+  if (pitchInp && !pitchInp.value && state.calibration && state.calibration.pixelsPerMm > 0) {
+    pitchInp.value = state.calibration.pixelsPerMm.toFixed(1);
+  }
+
   await rehydrateFromStatus();
 }
 

@@ -12,7 +12,7 @@ import uuid
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
@@ -68,8 +68,13 @@ class CaptureBody(BaseModel):
     row: int
 
 
+def _reject_hosted(request: Request):
+    if getattr(request.app.state, "hosted", False):
+        raise HTTPException(403, detail="Stitching is not available in hosted mode")
+
+
 def make_stitch_router(camera: BaseCamera) -> APIRouter:
-    router = APIRouter()
+    router = APIRouter(dependencies=[Depends(_reject_hosted)])
     session = _StitchSession()
     lock = threading.Lock()
 

@@ -12,7 +12,7 @@ import uuid
 from typing import List, Optional
 
 import numpy as np
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
@@ -49,8 +49,13 @@ class StartBody(BaseModel):
     pixel_pitch_um: float = Field(default=1.0, gt=0, description="Pixel pitch in micrometers")
 
 
+def _reject_hosted(request: Request):
+    if getattr(request.app.state, "hosted", False):
+        raise HTTPException(403, detail="Super-resolution is not available in hosted mode")
+
+
 def make_superres_router(camera: BaseCamera) -> APIRouter:
-    router = APIRouter()
+    router = APIRouter(dependencies=[Depends(_reject_hosted)])
     session = _SuperResSession()
     lock = threading.Lock()
 

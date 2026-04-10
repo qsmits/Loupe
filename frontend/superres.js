@@ -313,7 +313,8 @@ function updateStepInfo() {
     if (stepLabel) stepLabel.textContent = `Step ${step} of ${sr.totalNeeded}:`;
     if (shiftInfo && sr.shiftsUm.length > sr.currentStep) {
       const [dx, dy] = sr.shiftsUm[sr.currentStep];
-      shiftInfo.textContent = `Shift X: ${dx >= 0 ? "+" : ""}${dx.toFixed(1)} \u00b5m    Shift Y: ${dy >= 0 ? "+" : ""}${dy.toFixed(1)} \u00b5m`;
+      const rx = Math.round(dx), ry = Math.round(dy);
+      shiftInfo.textContent = `Shift X: ${rx >= 0 ? "+" : ""}${rx} \u00b5m    Shift Y: ${ry >= 0 ? "+" : ""}${ry} \u00b5m`;
     }
     if (reconstructBtn) reconstructBtn.disabled = true;
   }
@@ -507,6 +508,12 @@ export async function openSuperResDialog() {
   const dlg = $("superres-dialog");
   dlg.hidden = false;
   window.addEventListener("keydown", onSuperResKey, true);
+
+  // Pre-fill pixel pitch from global calibration (µm/px = 1000 / px/mm)
+  const pitchInp = $("superres-pitch");
+  if (pitchInp && !pitchInp.value && state.calibration && state.calibration.pixelsPerMm > 0) {
+    pitchInp.value = (1000 / state.calibration.pixelsPerMm).toFixed(2);
+  }
 
   // Probe backend for existing session state
   try {
