@@ -1,36 +1,56 @@
 # Roadmap
 
-> Revised 2026-04-04 after completing calibration profiles + detection presets.
-> See `Loupe_Competitive_Analysis.html` for the full 80+ feature comparison matrix.
+> Revised 2026-04-10 — sweeping update covering the Z-stack / heightmap /
+> super-res / stitching / camera-control / security work landed since
+> 2026-04-04, and the shift in product framing from "microscope app" to
+> "optical inspection frontend for DIY-able hardware."
 
 ## Context
 
-**Target parts:** Wire EDM parts (sharp edges, mirror finish), lathe parts
-(turned surfaces, concentric tooling marks), and eventually gears (involute
-profiles, tooth spacing).
+**What Loupe is (2026-04-10):** an open-source optical inspection frontend
+targeting DIY and small-shop hardware. Microscope/machine-vision is the
+anchor mode, but the app is evolving toward multiple instrument modes that
+*replace* each other (autocollimator, deflectometry, white-light
+interferometer) because calibration units, tool availability, and workflows
+diverge between them. Modes change workflow. Tools are specialized within a
+mode.
 
-**Competitive position (as of 2026-03-31):**
+**Target parts (microscope mode):** Wire EDM parts (sharp edges, mirror
+finish), lathe parts (turned surfaces, concentric tooling marks), gears
+(involute profiles, tooth spacing), and — newly relevant — surface texture
+and profile metrology via Z-stack, plus macro-scale inspection work as the
+user moves beyond pure micro.
+
+**Distribution:** Open-source local install (full feature set) + a
+hosted image-upload mode (compute-heavy features disabled). Not a commercial
+product — user experience trumps shop-floor GD&T compliance. See
+`CLAUDE.md` and `docs/2026-03-31-hosted-mode-security-audit.md`.
+
+**Competitive position (as of 2026-04-10):**
 
 | Category | Score | Notes |
 |----------|-------|-------|
-| Measurement tools | 92% | 14 tools + center-edge circle, sub-pixel snap |
-| Vision / auto-detection | 88% | Sub-pixel parabola + gaussian, JS instant preview |
-| CAD integration | 72% | DXF import/export, edge-based alignment |
-| Calibration & correction | 70% | Lens distortion, perspective/tilt correction, frame sync |
-| Inspection / GD&T | 58% | Corridor inspection, True Position, Punch/Die |
-| SPC & analytics | 45% | Run storage, Cpk, trend charts |
-| Reporting & export | 68% | PDF, CSV, DXF, SPC CSV, TP in exports |
-| Camera & hardware | 55% | Aravis/GigE, gamma, auto-exposure, ROI |
-| Automation & workflow | 55% | Templates, one-click inspect with auto-align |
+| Measurement tools | 94% | 14+ tools, sub-pixel snap, Bézier spline, canvas comments |
+| Vision / auto-detection | 90% | Sub-pixel parabola + gaussian, JS instant preview, surface presets |
+| CAD integration | 72% | DXF import/export, edge-based alignment (STEP pending) |
+| Calibration & correction | 82% | Lens distortion, tilt homography, frame sync, log-scale camera controls, export/import profiles |
+| Inspection / GD&T | 60% | Corridor inspection, True Position, Punch/Die |
+| SPC & analytics | 48% | Run storage, Cpk, trend charts |
+| Reporting & export | 70% | PDF, CSV, DXF, SPC CSV, TP, inspection results |
+| Camera & hardware | 74% | Aravis/GigE, OpenCV enumeration, browser camera, 4-quadrant compare, log-scale slider + histogram + client-side auto-exposure |
+| Automation & workflow | 58% | Templates, one-click inspect with auto-align |
+| Surface & profile metrology | 75% | Z-stack depth-from-focus, ISO 25178-2/3/606, 3D viewer, HDR fusion |
+| Multi-frame reconstruction | 72% | Image stitching wizard, super-resolution, HDR bracketing |
 | UI / UX / platform | 98% | Web-based, multi-user hosted, cross-platform |
 
 **Unique strengths vs. all competitors:**
 - Web-based (browser UI) — no other metrology vendor offers this
 - Open REST API — any shop with curl/Python can integrate
 - Free / self-hosted — competitors cost $5K–$50K per seat
-- Multi-user hosted mode — concurrent users, session isolation
-- Shadow-aware edge fitting
-- Edge-based DXF alignment without circles
+- Multi-user hosted mode with per-session frame isolation
+- Z-stack depth-from-focus with ISO 25178 areal roughness on a single-camera DIY rig (no motorized Z needed)
+- Image stitching + super-resolution wizards that reuse the inspection pipeline
+- Shadow-aware edge fitting, edge-based DXF alignment without circles
 
 ---
 
@@ -70,12 +90,11 @@ profiles, tooth spacing).
 - Guided inspection: sub-pixel refinement per-corridor (on by default)
 - Manual measurement: click-to-edge snap with magnitude/distance scoring
 - Live snap preview (orange crosshair on mousemove)
-- Gradient magnitude visualization overlay
-- Zoom-scaled search radius
+- Gradient magnitude visualization overlay, zoom-scaled search radius
 
-### Camera UI Overhaul (2026-03-30)
+### Camera UI (first pass, 2026-03-30)
 - Camera dropdown menu in top bar (replaces sidebar panel)
-- Exposure, gain, gamma, auto-exposure, auto-WB, white balance RGB
+- Exposure, gain, gamma, auto-WB, white balance RGB
 - Camera selection, pixel format, ROI set-from-view/reset
 - Capability-based visibility (unsupported features hidden per camera)
 - Settings dialog: 3 tabs (General, Measurement, Display)
@@ -91,94 +110,216 @@ profiles, tooth spacing).
 - Save/load inspection recipes as JSON files (client-side, no server storage)
 - Template captures: DXF entities, calibration, tolerances, detection settings, feature modes
 - One-click "Run Inspection" with auto-align when template loaded
-- Template name display in sidebar
 
 ### GD&T: True Position (2026-03-30)
 - TP = 2 × radial deviation for circle features
 - Datum-frame X/Y decomposition in hover tooltip
 - TP displayed in sidebar, CSV, and PDF exports
-- Feature-type-aware: lines show perpendicular deviation, circles show TP
 
 ### Run Storage + SPC (2026-03-30)
 - SQLite database for inspection history (parts → runs → results)
 - Feature-type-aware Cpk (one-sided for circles, two-sided for lines)
 - Canvas 2D trend chart with tolerance bands and colored dots
 - Cpk summary with capability rating (green/amber/red)
-- Part and feature selector dropdowns
-- SPC CSV export
-- Disabled in hosted mode (no server-side file persistence)
+- SPC CSV export; disabled in hosted mode
 
 ### Client-Side Sub-Pixel Snapping (2026-03-31)
 - `parabola-js` / `gaussian-js` modes run entirely in the browser
 - Instant orange crosshair snap preview on mousemove — no HTTP round-trip
-- Cached `ImageData` from frozen canvas; patch sampled per-mousemove
 - Default in hosted mode; server-side remains available locally
 
 ### Bézier Spline Tool (2026-03-31)
-- `B` key; click to place anchor points, double-click/Enter to finish
-- Catmull-Rom interpolation — smooth curve through every anchor, no manual handle adjustment
-- Draggable anchors in Select mode; arc length output (mm if calibrated)
+- `B` key; click to place anchors, double-click/Enter to finish
+- Catmull-Rom interpolation — smooth curve through every anchor
+- Draggable anchors in Select mode; arc length output
 - DXF export as `SPLINE` entity
 
 ### Help System Overhaul (2026-04-04)
-- Redesigned as two-panel layout: nav tree (left) + content page (right)
+- Two-panel layout: nav tree (left) + content page (right)
 - 20+ pages covering every tool, algorithm, workflow, and export format
-- New pages: Perspective Correction, Sub-pixel Snapping, Edge Detection pipeline, Circle & Arc Fitting, DXF Auto-alignment
-- All new features documented: grouped flyout toolbar, tool options bar, center-dist tracking, arc-measure modes
 
 ### Calibration Profiles + Detection Presets (2026-04-04)
-- **Multi-magnification calibration profiles**: save/load/delete named calibration presets in localStorage; floating panel in Setup flyout; instant recall per objective without re-calibrating
-- **Detection surface presets**: Wire EDM (default) / Lathe / 3D Print selector at top of Detect menu; surface-aware preprocessing — anisotropic directional blur for lathe tooling marks, extra bilateral pass for 3D print texture; `surface_mode` threaded through all detection endpoints
+- Multi-magnification calibration profiles (localStorage)
+- Detection surface presets: Wire EDM / Lathe / 3D Print with surface-aware preprocessing
 
 ### UX & Calibration Sprint (2026-04-04)
-- **Grouped flyout toolbar**: Measure ▾ (13 tools with key labels) + Setup ▾ (Calibrate, Lens Cal, Perspective Correct) flyouts above the tool strip
-- **Tool options bar**: second row in strip, shown per-tool — arc-measure Sequential/Ends-First toggle, circle 3-Point/Center+Edge toggle
-- **Arc-measure ends-first mode**: click both arc ends first, then the midpoint — easier when ends snap cleanly
-- **Circle center+edge mode**: two-click circle (center then any edge point) alongside existing 3-point mode
-- **Center-dist dynamic linking**: center-distance annotation updates live when either linked circle moves; read-only (delete only, no manual drag)
-- **Calibration status badge**: always-visible orange/green pill in status bar; click it to enter calibration mode
-- **Perspective (tilt) correction**: 4-point homography from a known rectangle; corrects camera tilt without telecentric optics
-- **Lens cal + perspective cal magnifier**: loupe now active during both calibration modes for precise point placement
-- **Backend frame sync**: `POST /update-frame` endpoint; called after lens or perspective correction so all backend analysis (detection, guided inspection, sub-pixel refinement) operates on the corrected image
+- Grouped flyout toolbar (Measure ▾ + Setup ▾), tool options bar
+- Arc-measure ends-first mode, circle center+edge mode
+- Center-dist dynamic linking (read-only, tracks linked circles)
+- Calibration status badge (always-visible orange/green pill)
+- Perspective (tilt) correction via 4-point homography
+- Lens cal + perspective cal loupe magnifier
+- Backend frame sync: all analysis operates on the corrected image
+
+### Z-Stack (Depth-from-Focus) Workflow (2026-04-05–07)
+- Capture stack + compute all-in-focus composite + per-pixel height map
+- Heightmap analysis: Gaussian filters, bearing ratio (Abbott-Firestone), 2D PSD
+- ISO 4287 1D and ISO 25178 2D areal roughness (Sa, Sq, Sp, Sv, Sz)
+- ISO 25178-606 surface metrology parameters
+- ISO 25178-3 Gaussian S-filter / L-filter (spatial filtering)
+- 2D profile extraction along user-drawn lines with live roughness readout
+- Plane / poly² detrend for heightmaps
+- Delete individual frames; unified server-side Z calibration
+- Session persistence across dialog reopens
+- Toolbar Surface button; preserve focus on dialog reopen
+- HDR bracketing + Laplacian pyramid fusion for high-dynamic-range stacks
+- Noise reference capture (sticky across reset)
+- 3D textured heightmap viewer with confidence mask, saturation override, Z calibration
+- Use-all-in-focus composite as the frozen view
+
+### Z-Stack Metrics Extensions (2026-04-10)
+- Skewness (Ssk) and kurtosis (Sku) in areal readout
+- ISO 25178-2 spatial texture parameters: Sal (fastest autocorrelation decay),
+  Str (texture aspect ratio), Std (dominant texture direction)
+- Quadrature noise-floor compensation using the stored noise reference
+- Calibration warning banner + disabled S/L filters when no pixel cal is set
+  (the backend silently skipped the S/L branch without calibration)
+
+### Image Stitching + Super-Resolution (2026-04-06)
+- Stitch wizard: manual tile capture with X/Y µm coordinate tracking
+- Separate X/Y overlap, sub-pixel placement, anti-ghost blending
+- 413 large-panorama protection; use-as-image error handling
+- Super-resolution wizard: multi-frame sub-pixel shift, pyramid reconstruction
+- Both wizards pre-fill pixel pitch from global calibration
+- Both disabled in hosted mode
+
+### 4-Quadrant Image Settings Comparison (2026-04-07)
+- Keyence-style side-by-side comparison of 4 live views with independent
+  exposure, gain, gamma, lighting settings — pick the best before measuring
+
+### Measurement Menu Restructure (2026-04-07)
+- 14 tools collapsed into 6 top-level groups
+- Area-from-shape added
+- Misc group, top-bar cleanup, canvas comment annotations
+
+### Camera Enumeration + Browser Camera (2026-04-08)
+- OpenCV webcam enumeration (multiple devices, per-index device_id)
+- Browser camera support via MediaDevices API
+- Per-device dropdown entries after permission granted
+- Placeholder option forces explicit selection (prevents silent fallthrough)
+- Hide drop-image overlay when browser camera is active
+
+### Security Hardening (2026-04-08–09)
+- CSP headers + Permissions-Policy + media-src
+- Concurrent operation limit for hosted mode
+- innerHTML → safe DOM construction (XSS prevention)
+- Server-issued session tokens (replaces client-generated UUIDs)
+- Bundled jsPDF locally (no third-party CDN)
+- Per-router hosted-mode rejection for stitch, super-res, and Z-stack
+- Pre-existing test failures resolved (4 tests fixed)
+
+### Camera Controls Overhaul (2026-04-10)
+- Log-scale exposure and gain sliders spanning the camera's reported
+  min/max. Each slider step is ~constant perceptual brightness change.
+  Baumer VCXU's 250× linear gain range is now usable; no more dead
+  slider travel.
+- Companion number input for exact entry; camera-native units (dB or
+  linear multiplier) auto-detected.
+- Backend AravisCamera publishes exposure_min/max and gain_min/max;
+  feature probing uses native `is_*_available()` instead of swallowing
+  exceptions.
+- Live 32-bin luma histogram with min/mean/max stats and clip warnings,
+  computed client-side from the MJPEG stream at 1 Hz.
+- Auto Exposure replaced with a client-side histogram-bisection loop
+  driving mean luma toward mid-gray. Works on cameras without hardware
+  ExposureAuto; caps search exposure at 200 ms to prevent UI hangs;
+  diagnoses under/over-exposure when it can't converge.
+- Camera dropdown grouped by backend (Scientific / Webcams / Browser).
+- Stream force-reconnects on camera switch (fixes stale MJPEG pipe).
+
+### Annotation Visibility + Calibration Polish (2026-04-10)
+- Per-row eye toggle in the sidebar hides individual annotations on canvas
+  but keeps the data; skipped in render and hit-testing
+- Global "hide all" button in the Measurements header
+- Calibration profile export/import (versioned JSON, collision-safe names)
+- `setTool("calibrate")` blocked until camera dimensions are known
+  (prevents calibration against a stale fallback imageWidth)
 
 ---
 
 ## Next Up
 
+### Autocollimator mode *(new top-of-queue when hardware arrives)*
+*Priority: high once the Nikon autocollimator arrives. Effort: medium.*
+
+This is the first "replacement mode" and the template for future instrument
+modes. The Nikon autocollimator with 12mm lens + 3D-printed adapter is
+incoming from a friend. Angular measurement (arcsec/px) cannot coexist with
+linear measurement tools (distance, circle, area) — the image is an angular
+view of a reflected reticle, not a spatial view of a part. Mode switch
+changes which tools/HUD are available and which calibration type applies.
+
+**Work needed:**
+- Mode concept refactor: add a mode-type field to calibration profiles;
+  gate tool availability by active mode
+- Focal-length-based calibration (arcsec/px from reticle displacement)
+- Angular HUD (Δx/Δy in arcsec with unit toggle to µrad)
+- Capture-reading button (snap current Δ as a logged value)
+- Parallelism workflow using the lapped base as a zero reference (no
+  flip-and-divide arithmetic required)
+
+**Why first:** establishes the mode-replacement pattern cleanly. Whatever
+shortcuts land here become tech debt for every future mode, so the
+refactor needs to be done properly.
+
+### Deflectometry mode *(second mode, hardware already on hand)*
+*Priority: medium. Effort: high. Start with a standalone Python
+prototype before integrating into Loupe.*
+
+All hardware is already present: monitor, camera, workshop space. Needs a
+stable rig to hold screen, camera, and part. Distinct value is
+**non-contact measurement of compliant or thin parts that would deform
+under the weight of an optical flat** — thin gage blocks, shim stock,
+feeler gauges, spring steel stampings, thin windows. Classical interferometry
+gives the wrong answer on these because the part conforms to the loaded
+flats. Also handles curved/specular surfaces.
+
+Concrete hello-world target: measure the free-state shape of a visibly-bent
+0.1 mm gage block.
+
 ### STEP import — geometry + PMI tolerances
 *Priority: high. Effort: high.*
 
-Two phases, both needed to make this worth the effort:
+Two phases, both needed:
 
-**Phase 1 — Geometry:** Accept a STEP file (AP203/AP214/AP242), project the relevant face to 2D, and feed the result into the existing DXF overlay pipeline as LINE/CIRCLE/ARC entities. Replaces the current "export DXF from your CAD tool first" step — many users have STEP from FreeCAD, OnShape, or Fusion 360 but no dedicated CAD tool to flatten it.
+**Phase 1 — Geometry:** Accept a STEP file (AP203/AP214/AP242), project the
+relevant face to 2D, feed into the DXF overlay pipeline as LINE/CIRCLE/ARC
+entities. Replaces the "export DXF from your CAD tool first" step.
 
-**Phase 2 — PMI tolerances:** STEP AP242 stores GD&T callouts semantically (tolerance values, datum references, bilateral zones) linked to specific geometric features. Read these and auto-populate feature tolerances on load — eliminating manual tolerance entry entirely. No competitor at this price point does this.
+**Phase 2 — PMI tolerances:** STEP AP242 stores GD&T callouts semantically
+linked to features. Read these and auto-populate feature tolerances on load
+— eliminating manual tolerance entry. No competitor at this price point
+does this.
 
-Implementation options:
-- **Server-side:** `pythonocc-core` (Python wrapper for OpenCASCADE, available via conda-forge, ~200 MB). Handles both geometry projection and PMI extraction. Works well for local installs.
-- **Client-side:** `opencascade.js` (WebAssembly build of the same library, ~40 MB lazy-loaded). STEP file stays in the browser — privacy win, no server dependency, works in hosted image-mode. API is less mature than pythonocc but sufficient for Phase 1 geometry and basic AP242 PMI.
-
-Phase 1 alone isn't compelling enough to justify the dependency. The goal is Phase 1 + PMI together — automatic inspection setup from a STEP file drop.
+Options: server-side `pythonocc-core` (~200 MB via conda-forge) or
+client-side `opencascade.js` (~40 MB WASM). Phase 1 alone isn't compelling;
+the goal is Phase 1 + PMI together.
 
 ### SPC: Control charts + histograms
 *Priority: medium. Effort: low–medium.*
 
-Run storage and Cpk are implemented. Adding X-bar/R control charts, histograms, and Pp/Ppk completes the quality analytics picture. Same Canvas 2D rendering pattern as the existing trend charts.
+X-bar/R control charts, histograms, Pp/Ppk — completes the quality
+analytics picture using the existing Canvas 2D rendering pattern.
 
 ### GD&T: Form tolerances (roundness, flatness)
 *Priority: medium. Effort: medium.*
 
-Roundness: already fit circles and compute radius; max deviation from the fit radius = roundness error. Flatness on a line segment: max deviation from the best-fit line across the measured points. Both are common callouts for turned and ground parts, and the data is already present in the inspection results. Lower priority than STEP import since tolerances can come from PMI.
+Roundness from existing circle fits; flatness from line fits. Data is
+already present in inspection results. Lower priority than STEP import
+since tolerances can come from PMI.
 
 ### GD&T: Profile of a line/surface
 *Priority: medium. Effort: medium.*
 
-The corridor-based inspection already computes perpendicular deviation per feature point. Wrapping it in formal GD&T semantics (bilateral/unilateral tolerance zones, datum references in the report) makes results directly comparable to print callouts. Better addressed after STEP/PMI import since that work overlaps heavily.
+Corridor inspection already computes perpendicular deviation per point;
+wrap in formal GD&T semantics (bilateral/unilateral zones, datums).
+Better addressed after STEP/PMI since they overlap heavily.
 
 ### Batch inspection
 *Priority: low. Effort: high.*
 
-Multiple parts in one frame, each measured in one pass. Part instance detection via DXF template matching, per-instance alignment and inspection, batch results table and combined PDF. Less relevant for single-image upload mode.
+Multi-part detection + per-instance alignment. Less relevant for the
+image-upload mode.
 
 ---
 
@@ -186,17 +327,34 @@ Multiple parts in one frame, each measured in one pass. Part instance detection 
 
 | Feature | Why deferred |
 |---------|-------------|
-| Gear inspection (involute profiles, tooth spacing) | Separate domain. Wait for gear machine. |
+| White-light interferometer mode | Longer-term — no hardware yet. Third mode after autocollimator + deflectometry. |
+| Fringe analysis tool (inside microscope mode) | **Parked.** Hardware is in hand (sodium lamps + 8–10 optical flats to 200 mm) and signal is strong, but user's actual workflow is handheld visual reading for lapping feedback, not quantitative measurement. Revisit when the new lapping machine is running and wanting repeatable before/after captures, or when a specific recurring measurement pain emerges. |
+| Digital level app (Digi-Pas DWL-3500XY ×3, BLE) | **Separate app, not a Loupe mode.** Shares backend plumbing with Loupe. Needs BLE protocol reverse engineering. |
+| Gear inspection | Separate domain. Wait for gear machine. |
 | Nikon SC-102 XY stage integration | Hardware-dependent. Separate project. |
 | Pattern matching / golden template | Interesting for incoming inspection but niche. |
 | Full GD&T (runout, concentricity, profile of surface) | Revisit when a compliance requirement drives it. |
-| Height map / focus stacking | Requires motorized Z-axis. Separate project. |
 | QDAS/QIF export | Revisit when an ISO shop asks. |
 | Calibration traceability / uncertainty budgets | ISO 17025 requirement. Not needed yet. |
-| OCR serial number recognition | Read etched/stamped serial numbers. Auto-name SPC runs and reports. Tesseract or EasyOCR. |
-| Education / cloud mode | Login, server-side session storage, teacher dashboard. See `docs/superpowers/specs/2026-03-30-education-cloud-notes.md`. |
-| Enterprise shared microscope | Role-based access, shared image library, audit trail. Builds on education mode. |
-| Customizable report templates | Fixed-format PDF covers most cases; full template system (logo, layout, PPAP fields) deferred until someone asks for it. |
+| OCR serial number recognition | Auto-name SPC runs from etched serials. |
+| Education / cloud mode | Login, server-side session storage, teacher dashboard. |
+| Enterprise shared microscope | Role-based access, shared image library, audit trail. |
+| Customizable report templates | Fixed-format PDF covers most cases. |
+
+---
+
+## Modes explicitly rejected
+
+These have been discussed and **will not** be built into Loupe:
+
+- **Shadowgraph / profile projector as its own mode.** The Mitutoyo
+  toolmakers scope already does this via microscope mode + green backlight.
+  Mounting a camera to the Nikon profile projector is a hardware problem,
+  not software. At most, "a lighting preset within microscope mode."
+- **Photogrammetry.** Meshroom / RealityCapture do it better. No reason to
+  reinvent.
+- **Laser triangulation, colorimetry, schlieren.** Niche, different data
+  models, or not inspection.
 
 ---
 
@@ -206,49 +364,69 @@ Multiple parts in one frame, each measured in one pass. Part instance detection 
 - Component framework (canvas rendering doesn't benefit)
 - WebGL rendering (canvas performance is fine at current image sizes)
 - AI-assisted detection (classical CV pipeline needs to be solid first)
+- **Feature-driven mode proliferation.** A few well-designed modes beat a
+  pile of half-modes. The question that has to be answered before adding
+  any feature (mode-level or tool-level) is *"what current recurring pain
+  would this fix?"* — not *"do I have the hardware?"*
 
 ---
 
 ## Execution Log
 
 ```
-✅ Done:   Phase 1 (reliability + UX)        — 2026-03-25
-✅ Done:   Phase 1.5 (zoom/pan)              — 2026-03-25
-✅ Done:   Phase 2 (guided inspection)       — 2026-03-25
-✅ Done:   Phase 2.5 (Punch/Die + tol)       — 2026-03-26
-✅ Done:   Misc polish + camera fixes        — 2026-03-26
-✅ Done:   Edge-based auto-alignment         — 2026-03-28
-✅ Done:   DXF export, grouping, labels      — 2026-03-28
-✅ Done:   Phase 5.1 (PDF/CSV reports)       — 2026-03-28
-✅ Done:   Phase 6 (tests + module splits)   — 2026-03-29
-✅ Done:   Viewport coordinate fixes         — 2026-03-29
-✅ Done:   Sub-pixel edge refinement         — 2026-03-30
-✅ Done:   Camera UI overhaul               — 2026-03-30
-✅ Done:   Multi-user hosted mode           — 2026-03-30
-✅ Done:   Security hardening + deploy      — 2026-03-30
-✅ Done:   Measurement templates            — 2026-03-30
-✅ Done:   GD&T: True Position              — 2026-03-30
-✅ Done:   Run storage + SPC               — 2026-03-30
-✅ Done:   Client-side sub-pixel snapping  — 2026-03-31
-✅ Done:   Bézier spline tool              — 2026-03-31
-✅ Done:   Help system overhaul            — 2026-04-04
-✅ Done:   Grouped flyout toolbar          — 2026-04-04
-✅ Done:   Perspective (tilt) correction   — 2026-04-04
-✅ Done:   Circle center+edge mode         — 2026-04-04
-✅ Done:   Arc-measure ends-first mode     — 2026-04-04
-✅ Done:   Center-dist dynamic linking     — 2026-04-04
-✅ Done:   Backend frame sync (corrections)— 2026-04-04
-✅ Done:   Multi-mag calibration profiles  — per-objective cal recall
-✅ Done:   Detection presets               — EDM/Lathe/Print surface modes
+✅ Phase 1 (reliability + UX)        — 2026-03-25
+✅ Phase 1.5 (zoom/pan)              — 2026-03-25
+✅ Phase 2 (guided inspection)       — 2026-03-25
+✅ Phase 2.5 (Punch/Die + tol)       — 2026-03-26
+✅ Edge-based auto-alignment         — 2026-03-28
+✅ DXF export, grouping, labels      — 2026-03-28
+✅ PDF/CSV reports                   — 2026-03-28
+✅ Tests + module splits             — 2026-03-29
+✅ Sub-pixel edge refinement         — 2026-03-30
+✅ Camera UI overhaul (first pass)   — 2026-03-30
+✅ Multi-user hosted mode            — 2026-03-30
+✅ Security hardening + deploy       — 2026-03-30
+✅ Measurement templates             — 2026-03-30
+✅ GD&T: True Position               — 2026-03-30
+✅ Run storage + SPC                 — 2026-03-30
+✅ Client-side sub-pixel snapping    — 2026-03-31
+✅ Bézier spline tool                — 2026-03-31
+✅ Help system overhaul              — 2026-04-04
+✅ Grouped flyout toolbar            — 2026-04-04
+✅ Perspective (tilt) correction     — 2026-04-04
+✅ Calibration profiles + presets    — 2026-04-04
+✅ Z-stack + heightmap analysis      — 2026-04-05
+✅ ISO 25178-606 surface metrology   — 2026-04-05
+✅ ISO 25178-3 S/L spatial filters   — 2026-04-05
+✅ Z-stack profile + roughness 1D    — 2026-04-06
+✅ Z-stack plane/poly² detrend       — 2026-04-06
+✅ HDR bracketing + pyramid fusion   — 2026-04-06
+✅ Image stitching wizard            — 2026-04-06
+✅ Super-resolution wizard           — 2026-04-06
+✅ 3D textured heightmap viewer      — 2026-04-07
+✅ 4-quadrant image compare          — 2026-04-07
+✅ Measure menu restructure          — 2026-04-07
+✅ Canvas comment annotations        — 2026-04-07
+✅ OpenCV webcam enumeration         — 2026-04-08
+✅ Browser camera support            — 2026-04-08
+✅ Hosted-mode CSP + media-src       — 2026-04-08
+✅ Concurrent op limit + XSS fix     — 2026-04-09
+✅ Server-issued session tokens      — 2026-04-09
+✅ Camera controls overhaul          — 2026-04-10
+✅ Z-stack texture params + noise    — 2026-04-10
+✅ Annotation visibility toggles     — 2026-04-10
+✅ Cal profile export/import         — 2026-04-10
 
-Next:      STEP import (geometry + PMI)     — auto inspection setup from STEP file drop
-Then:      STEP import (geometry + PMI)     — auto inspection setup from STEP file drop
-Then:      SPC: control charts + histograms — X-bar/R, Pp/Ppk
-Then:      GD&T: Form tolerances            — roundness, flatness (after STEP/PMI)
-Then:      GD&T: Profile of a line/surface  — formal tolerance zones (after STEP/PMI)
-Then:      Batch inspection                 — multi-part, lower priority for image-mode
-Future:    Gear inspection                  — when gear machine is running
-Future:    Nikon XY stage                   — hardware integration
-Future:    Education / cloud mode           — university adoption
-Future:    Enterprise shared microscope     — production shop multi-user
+Next:      Autocollimator mode         — when Nikon unit arrives; establishes mode-replacement pattern
+Then:      Deflectometry mode          — non-contact compliant-part metrology; prototype in Python first
+Then:      STEP import (geometry+PMI)  — auto inspection setup from STEP file drop
+Then:      SPC: control charts         — X-bar/R, Pp/Ppk
+Then:      GD&T: form tolerances       — roundness, flatness (after STEP/PMI)
+Then:      GD&T: profile of line/surf  — formal tolerance zones (after STEP/PMI)
+Then:      Batch inspection            — multi-part, lower priority for image-mode
+Later:     White-light interferometer  — third mode, no hardware yet
+Later:     Digital level app           — separate app, shares backend plumbing
+Future:    Gear inspection             — when gear machine is running
+Future:    Education / cloud mode      — university adoption
+Parked:    Fringe analysis tool        — revisit on lapping-machine trigger
 ```
