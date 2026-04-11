@@ -1264,6 +1264,7 @@ async function startFreshSession() {
   renderThumbs();
   updateCount();
   updateInstruction();
+  updateSurfaceButtonState();
   return true;
 }
 
@@ -1340,6 +1341,7 @@ async function compute() {
       `Z ${zs.computed.minZ.toFixed(3)} → ${zs.computed.maxZ.toFixed(3)} mm`;
     $("zstack-result").hidden = false;
     showStatus(`Z-stack built: ${zs.frameCount} frames, Z range ${(zs.computed.maxZ - zs.computed.minZ).toFixed(3)} mm`);
+    updateSurfaceButtonState();
   } finally {
     if (btn) { btn.disabled = zs.frameCount < 3; btn.textContent = "Build height map"; }
   }
@@ -1356,6 +1358,7 @@ async function resetStack() {
   renderThumbs();
   updateCount();
   updateInstruction();
+  updateSurfaceButtonState();
   // Noise floor survives reset on the backend — restore the readout
   try {
     const r = await apiFetch("/zstack/status");
@@ -1452,6 +1455,7 @@ export async function openZstackDialog() {
     updateCount();
     updateInstruction();
     if (status.has_result) rehydrateResult(status);
+    updateSurfaceButtonState();
   } else {
     await startFreshSession();
   }
@@ -1482,23 +1486,34 @@ function closeDialog() {
   window.removeEventListener("keydown", onZstackKey, true);
 }
 
+// Sync the toolbar "Surface view" button enabled-state to whether a
+// computed Z-stack exists. Called on init (one-shot against the backend
+// to rehydrate after a reload) and directly from compute/reset/open-dialog
+// transitions — polling isn't needed because every has_result flip is
+// frontend-driven in this tab.
+export function updateSurfaceButtonState() {
+  const viewBtn = $("btn-zstack-3d-view");
+  if (!viewBtn) return;
+  viewBtn.disabled = !zs.computed;
+}
+
 export function initZstack() {
   const btn = $("btn-zstack");
   if (btn) btn.addEventListener("click", openZstackDialog);
   const viewBtn = $("btn-zstack-3d-view");
   if (viewBtn) {
     viewBtn.addEventListener("click", openZstack3dFromToolbar);
-    // Poll /zstack/status periodically so the button enables itself once
-    // a result exists and disables itself after a reset.  Cheap call.
-    const refresh = async () => {
+    // One-shot probe on page load: if the backend already has a computed
+    // stack from a previous session, enable the button. After this, state
+    // transitions are driven locally by compute()/resetStack()/openDialog.
+    viewBtn.disabled = true;
+    (async () => {
       try {
         const sr = await apiFetch("/zstack/status");
         if (!sr.ok) return;
         const status = await sr.json();
         viewBtn.disabled = !status.has_result;
       } catch {}
-    };
-    refresh();
-    setInterval(refresh, 5000);
+    })();
   }
 }
