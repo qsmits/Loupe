@@ -110,6 +110,27 @@ export function drawDxfOverlay(ann) {
   }
 
   ctx.restore();
+
+  // While in drag-rotate mode, draw a small crosshair at the pivot so the
+  // user can see where the overlay will rotate from. Pivot = dxfToCanvas(0,0).
+  if (state.dxfRotateMode) {
+    const pivot = dxfToCanvas(0, 0, ann);
+    const size = pw(8);
+    ctx.save();
+    ctx.strokeStyle = "#fbbf24";
+    ctx.lineWidth = pw(1.5);
+    ctx.setLineDash([]);
+    ctx.beginPath();
+    ctx.moveTo(pivot.x - size, pivot.y);
+    ctx.lineTo(pivot.x + size, pivot.y);
+    ctx.moveTo(pivot.x, pivot.y - size);
+    ctx.lineTo(pivot.x, pivot.y + size);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(pivot.x, pivot.y, pw(3), 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  }
 }
 
 export function dxfToCanvas(x, y, ann) {

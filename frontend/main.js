@@ -399,6 +399,10 @@ document.getElementById("btn-set-origin").addEventListener("click", () => {
     state.dxfDragMode = false; state.dxfDragOrigin = null;
     document.getElementById("btn-dxf-move")?.classList.remove("active");
   }
+  if (state.dxfRotateMode) {
+    state.dxfRotateMode = false; state.dxfRotateOrigin = null;
+    document.getElementById("btn-dxf-rotate")?.classList.remove("active");
+  }
   if (state.inspectionPickTarget) {
     state.inspectionPickTarget = null;
     state.inspectionPickPoints = [];

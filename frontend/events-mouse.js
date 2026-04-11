@@ -140,6 +140,28 @@ async function onMouseDown(e) {
     }
     return;
   }
+  if (state.dxfRotateMode) {
+    const ann = state.annotations.find(a => a.type === "dxf-overlay");
+    if (ann) {
+      const pt = canvasPoint(e);
+      // The rotation pivot in canvas space = dxfToCanvas(0, 0, ann), which
+      // evaluates to (ann.offsetX, ann.offsetY) when originAngle is 0. Use
+      // the helper so we stay correct if a rotated origin is in play.
+      const pivot = dxfToCanvas(0, 0, ann);
+      const dx = pt.x - pivot.x;
+      const dy = pt.y - pivot.y;
+      // Ignore clicks right on top of the pivot — angle is undefined and
+      // the user almost certainly didn't mean to start a rotation there.
+      if (Math.hypot(dx, dy) < 4) return;
+      pushUndo();
+      state.dxfRotateOrigin = {
+        pivotX: pivot.x, pivotY: pivot.y,
+        startAngleRad: Math.atan2(dy, dx),
+        annAngleStart: ann.angle ?? 0,
+      };
+    }
+    return;
+  }
   const pt = canvasPoint(e);
   // Gear analysis pick mode short-circuits tool dispatch.
   if (state.gearPickMode && e.button === 0) {
@@ -315,6 +337,10 @@ function onMouseUp() {
     state.dxfDragOrigin = null;
     return;
   }
+  if (state.dxfRotateMode) {
+    state.dxfRotateOrigin = null;
+    return;
+  }
   if (state._selectRect) {
     const r = state._selectRect;
     const minX = Math.min(r.x1, r.x2), maxX = Math.max(r.x1, r.x2);
@@ -432,6 +458,30 @@ export function initMouseHandlers() {
         ann.offsetX = state.dxfDragOrigin.annOffsetX + (pt.x - state.dxfDragOrigin.mouseX);
         ann.offsetY = state.dxfDragOrigin.annOffsetY + (pt.y - state.dxfDragOrigin.mouseY);
         redraw();
+      }
+      return;
+    }
+    if (state.dxfRotateMode && state.dxfRotateOrigin) {
+      const ann = state.annotations.find(a => a.type === "dxf-overlay");
+      if (ann) {
+        const o = state.dxfRotateOrigin;
+        const dx = pt.x - o.pivotX;
+        const dy = pt.y - o.pivotY;
+        if (Math.hypot(dx, dy) >= 1e-6) {
+          const nowRad = Math.atan2(dy, dx);
+          let deltaDeg = (nowRad - o.startAngleRad) * 180 / Math.PI;
+          // Canvas Y is down, so CW drag on screen → positive deltaDeg,
+          // and the overlay's annAngle convention is DXF-frame degrees
+          // (rendered via `rotate(-annAngle)` after the Y-flip), which
+          // makes CW on screen correspond to increasing annAngle.
+          let next = o.annAngleStart + deltaDeg;
+          if (e.shiftKey) next = Math.round(next * 2) / 2; // snap to 0.5°
+          ann.angle = ((next % 360) + 360) % 360;
+          // Keep the nudge-button display in sync if it exists.
+          const disp = document.getElementById("dxf-angle-display");
+          if (disp) disp.textContent = ann.angle.toFixed(1) + "°";
+          redraw();
+        }
       }
       return;
     }

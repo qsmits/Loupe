@@ -506,11 +506,39 @@ export function initDxfHandlers() {
     if (!ann) return;
     state.dxfDragMode = !state.dxfDragMode;
     state.dxfDragOrigin = null;
+    // Mutually exclusive with rotate mode.
+    if (state.dxfDragMode && state.dxfRotateMode) {
+      state.dxfRotateMode = false;
+      state.dxfRotateOrigin = null;
+      document.getElementById("btn-dxf-rotate")?.classList.remove("active");
+    }
     document.getElementById("btn-dxf-move")?.classList.toggle("active", state.dxfDragMode);
     // Close the dropdown menu
     const dropdown = document.getElementById("btn-dxf-move")?.closest(".dropdown");
     if (dropdown) dropdown.hidden = true;
     showStatus(state.dxfDragMode ? "Drag to reposition DXF overlay" : (state.frozen ? "Frozen" : "Live"));
+    redraw();
+  });
+
+  // btn-dxf-rotate: toggle drag-to-rotate mode (pivot = DXF origin in canvas)
+  document.getElementById("btn-dxf-rotate")?.addEventListener("click", () => {
+    const ann = state.annotations.find(a => a.type === "dxf-overlay");
+    if (!ann) return;
+    state.dxfRotateMode = !state.dxfRotateMode;
+    state.dxfRotateOrigin = null;
+    // Mutually exclusive with move mode.
+    if (state.dxfRotateMode && state.dxfDragMode) {
+      state.dxfDragMode = false;
+      state.dxfDragOrigin = null;
+      document.getElementById("btn-dxf-move")?.classList.remove("active");
+    }
+    document.getElementById("btn-dxf-rotate")?.classList.toggle("active", state.dxfRotateMode);
+    showStatus(
+      state.dxfRotateMode
+        ? "Drag to rotate DXF overlay around its pivot (Shift to snap)"
+        : (state.frozen ? "Frozen" : "Live"),
+    );
+    redraw();
   });
 
   const btnExportCsv = document.getElementById("btn-export-inspection-csv");

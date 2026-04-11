@@ -229,18 +229,18 @@ async function runGenerateGearOverlayFromDialog() {
   const r_tip_mm = tipCircle.r / ppm;
   const module_mm = (2 * r_tip_mm) / (n + 2 * addendum);
 
-  // Map tip-circle center from image pixels → DXF mm (Y-flip: canvas Y-down → DXF Y-up).
-  const originX = state.origin?.x ?? 0;
-  const originY = state.origin?.y ?? 0;
-  const cx_dxf = (tipCircle.cx - originX) / ppm;
-  const cy_dxf = -(tipCircle.cy - originY) / ppm;
-
+  // Generate the gear in its own local DXF frame with the center at (0, 0),
+  // then place the overlay so DXF origin lands at the picked tip-circle
+  // pixel center. Because dxf_to_image_px rotates around DXF (0,0), this
+  // makes the overlay's rotation pivot equal to the gear center — which is
+  // what the user expects when they nudge rotation or drag-rotate, and what
+  // the future common-mode refine loop needs as a stable reference frame.
   const body = {
     n_teeth: n,
     profile,
     module: module_mm,
-    cx: cx_dxf,
-    cy: cy_dxf,
+    cx: 0,
+    cy: 0,
     addendum_coef: addendum,
     dedendum_coef: dedendum,
     rotation_deg: rotationDeg,
@@ -266,12 +266,14 @@ async function runGenerateGearOverlayFromDialog() {
     closeGearDialog();
     await setDxfOverlayFromEntities(entities, {
       filename: `generated ${profile} gear (N=${n})`,
-      offsetX: originX,
-      offsetY: originY,
+      offsetX: tipCircle.cx,
+      offsetY: tipCircle.cy,
       scale: ppm,
-      readyMessage: `Generated ${profile} gear overlay — ${entities.length} segments`,
-      alignedMessagePrefix: "Gear overlay aligned",
-      fallbackMessage: "Gear overlay set — use Move DXF to fine-tune position",
+      readyMessage: `Generated ${profile} gear overlay — ${entities.length} segments. Use Rotate DXF to align.`,
+      // Skip auto-align: edge-based template matching doesn't work on
+      // rotationally symmetric geometry, and applyAlignmentResult would
+      // overwrite offsetX/Y and move the pivot off the gear center.
+      skipAutoAlign: true,
     });
   } catch (err) {
     console.error(err);

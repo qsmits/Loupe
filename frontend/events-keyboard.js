@@ -109,6 +109,12 @@ export function initKeyboard(closeAllDropdowns) {
         document.getElementById("btn-dxf-move")?.classList.remove("active");
         showStatus(state.frozen ? "Frozen" : "Live");
       }
+      if (state.dxfRotateMode) {
+        state.dxfRotateMode = false;
+        state.dxfRotateOrigin = null;
+        document.getElementById("btn-dxf-rotate")?.classList.remove("active");
+        showStatus(state.frozen ? "Frozen" : "Live");
+      }
       if (state.dxfAlignMode) { exitDxfAlignMode(); redraw(); return; }
       state.pendingPoints = [];
       state.pendingCenterCircle = null;

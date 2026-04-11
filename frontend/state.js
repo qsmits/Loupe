@@ -27,6 +27,8 @@ export const state = {
   dxfAlignHover: null,
   dxfDragMode: false,
   dxfDragOrigin: null,  // { mouseX, mouseY, annOffsetX, annOffsetY }
+  dxfRotateMode: false,
+  dxfRotateOrigin: null, // { pivotX, pivotY, startAngleRad, annAngleStart }
   showDeviations: false,
   tolerances: { warn: 0.10, fail: 0.25 },
   featureTolerances: {},

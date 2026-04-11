@@ -57,6 +57,11 @@ export function setTool(name) {
     state.dxfDragOrigin = null;
     document.getElementById("btn-dxf-move")?.classList.remove("active");
   }
+  if (state.dxfRotateMode) {
+    state.dxfRotateMode = false;
+    state.dxfRotateOrigin = null;
+    document.getElementById("btn-dxf-rotate")?.classList.remove("active");
+  }
   if (state._originMode) {
     state._originMode = false;
     document.getElementById("btn-set-origin")?.classList.remove("active");
