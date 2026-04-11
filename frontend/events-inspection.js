@@ -7,6 +7,7 @@ import { canvasPoint, hitTestDxfEntity } from './tools.js';
 import { fitCircle, fitLine, fitCircleAlgebraic, distPointToSegment } from './math.js';
 import { viewport } from './viewport.js';
 import { imageWidth, imageHeight } from './viewport.js';
+import { serverSubpixelMethod } from './subpixel-js.js';
 
 export function _hitTestGuidedResult(pt, dxfAnn) {
   const threshold = 10 / viewport.zoom;
@@ -198,7 +199,7 @@ export async function _finalizePickInspection() {
           flip_h: ann.flipH ?? false, flip_v: ann.flipV ?? false,
           tolerance_warn: state.tolerances.warn,
           tolerance_fail: state.tolerances.fail,
-          subpixel: state.settings.subpixelMethod,
+          subpixel: serverSubpixelMethod(state.settings.subpixelMethod),
         }),
       });
       if (!resp.ok) continue;

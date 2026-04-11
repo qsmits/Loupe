@@ -4,6 +4,7 @@ import { redraw, canvas, img, showStatus } from './render.js';
 import { addAnnotation } from './annotations.js';
 import { renderSidebar, updateDxfControlsVisibility, updateFreezeUI, renderInspectionTable } from './sidebar.js';
 import { exportInspectionCsv, exportInspectionPdf } from './session.js';
+import { serverSubpixelMethod } from './subpixel-js.js';
 
 // ── Shared alignment helper ───────────────────────────────────────────────
 
@@ -439,7 +440,7 @@ export function initDxfHandlers() {
           tolerance_warn: state.tolerances.warn,
           tolerance_fail: state.tolerances.fail,
           feature_tolerances: state.featureTolerances,
-          subpixel: state.settings.subpixelMethod,
+          subpixel: serverSubpixelMethod(state.settings.subpixelMethod),
         }),
       });
 

@@ -30,6 +30,17 @@ export function clearImageCache() {
   _pixels = null;
 }
 
+/**
+ * Map the user's subpixel setting to a value safe to POST to the backend.
+ * The backend only knows "none"/"parabola"/"gaussian"; the "-js" variants
+ * are browser-only (applied during manual clicks in tools.js). Anywhere we
+ * hand a subpixel method to the server, route it through this first.
+ */
+export function serverSubpixelMethod(method) {
+  if (method === "parabola-js" || method === "gaussian-js") return "none";
+  return method || "none";
+}
+
 // Grayscale luminance at integer pixel (x, y), clamped to image bounds
 function luma(x, y) {
   const xi = x | 0, yi = y | 0;
