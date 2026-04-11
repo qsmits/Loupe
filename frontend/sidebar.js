@@ -830,10 +830,23 @@ export function renderInspectionTable() {
     headerTr.addEventListener("click", () => {
       collapsed = !collapsed;
       headerTr.querySelector(".insp-chevron").textContent = collapsed ? "▸" : "▾";
-      // Toggle visibility of detail rows
+      // Toggle visibility of detail rows. When expanding a gear-style
+      // group, per-segment drill-down rows (class "insp-tooth-detail")
+      // stay hidden — the user must click a tooth row to see them.
+      // Also reset any open tooth chevrons back to their collapsed glyph.
       let sibling = headerTr.nextElementSibling;
       while (sibling && !sibling.classList.contains("insp-group-header")) {
-        sibling.hidden = collapsed;
+        if (collapsed) {
+          sibling.hidden = true;
+        } else {
+          if (sibling.classList.contains("insp-tooth-detail")) {
+            sibling.hidden = true;
+          } else {
+            sibling.hidden = false;
+            const tchev = sibling.querySelector(".insp-tooth-chevron");
+            if (tchev) tchev.textContent = "▸";
+          }
+        }
         sibling = sibling.nextElementSibling;
       }
     });
@@ -863,7 +876,176 @@ export function renderInspectionTable() {
 
     tbody.appendChild(headerTr);
 
-    // Detail rows for each result in group
+    // ── Per-tooth aggregation (gears only) ────────────────────────────
+    // If every entity in this group carries a `tooth_index`, render one
+    // row per tooth showing the worst-case deviation, with drill-down
+    // into the per-segment rows on click. This keeps a 17-tooth gear
+    // inspection at ~17 rows instead of ~650.
+    const entitiesByHandle = new Map();
+    for (const e of (dxfAnn?.entities || [])) entitiesByHandle.set(e.handle, e);
+    const resultMeta = results.map(r => {
+      const e = entitiesByHandle.get(r.handle);
+      return {
+        r,
+        tooth: e && typeof e.tooth_index === "number" ? e.tooth_index : null,
+        region: e?.region || null,
+      };
+    });
+    const hasToothIndex = resultMeta.length > 0 && resultMeta.every(m => m.tooth !== null);
+
+    if (hasToothIndex) {
+      // Bucket by tooth.
+      const byTooth = new Map();  // tooth_index → [meta]
+      for (const m of resultMeta) {
+        if (!byTooth.has(m.tooth)) byTooth.set(m.tooth, []);
+        byTooth.get(m.tooth).push(m);
+      }
+      const sortedTeeth = [...byTooth.keys()].sort((a, b) => a - b);
+
+      const rankPF = pf => (pf === "fail" ? 2 : pf === "warn" ? 1 : 0);
+
+      for (const tooth of sortedTeeth) {
+        const bucket = byTooth.get(tooth);
+        // Worst-case by pass/fail, tie-break by |deviation_mm|.
+        let worst = null;
+        for (const m of bucket) {
+          if (!m.r.matched) continue;
+          if (worst === null) { worst = m; continue; }
+          const aP = rankPF(m.r.pass_fail);
+          const bP = rankPF(worst.r.pass_fail);
+          if (aP > bP) { worst = m; continue; }
+          if (aP < bP) continue;
+          const ad = Math.abs(m.r.deviation_mm ?? 0);
+          const bd = Math.abs(worst.r.deviation_mm ?? 0);
+          if (ad > bd) worst = m;
+        }
+
+        const toothTr = document.createElement("tr");
+        toothTr.className = "insp-tooth-row";
+        toothTr.style.cursor = "pointer";
+
+        const worstPF = worst ? worst.r.pass_fail : null;
+        let tBadgeClass, tBadgeText;
+        if (!worst) { tBadgeClass = "badge-unmatched"; tBadgeText = "—"; }
+        else if (worstPF === "fail") { tBadgeClass = "badge-fail"; tBadgeText = "FAIL"; }
+        else if (worstPF === "warn") { tBadgeClass = "badge-warn"; tBadgeText = "WARN"; }
+        else { tBadgeClass = "badge-pass"; tBadgeText = "PASS"; }
+
+        const nameTd2 = document.createElement("td");
+        nameTd2.className = "insp-handle";
+        const chev = document.createElement("span");
+        chev.className = "insp-chevron insp-tooth-chevron";
+        chev.textContent = "▸";
+        chev.style.marginRight = "4px";
+        nameTd2.appendChild(chev);
+        nameTd2.appendChild(document.createTextNode(`T${tooth}`));
+
+        const typeTd = document.createElement("td");
+        typeTd.className = "insp-type";
+        typeTd.textContent = worst?.region || "";
+
+        const devTd = document.createElement("td");
+        devTd.className = "insp-dev";
+        if (worst && worst.r.deviation_mm != null) {
+          devTd.textContent = worst.r.deviation_mm.toFixed(4) + " mm";
+        } else {
+          devTd.textContent = "—";
+        }
+
+        const tolTd = document.createElement("td");
+        tolTd.className = "insp-tol";
+        if (worst) tolTd.textContent = `±${worst.r.tolerance_warn}/${worst.r.tolerance_fail}`;
+
+        const statusTd = document.createElement("td");
+        const tBadge = document.createElement("span");
+        tBadge.className = `insp-badge ${tBadgeClass}`;
+        tBadge.textContent = tBadgeText;
+        statusTd.appendChild(tBadge);
+        const cntSpan = document.createElement("span");
+        cntSpan.className = "insp-group-count";
+        cntSpan.textContent = ` (${bucket.length})`;
+        statusTd.appendChild(cntSpan);
+
+        toothTr.append(nameTd2, typeTd, devTd, tolTd, statusTd);
+
+        // Hover: highlight all handles in this tooth.
+        const toothHandles = bucket.map(m => m.r.handle);
+        toothTr.addEventListener("mouseenter", () => {
+          state.inspectionHoverHandle = toothHandles;
+          redraw();
+        });
+        toothTr.addEventListener("mouseleave", () => {
+          state.inspectionHoverHandle = null;
+          redraw();
+        });
+
+        // Track detail rows so we can toggle them when the tooth row is clicked.
+        const detailRows = [];
+
+        toothTr.addEventListener("click", () => {
+          if (detailRows.length === 0) return;
+          const hidden = detailRows[0].hidden;
+          for (const dr of detailRows) dr.hidden = !hidden;
+          chev.textContent = hidden ? "▾" : "▸";
+        });
+
+        tbody.appendChild(toothTr);
+
+        // Per-segment drill-down rows (hidden by default).
+        for (const m of bucket) {
+          const r = m.r;
+          featureNum++;
+          const tr = document.createElement("tr");
+          tr.className = "insp-detail-row insp-tooth-detail";
+          tr.hidden = true;
+
+          let deviationText = "—";
+          if (r.matched && r.deviation_mm != null) deviationText = r.deviation_mm.toFixed(4) + " mm";
+
+          let badgeClass2, badgeText;
+          if (!r.matched) { badgeClass2 = "badge-unmatched"; badgeText = "—"; }
+          else if (r.pass_fail === "pass") { badgeClass2 = "badge-pass"; badgeText = "PASS"; }
+          else if (r.pass_fail === "warn") { badgeClass2 = "badge-warn"; badgeText = "WARN"; }
+          else { badgeClass2 = "badge-fail"; badgeText = "FAIL"; }
+
+          const handleTd = document.createElement("td");
+          handleTd.className = "insp-handle";
+          handleTd.style.paddingLeft = "20px";
+          handleTd.textContent = `s${r.handle.match(/_s(\d+)$/)?.[1] ?? r.handle}`;
+          const typeTd2 = document.createElement("td");
+          typeTd2.className = "insp-type";
+          typeTd2.textContent = m.region || "";
+          const devTd2 = document.createElement("td");
+          devTd2.className = "insp-dev";
+          devTd2.textContent = deviationText;
+          const tolTd2 = document.createElement("td");
+          tolTd2.className = "insp-tol";
+          tolTd2.textContent = `±${r.tolerance_warn}/${r.tolerance_fail}`;
+          const statusTd2 = document.createElement("td");
+          const b2 = document.createElement("span");
+          b2.className = `insp-badge ${badgeClass2}`;
+          b2.textContent = badgeText;
+          statusTd2.appendChild(b2);
+          tr.append(handleTd, typeTd2, devTd2, tolTd2, statusTd2);
+
+          tr.addEventListener("mouseenter", () => {
+            state.inspectionHoverHandle = r.handle;
+            redraw();
+          });
+          tr.addEventListener("mouseleave", () => {
+            state.inspectionHoverHandle = null;
+            redraw();
+          });
+
+          tbody.appendChild(tr);
+          detailRows.push(tr);
+        }
+      }
+      // Skip the default flat-list rendering for this group.
+      continue;
+    }
+
+    // Detail rows for each result in group (non-gear groups)
     for (const r of results) {
       featureNum++;
       const tr = document.createElement("tr");

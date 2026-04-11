@@ -39,7 +39,8 @@ def generate_involute_gear(
     points_per_flank: int = 30,
     points_per_tip: int = 10,
     points_per_root: int = 6,
-) -> list[tuple[float, float]]:
+    return_regions: bool = False,
+):
     """Generate a closed polyline of an ideal involute spur gear.
 
     The gear is constructed by building one "tooth period" (one half of the
@@ -62,7 +63,13 @@ def generate_involute_gear(
         points_per_root: samples along each half of the root gap arc.
 
     Returns:
-        Closed polyline, list of (x, y) tuples.
+        By default: closed polyline, list of (x, y) tuples.
+        If return_regions=True: (points, period_length, period_segment_regions)
+        where period_segment_regions[i] labels the segment that starts at
+        period_points[i] (length == period_length). Segment labels repeat
+        for every tooth period, so segment j of the full polyline is labeled
+        period_segment_regions[j % period_length] and belongs to tooth
+        j // period_length.
     """
     if n_teeth < 6:
         raise ValueError(f"n_teeth must be >= 6, got {n_teeth}")
@@ -119,7 +126,23 @@ def generate_involute_gear(
 
     # Build one tooth profile, counterclockwise, from the left-root-corner up
     # around the tooth and back down to the right-root-corner.
+    # We track (point, region_label_of_segment_starting_here) pairs. The last
+    # label in `tooth` is a placeholder — it will be overwritten when the root
+    # arc is concatenated, since the final segment of the tooth connects into
+    # the root arc (a "root" segment).
     tooth: list[tuple[float, float]] = []
+    tooth_regions: list[str] = []
+
+    def _push(pt: tuple[float, float], region: str) -> None:
+        # Each append records the segment label for the segment that starts
+        # at `pt` and goes to whatever we push next. Dedup against the prior
+        # point (to preserve the existing behavior of _near) — when dedup
+        # fires we keep the earlier label, which is the correct one for the
+        # region being built since both points were meant to be inside it.
+        if tooth and _near(pt, tooth[-1]):
+            return
+        tooth.append(pt)
+        tooth_regions.append(region)
 
     # If root is below base, add a radial stub on the left flank from root up to base.
     # The left flank at t=0 (r = r_base) has polar angle -phase_right.
@@ -128,34 +151,40 @@ def generate_involute_gear(
         for i in range(points_per_root):
             frac = i / (points_per_root - 1)
             r = r_root + (r_base - r_root) * frac
-            tooth.append((r * math.cos(theta_stub_left), r * math.sin(theta_stub_left)))
+            _push(
+                (r * math.cos(theta_stub_left), r * math.sin(theta_stub_left)),
+                "flank",
+            )
 
     # Left flank: t from t_lo (inside, near root/base) to t_hi (tip).
     for i in range(points_per_flank):
         frac = i / (points_per_flank - 1)
         t = t_lo + (t_hi - t_lo) * frac
-        p = involute_left(t)
-        # Avoid duplicating the last point of the stub.
-        if tooth and _near(p, tooth[-1]):
-            continue
-        tooth.append(p)
+        _push(involute_left(t), "flank")
 
     # Tip arc: sweep polar angle from the left-flank-at-tip to the right-flank-at-tip.
+    # Note: the segment FROM the last flank point TO the first tip point
+    # belongs to the tip (it's the boundary, and we label segments by what
+    # they travel along). The label of `tooth_regions[-1]` still says "flank"
+    # from the last _push of the flank — overwrite it to "tip" to capture the
+    # transition segment.
+    if tooth_regions:
+        tooth_regions[-1] = "tip"
     theta_tip_left = -phase_right + (t_hi - math.atan(t_hi))
     theta_tip_right = phase_right - (t_hi - math.atan(t_hi))
     for i in range(1, points_per_tip):
         frac = i / (points_per_tip - 1)
         theta = theta_tip_left + (theta_tip_right - theta_tip_left) * frac
-        tooth.append((r_tip * math.cos(theta), r_tip * math.sin(theta)))
+        _push((r_tip * math.cos(theta), r_tip * math.sin(theta)), "tip")
 
-    # Right flank: t from t_hi (tip) back down to t_lo.
+    # Right flank: t from t_hi (tip) back down to t_lo. First segment leaves
+    # the tip and enters the flank, so retag the transition segment.
+    if tooth_regions:
+        tooth_regions[-1] = "flank"
     for i in range(1, points_per_flank):
         frac = i / (points_per_flank - 1)
         t = t_hi - (t_hi - t_lo) * frac
-        p = involute_right(t)
-        if tooth and _near(p, tooth[-1]):
-            continue
-        tooth.append(p)
+        _push(involute_right(t), "flank")
 
     # Radial stub on the right flank from base down to root.
     if r_root < r_base:
@@ -163,32 +192,41 @@ def generate_involute_gear(
         for i in range(1, points_per_root):
             frac = i / (points_per_root - 1)
             r = r_base - (r_base - r_root) * frac
-            p = (r * math.cos(theta_stub_right), r * math.sin(theta_stub_right))
-            if tooth and _near(p, tooth[-1]):
-                continue
-            tooth.append(p)
+            _push(
+                (r * math.cos(theta_stub_right), r * math.sin(theta_stub_right)),
+                "flank",
+            )
 
     # Root arc: from right-root of this tooth to left-root of next tooth.
     # Since the next tooth is the same template rotated by 2π/n, the root
     # arc spans the gap between phase_right and (2π/n - phase_right) at r_root.
+    # The segment FROM the last tooth point TO the first root arc point
+    # travels along the root — retag the transition.
+    if tooth_regions:
+        tooth_regions[-1] = "root"
     pitch_angle = 2.0 * math.pi / n_teeth
     theta_root_start = phase_right
     theta_root_end = pitch_angle - phase_right
     if theta_root_end <= theta_root_start:
         raise ValueError("teeth overlap at the root — check parameters")
     root_arc: list[tuple[float, float]] = []
+    root_arc_regions: list[str] = []
     for i in range(1, points_per_root):
         frac = i / points_per_root  # stop before reaching the next tooth's start
         theta = theta_root_start + (theta_root_end - theta_root_start) * frac
         root_arc.append((r_root * math.cos(theta), r_root * math.sin(theta)))
+        root_arc_regions.append("root")
 
     # One "period" = tooth + root_arc after it. Rotate-replicate n times.
     period = tooth + root_arc
+    period_regions = tooth_regions + root_arc_regions
     full: list[tuple[float, float]] = []
     for k in range(n_teeth):
         full.extend(_rotate(period, k * pitch_angle))
     # Close the polyline.
     full.append(full[0])
+    if return_regions:
+        return full, len(period), period_regions
     return full
 
 
@@ -201,7 +239,8 @@ def generate_cycloidal_gear(
     points_per_flank: int = 30,
     points_per_tip: int = 10,
     points_per_root: int = 6,
-) -> list[tuple[float, float]]:
+    return_regions: bool = False,
+):
     """Generate a closed polyline of an ideal cycloidal spur gear.
 
     Classical watchmaking convention:
@@ -228,7 +267,9 @@ def generate_cycloidal_gear(
         points_per_root: samples along each root gap arc.
 
     Returns:
-        Closed polyline, list of (x, y) tuples.
+        By default: closed polyline, list of (x, y) tuples.
+        If return_regions=True: (points, period_length, period_segment_regions)
+        — same semantics as generate_involute_gear(return_regions=True).
     """
     if n_teeth < 6:
         raise ValueError(f"n_teeth must be >= 6, got {n_teeth}")
@@ -314,44 +355,52 @@ def generate_cycloidal_gear(
         return (x, -y)
 
     # ── Build one tooth ─────────────────────────────────────────────────
-    # Counterclockwise order from the left-root-corner.
+    # Counterclockwise order from the left-root-corner. We track segment
+    # region labels in lockstep with the point list: tooth_regions[i] is
+    # the label of the segment from tooth[i] to tooth[i+1]. The last label
+    # is a placeholder; it will be overwritten when the root arc is
+    # concatenated or retagged during region transitions.
     tooth: list[tuple[float, float]] = []
+    tooth_regions: list[str] = []
+
+    def _push(pt: tuple[float, float], region: str) -> None:
+        if tooth and _near(pt, tooth[-1]):
+            return
+        tooth.append(pt)
+        tooth_regions.append(region)
 
     # Left radial dedendum: from (r_root, -half_tooth_angle_pitch) up to
-    # (r_pitch, -half_tooth_angle_pitch).
+    # (r_pitch, -half_tooth_angle_pitch). Classified as "flank" (lower flank).
     theta_left_ded = -half_tooth_angle_pitch
     for i in range(points_per_root):
         frac = i / (points_per_root - 1)
         r = r_root + (r_pitch - r_root) * frac
-        tooth.append((r * math.cos(theta_left_ded), r * math.sin(theta_left_ded)))
+        _push((r * math.cos(theta_left_ded), r * math.sin(theta_left_ded)), "flank")
 
     # Left addendum: epicycloid from phi=0 (at pitch) to phi=phi_tip.
     for i in range(1, points_per_flank):
         frac = i / (points_per_flank - 1)
         phi = phi_tip * frac
-        p = addendum_left(phi)
-        if _near(p, tooth[-1]):
-            continue
-        tooth.append(p)
+        _push(addendum_left(phi), "flank")
 
-    # Tip arc from the end of left addendum to the end of the right addendum.
-    # Both endpoints lie on r_tip; sweep polar angle between them.
+    # Tip arc — retag the transition segment as "tip".
+    if tooth_regions:
+        tooth_regions[-1] = "tip"
     left_tip_pt = tooth[-1]
     theta_tip_left = math.atan2(left_tip_pt[1], left_tip_pt[0])
     theta_tip_right = -theta_tip_left  # by symmetry
     for i in range(1, points_per_tip):
         frac = i / (points_per_tip - 1)
         theta = theta_tip_left + (theta_tip_right - theta_tip_left) * frac
-        tooth.append((r_tip * math.cos(theta), r_tip * math.sin(theta)))
+        _push((r_tip * math.cos(theta), r_tip * math.sin(theta)), "tip")
 
-    # Right addendum: epicycloid from phi=phi_tip back down to phi=0.
+    # Right addendum: retag transition segment back to "flank".
+    if tooth_regions:
+        tooth_regions[-1] = "flank"
     for i in range(1, points_per_flank):
         frac = i / (points_per_flank - 1)
         phi = phi_tip * (1.0 - frac)
-        p = addendum_right(phi)
-        if _near(p, tooth[-1]):
-            continue
-        tooth.append(p)
+        _push(addendum_right(phi), "flank")
 
     # Right radial dedendum: from (r_pitch, +half_tooth_angle_pitch) down to
     # (r_root, +half_tooth_angle_pitch).
@@ -359,29 +408,35 @@ def generate_cycloidal_gear(
     for i in range(1, points_per_root):
         frac = i / (points_per_root - 1)
         r = r_pitch - (r_pitch - r_root) * frac
-        p = (r * math.cos(theta_right_ded), r * math.sin(theta_right_ded))
-        if _near(p, tooth[-1]):
-            continue
-        tooth.append(p)
+        _push(
+            (r * math.cos(theta_right_ded), r * math.sin(theta_right_ded)),
+            "flank",
+        )
 
-    # Root arc between teeth at r_root, from +half_tooth_angle_pitch
-    # to (2π/n − half_tooth_angle_pitch).
+    # Root arc between teeth at r_root. Retag the transition.
+    if tooth_regions:
+        tooth_regions[-1] = "root"
     pitch_angle = 2.0 * math.pi / n_teeth
     theta_root_start = half_tooth_angle_pitch
     theta_root_end = pitch_angle - half_tooth_angle_pitch
     if theta_root_end <= theta_root_start:
         raise ValueError("teeth overlap at the root — check parameters")
     root_arc: list[tuple[float, float]] = []
+    root_arc_regions: list[str] = []
     for i in range(1, points_per_root):
         frac = i / points_per_root
         theta = theta_root_start + (theta_root_end - theta_root_start) * frac
         root_arc.append((r_root * math.cos(theta), r_root * math.sin(theta)))
+        root_arc_regions.append("root")
 
     period = tooth + root_arc
+    period_regions = tooth_regions + root_arc_regions
     full: list[tuple[float, float]] = []
     for k in range(n_teeth):
         full.extend(_rotate(period, k * pitch_angle))
     full.append(full[0])
+    if return_regions:
+        return full, len(period), period_regions
     return full
 
 

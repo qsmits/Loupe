@@ -1615,6 +1615,19 @@ body.no-camera .camera-section { display: none; }
 .insp-group-header:hover td {
   background: var(--surface-2);
 }
+/* Per-tooth row: one step of indent from the group header, bold,
+   click-to-drill-down affordance. */
+.insp-tooth-row td {
+  padding-left: 14px;
+  font-weight: 600;
+}
+.insp-tooth-row:hover {
+  background: var(--surface-3);
+}
+.insp-tooth-detail td {
+  padding-left: 28px;
+  opacity: 0.9;
+}
 
 /* ─── Context menu ───────────────────────────────── */
 #context-menu {

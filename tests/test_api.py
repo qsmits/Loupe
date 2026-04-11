@@ -351,6 +351,51 @@ def test_generate_gear_dxf_segments_indexed_sequentially(client):
         assert e["segment_index"] == i
 
 
+def test_generate_gear_dxf_segments_have_tooth_index_and_region(client):
+    # Per-tooth aggregation in the sidebar needs each segment to carry its
+    # tooth_index (0..N-1) and region ("flank"/"tip"/"root") so the frontend
+    # can group deviations by tooth and show a single worst-case number per
+    # tooth with drill-down.
+    n = 17
+    r = client.post("/generate-gear-dxf", json=_gear_req(n_teeth=n))
+    entities = r.json()
+    # Every entity carries both fields.
+    for e in entities:
+        assert "tooth_index" in e
+        assert "region" in e
+        assert 0 <= e["tooth_index"] < n
+        assert e["region"] in {"flank", "tip", "root"}
+    # All N tooth indices should appear.
+    indices = {e["tooth_index"] for e in entities}
+    assert indices == set(range(n))
+    # Each tooth gets the same number of segments (deterministic period).
+    from collections import Counter
+    counts = Counter(e["tooth_index"] for e in entities)
+    assert len(set(counts.values())) == 1, (
+        f"tooth segment counts differ: {counts}"
+    )
+    # Each tooth includes at least one segment of each region.
+    per_tooth_regions: dict[int, set[str]] = {i: set() for i in range(n)}
+    for e in entities:
+        per_tooth_regions[e["tooth_index"]].add(e["region"])
+    for t, regs in per_tooth_regions.items():
+        assert {"flank", "tip", "root"} <= regs, (
+            f"tooth {t} missing regions: {regs}"
+        )
+
+
+def test_generate_gear_dxf_involute_has_tooth_index_and_region(client):
+    # Same contract as above for involute. The two generators have different
+    # internal structures (stubs vs. radial dedendums) so we verify both.
+    n = 20
+    r = client.post("/generate-gear-dxf",
+                    json=_gear_req(profile="involute", n_teeth=n))
+    entities = r.json()
+    for e in entities:
+        assert e["region"] in {"flank", "tip", "root"}
+    assert {e["tooth_index"] for e in entities} == set(range(n))
+
+
 def test_generate_gear_dxf_translates_to_center(client):
     # The generator produces vertices in gear-local coords (origin at the
     # gear center); the endpoint must translate them to (cx, cy) so they

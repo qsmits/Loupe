@@ -160,14 +160,32 @@ export function drawGuidedResults(ann) {
   const results = ann.guidedResults;
   if (!results || results.length === 0) return;
 
+  // Gear entities carry `tooth_index` — their per-segment deviation labels
+  // and feature numbers blanket the tooth and block the view. Suppress both
+  // for those; the per-tooth sidebar already exposes the numbers via
+  // drill-down, and the fit stroke color still communicates pass/warn/fail
+  // at a glance.
+  const gearHandles = new Set();
+  for (const e of (ann.entities || [])) {
+    if (typeof e.tooth_index === "number" && e.handle) {
+      gearHandles.add(e.handle);
+    }
+  }
+
   let featureIdx = 0;
   for (const r of results) {
     featureIdx++;
+    const isGearSegment = gearHandles.has(r.handle);
     if (r.matched && r.fit) {
-      // Hover highlight from inspection table
-      const isHovered = state.inspectionHoverHandle &&
-        (r.handle === state.inspectionHoverHandle ||
-         r.parent_handle === state.inspectionHoverHandle);
+      // Hover highlight from inspection table. `inspectionHoverHandle` may
+      // be a single handle/parent_handle string or an array of handles
+      // (e.g. when a gear's per-tooth row is hovered).
+      const hover = state.inspectionHoverHandle;
+      const isHovered = hover && (
+        Array.isArray(hover)
+          ? hover.includes(r.handle)
+          : (r.handle === hover || r.parent_handle === hover)
+      );
       if (isHovered) {
         ctx.save();
         ctx.strokeStyle = "#ffffff";
@@ -201,6 +219,7 @@ export function drawGuidedResults(ann) {
         ctx.moveTo(r.fit.x1, r.fit.y1);
         ctx.lineTo(r.fit.x2, r.fit.y2);
         ctx.stroke();
+        if (isGearSegment) { ctx.restore(); continue; }
         const mx = (r.fit.x1 + r.fit.x2) / 2;
         const my = (r.fit.y1 + r.fit.y2) / 2;
         _drawFeatureNumber(mx, my, featureIdx, color);
@@ -243,6 +262,7 @@ export function drawGuidedResults(ann) {
           ctx.arc(r.fit.cx, r.fit.cy, r.fit.r, 0, Math.PI * 2);
         }
         ctx.stroke();
+        if (isGearSegment) { ctx.restore(); continue; }
         _drawFeatureNumber(r.fit.cx, r.fit.cy, featureIdx, color);
         let labelAngle = 0;
         if (r.fit.start_deg != null && r.fit.end_deg != null) {
