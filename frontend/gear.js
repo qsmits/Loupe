@@ -31,6 +31,7 @@ export function initGear() {
 
   document.getElementById("btn-gear-gen-widths")?.addEventListener("click", runAnalyzeGearFromDialog);
   document.getElementById("btn-gear-gen-overlay")?.addEventListener("click", runGenerateGearOverlayFromDialog);
+  document.getElementById("btn-gear-gen-detect-n")?.addEventListener("click", detectToothCountFromDialog);
 }
 
 // Called when the user clicks the "Gear" button in the top bar.
@@ -156,6 +157,52 @@ function updateGearDialogDerivedInfo() {
   }
 }
 
+async function detectToothCountFromDialog() {
+  if (!_gearDialogCircles) return;
+  const { tipCircle, rootCircle } = _gearDialogCircles;
+
+  const btn = document.getElementById("btn-gear-gen-detect-n");
+  const orig = btn?.textContent;
+  if (btn) { btn.disabled = true; btn.textContent = "Detecting…"; }
+  setGearDialogStatus("Detecting tooth count…");
+
+  try {
+    const r = await apiFetch("/detect-gear-teeth", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        cx: tipCircle.cx,
+        cy: tipCircle.cy,
+        r_tip: tipCircle.r,
+        r_root: rootCircle.r,
+      }),
+    });
+    if (!r.ok) {
+      const txt = await r.text();
+      setGearDialogStatus(`Detect failed: ${txt}`);
+      return;
+    }
+    const result = await r.json();
+    const nInput = document.getElementById("gear-gen-n");
+    if (nInput) {
+      nInput.value = String(result.n_teeth);
+      nInput.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+    // SNR < 0.02 means the spectrum is flat enough to be untrustworthy;
+    // still fill the field but warn the user so they can sanity-check.
+    if (result.snr < 0.02) {
+      setGearDialogStatus(`Detected N=${result.n_teeth} (low SNR ${result.snr.toFixed(3)} — verify)`);
+    } else {
+      setGearDialogStatus(`Detected N=${result.n_teeth} (SNR ${result.snr.toFixed(3)})`);
+    }
+  } catch (err) {
+    console.error(err);
+    setGearDialogStatus(`Detect failed: ${err.message}`);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = orig; }
+  }
+}
+
 function runAnalyzeGearFromDialog() {
   if (!_gearDialogCircles) return;
   const n = parseInt(document.getElementById("gear-gen-n")?.value || "0", 10);
@@ -218,16 +265,67 @@ async function runGenerateGearOverlayFromDialog() {
   const rollingCoef = parseFloat(document.getElementById("gear-gen-rolling")?.value || "0.5");
   const pressureDeg = parseFloat(document.getElementById("gear-gen-pressure")?.value || "20");
   const rotationDeg = parseFloat(document.getElementById("gear-gen-rotation")?.value || "0");
+  const ptsFlank = parseInt(document.getElementById("gear-gen-pts-flank")?.value || "6", 10);
+  const ptsTip = parseInt(document.getElementById("gear-gen-pts-tip")?.value || "3", 10);
+  const ptsRoot = parseInt(document.getElementById("gear-gen-pts-root")?.value || "2", 10);
 
   if (!Number.isFinite(addendum) || addendum <= 0 ||
       !Number.isFinite(dedendum) || dedendum <= 0) {
     setGearDialogStatus("Addendum and dedendum must be positive numbers");
     return;
   }
+  if (!Number.isInteger(ptsFlank) || ptsFlank < 4 ||
+      !Number.isInteger(ptsTip)   || ptsTip   < 2 ||
+      !Number.isInteger(ptsRoot)  || ptsRoot  < 2) {
+    setGearDialogStatus("Sampling density must be integers: flank ≥ 4, tip ≥ 2, root ≥ 2");
+    return;
+  }
 
-  const { tipCircle } = _gearDialogCircles;
+  const { tipCircle, rootCircle } = _gearDialogCircles;
   const r_tip_mm = tipCircle.r / ppm;
   const module_mm = (2 * r_tip_mm) / (n + 2 * addendum);
+
+  // If the user hasn't set a rotation, auto-detect it via DFT phase of the
+  // pitch-circle intensity profile. Edge-based template matching doesn't
+  // work on rotationally symmetric geometry, but the N-th harmonic of the
+  // radial intensity profile gives the tooth phase directly. A rotation
+  // the user has typed in wins — we only auto-detect when the field is 0.
+  let effectiveRotationDeg = rotationDeg;
+  if (rotationDeg === 0) {
+    setGearDialogStatus("Detecting gear rotation…");
+    try {
+      const phaseBody = {
+        cx: tipCircle.cx,
+        cy: tipCircle.cy,
+        r_tip: tipCircle.r,
+        r_root: rootCircle.r,
+        n_teeth: n,
+        pixels_per_mm: ppm,
+        profile,
+        addendum_coef: addendum,
+        rolling_radius_coef: rollingCoef,
+        pressure_angle_deg: pressureDeg,
+      };
+      const pr = await apiFetch("/auto-phase-gear", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(phaseBody),
+      });
+      if (pr.ok) {
+        const pj = await pr.json();
+        // SNR below ~0.02 means the pitch-circle profile has no clean
+        // N-tooth harmonic — the estimate isn't trustworthy. Fall back to
+        // 0 and let the user align manually.
+        if (pj.snr >= 0.02 && Number.isFinite(pj.rotation_deg)) {
+          effectiveRotationDeg = pj.rotation_deg;
+          const rotInput = document.getElementById("gear-gen-rotation");
+          if (rotInput) rotInput.value = pj.rotation_deg.toFixed(2);
+        }
+      }
+    } catch (err) {
+      console.warn("auto-phase-gear failed, using rotation=0", err);
+    }
+  }
 
   // Generate the gear in its own local DXF frame with the center at (0, 0),
   // then place the overlay so DXF origin lands at the picked tip-circle
@@ -243,8 +341,11 @@ async function runGenerateGearOverlayFromDialog() {
     cy: 0,
     addendum_coef: addendum,
     dedendum_coef: dedendum,
-    rotation_deg: rotationDeg,
+    rotation_deg: effectiveRotationDeg,
     layer: "GEAR",
+    points_per_flank: ptsFlank,
+    points_per_tip: ptsTip,
+    points_per_root: ptsRoot,
   };
   if (profile === "cycloidal") body.rolling_radius_coef = rollingCoef;
   else body.pressure_angle_deg = pressureDeg;

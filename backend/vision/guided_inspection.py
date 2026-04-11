@@ -79,6 +79,19 @@ def _inspect_line(entity, edge_xy, ppm, tx, ty, angle_rad,
                   corridor_px, flip_h, flip_v, tol_warn, tol_fail,
                   subpixel="none", raw_gray=None):
     """Inspect a line/polyline_line entity against corridor-filtered edge pixels."""
+    # Gear tooth segments: the silhouette is a thin boundary between tooth
+    # metal and background, while polished/scratched tooth faces produce many
+    # interior edge pixels that easily out-count the silhouette in the generic
+    # histogram peak-picker below. Use closest-to-nominal bin selection so the
+    # real tooth edge wins even when interior texture has more pixels (see
+    # below). The corridor still needs to be wide enough to catch real
+    # deviations: actual tip heights often vary ±10 px tooth-to-tooth because
+    # the user fits an ideal tip circle to a gear that doesn't perfectly match
+    # it. 12 px is a balance between catching those deviations and keeping
+    # interior texture from swamping the histogram.
+    is_gear = entity.get("tooth_index") is not None
+    effective_corridor = min(corridor_px, 12.0) if is_gear else corridor_px
+
     # Project endpoints to image space
     x1_px, y1_px = dxf_to_image_px(entity["x1"], entity["y1"], ppm, tx, ty,
                                      angle_rad, flip_h, flip_v)
@@ -102,12 +115,22 @@ def _inspect_line(entity, edge_xy, ppm, tx, ty, angle_rad,
     along = rel_x * ux + rel_y * uy  # projection along line
     perp = rel_x * nx + rel_y * ny   # projection perpendicular
 
-    # Corridor: ±corridor_px perpendicular, extended 10% along direction
-    margin = 0.1 * length
+    # Corridor: ±effective_corridor perpendicular, extended along direction.
+    # Gear polylines approximate curved features (tip arcs, epicycloid flanks)
+    # as short chord segments — when the chord is shorter than the feature's
+    # local curvature offset, the real silhouette edge pixels sit *along* the
+    # arc but beyond the chord's endpoints, and a plain 10% length margin
+    # drops every edge pixel outside the window. Use an absolute 10 px floor
+    # for gear segments so consecutive chord corridors overlap enough for
+    # inspection to find the silhouette near the chord midpoints.
+    if is_gear:
+        margin = max(0.1 * length, 10.0)
+    else:
+        margin = 0.1 * length
     mask = (
         (along >= -margin) &
         (along <= length + margin) &
-        (np.abs(perp) <= corridor_px)
+        (np.abs(perp) <= effective_corridor)
     )
     corridor_pts = edge_xy[mask]
 
@@ -127,7 +150,7 @@ def _inspect_line(entity, edge_xy, ppm, tx, ty, angle_rad,
 
     # Bin points by their signed perpendicular distance to find edge clusters
     # Use a histogram with 1px bins
-    bin_edges = np.arange(-corridor_px, corridor_px + 1, 1.0)
+    bin_edges = np.arange(-effective_corridor, effective_corridor + 1, 1.0)
     hist, _ = np.histogram(perp_signed, bins=bin_edges)
 
     # Find the peak closest to 0 (the nominal) — this is the real edge
@@ -138,21 +161,35 @@ def _inspect_line(entity, edge_xy, ppm, tx, ty, angle_rad,
     else:
         smoothed = hist.astype(float)
 
-    # Find peak closest to zero with at least some points
     min_peak_height = max(3, len(corridor_pts) * 0.05)
-    best_offset = 0
-    best_score = -1
-    for i, (center, count) in enumerate(zip(bin_centers, smoothed)):
-        if count < min_peak_height:
-            continue
-        # Score: prefer high count and proximity to zero
-        score = count / (1 + abs(center))
-        if score > best_score:
-            best_score = score
-            best_offset = center
+    if is_gear:
+        # Closest-to-nominal selection: among all bins with enough points,
+        # pick the one nearest to 0. This prefers the real silhouette edge
+        # over interior surface texture even when texture has more pixels.
+        best_offset = 0.0
+        best_dist = float("inf")
+        for center, count in zip(bin_centers, smoothed):
+            if count < min_peak_height:
+                continue
+            d = abs(float(center))
+            if d < best_dist:
+                best_dist = d
+                best_offset = float(center)
+    else:
+        # Original scoring: prefer high count AND proximity to zero.
+        best_offset = 0.0
+        best_score = -1.0
+        for center, count in zip(bin_centers, smoothed):
+            if count < min_peak_height:
+                continue
+            score = count / (1 + abs(center))
+            if score > best_score:
+                best_score = score
+                best_offset = float(center)
 
-    # Filter to points near the best edge (within ±3px of the peak)
-    edge_band = 3.0
+    # Filter to points near the best edge (within ±3px of the peak — tighter
+    # for gears since the silhouette band is genuinely thin)
+    edge_band = 2.0 if is_gear else 3.0
     near_mask = np.abs(perp_signed - best_offset) < edge_band
     near_pts = corridor_pts[near_mask]
 

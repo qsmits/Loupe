@@ -1049,6 +1049,7 @@
         <div class="settings-row">
           <label class="settings-label" for="gear-gen-n">Teeth (N)</label>
           <input type="number" id="gear-gen-n" class="settings-input" min="6" max="300" step="1" value="17" />
+          <button type="button" id="btn-gear-gen-detect-n" class="settings-save-btn" title="Detect tooth count from the frozen image via DFT of the pitch-circle profile">Detect</button>
         </div>
         <div class="settings-row">
           <label class="settings-label" for="gear-gen-profile">Profile</label>
@@ -1083,6 +1084,18 @@
           <div class="settings-row">
             <label class="settings-label" for="gear-gen-rotation">Rotation °</label>
             <input type="number" id="gear-gen-rotation" class="settings-input" min="-360" max="360" step="0.1" value="0" />
+          </div>
+          <div class="settings-row" title="Samples per involute/epicycloid flank. Each sample becomes a chord segment in the generated polyline, and inspection runs per-segment. Too dense → chord segments become shorter than their own curvature, so real silhouette edge pixels fall outside each segment's corridor and inspection reports 'too few edge points'. Defaults are tuned so segments are long enough to match; increase only if you need a visually smoother overlay (e.g. 20+) and accept that inspection coverage drops.">
+            <label class="settings-label" for="gear-gen-pts-flank">Pts / flank</label>
+            <input type="number" id="gear-gen-pts-flank" class="settings-input" min="4" max="200" step="1" value="6" />
+          </div>
+          <div class="settings-row" title="Samples along the tip arc. Same density/match tradeoff as Pts / flank — keep low so each chord is long enough for the corridor to catch edge pixels.">
+            <label class="settings-label" for="gear-gen-pts-tip">Pts / tip</label>
+            <input type="number" id="gear-gen-pts-tip" class="settings-input" min="2" max="100" step="1" value="3" />
+          </div>
+          <div class="settings-row" title="Samples along each root gap arc (also used for radial stubs). Same density/match tradeoff as Pts / flank.">
+            <label class="settings-label" for="gear-gen-pts-root">Pts / root</label>
+            <input type="number" id="gear-gen-pts-root" class="settings-input" min="2" max="100" step="1" value="2" />
           </div>
         </details>
 

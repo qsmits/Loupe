@@ -79,6 +79,29 @@ Priority order at startup:
 - **Sidebar**: Detections separated from measurements with elevate ↑ button, grouped inspection results with Punch/Die badges, resizable.
 - **Export**: Annotated PNG, measurement CSV, inspection CSV, inspection PDF (jsPDF), **DXF export** (reverse engineering — measurements to DXF in mm).
 
+### Coordinate frames — read this before touching DXF, overlays, or gear code
+
+**Three frames coexist and they disagree about Y:**
+
+1. **Image / canvas frame** — `x` right, `y` down. Pixel coords. Angles measured as `atan2(y - cy, x - cx)` sweep visually clockwise.
+2. **DXF-math frame** — `x` right, `y` up. All DXF entity coords and gear-geometry generators (`generate_cycloidal_gear`, `generate_involute_gear`) live here. Rotations are applied as math-CCW: `x' = x·cosφ − y·sinφ, y' = x·sinφ + y·cosφ`.
+3. **Image-sampling frame** — used by any code that does `cx + r·cos θ, cy + r·sin θ` to sample an image along a circle (`analyze_gear`, `gear_phase._sample_circle`). This is numerically the image frame, but the parameterization matches DXF-math angles, so it's a trap: same formula, opposite handedness.
+
+**The Y-flip lives in exactly two places — and nowhere else:**
+- `frontend/render-dxf.js::dxfToCanvas` — `cy = -yr * scale`
+- `backend/vision/line_arc_matching.py::dxf_to_image_px` — `my = -(cx·sinφ + cy·cosφ) + ty`
+
+Both take DXF-math coords and emit image/canvas coords. `inspect_features`, the DXF overlay renderer, and any alignment code that uses these helpers are in agreement.
+
+**The trap:** if you write new code that rasterizes a DXF-generated polygon into an image buffer, or samples an image in a DXF-math-looking parameterization, you must Y-flip (or negate your rotation result) to stay consistent with (1) and (2). Rules of thumb:
+
+- A DXF rotation `φ` (math-CCW) displays in the canvas as a **visual CW rotation** by `φ`. Equivalently: visual angle `= -dxf angle`.
+- `analyze_gear` returns tooth angles in the **image frame** (already canvas-visual). You can plot them directly as `cx + r·cos α, cy + r·sin α`. You **cannot** feed them to `/generate-gear-dxf` as `rotation_deg` without negating — the DXF generator will rotate math-CCW and then the renderer will Y-flip, putting the tooth at visual angle `-α`.
+- If you rasterize a synth DXF polygon to a mask for DFT/template matching (like `gear_phase.py` does), **Y-flip when you rasterize** — otherwise your algorithm operates in a frame the renderer doesn't use, and the rotation you compute will be mirrored by 2× the true angle when it reaches the canvas. This is an **incredibly recurring bug** in this codebase. See `gear_phase.estimate_gear_phase` docstring "Frame note" for the cautionary tale.
+- Gears are mirror-symmetric about each tooth axis, which masks Y-flip sign bugs for a single tooth but not across rotations — the mismatch manifests as "works after a manual nudge within one pitch" instead of obviously failing.
+
+When in doubt, render the output of your new code as a colored overlay on top of the real image alongside `analyze_gear` results (which are known correct). If the overlay and the analyze-gear markers don't agree, you have a frame mismatch, not a magnitude error.
+
 ### Testing
 - `tests/conftest.py` provides a `FakeCamera` fixture used across all API tests.
 - Tests use `httpx` async client against a real FastAPI test app (no mocking of the HTTP layer).

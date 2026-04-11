@@ -73,6 +73,43 @@ class RefinePointBody(BaseModel):
     subpixel: str = Field(default="parabola", max_length=20)
 
 
+class DetectGearTeethBody(BaseModel):
+    """Inputs for /detect-gear-teeth.
+
+    Finds the dominant harmonic of the pitch-circle intensity profile
+    to estimate how many teeth the gear has. Caller supplies the fit
+    tip/root circles and the frozen frame is loaded from the session
+    store.
+    """
+    cx: float = Field(ge=-1e6, le=1e6)
+    cy: float = Field(ge=-1e6, le=1e6)
+    r_tip: float = Field(gt=0, le=1e6)
+    r_root: float = Field(gt=0, le=1e6)
+    k_min: int = Field(default=6, ge=2, le=299)
+    k_max: int = Field(default=300, ge=3, le=1000)
+
+
+class AutoPhaseGearBody(BaseModel):
+    """Inputs for /auto-phase-gear.
+
+    Detects the rotation needed to align a rotation=0 synthetic gear with
+    the real gear in the frozen frame. Caller supplies the fit tip/root
+    circles (same as /generate-gear-dxf) plus tooth count and profile.
+    Returns rotation_deg (wrapped to [0, 360/n_teeth)) and snr.
+    """
+    cx: float = Field(ge=-1e6, le=1e6)
+    cy: float = Field(ge=-1e6, le=1e6)
+    r_tip: float = Field(gt=0, le=1e6)
+    r_root: float = Field(gt=0, le=1e6)
+    n_teeth: int = Field(ge=6, le=300)
+    pixels_per_mm: float = Field(gt=0, le=100000)
+    profile: str = Field(pattern="^(involute|cycloidal)$", default="cycloidal")
+    addendum_coef: float = Field(default=1.0, ge=0.1, le=3.0)
+    dedendum_coef: float | None = Field(default=None, ge=0.1, le=3.0)
+    rolling_radius_coef: float = Field(default=0.5, ge=0.1, le=1.0)
+    pressure_angle_deg: float = Field(default=20.0, ge=5.0, le=35.0)
+
+
 class GenerateGearBody(BaseModel):
     """Inputs for /generate-gear-dxf.
 
@@ -148,7 +185,7 @@ def generate_gear_dxf_route(body: GenerateGearBody):
     )
     try:
         if body.profile == "cycloidal":
-            poly = generate_cycloidal_gear(
+            poly, period_length, period_regions = generate_cycloidal_gear(
                 n_teeth=body.n_teeth,
                 module=body.module,
                 rolling_radius_coef=body.rolling_radius_coef,
@@ -157,9 +194,10 @@ def generate_gear_dxf_route(body: GenerateGearBody):
                 points_per_flank=body.points_per_flank,
                 points_per_tip=body.points_per_tip,
                 points_per_root=body.points_per_root,
+                return_regions=True,
             )
         else:  # involute
-            poly = generate_involute_gear(
+            poly, period_length, period_regions = generate_involute_gear(
                 n_teeth=body.n_teeth,
                 module=body.module,
                 pressure_angle_deg=body.pressure_angle_deg,
@@ -169,6 +207,7 @@ def generate_gear_dxf_route(body: GenerateGearBody):
                 points_per_flank=body.points_per_flank,
                 points_per_tip=body.points_per_tip,
                 points_per_root=body.points_per_root,
+                return_regions=True,
             )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=f"gear: {exc}") from exc
@@ -184,10 +223,15 @@ def generate_gear_dxf_route(body: GenerateGearBody):
     parent = f"gear_{body.profile}_N{body.n_teeth}"
     entities: list[dict] = []
     # generate_*_gear returns a closed polyline (first == last), so we
-    # emit N-1 segments between consecutive points.
+    # emit N-1 segments between consecutive points. The period repeats every
+    # `period_length` segments, and segment labels within the period are
+    # identical for every tooth — so tooth_index = i // period_length and
+    # region = period_regions[i % period_length].
     for i in range(len(world) - 1):
         x1, y1 = world[i]
         x2, y2 = world[i + 1]
+        tooth_idx = i // period_length
+        region = period_regions[i % period_length]
         entities.append({
             "type": "polyline_line",
             "x1": float(x1), "y1": float(y1),
@@ -195,6 +239,8 @@ def generate_gear_dxf_route(body: GenerateGearBody):
             "handle": f"{parent}_s{i}",
             "parent_handle": parent,
             "segment_index": i,
+            "tooth_index": tooth_idx,
+            "region": region,
             "layer": body.layer,
         })
     return entities
@@ -271,6 +317,46 @@ def make_inspection_router(frame_store: SessionFrameStore) -> APIRouter:
             (body.x, body.y), gray,
             search_radius=body.search_radius, method=body.subpixel)
         return {"x": x, "y": y, "magnitude": magnitude}
+
+    @insp_router.post("/detect-gear-teeth")
+    async def detect_gear_teeth_route(body: DetectGearTeethBody, session_id: str = Depends(get_session_id_dep)):
+        frame = frame_store.get(session_id)
+        if frame is None:
+            raise HTTPException(status_code=400, detail="No frame stored. Call /freeze first.")
+        from .vision.gear_phase import estimate_gear_tooth_count
+        try:
+            n_teeth, snr = estimate_gear_tooth_count(
+                frame,
+                cx=body.cx, cy=body.cy,
+                r_tip=body.r_tip, r_root=body.r_root,
+                k_min=body.k_min, k_max=body.k_max,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=f"gear teeth: {exc}") from exc
+        return {"n_teeth": n_teeth, "snr": snr}
+
+    @insp_router.post("/auto-phase-gear")
+    async def auto_phase_gear_route(body: AutoPhaseGearBody, session_id: str = Depends(get_session_id_dep)):
+        frame = frame_store.get(session_id)
+        if frame is None:
+            raise HTTPException(status_code=400, detail="No frame stored. Call /freeze first.")
+        from .vision.gear_phase import estimate_gear_phase
+        try:
+            rotation_deg, snr = estimate_gear_phase(
+                frame,
+                cx=body.cx, cy=body.cy,
+                r_tip=body.r_tip, r_root=body.r_root,
+                n_teeth=body.n_teeth,
+                pixels_per_mm=body.pixels_per_mm,
+                profile=body.profile,
+                addendum_coef=body.addendum_coef,
+                dedendum_coef=body.dedendum_coef,
+                rolling_radius_coef=body.rolling_radius_coef,
+                pressure_angle_deg=body.pressure_angle_deg,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=f"gear phase: {exc}") from exc
+        return {"rotation_deg": rotation_deg, "snr": snr}
 
     @insp_router.get("/subpixel-methods")
     async def get_subpixel_methods():
