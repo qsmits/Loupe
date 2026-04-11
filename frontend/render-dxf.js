@@ -49,18 +49,6 @@ export function drawDxfOverlay(ann) {
   const { entities, offsetX, offsetY, scale, flipH = false, flipV = false, angle: annAngle = 0 } = ann;
   const originAngle = state.origin?.angle ?? 0;
 
-  ctx.save();
-  ctx.strokeStyle = "#00d4ff";
-  ctx.setLineDash([6 / (scale * viewport.zoom), 3 / (scale * viewport.zoom)]);
-
-  ctx.translate(offsetX, offsetY);
-  if (originAngle) ctx.rotate(originAngle);
-  ctx.scale(scale, -scale);   // DXF Y-up → canvas Y-down
-  if (flipH) ctx.scale(-1, 1);
-  if (flipV) ctx.scale(1, -1);
-  if (annAngle) ctx.rotate(-annAngle * Math.PI / 180);
-  ctx.lineWidth = 1 / (scale * viewport.zoom);
-
   // Build set of handles being actively point-picked for highlighting
   const pickHandles = new Set();
   if (state.inspectionPickTarget) {
@@ -69,17 +57,31 @@ export function drawDxfOverlay(ann) {
     }
   }
 
+  ctx.save();
+
+  // Paths are built inside a DXF-transformed CTM (so we can use raw DXF mm
+  // coordinates + scale(scale, -scale) for the Y-flip) but stroked *after*
+  // restoring to the outer (image-pixel) CTM. Canvas 2D paths store each
+  // segment in device coordinates at build time, so restore() doesn't move
+  // them — but it does give us a sane CTM for the stroke, where line width
+  // and dash values are simple `1/zoom` / `6/zoom` numbers. Without this,
+  // high-scale overlays like gears (scale = ppm ≈ 457 at watch magnification)
+  // force the stroke params to 1/(scale·zoom) which underflows Canvas 2D's
+  // dash/line-width rendering at zoom > ~2 and makes the overlay vanish.
+  const applyDxfCtm = () => {
+    ctx.translate(offsetX, offsetY);
+    if (originAngle) ctx.rotate(originAngle);
+    ctx.scale(scale, -scale);   // DXF Y-up → canvas Y-down
+    if (flipH) ctx.scale(-1, 1);
+    if (flipV) ctx.scale(1, -1);
+    if (annAngle) ctx.rotate(-annAngle * Math.PI / 180);
+  };
+
   for (const en of entities) {
     const isPicked = pickHandles.has(en.handle);
-    if (isPicked) {
-      ctx.strokeStyle = "#fbbf24";
-      ctx.lineWidth = 3 / (scale * viewport.zoom);
-      ctx.setLineDash([]);
-    } else {
-      ctx.strokeStyle = "#00d4ff";
-      ctx.lineWidth = 1 / (scale * viewport.zoom);
-      ctx.setLineDash([6 / (scale * viewport.zoom), 3 / (scale * viewport.zoom)]);
-    }
+
+    ctx.save();
+    applyDxfCtm();
 
     ctx.beginPath();
     if (en.type === "line") {
@@ -92,7 +94,7 @@ export function drawDxfOverlay(ann) {
       const er = en.end_angle * Math.PI / 180;
       ctx.arc(en.cx, en.cy, en.radius, sr, er, flipH !== flipV);
     } else if (en.type === "polyline") {
-      if (en.points.length < 2) continue;
+      if (en.points.length < 2) { ctx.restore(); continue; }
       ctx.moveTo(en.points[0].x, en.points[0].y);
       for (let i = 1; i < en.points.length; i++) {
         ctx.lineTo(en.points[i].x, en.points[i].y);
@@ -105,6 +107,17 @@ export function drawDxfOverlay(ann) {
       const sr = en.start_angle * Math.PI / 180;
       const er = en.end_angle * Math.PI / 180;
       ctx.arc(en.cx, en.cy, en.radius, sr, er, flipH !== flipV);
+    }
+    ctx.restore();  // back to outer (image-pixel) CTM; path persists
+
+    if (isPicked) {
+      ctx.strokeStyle = "#fbbf24";
+      ctx.lineWidth = 3 / viewport.zoom;
+      ctx.setLineDash([]);
+    } else {
+      ctx.strokeStyle = "#00d4ff";
+      ctx.lineWidth = 1 / viewport.zoom;
+      ctx.setLineDash([6 / viewport.zoom, 3 / viewport.zoom]);
     }
     ctx.stroke();
   }
