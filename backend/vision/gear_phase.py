@@ -8,7 +8,7 @@ Subtract the same measurement taken from a rasterized synth-gear-at-
 rotation-0 and divide by n_teeth to get the rotation needed.
 
 Why this instead of silhouette cross-correlation (the earlier attempt
-in scripts/validate_gear_geometry.autophase): segmenting the gear from
+in scripts/dev/validate_gear_geometry.autophase): segmenting the gear from
 the background is unreliable under microscope lighting — bright metallic
 surfaces, uneven green backlight, and the central bore all defeat simple
 color/saturation thresholds. Sampling raw intensity along a known circle

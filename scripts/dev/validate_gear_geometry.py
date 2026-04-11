@@ -6,9 +6,9 @@ tooth count, projects the synthetic polyline onto the image, and writes
 an overlay PNG for inspection.
 
 Usage (from repo root):
-    .venv/bin/python scripts/validate_gear_geometry.py snapshots/gear_1 15
-    .venv/bin/python scripts/validate_gear_geometry.py snapshots/gear_2 8
-    .venv/bin/python scripts/validate_gear_geometry.py snapshots/gear_3_stitched 36
+    .venv/bin/python scripts/dev/validate_gear_geometry.py snapshots/gear_1 15
+    .venv/bin/python scripts/dev/validate_gear_geometry.py snapshots/gear_2 8
+    .venv/bin/python scripts/dev/validate_gear_geometry.py snapshots/gear_3_stitched 36
 
 Takes <basename> (without extension) and tooth count N. Optional --profile
 {cycloidal,involute} (default cycloidal), --rolling-coef (default 0.5),

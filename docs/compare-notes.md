@@ -12,7 +12,7 @@ quadrant applies that variant as the active profile on the MJPEG stream.
 - `backend/api_compare.py` — `/compare/propose`, `/compare/apply`, `/compare/clear`, `/compare/active`
 - `tests/test_settings_proposer.py` — 8 tests (proposer shape, shadow lift, highlight compress, API round-trip)
 - `frontend/compare.js` — overlay UI + apply/clear calls
-- `COMPARE_NOTES.md` — this file
+- `docs/compare-notes.md` — this file
 
 ### Modified
 - `backend/api.py` — wires `make_compare_router` into the composed router.
