@@ -40,16 +40,28 @@ from backend.vision.gear_geometry import (  # noqa: E402
 def autodetect_tip_root(png_path: Path) -> tuple[float, float, float, float]:
     """Return (cx, cy, r_tip, r_root) for the centered gear in the image.
 
-    Segments the gear by G−R color difference (works for the typical
-    green-backlit setup), takes the component closest to the image center,
-    then fits tip/root circles to the contour (algebraic fit on the outer
-    10% and inner 30% of radii respectively).
+    Tries two color-space rules in sequence: (G−R < −10) catches
+    purple/metallic gears on green backlight, (G−B < 5) catches
+    bluish/semi-transparent gears. Takes the component closest to the
+    image center, then fits tip/root circles algebraically to the outer
+    10% and inner 30% of contour radii respectively.
     """
     img = cv2.imread(str(png_path), cv2.IMREAD_COLOR)
     if img is None:
         raise RuntimeError(f"could not read {png_path}")
-    diff = img[:, :, 1].astype(int) - img[:, :, 2].astype(int)
-    mask = (diff < -10).astype(np.uint8)
+
+    def segment(rule: str) -> np.ndarray:
+        if rule == "gr":
+            diff = img[:, :, 1].astype(int) - img[:, :, 2].astype(int)
+            return (diff < -10).astype(np.uint8)
+        if rule == "gb":
+            diff = img[:, :, 1].astype(int) - img[:, :, 0].astype(int)
+            return (diff < 5).astype(np.uint8)
+        raise ValueError(rule)
+
+    mask = segment("gr")
+    if mask.sum() < 10000:
+        mask = segment("gb")
     mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((7, 7), np.uint8))
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, np.ones((30, 30), np.uint8))
 
@@ -71,8 +83,6 @@ def autodetect_tip_root(png_path: Path) -> tuple[float, float, float, float]:
     contours, _ = cv2.findContours(lbl, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
     c = max(contours, key=cv2.contourArea)
     pts = c[:, 0, :].astype(np.float64)
-    cx0, cy0 = pts.mean(axis=0)
-    rs = np.hypot(pts[:, 0] - cx0, pts[:, 1] - cy0)
 
     def circle_fit(p):
         A = np.column_stack([2 * p[:, 0], 2 * p[:, 1], np.ones(len(p))])
@@ -81,19 +91,44 @@ def autodetect_tip_root(png_path: Path) -> tuple[float, float, float, float]:
         a, bb, c_ = sol
         return a, bb, math.sqrt(c_ + a * a + bb * bb)
 
-    tip_pts = pts[rs > np.percentile(rs, 90)]
-    root_pts = pts[rs < np.percentile(rs, 30)]
+    # Center from the contour's area moments — robust to asymmetric noise
+    # blobs that would pull a naive point-mean off.
+    M = cv2.moments(c)
+    if M["m00"] > 0:
+        cx0 = M["m10"] / M["m00"]
+        cy0 = M["m01"] / M["m00"]
+    else:
+        cx0, cy0 = pts.mean(axis=0)
+    rs = np.hypot(pts[:, 0] - cx0, pts[:, 1] - cy0)
+
+    # Reject points whose radii are gross outliers relative to the bulk of
+    # the contour (stray noise-blob pixels that attached to the main gear
+    # via morphological closing). Keep the 5..95 percentile band of radii
+    # for the initial "good gear contour" mask.
+    r_lo_keep = np.percentile(rs, 5)
+    r_hi_keep = np.percentile(rs, 95)
+    keep = (rs >= r_lo_keep) & (rs <= r_hi_keep)
+    good_pts = pts[keep]
+    good_rs = rs[keep]
+
+    # Fit tip to the top 10% and root to the bottom 30% of the *kept* pts.
+    tip_pts = good_pts[good_rs > np.percentile(good_rs, 90)]
+    root_pts = good_pts[good_rs < np.percentile(good_rs, 30)]
     cxt, cyt, r_tip = circle_fit(tip_pts)
     _, _, r_root = circle_fit(root_pts)
-    # Use the tip circle's center as the gear center (it is the more stable fit
-    # for the outer envelope, and matches what the interactive picker does).
     return cxt, cyt, r_tip, r_root
 
 
 def _gear_mask(png_path: Path) -> np.ndarray:
     img = cv2.imread(str(png_path), cv2.IMREAD_COLOR)
-    diff = img[:, :, 1].astype(int) - img[:, :, 2].astype(int)
-    m = (diff < -10).astype(np.uint8)
+    # Same two-rule fallback as autodetect_tip_root: G−R catches
+    # purple/metallic gears on green backlight, G−B catches bluish/
+    # semi-transparent gears.
+    diff_gr = img[:, :, 1].astype(int) - img[:, :, 2].astype(int)
+    m = (diff_gr < -10).astype(np.uint8)
+    if m.sum() < 10000:
+        diff_gb = img[:, :, 1].astype(int) - img[:, :, 0].astype(int)
+        m = (diff_gb < 5).astype(np.uint8)
     m = cv2.morphologyEx(m, cv2.MORPH_OPEN, np.ones((7, 7), np.uint8))
     m = cv2.morphologyEx(m, cv2.MORPH_CLOSE, np.ones((15, 15), np.uint8))
     # Keep only the centered component.
@@ -151,17 +186,18 @@ def autophase(png_path: Path, cx: float, cy: float, r_tip: float,
     F = np.fft.fft(prof_real)
     G = np.fft.fft(prof_synth)
     corr = np.fft.ifft(F * np.conj(G)).real
-    k_best = int(np.argmax(corr))
-    # corr index k corresponds to shifting prof_synth by +k samples, which
-    # means rotating the synthetic by +k * (360/NS) degrees in sample space.
-    # But because our sample index runs with theta (image +CCW in screen =
-    # +CW in math) we need to handle sign carefully. Empirically: this
-    # rotates the synthetic CCW in image coords (i.e., math +y-down), which
-    # is what our rotate block in main() already does with +phase_deg.
+
+    # An N-fold symmetric gear produces N nearly-identical correlation
+    # peaks spaced by NS/N samples. A global argmax can land on any of
+    # them — including lag 0 when the true shift is half-pitch — which is
+    # why we previously returned 0° for gear_3. Restrict the search to a
+    # single pitch window [0, NS/N) so we find the correct sub-pitch shift
+    # unambiguously.
+    samples_per_pitch = NS / n_teeth
+    search_hi = int(math.ceil(samples_per_pitch))
+    k_best = int(np.argmax(corr[:search_hi]))
     shift_deg = k_best * (360.0 / NS)
-    # Limit to one pitch period.
-    pitch_deg = 360.0 / n_teeth
-    shift_deg = shift_deg % pitch_deg
+    # shift_deg is already in [0, pitch_deg) by construction.
     return shift_deg
 
 
@@ -219,15 +255,27 @@ def main() -> int:
         r_tip = tip["r"]
         r_root = root["r"]
 
-    # Derive module and dedendum coef from the fitted radii, keeping the
-    # user-requested addendum_coef fixed: r_pitch = r_tip − addendum·m, and
-    # r_root = r_pitch − dedendum·m. Solve for m such that the dedendum coef
-    # matches the user-specified --dedendum (classic 1.25). Equivalently:
-    #   m = (r_tip − r_root) / (addendum + dedendum)
-    m = (r_tip - r_root) / (args.addendum + args.dedendum)
-    r_pitch = r_tip - args.addendum * m
+    # Derive the module m from r_tip with the user-fixed addendum_coef and
+    # the geometric identity r_pitch = N·m/2:
+    #   r_tip = r_pitch + addendum·m = N·m/2 + addendum·m
+    #   → m = 2·r_tip / (N + 2·addendum)
+    # The dedendum_coef is then DERIVED from r_root rather than assumed,
+    # because watch gears don't follow the industrial 1.25 convention. The
+    # user-supplied --dedendum is only used as an override for cases where
+    # the root fit is unreliable (tip fit is the more stable anchor).
+    m = 2.0 * r_tip / (args.n_teeth + 2.0 * args.addendum)
+    r_pitch = args.n_teeth * m / 2.0
+    dedendum_derived = (r_pitch - r_root) / m
+    # Guard against pathological dedendums (r_root above r_pitch, or
+    # absurdly deep) — fall back to the user-supplied value in that case.
+    if 0.5 <= dedendum_derived <= 2.0:
+        dedendum_used = dedendum_derived
+    else:
+        dedendum_used = args.dedendum
     print(f"derived: m={m:.3f} px ({m / 455.69 * 1000:.1f} µm), "
-          f"r_pitch={r_pitch:.2f} px, N={args.n_teeth}")
+          f"r_pitch={r_pitch:.2f} px, N={args.n_teeth}, "
+          f"dedendum_coef={dedendum_used:.3f} "
+          f"(raw={dedendum_derived:.3f})")
 
     if args.profile == "cycloidal":
         poly = generate_cycloidal_gear(
@@ -235,7 +283,7 @@ def main() -> int:
             module=m,
             rolling_radius_coef=args.rolling_coef,
             addendum_coef=args.addendum,
-            dedendum_coef=args.dedendum,
+            dedendum_coef=dedendum_used,
             points_per_flank=80,
             points_per_tip=30,
             points_per_root=20,
@@ -246,7 +294,7 @@ def main() -> int:
             module=m,
             pressure_angle_deg=args.pressure_angle,
             addendum_coef=args.addendum,
-            dedendum_coef=args.dedendum,
+            dedendum_coef=dedendum_used,
             points_per_flank=80,
             points_per_tip=30,
             points_per_root=20,
