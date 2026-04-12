@@ -15,7 +15,6 @@ import { apiFetch } from './api.js';
 
 const df = {
   sessionId: null,
-  pairingUrl: null,      // absolute URL (location.origin + relative)
   polling: null,         // setInterval handle while dialog is open
   initialized: false,    // has the first-open /status probe run?
 };
@@ -44,9 +43,9 @@ function buildDialog() {
         </p>
 
         <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;padding:8px 10px;background:#161616;border:1px solid #2a2a2a;border-radius:3px;flex-wrap:wrap">
-          <label style="font-size:13px">iPad pairing URL:</label>
-          <code id="deflectometry-pairing-url" style="flex:1;min-width:220px;padding:4px 8px;background:#0b0b0b;border:1px solid #333;border-radius:3px;font-size:12px;overflow-x:auto;white-space:nowrap">—</code>
-          <button class="detect-btn" id="btn-deflectometry-copy" style="flex-shrink:0">Copy</button>
+          <label style="font-size:13px">iPad pairing code:</label>
+          <input type="text" id="deflectometry-pair-code" maxlength="4" placeholder="A3X7" style="width:80px;text-transform:uppercase;font-family:monospace;font-size:18px;text-align:center;letter-spacing:4px" />
+          <button class="detect-btn" id="btn-deflectometry-pair" style="flex-shrink:0">Pair</button>
           <span id="deflectometry-ipad-status" style="font-size:12px;padding:3px 8px;border-radius:3px;background:#3a1a1a;color:#f87171;border:1px solid #7a2a2a">iPad: disconnected</span>
         </div>
 
@@ -54,7 +53,8 @@ function buildDialog() {
           <label style="font-size:13px">Fringe frequency (cycles):</label>
           <input type="number" id="deflectometry-freq" min="2" max="64" step="1" value="16"
                  style="width:90px" />
-          <button class="detect-btn" id="btn-deflectometry-capture" style="margin-left:8px;min-width:150px">Capture Sequence</button>
+          <button class="detect-btn" id="btn-deflectometry-flatfield" style="margin-left:8px;min-width:80px">Flat Field</button>
+          <button class="detect-btn" id="btn-deflectometry-capture" style="min-width:150px">Capture Sequence</button>
           <button class="detect-btn" id="btn-deflectometry-compute" style="min-width:110px">Compute</button>
           <button class="detect-btn" id="btn-deflectometry-reset" style="min-width:80px">Reset</button>
         </div>
@@ -79,7 +79,8 @@ function buildDialog() {
   document.body.appendChild(dlg);
 
   $("btn-deflectometry-close").addEventListener("click", closeDialog);
-  $("btn-deflectometry-copy").addEventListener("click", copyPairingUrl);
+  $("btn-deflectometry-pair").addEventListener("click", pairIpad);
+  $("btn-deflectometry-flatfield").addEventListener("click", flatField);
   $("btn-deflectometry-capture").addEventListener("click", captureSequence);
   $("btn-deflectometry-compute").addEventListener("click", compute);
   $("btn-deflectometry-reset").addEventListener("click", resetSession);
@@ -106,19 +107,58 @@ function setIpadStatus(connected) {
   }
 }
 
-function setPairingUrl(relUrl) {
-  df.pairingUrl = relUrl ? (location.origin + relUrl) : null;
-  const el = $("deflectometry-pairing-url");
-  if (el) el.textContent = df.pairingUrl || "—";
+async function pairIpad() {
+  const input = $("deflectometry-pair-code");
+  if (!input) return;
+  const code = input.value.trim().toUpperCase();
+  if (!code || code.length < 1) {
+    setProgress("Enter the code shown on the iPad.");
+    return;
+  }
+  setProgress("Pairing...");
+  try {
+    const r = await apiFetch("/deflectometry/pair", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code }),
+    });
+    if (r.status === 404) {
+      setProgress("No iPad with that code found.");
+      return;
+    }
+    if (!r.ok) {
+      const msg = await r.text();
+      setProgress("Pair failed: " + msg);
+      return;
+    }
+    input.value = "";
+    setIpadStatus(true);
+    setProgress("iPad paired.");
+  } catch (e) {
+    setProgress("Pair failed: " + (e && e.message ? e.message : String(e)));
+  }
 }
 
-async function copyPairingUrl() {
-  if (!df.pairingUrl) return;
+async function flatField() {
+  const btn = $("btn-deflectometry-flatfield");
+  if (btn) btn.disabled = true;
+  setProgress("Capturing flat field\u2026");
   try {
-    await navigator.clipboard.writeText(df.pairingUrl);
-    setProgress("Pairing URL copied to clipboard.");
+    const r = await apiFetch("/deflectometry/flat-field", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    if (!r.ok) {
+      const msg = await r.text();
+      setProgress("Flat field failed: " + msg);
+      return;
+    }
+    setProgress("Flat field captured.");
   } catch (e) {
-    setProgress("Copy failed: " + (e && e.message ? e.message : "clipboard unavailable"));
+    setProgress("Flat field failed: " + (e && e.message ? e.message : String(e)));
+  } finally {
+    if (btn) btn.disabled = false;
   }
 }
 
@@ -181,7 +221,6 @@ async function startSession() {
   }
   const data = await r.json();
   df.sessionId = data.session_id;
-  setPairingUrl(data.pairing_url);
   setIpadStatus(!!data.ipad_connected);
   return true;
 }
@@ -277,8 +316,7 @@ async function openDialog() {
       await startSession();
     } else {
       df.sessionId = status.session_id;
-      // /status doesn't return pairing_url — call /start which is idempotent
-      // and will return the existing session's pairing URL.
+      // /start is idempotent — re-call to ensure session is active.
       await startSession();
       if (status.has_result && status.last_result) {
         renderResult(status.last_result);

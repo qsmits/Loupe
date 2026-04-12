@@ -35,15 +35,25 @@
   const canvas = document.getElementById('screen');
   const ctx = canvas.getContext('2d', { alpha: false });
 
-  // --- Session id from query string ---
-  const params = new URLSearchParams(location.search);
-  const sessionId = params.get('session');
+  // Safe characters for pairing code (no 0/O, 1/I/L)
+  const SAFE_CHARS = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 
   // Last rendered command, so we can re-render on resize.
   let lastCommand = null;
   let ws = null;
   let reconnectTimer = null;
   let statusMessage = null;
+  let pairingCode = null;
+  let sessionId = null;
+  let paired = false;
+
+  function generatePairingCode() {
+    let code = '';
+    for (let i = 0; i < 4; i++) {
+      code += SAFE_CHARS[Math.floor(Math.random() * SAFE_CHARS.length)];
+    }
+    return code;
+  }
 
   function resizeCanvas() {
     const dpr = window.devicePixelRatio || 1;
@@ -55,18 +65,27 @@
     canvas.style.height = window.innerHeight + 'px';
   }
 
-  function drawNoSession() {
-    ctx.fillStyle = '#ff0000';
+  function drawPairingCode(subtitle) {
+    const dpr = window.devicePixelRatio || 1;
+    ctx.fillStyle = '#000000';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    // Large pairing code
+    const codePx = Math.round(120 * dpr);
+    ctx.font = 'bold ' + codePx + 'px -apple-system, system-ui, sans-serif';
     ctx.fillStyle = '#ffffff';
-    const fontPx = Math.round(24 * (window.devicePixelRatio || 1));
-    ctx.font = fontPx + 'px -apple-system, system-ui, sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
+    ctx.fillText(pairingCode, canvas.width / 2, canvas.height / 2 - Math.round(20 * dpr));
+
+    // Subtitle
+    const subPx = Math.round(18 * dpr);
+    ctx.font = subPx + 'px -apple-system, system-ui, sans-serif';
+    ctx.fillStyle = '#999999';
     ctx.fillText(
-      'NO SESSION \u2014 append ?session=<id> to URL',
+      subtitle || 'Enter this code in Loupe to pair',
       canvas.width / 2,
-      canvas.height / 2
+      canvas.height / 2 + Math.round(60 * dpr)
     );
   }
 
@@ -209,7 +228,7 @@
       reconnectTimer = null;
     }
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const url = proto + '//' + location.host + '/deflectometry/ws/' + encodeURIComponent(sessionId);
+    const url = proto + '//' + location.host + '/deflectometry/ws';
     try {
       ws = new WebSocket(url);
     } catch (e) {
@@ -220,11 +239,8 @@
     ws.onopen = function () {
       statusMessage = null;
       try {
-        ws.send(JSON.stringify({ type: 'hello', session_id: sessionId }));
+        ws.send(JSON.stringify({ type: 'hello', pairing_code: pairingCode }));
       } catch (e) { /* ignore */ }
-      // Return screen to mid-gray until a real command arrives.
-      if (!lastCommand) renderSolid(128);
-      else reRenderLast();
     };
 
     ws.onmessage = function (ev) {
@@ -232,6 +248,13 @@
       try {
         msg = JSON.parse(ev.data);
       } catch (e) {
+        return;
+      }
+      if (msg.type === 'paired') {
+        sessionId = msg.session_id;
+        paired = true;
+        lastCommand = null;
+        renderSolid(128);
         return;
       }
       handleCommand(msg);
@@ -242,8 +265,12 @@
     };
 
     ws.onclose = function () {
-      statusMessage = 'reconnecting\u2026';
-      drawStatusOverlay(statusMessage);
+      paired = false;
+      sessionId = null;
+      lastCommand = null;
+      // Generate a new code so stale codes don't linger
+      pairingCode = generatePairingCode();
+      drawPairingCode('reconnecting\u2026');
       scheduleReconnect();
     };
   }
@@ -260,19 +287,18 @@
 
   window.addEventListener('resize', function () {
     resizeCanvas();
-    reRenderLast();
+    if (!paired) {
+      drawPairingCode(statusMessage || 'Enter this code in Loupe to pair');
+    } else {
+      reRenderLast();
+    }
   });
 
   resizeCanvas();
 
-  if (!sessionId) {
-    drawNoSession();
-    return;
-  }
-
-  // Start in mid-gray until the backend tells us otherwise.
-  renderSolid(128);
-  lastCommand = null;
+  // Generate initial pairing code and show it
+  pairingCode = generatePairingCode();
+  drawPairingCode();
   connect();
 })();
 </script>

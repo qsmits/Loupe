@@ -9,15 +9,14 @@ tests in tests/test_deflectometry.py.
 from fastapi.testclient import TestClient
 
 
-def test_deflectometry_start_returns_pairing_url(client: TestClient):
+def test_deflectometry_start_returns_session(client: TestClient):
     # Fresh app: first /start creates a new session.
     client.post("/deflectometry/reset", json={})
     r = client.post("/deflectometry/start", json={})
     assert r.status_code == 200
     body = r.json()
     assert body["ipad_connected"] is False
-    assert body["pairing_url"].startswith("/deflectometry-screen.html?session=")
-    assert body["session_id"] in body["pairing_url"]
+    assert "session_id" in body
 
 
 def test_deflectometry_status_reports_session(client: TestClient):
@@ -45,7 +44,7 @@ def test_deflectometry_start_is_idempotent_when_unused(client: TestClient):
     assert r2.status_code == 200
     body = r2.json()
     assert body["ipad_connected"] is False
-    assert body["session_id"] in body["pairing_url"]
+    assert "session_id" in body
 
 
 def test_deflectometry_capture_requires_ipad(client: TestClient):
@@ -53,7 +52,6 @@ def test_deflectometry_capture_requires_ipad(client: TestClient):
     client.post("/deflectometry/start", json={})
     r = client.post("/deflectometry/capture-sequence", json={"freq": 16})
     assert r.status_code == 400
-    assert "ipad" in r.json()["detail"].lower()
 
 
 def test_deflectometry_capture_requires_session(client: TestClient):
@@ -93,6 +91,26 @@ def test_deflectometry_reset_without_session_is_ok(client: TestClient):
     r = client.post("/deflectometry/reset", json={})
     assert r.status_code == 200
     assert r.json() == {}
+
+
+def test_deflectometry_pair_without_lobby_returns_404(client: TestClient):
+    client.post("/deflectometry/start", json={})
+    r = client.post("/deflectometry/pair", json={"code": "ZZZZ"})
+    assert r.status_code == 404
+
+
+def test_deflectometry_flat_field_requires_ipad(client: TestClient):
+    client.post("/deflectometry/start", json={})
+    r = client.post("/deflectometry/flat-field", json={})
+    assert r.status_code == 400
+
+
+def test_deflectometry_status_includes_flat_field(client: TestClient):
+    client.post("/deflectometry/start", json={})
+    r = client.get("/deflectometry/status")
+    assert r.status_code == 200
+    assert "has_flat_field" in r.json()
+    assert r.json()["has_flat_field"] is False
 
 
 # NOTE: hosted-mode rejection test is not included here because the

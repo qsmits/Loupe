@@ -51,10 +51,14 @@ class _Session:
         self.pending_acks: dict[int, asyncio.Event] = {}
         self.frames: list[np.ndarray] = []
         self.last_result: Optional[dict] = None
+        self.flat_white: Optional[np.ndarray] = None
+        self.flat_black: Optional[np.ndarray] = None
         # Serializes capture-sequence so two concurrent runs can't interleave
         self.lock: asyncio.Lock = asyncio.Lock()
 
     def clear_capture(self) -> None:
+        # NOTE: flat_white / flat_black persist across resets — they are
+        # only recaptured explicitly via /flat-field.
         self.frames = []
         self.last_result = None
 
@@ -82,16 +86,22 @@ class CaptureBody(BaseModel):
     freq: int = Field(default=16, ge=1, le=256)
 
 
+class PairBody(BaseModel):
+    code: str
+
+
 def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
-    router = APIRouter(dependencies=[Depends(_reject_hosted)])
+    router = APIRouter()
     # Single-active-session container; using a dict so nested functions can
     # rebind without `nonlocal`.
     state: dict[str, Optional[_Session]] = {"session": None}
+    # Lobby: maps pairing codes to iPad WebSocket connections waiting to pair.
+    lobby: dict[str, WebSocket] = {}
 
     def _current() -> Optional[_Session]:
         return state["session"]
 
-    @router.post("/deflectometry/start")
+    @router.post("/deflectometry/start", dependencies=[Depends(_reject_hosted)])
     async def deflectometry_start(body: StartBody):
         existing = state["session"]
         # Idempotent: keep an existing session if it's already paired or has
@@ -99,18 +109,16 @@ def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
         if existing is not None and not existing.is_unused():
             return {
                 "session_id": existing.id,
-                "pairing_url": f"/deflectometry-screen.html?session={existing.id}",
                 "ipad_connected": existing.ws is not None,
             }
         sid = uuid.uuid4().hex
         state["session"] = _Session(sid)
         return {
             "session_id": sid,
-            "pairing_url": f"/deflectometry-screen.html?session={sid}",
             "ipad_connected": False,
         }
 
-    @router.get("/deflectometry/status")
+    @router.get("/deflectometry/status", dependencies=[Depends(_reject_hosted)])
     async def deflectometry_status():
         s = _current()
         if s is None:
@@ -119,6 +127,7 @@ def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
                 "ipad_connected": False,
                 "captured_count": 0,
                 "has_result": False,
+                "has_flat_field": False,
                 "last_result": None,
             }
         return {
@@ -126,10 +135,65 @@ def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
             "ipad_connected": s.ws is not None,
             "captured_count": len(s.frames),
             "has_result": s.last_result is not None,
+            "has_flat_field": s.flat_white is not None and s.flat_black is not None,
             "last_result": s.last_result,
         }
 
-    @router.post("/deflectometry/reset")
+    @router.post("/deflectometry/pair", dependencies=[Depends(_reject_hosted)])
+    async def deflectometry_pair(body: PairBody):
+        code = body.code
+        ws = lobby.get(code)
+        if ws is None:
+            raise HTTPException(404, detail="No iPad with that code is waiting")
+        lobby.pop(code, None)
+        # Auto-create session if needed
+        s = _current()
+        if s is None or s.is_unused():
+            sid = uuid.uuid4().hex
+            s = _Session(sid)
+            state["session"] = s
+        s.ws = ws
+        await ws.send_json({"type": "paired", "session_id": s.id})
+        return {"session_id": s.id, "ipad_connected": True}
+
+    @router.post("/deflectometry/flat-field", dependencies=[Depends(_reject_hosted)])
+    async def deflectometry_flat_field():
+        s = _current()
+        if s is None:
+            raise HTTPException(400, detail="No active deflectometry session")
+        if s.ws is None:
+            raise HTTPException(400, detail="iPad not connected")
+
+        async with s.lock:
+            # White frame
+            await _push_and_wait(
+                s,
+                {"type": "solid", "pattern_id": 1, "value": 255},
+            )
+            frame_w = camera.get_frame()
+            if frame_w is None:
+                raise HTTPException(503, detail="Camera returned no frame")
+            s.flat_white = frame_w.copy()
+
+            # Black frame
+            await _push_and_wait(
+                s,
+                {"type": "solid", "pattern_id": 2, "value": 0},
+            )
+            frame_b = camera.get_frame()
+            if frame_b is None:
+                raise HTTPException(503, detail="Camera returned no frame")
+            s.flat_black = frame_b.copy()
+
+            # Return iPad to mid-gray
+            await _push_and_wait(
+                s,
+                {"type": "clear", "pattern_id": 3},
+            )
+
+        return {"status": "ok", "has_flat_field": True}
+
+    @router.post("/deflectometry/reset", dependencies=[Depends(_reject_hosted)])
     async def deflectometry_reset(body: ResetBody = ResetBody()):  # noqa: B008
         s = _current()
         if s is not None:
@@ -160,7 +224,7 @@ def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
         # Small settle delay for the LCD to stabilize before camera capture
         await asyncio.sleep(settle_s)
 
-    @router.post("/deflectometry/capture-sequence")
+    @router.post("/deflectometry/capture-sequence", dependencies=[Depends(_reject_hosted)])
     async def deflectometry_capture_sequence(body: CaptureBody):
         s = _current()
         if s is None:
@@ -199,7 +263,7 @@ def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
 
         return {"captured_count": len(s.frames)}
 
-    @router.post("/deflectometry/compute")
+    @router.post("/deflectometry/compute", dependencies=[Depends(_reject_hosted)])
     async def deflectometry_compute(body: ComputeBody = ComputeBody()):  # noqa: B008
         s = _current()
         if s is None or len(s.frames) < 8:
@@ -218,6 +282,14 @@ def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
         frames_x = [_to_gray(f) for f in s.frames[:4]]
         frames_y = [_to_gray(f) for f in s.frames[4:8]]
 
+        # Flat-field correction: normalize per-pixel intensity range
+        if s.flat_white is not None and s.flat_black is not None:
+            white = _to_gray(s.flat_white)
+            black = _to_gray(s.flat_black)
+            denom = white - black + 1e-6
+            frames_x = [(f - black) / denom for f in frames_x]
+            frames_y = [(f - black) / denom for f in frames_y]
+
         wrap_x = compute_wrapped_phase(frames_x)
         wrap_y = compute_wrapped_phase(frames_y)
         unw_x = unwrap_phase(wrap_x, orientation="x")
@@ -232,40 +304,52 @@ def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
         s.last_result = result
         return result
 
-    @router.websocket("/deflectometry/ws/{session_id}")
-    async def deflectometry_ws(websocket: WebSocket, session_id: str):
+    @router.websocket("/deflectometry/ws")
+    async def deflectometry_ws(websocket: WebSocket):
         # Router-level Depends(_reject_hosted) does not apply to WebSocket
         # routes — enforce hosted-mode rejection explicitly.
         if getattr(websocket.app.state, "hosted", False):
             await websocket.close(code=1008)
             return
-        s = _current()
-        if s is None or s.id != session_id:
+
+        await websocket.accept()
+
+        # Wait for the first message — must be a hello with a pairing code.
+        try:
+            first = await websocket.receive_json()
+        except WebSocketDisconnect:
+            return
+        if first.get("type") != "hello" or "pairing_code" not in first:
             await websocket.close(code=1008)
             return
 
-        await websocket.accept()
-        s.ws = websocket
+        pairing_code: str = first["pairing_code"]
+        lobby[pairing_code] = websocket
+
         try:
             while True:
                 msg = await websocket.receive_json()
                 mtype = msg.get("type")
                 if mtype == "ack":
-                    try:
-                        pid = int(msg["pattern_id"])
-                    except (KeyError, TypeError, ValueError):
-                        continue
-                    ev = s.pending_acks.get(pid)
-                    if ev is not None:
-                        ev.set()
-                elif mtype == "hello":
-                    # Handshake already recorded via s.ws = websocket above
-                    pass
+                    # Resolve pending ack on the session this WS is paired to
+                    s = _current()
+                    if s is not None and s.ws is websocket:
+                        try:
+                            pid = int(msg["pattern_id"])
+                        except (KeyError, TypeError, ValueError):
+                            continue
+                        ev = s.pending_acks.get(pid)
+                        if ev is not None:
+                            ev.set()
                 # Unknown message types are silently ignored
         except WebSocketDisconnect:
             pass
         finally:
-            if s.ws is websocket:
+            # Clean up lobby entry if still present
+            lobby.pop(pairing_code, None)
+            # Unset session.ws if this was the paired WS
+            s = _current()
+            if s is not None and s.ws is websocket:
                 s.ws = None
 
     return router
