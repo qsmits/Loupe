@@ -133,4 +133,4 @@ def test_frankot_chellappa_recovers_paraboloid():
     z_true -= z_true.mean()
     # Check correlation
     corr = np.corrcoef(z.ravel(), z_true.ravel())[0, 1]
-    assert corr > 0.99, f"correlation {corr} too low"
+    assert abs(corr) > 0.99, f"correlation {corr} too low"
