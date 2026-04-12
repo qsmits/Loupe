@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Loupe Deflectometry Screen</title>
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: #000;
+    overflow: hidden;
+    touch-action: none;
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+  canvas {
+    display: block;
+    width: 100vw;
+    height: 100vh;
+    pointer-events: none;
+  }
+</style>
+</head>
+<body>
+<canvas id="screen"></canvas>
+<script>
+(function () {
+  'use strict';
+
+  const canvas = document.getElementById('screen');
+  const ctx = canvas.getContext('2d', { alpha: false });
+
+  // --- Session id from query string ---
+  const params = new URLSearchParams(location.search);
+  const sessionId = params.get('session');
+
+  // Last rendered command, so we can re-render on resize.
+  let lastCommand = null;
+  let ws = null;
+  let reconnectTimer = null;
+  let statusMessage = null;
+
+  function resizeCanvas() {
+    const dpr = window.devicePixelRatio || 1;
+    const w = Math.max(1, Math.floor(window.innerWidth * dpr));
+    const h = Math.max(1, Math.floor(window.innerHeight * dpr));
+    canvas.width = w;
+    canvas.height = h;
+    canvas.style.width = window.innerWidth + 'px';
+    canvas.style.height = window.innerHeight + 'px';
+  }
+
+  function drawNoSession() {
+    ctx.fillStyle = '#ff0000';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = '#ffffff';
+    const fontPx = Math.round(24 * (window.devicePixelRatio || 1));
+    ctx.font = fontPx + 'px -apple-system, system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(
+      'NO SESSION \u2014 append ?session=<id> to URL',
+      canvas.width / 2,
+      canvas.height / 2
+    );
+  }
+
+  function drawSessionLabel() {
+    if (!sessionId) return;
+    const dpr = window.devicePixelRatio || 1;
+    const fontPx = Math.round(10 * dpr);
+    ctx.font = fontPx + 'px -apple-system, system-ui, sans-serif';
+    ctx.fillStyle = 'rgba(60,60,60,0.3)';
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'top';
+    const shortId = sessionId.length > 8 ? sessionId.slice(0, 8) : sessionId;
+    ctx.fillText('session: ' + shortId, canvas.width - 8 * dpr, 8 * dpr);
+  }
+
+  function drawStatusOverlay(text) {
+    // Clear to mid-gray so the status is visible and the screen isn't
+    // stuck on a stale fringe pattern while we're disconnected.
+    ctx.fillStyle = '#000000';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = '#ffffff';
+    const dpr = window.devicePixelRatio || 1;
+    const fontPx = Math.round(18 * dpr);
+    ctx.font = fontPx + 'px -apple-system, system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(text, canvas.width / 2, canvas.height / 2);
+  }
+
+  // --- Render functions ---
+
+  function renderPattern(cmd) {
+    const W = canvas.width, H = canvas.height;
+    const img = ctx.createImageData(W, H);
+    const data = img.data;
+    const freq = cmd.freq;
+    const phase = cmd.phase;
+    const orientation = cmd.orientation;
+
+    if (orientation === 'x') {
+      const rowValues = new Uint8ClampedArray(W);
+      const k = 2 * Math.PI * freq / W;
+      for (let x = 0; x < W; x++) {
+        const v = Math.round(127 + 127 * Math.cos(k * x + phase));
+        rowValues[x] = v < 0 ? 0 : (v > 255 ? 255 : v);
+      }
+      for (let y = 0; y < H; y++) {
+        const yOff = y * W * 4;
+        for (let x = 0; x < W; x++) {
+          const o = yOff + x * 4;
+          const v = rowValues[x];
+          data[o] = v;
+          data[o + 1] = v;
+          data[o + 2] = v;
+          data[o + 3] = 255;
+        }
+      }
+    } else {
+      const colValues = new Uint8ClampedArray(H);
+      const k = 2 * Math.PI * freq / H;
+      for (let y = 0; y < H; y++) {
+        const v = Math.round(127 + 127 * Math.cos(k * y + phase));
+        colValues[y] = v < 0 ? 0 : (v > 255 ? 255 : v);
+      }
+      for (let y = 0; y < H; y++) {
+        const v = colValues[y];
+        const yOff = y * W * 4;
+        for (let x = 0; x < W; x++) {
+          const o = yOff + x * 4;
+          data[o] = v;
+          data[o + 1] = v;
+          data[o + 2] = v;
+          data[o + 3] = 255;
+        }
+      }
+    }
+    ctx.putImageData(img, 0, 0);
+    drawSessionLabel();
+  }
+
+  function renderSolid(value) {
+    const W = canvas.width, H = canvas.height;
+    const v = Math.max(0, Math.min(255, value | 0));
+    const img = ctx.createImageData(W, H);
+    const data = img.data;
+    for (let i = 0; i < data.length; i += 4) {
+      data[i] = v;
+      data[i + 1] = v;
+      data[i + 2] = v;
+      data[i + 3] = 255;
+    }
+    ctx.putImageData(img, 0, 0);
+    drawSessionLabel();
+  }
+
+  function handleCommand(cmd) {
+    if (!cmd || typeof cmd !== 'object') return;
+    if (cmd.type === 'pattern') {
+      renderPattern(cmd);
+    } else if (cmd.type === 'solid') {
+      renderSolid(cmd.value);
+    } else if (cmd.type === 'clear') {
+      renderSolid(128);
+    } else {
+      return;
+    }
+    lastCommand = cmd;
+    // Defer ack until after the browser composites the frame.
+    if (typeof cmd.pattern_id === 'number') {
+      const pid = cmd.pattern_id;
+      requestAnimationFrame(function () {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          try {
+            ws.send(JSON.stringify({ type: 'ack', pattern_id: pid }));
+          } catch (e) { /* ignore */ }
+        }
+      });
+    }
+  }
+
+  function reRenderLast() {
+    if (statusMessage) {
+      drawStatusOverlay(statusMessage);
+      return;
+    }
+    if (lastCommand) {
+      if (lastCommand.type === 'pattern') renderPattern(lastCommand);
+      else if (lastCommand.type === 'solid') renderSolid(lastCommand.value);
+      else if (lastCommand.type === 'clear') renderSolid(128);
+    } else {
+      renderSolid(128);
+    }
+  }
+
+  // --- WebSocket lifecycle ---
+
+  function connect() {
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
+    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const url = proto + '//' + location.host + '/deflectometry/ws/' + encodeURIComponent(sessionId);
+    try {
+      ws = new WebSocket(url);
+    } catch (e) {
+      scheduleReconnect();
+      return;
+    }
+
+    ws.onopen = function () {
+      statusMessage = null;
+      try {
+        ws.send(JSON.stringify({ type: 'hello', session_id: sessionId }));
+      } catch (e) { /* ignore */ }
+      // Return screen to mid-gray until a real command arrives.
+      if (!lastCommand) renderSolid(128);
+      else reRenderLast();
+    };
+
+    ws.onmessage = function (ev) {
+      let msg;
+      try {
+        msg = JSON.parse(ev.data);
+      } catch (e) {
+        return;
+      }
+      handleCommand(msg);
+    };
+
+    ws.onerror = function () {
+      // onclose will follow; handle reconnect there.
+    };
+
+    ws.onclose = function () {
+      statusMessage = 'reconnecting\u2026';
+      drawStatusOverlay(statusMessage);
+      scheduleReconnect();
+    };
+  }
+
+  function scheduleReconnect() {
+    if (reconnectTimer) return;
+    reconnectTimer = setTimeout(function () {
+      reconnectTimer = null;
+      connect();
+    }, 2000);
+  }
+
+  // --- Boot ---
+
+  window.addEventListener('resize', function () {
+    resizeCanvas();
+    reRenderLast();
+  });
+
+  resizeCanvas();
+
+  if (!sessionId) {
+    drawNoSession();
+    return;
+  }
+
+  // Start in mid-gray until the backend tells us otherwise.
+  renderSolid(128);
+  lastCommand = null;
+  connect();
+})();
+</script>
+</body>
+</html>
