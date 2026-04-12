@@ -1,6 +1,8 @@
 import base64
 import numpy as np
 from backend.vision.deflectometry import (
+    create_modulation_mask,
+    frankot_chellappa,
     generate_fringe_pattern, compute_wrapped_phase, unwrap_phase,
     phase_stats, pseudocolor_png_b64, remove_tilt,
 )
@@ -98,3 +100,37 @@ def test_pseudocolor_png_b64_decodes_to_png():
     assert not b64.startswith("data:")
     blob = base64.b64decode(b64)
     assert blob.startswith(b"\x89PNG\r\n\x1a\n")
+
+
+def test_create_modulation_mask_thresholds():
+    mod_x = np.array([[100, 50, 10], [80, 5, 90]], dtype=np.float64)
+    mod_y = np.array([[90, 60, 5], [70, 10, 80]], dtype=np.float64)
+    mask = create_modulation_mask(mod_x, mod_y, threshold_frac=0.15)
+    # threshold_x = 0.15 * 100 = 15, threshold_y = 0.15 * 90 = 13.5
+    expected = np.array([[True, True, False], [True, False, True]])
+    np.testing.assert_array_equal(mask, expected)
+
+
+def test_phase_stats_with_mask():
+    u = np.array([[0.0, 1.0, 2.0], [3.0, 4.0, 5.0]])
+    mask = np.array([[True, True, False], [True, False, True]])
+    s = phase_stats(u, mask=mask)
+    # Valid pixels: 0, 1, 3, 5 -> mean=2.25, pv=5.0
+    assert abs(s["mean"] - 2.25) < 1e-9
+    assert abs(s["pv"] - 5.0) < 1e-9
+
+
+def test_frankot_chellappa_recovers_paraboloid():
+    # z = x^2 + y^2 -> dz/dx = 2x, dz/dy = 2y
+    h, w = 64, 64
+    y, x = np.mgrid[-1:1:complex(h), -1:1:complex(w)]
+    dzdx = 2 * x
+    dzdy = 2 * y
+    z = frankot_chellappa(dzdx, dzdy)
+    z_true = x**2 + y**2
+    # Remove mean from both (FC sets DC=0)
+    z -= np.nanmean(z)
+    z_true -= z_true.mean()
+    # Check correlation
+    corr = np.corrcoef(z.ravel(), z_true.ravel())[0, 1]
+    assert corr > 0.99, f"correlation {corr} too low"

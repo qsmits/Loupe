@@ -32,6 +32,8 @@ from .cameras.base import BaseCamera
 from .vision.deflectometry import (
     compute_modulation,
     compute_wrapped_phase,
+    create_modulation_mask,
+    frankot_chellappa,
     phase_stats,
     pseudocolor_png_b64,
     remove_tilt,
@@ -55,12 +57,14 @@ class _Session:
         self.last_result: Optional[dict] = None
         self.flat_white: Optional[np.ndarray] = None
         self.flat_black: Optional[np.ndarray] = None
+        self.ref_phase_x: Optional[np.ndarray] = None
+        self.ref_phase_y: Optional[np.ndarray] = None
         # Serializes capture-sequence so two concurrent runs can't interleave
         self.lock: asyncio.Lock = asyncio.Lock()
 
     def clear_capture(self) -> None:
-        # NOTE: flat_white / flat_black persist across resets — they are
-        # only recaptured explicitly via /flat-field.
+        # NOTE: flat_white / flat_black and ref_phase_x / ref_phase_y persist
+        # across resets — they are only recaptured explicitly.
         self.frames = []
         self.last_result = None
 
@@ -85,6 +89,11 @@ class ComputeBody(BaseModel):
 
 
 class CaptureBody(BaseModel):
+    freq: int = Field(default=16, ge=1, le=256)
+    averages: int = Field(default=3, ge=1, le=10)
+
+
+class CaptureReferenceBody(BaseModel):
     freq: int = Field(default=16, ge=1, le=256)
     averages: int = Field(default=3, ge=1, le=10)
 
@@ -139,6 +148,7 @@ def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
             "captured_count": len(s.frames),
             "has_result": s.last_result is not None,
             "has_flat_field": s.flat_white is not None and s.flat_black is not None,
+            "has_reference": s.ref_phase_x is not None,
             "last_result": s.last_result,
         }
 
@@ -195,6 +205,87 @@ def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
             )
 
         return {"status": "ok", "has_flat_field": True}
+
+    def _compute_unwrapped(s: _Session):
+        """Shared pipeline: flat-field correct, wrap, unwrap, tilt-remove.
+
+        Returns (unw_x, unw_y, frames_x, frames_y) where frames are the
+        (possibly flat-field-corrected) gray frames used for modulation.
+        """
+        def _to_gray(f: np.ndarray) -> np.ndarray:
+            arr = np.asarray(f, dtype=np.float64)
+            if arr.ndim == 3:
+                arr = arr.mean(axis=-1)
+            return arr
+
+        frames_x = [_to_gray(f) for f in s.frames[:4]]
+        frames_y = [_to_gray(f) for f in s.frames[4:8]]
+
+        if s.flat_white is not None and s.flat_black is not None:
+            white = _to_gray(s.flat_white)
+            black = _to_gray(s.flat_black)
+            denom = white - black + 1e-6
+            frames_x = [(f - black) / denom for f in frames_x]
+            frames_y = [(f - black) / denom for f in frames_y]
+
+        wrap_x = compute_wrapped_phase(frames_x)
+        wrap_y = compute_wrapped_phase(frames_y)
+        unw_x = remove_tilt(unwrap_phase(wrap_x, orientation="x"))
+        unw_y = remove_tilt(unwrap_phase(wrap_y, orientation="y"))
+
+        return unw_x, unw_y, frames_x, frames_y
+
+    @router.post("/deflectometry/capture-reference", dependencies=[Depends(_reject_hosted)])
+    async def deflectometry_capture_reference(body: CaptureReferenceBody):
+        s = _current()
+        if s is None:
+            raise HTTPException(400, detail="No active deflectometry session")
+        if s.ws is None:
+            raise HTTPException(400, detail="iPad not connected")
+
+        phases = [0.0, math.pi / 2.0, math.pi, 3.0 * math.pi / 2.0]
+
+        async with s.lock:
+            ref_frames: list[np.ndarray] = []
+            pid = 0
+            for orientation in ("x", "y"):
+                for phase in phases:
+                    pid += 1
+                    await _push_and_wait(
+                        s,
+                        {
+                            "type": "pattern",
+                            "pattern_id": pid,
+                            "freq": int(body.freq),
+                            "phase": float(phase),
+                            "orientation": orientation,
+                        },
+                    )
+                    accum = None
+                    for _avg in range(body.averages):
+                        frame = camera.get_frame()
+                        if frame is None:
+                            raise HTTPException(503, detail="Camera returned no frame")
+                        f = frame.astype(np.float64)
+                        accum = f if accum is None else accum + f
+                        if _avg < body.averages - 1:
+                            await asyncio.sleep(0.05)
+                    ref_frames.append((accum / body.averages).astype(np.uint8))
+
+        # Temporarily stash ref_frames, compute unwrapped phase, then restore
+        orig_frames = s.frames
+        orig_result = s.last_result
+        s.frames = ref_frames
+        try:
+            unw_x, unw_y, _, _ = _compute_unwrapped(s)
+        finally:
+            s.frames = orig_frames
+            s.last_result = orig_result
+
+        s.ref_phase_x = unw_x
+        s.ref_phase_y = unw_y
+
+        return {"status": "ok", "has_reference": True}
 
     @router.post("/deflectometry/reset", dependencies=[Depends(_reject_hosted)])
     async def deflectometry_reset(body: ResetBody = ResetBody()):  # noqa: B008
@@ -282,36 +373,103 @@ def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
                 detail=f"Need 8 captured frames before compute (have {have})",
             )
 
-        def _to_gray(f: np.ndarray) -> np.ndarray:
-            arr = np.asarray(f, dtype=np.float64)
-            if arr.ndim == 3:
-                arr = arr.mean(axis=-1)
-            return arr
+        unw_x, unw_y, frames_x, frames_y = _compute_unwrapped(s)
 
-        frames_x = [_to_gray(f) for f in s.frames[:4]]
-        frames_y = [_to_gray(f) for f in s.frames[4:8]]
+        # Reference subtraction
+        has_reference = False
+        if s.ref_phase_x is not None and s.ref_phase_y is not None:
+            if s.ref_phase_x.shape == unw_x.shape and s.ref_phase_y.shape == unw_y.shape:
+                unw_x = unw_x - s.ref_phase_x
+                unw_y = unw_y - s.ref_phase_y
+                has_reference = True
 
-        # Flat-field correction: normalize per-pixel intensity range
-        if s.flat_white is not None and s.flat_black is not None:
-            white = _to_gray(s.flat_white)
-            black = _to_gray(s.flat_black)
-            denom = white - black + 1e-6
-            frames_x = [(f - black) / denom for f in frames_x]
-            frames_y = [(f - black) / denom for f in frames_y]
-
-        wrap_x = compute_wrapped_phase(frames_x)
-        wrap_y = compute_wrapped_phase(frames_y)
-        unw_x = remove_tilt(unwrap_phase(wrap_x, orientation="x"))
-        unw_y = remove_tilt(unwrap_phase(wrap_y, orientation="y"))
+        # Modulation-based masking
+        mod_x = compute_modulation(frames_x)
+        mod_y = compute_modulation(frames_y)
+        mask = create_modulation_mask(mod_x, mod_y)
+        mask_valid_frac = float(mask.sum()) / float(mask.size) if mask.size > 0 else 0.0
 
         result = {
-            "phase_x_png_b64": pseudocolor_png_b64(unw_x),
-            "phase_y_png_b64": pseudocolor_png_b64(unw_y),
-            "stats_x": phase_stats(unw_x),
-            "stats_y": phase_stats(unw_y),
+            "phase_x_png_b64": pseudocolor_png_b64(unw_x, mask=mask),
+            "phase_y_png_b64": pseudocolor_png_b64(unw_y, mask=mask),
+            "stats_x": phase_stats(unw_x, mask=mask),
+            "stats_y": phase_stats(unw_y, mask=mask),
+            "has_reference": has_reference,
+            "mask_valid_frac": mask_valid_frac,
         }
         s.last_result = result
+        # Store unwrapped phases and mask for heightmap endpoint
+        s._last_unw_x = unw_x
+        s._last_unw_y = unw_y
+        s._last_mask = mask
         return result
+
+    @router.post("/deflectometry/heightmap", dependencies=[Depends(_reject_hosted)])
+    async def deflectometry_heightmap():
+        import cv2 as cv2_local
+        s = _current()
+        if s is None or s.last_result is None:
+            raise HTTPException(400, detail="Run compute first")
+
+        unw_x = s._last_unw_x
+        unw_y = s._last_unw_y
+        mask = s._last_mask
+
+        height = frankot_chellappa(unw_x, unw_y, mask=mask)
+
+        # Downsampled dimensions: max 256px on long edge
+        h, w = height.shape
+        long_edge = max(h, w)
+        if long_edge > 256:
+            scale = 256.0 / long_edge
+            new_w = max(1, int(round(w * scale)))
+            new_h = max(1, int(round(h * scale)))
+        else:
+            new_w, new_h = w, h
+
+        if new_w != w or new_h != h:
+            # Set NaN (masked) pixels to 0 before resize
+            h_filled = height.copy()
+            nan_mask = np.isnan(h_filled)
+            h_filled[nan_mask] = 0.0
+
+            h_small = cv2_local.resize(
+                h_filled.astype(np.float32), (new_w, new_h),
+                interpolation=cv2_local.INTER_AREA,
+            )
+
+            # Resize mask separately
+            mask_float = mask.astype(np.float32)
+            mask_small = cv2_local.resize(
+                mask_float, (new_w, new_h),
+                interpolation=cv2_local.INTER_AREA,
+            )
+            mask_ds = mask_small > 0.5
+            h_small[~mask_ds] = float("nan")
+        else:
+            h_small = height.astype(np.float32)
+            mask_ds = mask
+
+        # Stats on valid pixels
+        stats = phase_stats(h_small[mask_ds]) if mask_ds.any() else {"pv": 0.0, "rms": 0.0, "mean": 0.0}
+
+        # Build flat lists, replacing NaN with None for JSON
+        data_list = []
+        mask_list = []
+        for val, m in zip(h_small.ravel(), mask_ds.ravel()):
+            data_list.append(None if np.isnan(val) else float(val))
+            mask_list.append(1 if m else 0)
+
+        has_reference = s.ref_phase_x is not None
+
+        return {
+            "width": new_w,
+            "height": new_h,
+            "data": data_list,
+            "mask": mask_list,
+            "stats": stats,
+            "has_reference": has_reference,
+        }
 
     @router.post("/deflectometry/diagnostics", dependencies=[Depends(_reject_hosted)])
     async def deflectometry_diagnostics():
