@@ -6,6 +6,7 @@ from .config import load_config, save_config
 from .session_store import SessionFrameStore
 from .api_camera import make_camera_router
 from .api_compare import make_compare_router
+from .api_deflectometry import make_deflectometry_router
 from .api_detection import make_detection_router
 from .api_inspection import make_inspection_router, router as inspection_router
 from .api_runs import make_runs_router
@@ -84,6 +85,7 @@ def make_router(camera: BaseCamera, frame_store: SessionFrameStore, startup_warn
     composed.include_router(make_zstack_router(camera))
     composed.include_router(make_stitch_router(camera))
     composed.include_router(make_superres_router(camera))
+    composed.include_router(make_deflectometry_router(camera))
     if run_store:
         composed.include_router(make_runs_router(run_store))
     return composed
