@@ -111,7 +111,7 @@ def compute_modulation(frames4: list[np.ndarray]) -> np.ndarray:
     return np.sqrt((i3 - i1) ** 2 + (i0 - i2) ** 2) / 2.0
 
 
-def create_modulation_mask(mod_x: np.ndarray, mod_y: np.ndarray, threshold_frac: float = 0.05) -> np.ndarray:
+def create_modulation_mask(mod_x: np.ndarray, mod_y: np.ndarray, threshold_frac: float = 0.02) -> np.ndarray:
     """Create a boolean mask where True = valid part pixel.
 
     A pixel is valid if BOTH mod_x and mod_y exceed threshold_frac * max(respective_modulation).
@@ -225,7 +225,7 @@ def frankot_chellappa(dzdx: np.ndarray, dzdy: np.ndarray, mask: np.ndarray | Non
     Z = (-1j * WX * Sx - 1j * WY * Sy) / denom
     Z[0, 0] = 0.0  # DC = arbitrary offset
 
-    height = -np.real(np.fft.ifft2(Z))
+    height = np.real(np.fft.ifft2(Z))
 
     if mask is not None:
         height[~valid] = np.nan
