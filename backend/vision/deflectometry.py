@@ -89,6 +89,28 @@ def remove_tilt(unwrapped: np.ndarray) -> np.ndarray:
     return u - plane
 
 
+def compute_modulation(frames4: list[np.ndarray]) -> np.ndarray:
+    """Fringe modulation (contrast) map from 4-step frames.
+
+    modulation = sqrt((I3 - I1)^2 + (I0 - I2)^2) / 2
+
+    High modulation = strong fringe signal = reliable phase.
+    Low modulation = the reflected fringes are weak at that pixel (outside
+    the iPad reflection, ambient light washing them out, clipped exposure).
+    Returned as float64, same spatial shape as the input frames.
+    """
+    if len(frames4) != 4:
+        raise ValueError(f"expected 4 frames, got {len(frames4)}")
+    prepped = []
+    for f in frames4:
+        arr = np.asarray(f, dtype=np.float64)
+        if arr.ndim == 3:
+            arr = arr.mean(axis=-1)
+        prepped.append(arr)
+    i0, i1, i2, i3 = prepped
+    return np.sqrt((i3 - i1) ** 2 + (i0 - i2) ** 2) / 2.0
+
+
 def phase_stats(unwrapped: np.ndarray) -> dict:
     """Return {'pv', 'rms', 'mean'} as plain Python floats.
 

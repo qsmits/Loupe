@@ -30,6 +30,7 @@ from pydantic import BaseModel, Field
 
 from .cameras.base import BaseCamera
 from .vision.deflectometry import (
+    compute_modulation,
     compute_wrapped_phase,
     phase_stats,
     pseudocolor_png_b64,
@@ -85,6 +86,7 @@ class ComputeBody(BaseModel):
 
 class CaptureBody(BaseModel):
     freq: int = Field(default=16, ge=1, le=256)
+    averages: int = Field(default=3, ge=1, le=10)
 
 
 class PairBody(BaseModel):
@@ -205,7 +207,7 @@ def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
         s: _Session,
         payload: dict,
         timeout_s: float = 2.0,
-        settle_s: float = 0.12,
+        settle_s: float = 0.30,
     ) -> None:
         if s.ws is None:
             raise HTTPException(400, detail="iPad not connected")
@@ -254,13 +256,19 @@ def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
                             "orientation": orientation,
                         },
                     )
-                    frame = camera.get_frame()
-                    if frame is None:
-                        raise HTTPException(
-                            503, detail="Camera returned no frame"
-                        )
-                    # Copy so we don't hold a reference to a shared buffer
-                    s.frames.append(frame.copy())
+                    # Average multiple captures to reduce random noise
+                    accum = None
+                    for _avg in range(body.averages):
+                        frame = camera.get_frame()
+                        if frame is None:
+                            raise HTTPException(
+                                503, detail="Camera returned no frame"
+                            )
+                        f = frame.astype(np.float64)
+                        accum = f if accum is None else accum + f
+                        if _avg < body.averages - 1:
+                            await asyncio.sleep(0.05)
+                    s.frames.append((accum / body.averages).astype(np.uint8))
 
         return {"captured_count": len(s.frames)}
 
@@ -304,6 +312,91 @@ def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
         }
         s.last_result = result
         return result
+
+    @router.post("/deflectometry/diagnostics", dependencies=[Depends(_reject_hosted)])
+    async def deflectometry_diagnostics():
+        """Save captured frames to disk and return diagnostic data.
+
+        Writes each frame as a PNG in poc_output/deflectometry/ and returns
+        per-frame stats, modulation maps, wrapped phase maps, and unwrapped
+        phase maps — everything needed to debug fringe quality and unwrap
+        failures.
+        """
+        import os
+        s = _current()
+        if s is None or len(s.frames) < 8:
+            have = 0 if s is None else len(s.frames)
+            raise HTTPException(400, detail=f"Need 8 frames (have {have})")
+
+        out_dir = os.path.join(os.path.dirname(__file__), "..", "poc_output", "deflectometry")
+        os.makedirs(out_dir, exist_ok=True)
+
+        def _to_gray(f):
+            arr = np.asarray(f, dtype=np.float64)
+            return arr.mean(axis=-1) if arr.ndim == 3 else arr
+
+        # Save raw frames as PNGs
+        frame_stats = []
+        for i, f in enumerate(s.frames[:8]):
+            orientation = "x" if i < 4 else "y"
+            phase_idx = i % 4
+            fname = f"frame_{orientation}_{phase_idx}.png"
+            import cv2
+            cv2.imwrite(os.path.join(out_dir, fname), f)
+            gray = _to_gray(f)
+            frame_stats.append({
+                "name": fname,
+                "min": float(gray.min()),
+                "max": float(gray.max()),
+                "mean": float(gray.mean()),
+                "std": float(gray.std()),
+            })
+
+        frames_x = [_to_gray(f) for f in s.frames[:4]]
+        frames_y = [_to_gray(f) for f in s.frames[4:8]]
+
+        # Apply flat-field if available
+        if s.flat_white is not None and s.flat_black is not None:
+            white = _to_gray(s.flat_white)
+            black = _to_gray(s.flat_black)
+            denom = white - black + 1e-6
+            frames_x = [(f - black) / denom for f in frames_x]
+            frames_y = [(f - black) / denom for f in frames_y]
+
+        # Modulation (fringe contrast)
+        mod_x = compute_modulation(frames_x)
+        mod_y = compute_modulation(frames_y)
+
+        # Wrapped phase
+        wrap_x = compute_wrapped_phase(frames_x)
+        wrap_y = compute_wrapped_phase(frames_y)
+
+        # Unwrapped phase (before tilt removal)
+        unw_x_raw = unwrap_phase(wrap_x, orientation="x")
+        unw_y_raw = unwrap_phase(wrap_y, orientation="y")
+
+        return {
+            "frame_stats": frame_stats,
+            "modulation_x": {
+                "png_b64": pseudocolor_png_b64(mod_x),
+                "min": float(mod_x.min()),
+                "max": float(mod_x.max()),
+                "mean": float(mod_x.mean()),
+                "median": float(np.median(mod_x)),
+            },
+            "modulation_y": {
+                "png_b64": pseudocolor_png_b64(mod_y),
+                "min": float(mod_y.min()),
+                "max": float(mod_y.max()),
+                "mean": float(mod_y.mean()),
+                "median": float(np.median(mod_y)),
+            },
+            "wrapped_x_png_b64": pseudocolor_png_b64(wrap_x),
+            "wrapped_y_png_b64": pseudocolor_png_b64(wrap_y),
+            "unwrapped_raw_x_png_b64": pseudocolor_png_b64(unw_x_raw),
+            "unwrapped_raw_y_png_b64": pseudocolor_png_b64(unw_y_raw),
+            "frames_saved_to": os.path.abspath(out_dir),
+        }
 
     @router.websocket("/deflectometry/ws")
     async def deflectometry_ws(websocket: WebSocket):

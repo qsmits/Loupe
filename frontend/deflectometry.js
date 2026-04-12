@@ -57,20 +57,54 @@ function buildDialog() {
           <button class="detect-btn" id="btn-deflectometry-capture" style="min-width:150px">Capture Sequence</button>
           <button class="detect-btn" id="btn-deflectometry-compute" style="min-width:110px">Compute</button>
           <button class="detect-btn" id="btn-deflectometry-reset" style="min-width:80px">Reset</button>
+          <button class="detect-btn" id="btn-deflectometry-diag" style="min-width:100px">Diagnostics</button>
         </div>
 
         <div id="deflectometry-progress" style="font-size:12px;opacity:0.85;min-height:1.4em;margin-bottom:10px;font-variant-numeric:tabular-nums"></div>
 
         <div id="deflectometry-result" hidden style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:6px">
           <div>
-            <div style="font-size:12px;opacity:0.85;margin-bottom:4px">Phase X (horizontal fringes)</div>
+            <div style="font-size:12px;opacity:0.85;margin-bottom:4px">Phase X (vertical fringes)</div>
             <img id="deflectometry-phase-x-img" style="width:100%;border:1px solid #444;background:#111;display:block" />
             <pre id="deflectometry-phase-x-stats" style="margin:6px 0 0;padding:6px 8px;background:#0b0b0b;border:1px solid #2a2a2a;border-radius:3px;font-size:11px;font-variant-numeric:tabular-nums;white-space:pre">—</pre>
           </div>
           <div>
-            <div style="font-size:12px;opacity:0.85;margin-bottom:4px">Phase Y (vertical fringes)</div>
+            <div style="font-size:12px;opacity:0.85;margin-bottom:4px">Phase Y (horizontal fringes)</div>
             <img id="deflectometry-phase-y-img" style="width:100%;border:1px solid #444;background:#111;display:block" />
             <pre id="deflectometry-phase-y-stats" style="margin:6px 0 0;padding:6px 8px;background:#0b0b0b;border:1px solid #2a2a2a;border-radius:3px;font-size:11px;font-variant-numeric:tabular-nums;white-space:pre">—</pre>
+          </div>
+        </div>
+
+        <div id="deflectometry-diag-result" hidden style="margin-top:14px;border-top:1px solid #2a2a2a;padding-top:12px">
+          <div style="font-size:13px;font-weight:600;margin-bottom:8px">Diagnostics</div>
+          <pre id="deflectometry-diag-framestats" style="margin:0 0 10px;padding:6px 8px;background:#0b0b0b;border:1px solid #2a2a2a;border-radius:3px;font-size:11px;overflow-x:auto">—</pre>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+            <div>
+              <div style="font-size:11px;opacity:0.7;margin-bottom:2px">Modulation X (fringe contrast)</div>
+              <img id="deflectometry-diag-mod-x" style="width:100%;border:1px solid #444;background:#111;display:block" />
+              <pre id="deflectometry-diag-mod-x-stats" style="margin:4px 0 0;padding:4px 6px;background:#0b0b0b;border:1px solid #2a2a2a;border-radius:3px;font-size:10px">—</pre>
+            </div>
+            <div>
+              <div style="font-size:11px;opacity:0.7;margin-bottom:2px">Modulation Y (fringe contrast)</div>
+              <img id="deflectometry-diag-mod-y" style="width:100%;border:1px solid #444;background:#111;display:block" />
+              <pre id="deflectometry-diag-mod-y-stats" style="margin:4px 0 0;padding:4px 6px;background:#0b0b0b;border:1px solid #2a2a2a;border-radius:3px;font-size:10px">—</pre>
+            </div>
+            <div>
+              <div style="font-size:11px;opacity:0.7;margin-bottom:2px">Wrapped phase X</div>
+              <img id="deflectometry-diag-wrap-x" style="width:100%;border:1px solid #444;background:#111;display:block" />
+            </div>
+            <div>
+              <div style="font-size:11px;opacity:0.7;margin-bottom:2px">Wrapped phase Y</div>
+              <img id="deflectometry-diag-wrap-y" style="width:100%;border:1px solid #444;background:#111;display:block" />
+            </div>
+            <div>
+              <div style="font-size:11px;opacity:0.7;margin-bottom:2px">Unwrapped X (before tilt removal)</div>
+              <img id="deflectometry-diag-unw-x" style="width:100%;border:1px solid #444;background:#111;display:block" />
+            </div>
+            <div>
+              <div style="font-size:11px;opacity:0.7;margin-bottom:2px">Unwrapped Y (before tilt removal)</div>
+              <img id="deflectometry-diag-unw-y" style="width:100%;border:1px solid #444;background:#111;display:block" />
+            </div>
           </div>
         </div>
       </div>
@@ -84,6 +118,7 @@ function buildDialog() {
   $("btn-deflectometry-capture").addEventListener("click", captureSequence);
   $("btn-deflectometry-compute").addEventListener("click", compute);
   $("btn-deflectometry-reset").addEventListener("click", resetSession);
+  $("btn-deflectometry-diag").addEventListener("click", runDiagnostics);
 }
 
 function setProgress(text) {
@@ -272,6 +307,54 @@ async function compute() {
     setProgress("Compute complete.");
   } catch (e) {
     setProgress("Compute failed: " + (e && e.message ? e.message : String(e)));
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function runDiagnostics() {
+  const btn = $("btn-deflectometry-diag");
+  if (btn) btn.disabled = true;
+  setProgress("Running diagnostics…");
+  try {
+    const r = await apiFetch("/deflectometry/diagnostics", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    if (!r.ok) {
+      const msg = await r.text();
+      setProgress("Diagnostics failed: " + msg);
+      return;
+    }
+    const d = await r.json();
+    const diagEl = $("deflectometry-diag-result");
+    if (!diagEl) return;
+
+    // Frame stats table
+    const lines = d.frame_stats.map(f =>
+      `${f.name.padEnd(16)} min:${f.min.toFixed(1).padStart(6)} max:${f.max.toFixed(1).padStart(6)} mean:${f.mean.toFixed(1).padStart(6)} std:${f.std.toFixed(1).padStart(6)}`
+    );
+    $("deflectometry-diag-framestats").textContent = lines.join("\n");
+
+    // Modulation maps
+    const b64 = s => `data:image/png;base64,${s}`;
+    $("deflectometry-diag-mod-x").src = b64(d.modulation_x.png_b64);
+    $("deflectometry-diag-mod-y").src = b64(d.modulation_y.png_b64);
+    const fmtMod = m => `min:${m.min.toFixed(1)} max:${m.max.toFixed(1)} mean:${m.mean.toFixed(1)} median:${m.median.toFixed(1)}`;
+    $("deflectometry-diag-mod-x-stats").textContent = fmtMod(d.modulation_x);
+    $("deflectometry-diag-mod-y-stats").textContent = fmtMod(d.modulation_y);
+
+    // Wrapped + unwrapped phase
+    $("deflectometry-diag-wrap-x").src = b64(d.wrapped_x_png_b64);
+    $("deflectometry-diag-wrap-y").src = b64(d.wrapped_y_png_b64);
+    $("deflectometry-diag-unw-x").src = b64(d.unwrapped_raw_x_png_b64);
+    $("deflectometry-diag-unw-y").src = b64(d.unwrapped_raw_y_png_b64);
+
+    diagEl.hidden = false;
+    setProgress(`Diagnostics complete. Raw frames saved to ${d.frames_saved_to}`);
+  } catch (e) {
+    setProgress("Diagnostics failed: " + (e && e.message ? e.message : String(e)));
   } finally {
     if (btn) btn.disabled = false;
   }
