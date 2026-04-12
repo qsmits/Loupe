@@ -85,7 +85,7 @@ class ResetBody(BaseModel):
 
 
 class ComputeBody(BaseModel):
-    pass
+    mask_threshold: float = Field(default=0.02, ge=0.0, le=0.5)
 
 
 class CaptureBody(BaseModel):
@@ -386,7 +386,7 @@ def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
         # Modulation-based masking
         mod_x = compute_modulation(frames_x)
         mod_y = compute_modulation(frames_y)
-        mask = create_modulation_mask(mod_x, mod_y)
+        mask = create_modulation_mask(mod_x, mod_y, threshold_frac=body.mask_threshold)
         mask_valid_frac = float(mask.sum()) / float(mask.size) if mask.size > 0 else 0.0
 
         result = {
@@ -404,8 +404,11 @@ def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
         s._last_mask = mask
         return result
 
+    class HeightmapBody(BaseModel):
+        mask_threshold: float = Field(default=0.02, ge=0.0, le=0.5)
+
     @router.post("/deflectometry/heightmap", dependencies=[Depends(_reject_hosted)])
-    async def deflectometry_heightmap():
+    async def deflectometry_heightmap(body: HeightmapBody = HeightmapBody()):  # noqa: B008
         import cv2 as cv2_local
         s = _current()
         if s is None or s.last_result is None:
@@ -413,7 +416,25 @@ def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
 
         unw_x = s._last_unw_x
         unw_y = s._last_unw_y
-        mask = s._last_mask
+        # Recompute mask with the requested threshold so the 3D view
+        # respects the slider value even if it differs from the last compute.
+        if len(s.frames) >= 8:
+            def _to_gray(f):
+                arr = np.asarray(f, dtype=np.float64)
+                return arr.mean(axis=-1) if arr.ndim == 3 else arr
+            frames_x = [_to_gray(f) for f in s.frames[:4]]
+            frames_y = [_to_gray(f) for f in s.frames[4:8]]
+            if s.flat_white is not None and s.flat_black is not None:
+                white = _to_gray(s.flat_white)
+                black = _to_gray(s.flat_black)
+                denom = white - black + 1e-6
+                frames_x = [(f - black) / denom for f in frames_x]
+                frames_y = [(f - black) / denom for f in frames_y]
+            mod_x = compute_modulation(frames_x)
+            mod_y = compute_modulation(frames_y)
+            mask = create_modulation_mask(mod_x, mod_y, threshold_frac=body.mask_threshold)
+        else:
+            mask = s._last_mask
 
         height = frankot_chellappa(unw_x, unw_y, mask=mask)
 

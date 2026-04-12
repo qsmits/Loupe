@@ -47,12 +47,18 @@ function buildDialog() {
           <input type="text" id="deflectometry-pair-code" maxlength="4" placeholder="A3X7" style="width:80px;text-transform:uppercase;font-family:monospace;font-size:18px;text-align:center;letter-spacing:4px" />
           <button class="detect-btn" id="btn-deflectometry-pair" style="flex-shrink:0">Pair</button>
           <span id="deflectometry-ipad-status" style="font-size:12px;padding:3px 8px;border-radius:3px;background:#3a1a1a;color:#f87171;border:1px solid #7a2a2a">iPad: disconnected</span>
+          <span id="deflectometry-flatfield-status" style="font-size:12px;padding:3px 8px;border-radius:3px;background:#1a1a2a;color:#888;border:1px solid #333">Flat field: \u2014</span>
+          <span id="deflectometry-ref-status" style="font-size:12px;padding:3px 8px;border-radius:3px;background:#1a1a2a;color:#888;border:1px solid #333">Reference: \u2014</span>
         </div>
 
         <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap">
           <label style="font-size:13px">Fringe frequency (cycles):</label>
           <input type="number" id="deflectometry-freq" min="2" max="64" step="1" value="16"
                  style="width:90px" />
+          <label style="font-size:13px">Mask threshold:
+            <input type="range" id="deflectometry-mask-thresh" min="0" max="20" step="1" value="2" style="width:100px;vertical-align:middle">
+            <span id="deflectometry-mask-thresh-val" style="font-size:12px;min-width:30px;display:inline-block">2%</span>
+          </label>
           <button class="detect-btn" id="btn-deflectometry-flatfield" style="margin-left:8px;min-width:80px">Flat Field</button>
           <button class="detect-btn" id="btn-deflectometry-ref" style="min-width:140px">Capture Reference</button>
           <button class="detect-btn" id="btn-deflectometry-capture" style="min-width:150px">Capture Sequence</button>
@@ -123,6 +129,24 @@ function buildDialog() {
   $("btn-deflectometry-reset").addEventListener("click", resetSession);
   $("btn-deflectometry-diag").addEventListener("click", runDiagnostics);
   $("btn-deflectometry-3d").addEventListener("click", openDeflectometry3d);
+
+  // Mask threshold slider: update label + debounced recompute
+  const maskSlider = $("deflectometry-mask-thresh");
+  const maskLabel = $("deflectometry-mask-thresh-val");
+  let _maskDebounce = null;
+  if (maskSlider) {
+    maskSlider.addEventListener("input", () => {
+      if (maskLabel) maskLabel.textContent = maskSlider.value + "%";
+      // Debounced recompute if results are already visible
+      if (_maskDebounce) clearTimeout(_maskDebounce);
+      _maskDebounce = setTimeout(() => {
+        const resultEl = $("deflectometry-result");
+        if (resultEl && !resultEl.hidden) {
+          compute();
+        }
+      }, 300);
+    });
+  }
 }
 
 function setProgress(text) {
@@ -251,12 +275,30 @@ function renderResult(result) {
   resultEl.hidden = false;
 }
 
+function setCalibrationStatus(elId, label, hasIt) {
+  const el = $(elId);
+  if (!el) return;
+  if (hasIt) {
+    el.textContent = label + ": \u2713";
+    el.style.background = "#0f2a16";
+    el.style.color = "#4ade80";
+    el.style.borderColor = "#1f5a2e";
+  } else {
+    el.textContent = label + ": \u2014";
+    el.style.background = "#1a1a2a";
+    el.style.color = "#888";
+    el.style.borderColor = "#333";
+  }
+}
+
 async function refreshStatus() {
   try {
     const r = await apiFetch("/deflectometry/status");
     if (!r.ok) return null;
     const data = await r.json();
     setIpadStatus(!!data.ipad_connected);
+    setCalibrationStatus("deflectometry-flatfield-status", "Flat field", !!data.has_flat_field);
+    setCalibrationStatus("deflectometry-ref-status", "Reference", !!data.has_reference);
     return data;
   } catch {
     return null;
@@ -321,12 +363,13 @@ async function captureSequence() {
 async function compute() {
   const btn = $("btn-deflectometry-compute");
   if (btn) { btn.disabled = true; }
-  setProgress("Computing phase maps…");
+  setProgress("Computing phase maps\u2026");
   try {
+    const maskThresh = parseFloat($("deflectometry-mask-thresh")?.value || "2") / 100;
     const r = await apiFetch("/deflectometry/compute", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({}),
+      body: JSON.stringify({ mask_threshold: maskThresh }),
     });
     if (!r.ok) {
       const msg = await r.text();
@@ -337,7 +380,8 @@ async function compute() {
     renderResult(data);
     const btn3d = $("btn-deflectometry-3d");
     if (btn3d) btn3d.disabled = false;
-    setProgress("Compute complete.");
+    const maskPct = data.mask_valid_frac != null ? (data.mask_valid_frac * 100).toFixed(1) : "?";
+    setProgress("Compute complete. Mask: " + maskPct + "% of pixels valid.");
   } catch (e) {
     setProgress("Compute failed: " + (e && e.message ? e.message : String(e)));
   } finally {
@@ -437,10 +481,11 @@ async function openDeflectometry3d() {
   // Fetch heightmap data from the backend.
   let payload;
   try {
+    const maskThresh = parseFloat($("deflectometry-mask-thresh")?.value || "2") / 100;
     const resp = await apiFetch("/deflectometry/heightmap", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({}),
+      body: JSON.stringify({ mask_threshold: maskThresh }),
     });
     if (resp.status === 404) {
       setProgress("No heightmap available. Run Compute first.");
