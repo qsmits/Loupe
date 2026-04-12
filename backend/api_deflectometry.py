@@ -33,6 +33,7 @@ from .vision.deflectometry import (
     compute_wrapped_phase,
     phase_stats,
     pseudocolor_png_b64,
+    remove_tilt,
     unwrap_phase,
 )
 
@@ -292,8 +293,8 @@ def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
 
         wrap_x = compute_wrapped_phase(frames_x)
         wrap_y = compute_wrapped_phase(frames_y)
-        unw_x = unwrap_phase(wrap_x, orientation="x")
-        unw_y = unwrap_phase(wrap_y, orientation="y")
+        unw_x = remove_tilt(unwrap_phase(wrap_x, orientation="x"))
+        unw_y = remove_tilt(unwrap_phase(wrap_y, orientation="y"))
 
         result = {
             "phase_x_png_b64": pseudocolor_png_b64(unw_x),

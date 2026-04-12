@@ -70,6 +70,25 @@ def unwrap_phase(wrapped: np.ndarray, orientation: str) -> np.ndarray:
     return np.unwrap(wrapped, axis=axis)
 
 
+def remove_tilt(unwrapped: np.ndarray) -> np.ndarray:
+    """Subtract the best-fit plane from a 2D phase map.
+
+    Fits z = a*x + b*y + c via least-squares and returns the residual.
+    This removes alignment tilt so the stats and colormap reflect actual
+    surface shape rather than how well the part is levelled.
+    """
+    u = np.asarray(unwrapped, dtype=np.float64)
+    h, w = u.shape
+    yy, xx = np.mgrid[0:h, 0:w]
+    # Build the (N, 3) design matrix [x, y, 1]
+    A = np.column_stack([xx.ravel(), yy.ravel(), np.ones(h * w)])
+    z = u.ravel()
+    # Least-squares solve for [a, b, c]
+    coeffs, _, _, _ = np.linalg.lstsq(A, z, rcond=None)
+    plane = (coeffs[0] * xx + coeffs[1] * yy + coeffs[2])
+    return u - plane
+
+
 def phase_stats(unwrapped: np.ndarray) -> dict:
     """Return {'pv', 'rms', 'mean'} as plain Python floats.
 

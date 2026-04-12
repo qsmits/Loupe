@@ -2,7 +2,7 @@ import base64
 import numpy as np
 from backend.vision.deflectometry import (
     generate_fringe_pattern, compute_wrapped_phase, unwrap_phase,
-    phase_stats, pseudocolor_png_b64,
+    phase_stats, pseudocolor_png_b64, remove_tilt,
 )
 
 def test_generate_fringe_pattern_x_is_sinusoidal():
@@ -68,6 +68,29 @@ def test_phase_stats_on_ramp():
     assert isinstance(s["pv"], float)
     assert isinstance(s["rms"], float)
     assert isinstance(s["mean"], float)
+
+def test_remove_tilt_flattens_plane():
+    h, w = 32, 64
+    yy, xx = np.mgrid[0:h, 0:w]
+    # A tilted plane: z = 0.5*x + 0.3*y + 10
+    plane = 0.5 * xx + 0.3 * yy + 10.0
+    # Add a small bump so the residual isn't perfectly zero
+    bump = 0.01 * np.sin(2 * np.pi * xx / w)
+    result = remove_tilt(plane + bump)
+    # The plane should be gone; only the bump remains
+    assert result.shape == (h, w)
+    # Residual PV should be close to the bump's PV (~0.02), not the plane's (~47)
+    assert np.ptp(result) < 0.05
+
+def test_remove_tilt_preserves_curvature():
+    h, w = 32, 64
+    yy, xx = np.mgrid[0:h, 0:w]
+    # Quadratic curvature + tilt
+    surface = 0.001 * (xx - w/2)**2 + 2.0 * xx + 5.0
+    result = remove_tilt(surface)
+    # Tilt removed, curvature preserved — PV should be close to the parabola's range
+    parabola_pv = 0.001 * (w/2)**2  # ~1.024
+    assert abs(np.ptp(result) - parabola_pv) < 0.1
 
 def test_pseudocolor_png_b64_decodes_to_png():
     u = np.random.default_rng(0).normal(size=(24, 24))
