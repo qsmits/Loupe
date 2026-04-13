@@ -124,7 +124,7 @@ function buildWorkspace() {
         </div>
 
         <div class="defl-tab-panel" id="defl-panel-phase">
-          <div class="defl-empty-state" id="defl-phase-empty">Complete the workflow to see results.</div>
+          <div class="defl-empty-state" id="defl-phase-empty">Capture a part and compute to see results.</div>
           <div id="defl-phase-content" hidden>
             <div class="defl-phase-grid">
               <div>
