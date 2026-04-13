@@ -342,7 +342,11 @@ image-upload mode.
 | Feature | Why deferred |
 |---------|-------------|
 | White-light interferometer mode | Longer-term — no hardware yet. Third mode after autocollimator + deflectometry. |
-| Fringe analysis tool (inside microscope mode) | **Parked.** Hardware is in hand (sodium lamps + 8–10 optical flats to 200 mm) and signal is strong, but user's actual workflow is handheld visual reading for lapping feedback, not quantitative measurement. Revisit when the new lapping machine is running and wanting repeatable before/after captures, or when a specific recurring measurement pain emerges. |
+| Cross-mode calibration sharing | Share microscope calibration (px/mm) with fringe mode so surface maps show physical dimensions. Measure part dimensions in microscope, drop optical flat on top, switch to fringe — same calibration applies. |
+| Cross-mode annotation overlay | Show microscope annotations (hole positions, feature dimensions) as an overlay in fringe mode for spatial correlation. |
+| Fringe mode: custom profile lines | Click on surface map to place arbitrary cross-section lines instead of only center H/V profiles. |
+| Fringe mode: phase-shifting capture | Add piezo-based multi-frame phase shifting as an alternative to single-image DFT extraction — higher accuracy, requires hardware. |
+| Fringe mode: lens distortion correction | Apply microscope lens cal to fringe images for more accurate Zernike fitting and spatial localization. |
 | Digital level app (Digi-Pas DWL-3500XY ×3, BLE) | **Separate app, not a Loupe mode.** Shares backend plumbing with Loupe. Needs BLE protocol reverse engineering. |
 | Gear inspection | Separate domain. Wait for gear machine. |
 | Nikon SC-102 XY stage integration | Hardware-dependent. Separate project. |
@@ -444,5 +448,5 @@ Later:     White-light interferometer  — third mode, no hardware yet
 Later:     Digital level app           — separate app, shares backend plumbing
 Future:    Gear inspection             — when gear machine is running
 Future:    Education / cloud mode      — university adoption
-Parked:    Fringe analysis tool        — revisit on lapping-machine trigger
+Active:    Fringe analysis mode        — single-image DFT interferogram analysis, Zernike fitting
 ```
