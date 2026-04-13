@@ -29,7 +29,7 @@ import { initStitch } from './stitch.js';
 import { initSuperRes } from './superres.js';
 import { initDeflectometry } from './deflectometry.js';
 import { initGear } from './gear.js';
-import { initModes } from './modes.js';
+import { initModes, getActiveMode } from './modes.js';
 
 // ─── Dropdown helpers ─────��──────────────────────────────────────────────────
 function closeAllDropdowns() {

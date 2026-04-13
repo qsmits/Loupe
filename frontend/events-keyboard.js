@@ -9,6 +9,7 @@ import { saveSession } from './session.js';
 import { viewport, fitToWindow, zoomOneToOne, clampPan, imageWidth, imageHeight } from './viewport.js';
 import { hideContextMenu } from './events-context-menu.js';
 import { _finalizePickInspection } from './events-inspection.js';
+import { getActiveMode } from './modes.js';
 
 export function undo() {
   if (!undoStack.length) return;
@@ -44,6 +45,7 @@ let _spacebarPrevTool = null;  // non-null while spacebar is held
 
 export function initKeyboard(closeAllDropdowns) {
   document.addEventListener("keyup", e => {
+    if (getActiveMode() !== 'microscope') return;
     if (e.key === " " && _spacebarPrevTool !== null) {
       setTool(_spacebarPrevTool);
       _spacebarPrevTool = null;
@@ -59,6 +61,9 @@ export function initKeyboard(closeAllDropdowns) {
     }
     // All other shortcuts are blocked when an input/select/textarea/dialog is focused
     if (document.activeElement.closest("input, select, textarea") !== null || document.querySelector(".dialog-overlay:not([hidden])") !== null) return;
+
+    // Microscope-only shortcuts: do nothing in other modes
+    if (getActiveMode() !== 'microscope') return;
 
     // Spacebar — temporary pan while held (Figma / CAD convention)
     if (e.key === " " && !e.repeat) {
