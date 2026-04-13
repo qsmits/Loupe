@@ -2007,3 +2007,29 @@ body.no-camera .camera-section { display: none; }
   pointer-events: none;
 }
 
+/* ── Mode system ─────────────────────────────────────────── */
+
+.mode-switcher {
+  font-size: 14px;
+  font-weight: 600;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 3px 8px;
+  cursor: pointer;
+  outline: none;
+}
+.mode-switcher:focus {
+  border-color: var(--accent);
+}
+
+.mode-container {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+.mode-container[hidden] {
+  display: none !important;
+}
+

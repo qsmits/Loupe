@@ -10,10 +10,14 @@
 
   <!-- Top bar -->
   <div id="top-bar">
-    <span id="app-title">Microscope</span>
+    <select id="mode-switcher" class="mode-switcher">
+      <option value="microscope">Microscope</option>
+      <option value="deflectometry">Deflectometry</option>
+      <option value="fringe">Fringe Analysis</option>
+    </select>
     <div class="top-bar-divider"></div>
 
-    <div class="menu-group">
+    <div class="menu-group microscope-only">
       <button class="menu-btn" id="btn-menu-detect">Detect ▾</button>
       <div class="dropdown detect-panel" id="dropdown-detect" hidden>
         <div class="detect-section">
@@ -112,7 +116,7 @@
       </div>
     </div>
 
-    <div class="menu-group">
+    <div class="menu-group microscope-only">
       <button class="menu-btn" id="btn-menu-overlay">Overlay ▾</button>
       <div class="dropdown" id="dropdown-overlay" hidden>
         <button class="dropdown-item" id="btn-load-dxf">Load DXF</button>
@@ -171,7 +175,7 @@
       </div>
     </div>
 
-    <div class="menu-group">
+    <div class="menu-group microscope-only">
       <button class="menu-btn" id="btn-menu-clear">Clear ▾</button>
       <div class="dropdown" id="dropdown-clear" hidden>
         <button class="dropdown-item" id="btn-clear-detections">Clear detections</button>
@@ -253,16 +257,15 @@
     </div>
 
     <div class="top-bar-right">
-<button id="btn-compare" class="top-btn" title="Compare 4 image settings (Keyence-style)">4-up</button>
-      <button id="btn-stitch" class="top-btn" title="Stitch a grid of images into a panorama">Stitch</button>
-      <button id="btn-superres" class="top-btn" title="Super-resolution from sub-pixel shifted captures">SR</button>
-      <button id="btn-zstack" class="top-btn" title="3D Z-Stack (depth-from-focus)">3D</button>
-      <button id="btn-deflectometry" class="top-btn">Deflect</button>
-      <button id="btn-zstack-3d-view" class="top-btn" title="Open 3D surface view (requires a built Z-stack)" disabled>Surface</button>
-      <button id="btn-analyze-gear" class="top-btn" title="Analyze gear tooth widths (PoC)">Gear</button>
+<button id="btn-compare" class="top-btn microscope-only" title="Compare 4 image settings (Keyence-style)">4-up</button>
+      <button id="btn-stitch" class="top-btn microscope-only" title="Stitch a grid of images into a panorama">Stitch</button>
+      <button id="btn-superres" class="top-btn microscope-only" title="Super-resolution from sub-pixel shifted captures">SR</button>
+      <button id="btn-zstack" class="top-btn microscope-only" title="3D Z-Stack (depth-from-focus)">3D</button>
+      <button id="btn-zstack-3d-view" class="top-btn microscope-only" title="Open 3D surface view (requires a built Z-stack)" disabled>Surface</button>
+      <button id="btn-analyze-gear" class="top-btn microscope-only" title="Analyze gear tooth widths (PoC)">Gear</button>
       <button id="btn-freeze" class="top-btn freeze-btn freeze-live">❄ Live</button>
-      <button id="btn-load" class="top-btn icon-btn" title="Load image">📁</button>
-      <button id="btn-save-session" class="top-btn icon-btn" title="Save session">💾</button>
+      <button id="btn-load" class="top-btn icon-btn microscope-only" title="Load image">📁</button>
+      <button id="btn-save-session" class="top-btn icon-btn microscope-only" title="Save session">💾</button>
       <button id="btn-settings" class="top-btn icon-btn" title="Settings">⚙</button>
       <button id="btn-help" class="top-btn icon-btn" title="Help &amp; shortcuts (?)">?</button>
     </div>
@@ -270,6 +273,7 @@
 
   <!-- Main content area -->
   <div id="main">
+    <div id="mode-microscope" class="mode-container mode-active">
 
     <!-- Viewer -->
     <div id="viewer">
@@ -435,6 +439,16 @@
         <span id="cal-badge" class="cal-badge uncalibrated">NOT CALIBRATED</span>
       </div>
 
+    </div>
+    </div><!-- /mode-microscope -->
+
+    <div id="mode-deflectometry" class="mode-container" hidden>
+    </div>
+
+    <div id="mode-fringe" class="mode-container" hidden>
+      <div style="display:flex;align-items:center;justify-content:center;flex:1;opacity:0.5;font-size:18px">
+        Fringe Analysis — coming soon
+      </div>
     </div>
   </div>
 

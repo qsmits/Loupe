@@ -29,6 +29,7 @@ import { initStitch } from './stitch.js';
 import { initSuperRes } from './superres.js';
 import { initDeflectometry } from './deflectometry.js';
 import { initGear } from './gear.js';
+import { initModes } from './modes.js';
 
 // ─── Dropdown helpers ─────��──────────────────────────────────────────────────
 function closeAllDropdowns() {
@@ -68,6 +69,7 @@ function toggleDropdown(btnId, dropId) {
 // ── Init event modules ───────────────────────────────���────────────────────────
 initMouseHandlers();
 initKeyboard(closeAllDropdowns);
+initModes();
 
 // ── Dropdown menu wiring ───────────────────────────��─────────────────────────
 document.getElementById("btn-menu-detect").addEventListener("click", e => {
