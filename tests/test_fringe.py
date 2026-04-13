@@ -353,7 +353,29 @@ class TestRenderZernikeChart:
         assert decoded[:4] == b'\x89PNG'
 
 
+def _make_fringe_image(h, w, n_fringes=10):
+    """Create a synthetic interferogram with horizontal fringes."""
+    y = np.linspace(0, n_fringes * 2 * np.pi, h)
+    pattern = np.outer(np.cos(y), np.ones(w))
+    return ((pattern + 1) * 127).astype(np.uint8)
+
+
 class TestAnalyzeInterferogram:
+    def test_analyze_returns_height_grid(self):
+        """analyze_interferogram should return height_grid, mask_grid, grid_rows, grid_cols."""
+        image = _make_fringe_image(256, 256)
+        result = analyze_interferogram(image, wavelength_nm=632.8)
+        assert "height_grid" in result
+        assert "mask_grid" in result
+        assert "grid_rows" in result
+        assert "grid_cols" in result
+        assert isinstance(result["height_grid"], list)
+        assert isinstance(result["mask_grid"], list)
+        assert result["grid_rows"] > 0
+        assert result["grid_cols"] > 0
+        assert len(result["height_grid"]) == result["grid_rows"] * result["grid_cols"]
+        assert len(result["mask_grid"]) == result["grid_rows"] * result["grid_cols"]
+
     def test_full_pipeline_synthetic(self):
         """Full pipeline on a synthetic interferogram returns expected keys."""
         h, w = 128, 128

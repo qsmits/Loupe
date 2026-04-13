@@ -316,12 +316,15 @@ def _find_carrier(image: np.ndarray) -> tuple[int, int, float]:
     mag_search[cy - dc_margin_y:cy + dc_margin_y + 1,
                cx - dc_margin_x:cx + dc_margin_x + 1] = 0
 
+    # Zero out the lower half-plane (and right half of center row) so we can
+    # only ever find the +1 order peak.  This makes the result deterministic
+    # regardless of noise — conjugate symmetry means the -1 order has
+    # identical magnitude, so argmax tie-breaking could flip otherwise.
+    mag_search[cy + 1:, :] = 0
+    mag_search[cy, cx + 1:] = 0
+
     peak_idx = np.unravel_index(np.argmax(mag_search), mag_search.shape)
     py, px = peak_idx
-
-    if py > cy or (py == cy and px > cx):
-        py = h - py
-        px = w - px
 
     dist = math.sqrt((py - cy) ** 2 + (px - cx) ** 2)
 
@@ -472,8 +475,10 @@ def extract_phase_dft(image: np.ndarray, mask: np.ndarray | None = None
     if mask is not None:
         enhanced[~mask.astype(bool)] = 0
 
-    # Step 2: find carrier frequency
-    py, px, dist = _find_carrier(enhanced)
+    # Step 2: find carrier frequency (use raw image, not background-subtracted,
+    # so the peak selection is consistent with compute_fringe_modulation and
+    # doesn't flip sign depending on subtle background subtraction differences)
+    py, px, dist = _find_carrier(img)
     fy = (py - h // 2) / h  # cycles per pixel
     fx = (px - w // 2) / w
 
@@ -744,7 +749,8 @@ def render_zernike_chart(coefficients: list[float],
 def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 632.8,
                           mask_threshold: float = 0.15,
                           subtract_terms: list[int] | None = None,
-                          n_zernike: int = 36) -> dict:
+                          n_zernike: int = 36,
+                          use_full_mask: bool = False) -> dict:
     """Full analysis pipeline: single image in, all results out.
 
     Parameters
@@ -754,6 +760,10 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 632.8,
     mask_threshold : modulation threshold for auto-masking (0-1).
     subtract_terms : Noll indices to subtract (default: [1, 2, 3] = piston + tilt).
     n_zernike : number of Zernike terms to fit.
+    use_full_mask : when True, skip auto-masking and treat every pixel as
+        valid.  Use this when the caller already cropped to an ROI — Otsu
+        thresholding inside a user-selected region often picks up rim
+        artifacts that the user explicitly wanted to exclude.
 
     Returns
     -------
@@ -773,7 +783,10 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 632.8,
 
     # Step 1: Modulation & mask
     modulation = compute_fringe_modulation(img)
-    mask = create_fringe_mask(img, modulation, threshold_frac=mask_threshold)
+    if use_full_mask:
+        mask = np.ones(img.shape, dtype=bool)
+    else:
+        mask = create_fringe_mask(img, modulation, threshold_frac=mask_threshold)
     n_valid = int(mask.sum())
     n_total = int(mask.size)
 
@@ -819,6 +832,30 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 632.8,
         "mean": float(modulation.mean()),
     }
 
+    # Downsample height grid for client-side measurements (max 256x256)
+    max_grid = 256
+    gh, gw = height_nm.shape
+    if gh > max_grid or gw > max_grid:
+        scale_factor = min(max_grid / gh, max_grid / gw)
+        grid_h = max(1, int(gh * scale_factor))
+        grid_w = max(1, int(gw * scale_factor))
+        grid = cv2.resize(height_nm.astype(np.float32), (grid_w, grid_h),
+                          interpolation=cv2.INTER_AREA)
+        if mask is not None:
+            mask_resized = cv2.resize(mask.astype(np.uint8), (grid_w, grid_h),
+                                      interpolation=cv2.INTER_NEAREST)
+            grid_mask = (mask_resized > 0)
+        else:
+            grid_mask = np.ones((grid_h, grid_w), dtype=bool)
+    else:
+        grid = height_nm.astype(np.float32)
+        grid_h, grid_w = gh, gw
+        grid_mask = mask if mask is not None else np.ones((grid_h, grid_w), dtype=bool)
+
+    # Set masked pixels to 0 in the grid
+    grid_out = grid.copy()
+    grid_out[~grid_mask] = 0.0
+
     return {
         "surface_map": surface_map_b64,
         "zernike_chart": zernike_chart_b64,
@@ -837,6 +874,12 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 632.8,
         "wavelength_nm": wavelength_nm,
         "n_valid_pixels": n_valid,
         "n_total_pixels": n_total,
+        "surface_height": int(img.shape[0]),
+        "surface_width": int(img.shape[1]),
+        "height_grid": [round(float(v), 2) for v in grid_out.ravel()],
+        "mask_grid": [int(v) for v in grid_mask.ravel()],
+        "grid_rows": grid_h,
+        "grid_cols": grid_w,
     }
 
 
