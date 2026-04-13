@@ -10,6 +10,7 @@ Surface statistics and false-color rendering are added in subsequent tasks.
 
 from __future__ import annotations
 
+import base64
 import math
 
 import cv2
@@ -479,3 +480,369 @@ def focus_quality(image: np.ndarray) -> float:
     mid = 150.0
     score = 100.0 / (1.0 + math.exp(-k * (variance - mid)))
     return round(score, 1)
+
+
+# ── Surface analysis, rendering, full pipeline ──────────────────────────
+
+
+def phase_to_height(phase: np.ndarray, wavelength_nm: float) -> np.ndarray:
+    """Convert phase (radians) to physical height (nanometers).
+
+    For a double-pass interferometer (reflection):
+      height = phase * lambda / (4 * pi)
+
+    Parameters
+    ----------
+    phase : unwrapped phase in radians.
+    wavelength_nm : light source wavelength in nanometers.
+
+    Returns
+    -------
+    Height map in nanometers.
+    """
+    return phase * wavelength_nm / (4.0 * np.pi)
+
+
+def surface_stats(surface: np.ndarray, mask: np.ndarray | None = None
+                  ) -> dict:
+    """Compute PV (peak-to-valley) and RMS of a surface.
+
+    Parameters
+    ----------
+    surface : 2D height or phase array.
+    mask : boolean mask (True = valid).
+
+    Returns
+    -------
+    {"pv": float, "rms": float, "mean": float} in the same units as input.
+    """
+    s = np.asarray(surface, dtype=np.float64)
+    if mask is not None:
+        valid = mask.astype(bool)
+        s = s[valid]
+        if s.size == 0:
+            return {"pv": 0.0, "rms": 0.0, "mean": 0.0}
+    mean = float(s.mean())
+    pv = float(s.max() - s.min())
+    rms = float(np.sqrt(np.mean((s - mean) ** 2)))
+    return {"pv": pv, "rms": rms, "mean": mean}
+
+
+def render_surface_map(surface: np.ndarray, mask: np.ndarray | None = None
+                       ) -> str:
+    """Render a false-color surface map as a PNG, base64-encoded.
+
+    Uses the RdBu_r (red-blue reversed) colormap: red = high, blue = low.
+    Masked-out pixels are rendered as black.
+
+    Returns base64 string (no 'data:' prefix).
+    """
+    s = np.asarray(surface, dtype=np.float64)
+    if mask is not None:
+        valid = mask.astype(bool)
+        if valid.any():
+            smin = float(s[valid].min())
+            smax = float(s[valid].max())
+        else:
+            smin, smax = 0.0, 0.0
+    else:
+        smin = float(s.min())
+        smax = float(s.max())
+
+    if smax > smin:
+        # Center around zero for symmetric colormap
+        vmax = max(abs(smin), abs(smax))
+        norm = ((s + vmax) / (2.0 * vmax) * 255.0)
+    else:
+        norm = np.full_like(s, 128.0)
+
+    gray = np.clip(norm, 0, 255).astype(np.uint8)
+    if mask is not None:
+        gray[~valid] = 0
+
+    # Apply RdBu_r-like colormap via OpenCV
+    # OpenCV COLORMAP_JET is similar; use custom LUT for RdBu_r
+    # For simplicity, use matplotlib to generate the LUT
+    try:
+        import matplotlib.pyplot as plt
+        cmap = plt.cm.RdBu_r
+        lut = (cmap(np.linspace(0, 1, 256))[:, :3] * 255).astype(np.uint8)
+        # Apply LUT manually
+        colored = lut[gray]
+        # Convert RGB to BGR for cv2
+        colored = colored[:, :, ::-1].copy()
+    except ImportError:
+        # Fallback to VIRIDIS
+        colored = cv2.applyColorMap(gray, cv2.COLORMAP_VIRIDIS)
+
+    if mask is not None:
+        colored[~valid] = 0
+
+    ok, buf = cv2.imencode(".png", colored)
+    if not ok:
+        raise RuntimeError("cv2.imencode failed for surface map PNG")
+    return base64.b64encode(buf.tobytes()).decode("ascii")
+
+
+def render_profile(surface: np.ndarray, mask: np.ndarray | None = None,
+                   axis: str = "x") -> dict:
+    """Extract a cross-section profile through the center of the surface.
+
+    Parameters
+    ----------
+    surface : 2D array.
+    mask : boolean mask.
+    axis : "x" for horizontal profile (row at center), "y" for vertical.
+
+    Returns
+    -------
+    JSON-serializable dict with keys:
+      "positions": list of pixel positions along the axis
+      "values": list of height/phase values (None for masked pixels)
+      "axis": "x" or "y"
+    """
+    h, w = surface.shape
+    if axis == "x":
+        row = h // 2
+        profile = surface[row, :]
+        mask_row = mask[row, :] if mask is not None else np.ones(w, dtype=bool)
+        positions = list(range(w))
+    else:
+        col = w // 2
+        profile = surface[:, col]
+        mask_row = mask[:, col] if mask is not None else np.ones(h, dtype=bool)
+        positions = list(range(h))
+
+    values = []
+    for val, m in zip(profile, mask_row):
+        values.append(float(val) if m else None)
+
+    return {"positions": positions, "values": values, "axis": axis}
+
+
+def render_zernike_chart(coefficients: list[float],
+                         subtracted_terms: list[int],
+                         wavelength_nm: float) -> str:
+    """Render a bar chart of Zernike coefficients as a PNG, base64-encoded.
+
+    Bars are colored: blue for included terms, gray for subtracted terms.
+    Values are shown in both waves (lambda) and nm.
+
+    Returns base64 string (no 'data:' prefix).
+    """
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    n_terms = len(coefficients)
+    indices = list(range(1, n_terms + 1))
+
+    # Convert coefficients to waves (1 wave = 2*pi radians)
+    coeff_waves = [c / (2 * np.pi) for c in coefficients]
+    coeff_nm = [c * wavelength_nm / (4 * np.pi) for c in coefficients]
+
+    colors = []
+    for j in indices:
+        if j in subtracted_terms:
+            colors.append("#666666")  # gray for subtracted
+        else:
+            colors.append("#4a9eff")  # blue for active
+
+    fig, ax = plt.subplots(figsize=(10, 3.5), dpi=100)
+    fig.patch.set_facecolor("#1c1c1e")
+    ax.set_facecolor("#1c1c1e")
+
+    bars = ax.bar(indices, coeff_waves, color=colors, edgecolor="none", width=0.7)
+    ax.set_xlabel("Zernike term (Noll index)", color="#e8e8e8", fontsize=9)
+    ax.set_ylabel("Coefficient (waves)", color="#e8e8e8", fontsize=9)
+    ax.set_title("Zernike Coefficients", color="#e8e8e8", fontsize=11)
+    ax.tick_params(colors="#ababab", labelsize=8)
+    ax.spines["bottom"].set_color("#3a3a3c")
+    ax.spines["left"].set_color("#3a3a3c")
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    ax.axhline(y=0, color="#3a3a3c", linewidth=0.5)
+
+    # Add term names as x-tick labels for first 11 terms
+    if n_terms <= 15:
+        labels = [ZERNIKE_NAMES.get(j, str(j)) for j in indices]
+        ax.set_xticks(indices)
+        ax.set_xticklabels(labels, rotation=45, ha="right", fontsize=7)
+    else:
+        ax.set_xticks(indices[::3])
+
+    plt.tight_layout()
+
+    import io
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", facecolor=fig.get_facecolor(), edgecolor="none")
+    plt.close(fig)
+    buf.seek(0)
+    return base64.b64encode(buf.read()).decode("ascii")
+
+
+def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 632.8,
+                          mask_threshold: float = 0.15,
+                          subtract_terms: list[int] | None = None,
+                          n_zernike: int = 36) -> dict:
+    """Full analysis pipeline: single image in, all results out.
+
+    Parameters
+    ----------
+    image : grayscale or BGR interferogram.
+    wavelength_nm : light source wavelength.
+    mask_threshold : modulation threshold for auto-masking (0-1).
+    subtract_terms : Noll indices to subtract (default: [1, 2, 3] = piston + tilt).
+    n_zernike : number of Zernike terms to fit.
+
+    Returns
+    -------
+    Dict with keys: surface_map, zernike_chart, profile_x, profile_y,
+    coefficients, pv_nm, rms_nm, pv_waves, rms_waves, modulation_stats,
+    focus_score, subtracted_terms, wavelength_nm, n_valid_pixels, n_total_pixels.
+    """
+    if subtract_terms is None:
+        subtract_terms = [1, 2, 3]  # Piston + Tilt X + Tilt Y
+
+    img = np.asarray(image, dtype=np.float64)
+    if img.ndim == 3:
+        img = img.mean(axis=-1)
+
+    # Step 1: Modulation & mask
+    modulation = compute_fringe_modulation(img)
+    mask = create_fringe_mask(modulation, threshold_frac=mask_threshold)
+    n_valid = int(mask.sum())
+    n_total = int(mask.size)
+
+    # Step 2: DFT phase extraction
+    wrapped = extract_phase_dft(img, mask)
+
+    # Step 3: Phase unwrapping
+    unwrapped = unwrap_phase_2d(wrapped, mask)
+
+    # Step 4: Zernike fitting
+    coeffs, rho, theta = fit_zernike(unwrapped, n_terms=n_zernike, mask=mask)
+
+    # Step 5: Subtract selected terms
+    corrected = subtract_zernike(unwrapped, coeffs, subtract_terms, rho, theta, mask)
+
+    # Step 6: Convert to height
+    height_nm = phase_to_height(corrected, wavelength_nm)
+
+    # Step 7: Statistics
+    stats = surface_stats(height_nm, mask)
+    pv_nm = stats["pv"]
+    rms_nm = stats["rms"]
+    pv_waves = pv_nm / wavelength_nm
+    rms_waves = rms_nm / wavelength_nm
+
+    # Step 8: Focus quality
+    f_score = focus_quality(image)
+
+    # Step 9: Renderings
+    surface_map_b64 = render_surface_map(height_nm, mask)
+    profile_x = render_profile(height_nm, mask, axis="x")
+    profile_y = render_profile(height_nm, mask, axis="y")
+
+    # Step 10: Zernike chart
+    zernike_chart_b64 = render_zernike_chart(
+        coeffs.tolist(), subtract_terms, wavelength_nm
+    )
+
+    # Modulation stats
+    mod_stats = {
+        "min": float(modulation.min()),
+        "max": float(modulation.max()),
+        "mean": float(modulation.mean()),
+    }
+
+    return {
+        "surface_map": surface_map_b64,
+        "zernike_chart": zernike_chart_b64,
+        "profile_x": profile_x,
+        "profile_y": profile_y,
+        "coefficients": coeffs.tolist(),
+        "coefficient_names": {str(j): ZERNIKE_NAMES.get(j, f"Z{j}")
+                              for j in range(1, n_zernike + 1)},
+        "pv_nm": pv_nm,
+        "rms_nm": rms_nm,
+        "pv_waves": pv_waves,
+        "rms_waves": rms_waves,
+        "modulation_stats": mod_stats,
+        "focus_score": f_score,
+        "subtracted_terms": subtract_terms,
+        "wavelength_nm": wavelength_nm,
+        "n_valid_pixels": n_valid,
+        "n_total_pixels": n_total,
+    }
+
+
+def reanalyze(coefficients: list[float], subtract_terms: list[int],
+              wavelength_nm: float, surface_shape: tuple[int, int],
+              mask_serialized: list[int] | None = None,
+              n_zernike: int = 36) -> dict:
+    """Re-analyze with different Zernike subtraction without redoing FFT.
+
+    This is the fast path: reconstruct the full surface from coefficients,
+    subtract the requested terms, recompute stats and renderings.
+
+    Parameters
+    ----------
+    coefficients : Zernike coefficients from a previous analyze call.
+    subtract_terms : Noll indices to subtract.
+    wavelength_nm : wavelength for height conversion.
+    surface_shape : (height, width) of the original surface.
+    mask_serialized : flat list of 0/1 values, same length as h*w.
+    n_zernike : number of Zernike terms.
+
+    Returns
+    -------
+    Dict with: surface_map, zernike_chart, profile_x, profile_y,
+    pv_nm, rms_nm, pv_waves, rms_waves, subtracted_terms.
+    """
+    h, w = surface_shape
+    coeffs = np.array(coefficients[:n_zernike], dtype=np.float64)
+
+    # Reconstruct mask
+    if mask_serialized is not None:
+        mask = np.array(mask_serialized, dtype=bool).reshape(h, w)
+    else:
+        mask = np.ones((h, w), dtype=bool)
+
+    rho, theta = _make_polar_coords((h, w), mask)
+
+    # Reconstruct full surface from all coefficients
+    full_surface = np.zeros((h, w), dtype=np.float64)
+    for j in range(1, min(len(coeffs) + 1, n_zernike + 1)):
+        Zj = zernike_polynomial(j, rho, theta)
+        full_surface += coeffs[j - 1] * Zj
+
+    # Subtract selected terms
+    corrected = subtract_zernike(full_surface, coeffs, subtract_terms,
+                                 rho, theta, mask)
+
+    # Convert to height
+    height_nm = phase_to_height(corrected, wavelength_nm)
+
+    # Stats
+    stats = surface_stats(height_nm, mask)
+
+    # Renderings
+    surface_map_b64 = render_surface_map(height_nm, mask)
+    zernike_chart_b64 = render_zernike_chart(
+        coeffs.tolist(), subtract_terms, wavelength_nm
+    )
+    profile_x = render_profile(height_nm, mask, axis="x")
+    profile_y = render_profile(height_nm, mask, axis="y")
+
+    return {
+        "surface_map": surface_map_b64,
+        "zernike_chart": zernike_chart_b64,
+        "profile_x": profile_x,
+        "profile_y": profile_y,
+        "pv_nm": stats["pv"],
+        "rms_nm": stats["rms"],
+        "pv_waves": stats["pv"] / wavelength_nm,
+        "rms_waves": stats["rms"] / wavelength_nm,
+        "subtracted_terms": subtract_terms,
+    }

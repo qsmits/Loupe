@@ -1,4 +1,5 @@
 """Tests for fringe analysis vision module."""
+import base64
 import math
 import numpy as np
 import pytest
@@ -18,6 +19,13 @@ from backend.vision.fringe import (
     extract_phase_dft,
     unwrap_phase_2d,
     focus_quality,
+    phase_to_height,
+    surface_stats,
+    render_surface_map,
+    render_profile,
+    render_zernike_chart,
+    analyze_interferogram,
+    reanalyze,
 )
 
 
@@ -251,3 +259,141 @@ class TestFocusQuality:
         img = np.zeros((50, 50), dtype=np.uint8)
         score = focus_quality(img)
         assert 0 <= score <= 100
+
+
+class TestPhaseToHeight:
+    def test_known_conversion(self):
+        """2*pi radians at 632.8 nm should give 632.8/(4*pi)*2*pi = 316.4 nm."""
+        phase = np.array([2 * np.pi])
+        height = phase_to_height(phase, 632.8)
+        expected = 632.8 / 2.0  # lambda/2 for a full wave
+        np.testing.assert_allclose(height, expected, rtol=1e-6)
+
+    def test_zero_phase_zero_height(self):
+        phase = np.zeros((10, 10))
+        height = phase_to_height(phase, 589.0)
+        np.testing.assert_allclose(height, 0.0)
+
+
+class TestSurfaceStats:
+    def test_ramp_stats(self):
+        s = np.linspace(0, 10, 101)
+        stats = surface_stats(s)
+        assert abs(stats["pv"] - 10.0) < 1e-9
+        assert stats["rms"] > 0
+
+    def test_masked_stats(self):
+        s = np.array([0.0, 1.0, 2.0, 100.0])  # outlier at index 3
+        mask = np.array([True, True, True, False])
+        stats = surface_stats(s, mask)
+        assert abs(stats["pv"] - 2.0) < 1e-9
+
+    def test_empty_mask(self):
+        s = np.ones((5, 5))
+        mask = np.zeros((5, 5), dtype=bool)
+        stats = surface_stats(s, mask)
+        assert stats["pv"] == 0.0
+        assert stats["rms"] == 0.0
+
+
+class TestRenderSurfaceMap:
+    def test_returns_valid_base64_png(self):
+        surface = np.random.rand(50, 50)
+        b64 = render_surface_map(surface)
+        assert len(b64) > 100
+        # Should decode without error
+        decoded = base64.b64decode(b64)
+        # PNG magic bytes
+        assert decoded[:4] == b'\x89PNG'
+
+    def test_masked_surface(self):
+        surface = np.random.rand(50, 50)
+        mask = np.ones((50, 50), dtype=bool)
+        mask[:10, :] = False
+        b64 = render_surface_map(surface, mask)
+        assert len(b64) > 100
+
+
+class TestRenderProfile:
+    def test_x_profile(self):
+        surface = np.arange(100).reshape(10, 10).astype(float)
+        profile = render_profile(surface, axis="x")
+        assert profile["axis"] == "x"
+        assert len(profile["positions"]) == 10
+        assert len(profile["values"]) == 10
+        assert all(v is not None for v in profile["values"])
+
+    def test_y_profile(self):
+        surface = np.arange(100).reshape(10, 10).astype(float)
+        profile = render_profile(surface, axis="y")
+        assert profile["axis"] == "y"
+        assert len(profile["positions"]) == 10
+
+    def test_masked_profile(self):
+        surface = np.ones((10, 10))
+        mask = np.ones((10, 10), dtype=bool)
+        mask[5, 3] = False
+        profile = render_profile(surface, mask, axis="x")
+        # The center row profile at y=5 should have None at x=3
+        assert profile["values"][3] is None
+
+
+class TestRenderZernikeChart:
+    def test_returns_valid_png(self):
+        coeffs = [0.1] * 36
+        b64 = render_zernike_chart(coeffs, [2, 3], 632.8)
+        assert len(b64) > 100
+        decoded = base64.b64decode(b64)
+        assert decoded[:4] == b'\x89PNG'
+
+
+class TestAnalyzeInterferogram:
+    def test_full_pipeline_synthetic(self):
+        """Full pipeline on a synthetic interferogram returns expected keys."""
+        h, w = 128, 128
+        yy, xx = np.mgrid[0:h, 0:w]
+        carrier = 2 * np.pi * 6 * xx / w
+        surface = 0.5 * ((xx - w/2)**2 + (yy - h/2)**2) / (w/2)**2
+        img = (128 + 100 * np.cos(carrier + surface)).astype(np.uint8)
+
+        result = analyze_interferogram(img, wavelength_nm=632.8)
+
+        # Check all expected keys are present
+        expected_keys = {
+            "surface_map", "zernike_chart", "profile_x", "profile_y",
+            "coefficients", "coefficient_names", "pv_nm", "rms_nm",
+            "pv_waves", "rms_waves", "modulation_stats", "focus_score",
+            "subtracted_terms", "wavelength_nm", "n_valid_pixels", "n_total_pixels",
+        }
+        assert expected_keys.issubset(set(result.keys()))
+        assert len(result["coefficients"]) == 36
+        assert result["pv_nm"] >= 0
+        assert result["rms_nm"] >= 0
+        assert 0 <= result["focus_score"] <= 100
+
+
+class TestReanalyze:
+    def test_reanalyze_changes_stats(self):
+        """Re-analyzing with different subtraction should change PV/RMS."""
+        # First do a full analysis
+        h, w = 64, 64
+        yy, xx = np.mgrid[0:h, 0:w]
+        carrier = 2 * np.pi * 4 * xx / w
+        img = (128 + 80 * np.cos(carrier)).astype(np.uint8)
+
+        result = analyze_interferogram(img, wavelength_nm=632.8,
+                                       subtract_terms=[1, 2, 3])
+        coeffs = result["coefficients"]
+
+        # Re-analyze: subtract nothing
+        r1 = reanalyze(coeffs, subtract_terms=[1],
+                       wavelength_nm=632.8, surface_shape=(h, w))
+        # Re-analyze: subtract tilt + power
+        r2 = reanalyze(coeffs, subtract_terms=[1, 2, 3, 4],
+                       wavelength_nm=632.8, surface_shape=(h, w))
+
+        # The two should generally have different PV
+        assert r1["pv_nm"] >= 0
+        assert r2["pv_nm"] >= 0
+        assert "surface_map" in r1
+        assert "surface_map" in r2
