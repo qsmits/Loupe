@@ -29,6 +29,7 @@ import { initStitch } from './stitch.js';
 import { initSuperRes } from './superres.js';
 import { initDeflectometry } from './deflectometry.js';
 import { initGear } from './gear.js';
+import { initFringe } from './fringe.js';
 import { initModes, getActiveMode } from './modes.js';
 
 // ─── Dropdown helpers ─────��──────────────────────────────────────────────────
@@ -1313,6 +1314,7 @@ initStitch();
 initSuperRes();
 initDeflectometry();
 initGear();
+initFringe();
 document.getElementById("btn-arc-fit-arc")?.addEventListener("click", () => finalizeArcFit(false));
 document.getElementById("btn-arc-fit-circle")?.addEventListener("click", () => finalizeArcFit(true));
 
