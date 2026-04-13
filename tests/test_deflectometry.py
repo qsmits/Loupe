@@ -146,6 +146,21 @@ def test_fit_sphere_calibration_recovers_radius():
     assert cal["residual_rms_um"] < 1.0  # paraboloid fits a sphere well near center
 
 
+def test_compute_wrapped_phase_with_smoothing():
+    """Smoothing should not destroy phase recovery on clean signals."""
+    from scipy.ndimage import gaussian_filter
+    H, W = 16, 32
+    true_phase = np.linspace(-2.5, 2.5, W)[None, :].repeat(H, 0)
+    amplitude = 100.0
+    offset = 127.0
+    frames = [offset + amplitude * np.cos(true_phase + k * np.pi / 2) for k in range(4)]
+    # Apply same smoothing the pipeline would
+    smoothed = [gaussian_filter(f, sigma=1.5) for f in frames]
+    wrapped = compute_wrapped_phase(smoothed)
+    # Phase should still be close (smoothing a clean signal barely changes it)
+    np.testing.assert_allclose(wrapped, true_phase, atol=0.15)
+
+
 def test_frankot_chellappa_recovers_paraboloid():
     # z = x^2 + y^2 -> dz/dx = 2x, dz/dy = 2y
     h, w = 64, 64

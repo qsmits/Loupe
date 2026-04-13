@@ -96,6 +96,10 @@ function buildWorkspace() {
             <input type="range" id="defl-mask-thresh" min="0" max="20" step="1" value="2" style="width:100px" />
             <span id="defl-mask-thresh-val" style="min-width:28px;font-size:11px">2%</span>
           </label>
+          <label>Smoothing
+            <input type="range" id="defl-smooth" min="0" max="5" step="0.5" value="0" style="width:100px" />
+            <span id="defl-smooth-val" style="min-width:28px;font-size:11px">0</span>
+          </label>
         </div>
         <div class="defl-setting-group" style="margin-top:6px;padding-top:8px;border-top:1px solid var(--border)">
           <div style="font-size:12px;font-weight:600;opacity:0.7">Sphere Calibration</div>
@@ -286,6 +290,15 @@ function wireEvents() {
     });
   }
 
+  // Smoothing slider
+  const smoothSlider = $("defl-smooth");
+  const smoothLabel = $("defl-smooth-val");
+  if (smoothSlider && smoothLabel) {
+    smoothSlider.addEventListener("input", () => {
+      smoothLabel.textContent = smoothSlider.value;
+    });
+  }
+
   // Workflow buttons
   $("defl-btn-flat")?.addEventListener("click", flatField);
   $("defl-btn-ref")?.addEventListener("click", captureReference);
@@ -306,6 +319,11 @@ function getFreq() {
 function getMaskThreshold() {
   const el = $("defl-mask-thresh");
   return el ? parseInt(el.value, 10) / 100 : 0.02;
+}
+
+function getSmoothSigma() {
+  const el = $("defl-smooth");
+  return el ? parseFloat(el.value) : 0;
 }
 
 async function flatField() {
@@ -386,7 +404,7 @@ async function compute() {
     const r = await apiFetch("/deflectometry/compute", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ mask_threshold: getMaskThreshold() }),
+      body: JSON.stringify({ mask_threshold: getMaskThreshold(), smooth_sigma: getSmoothSigma() }),
     });
     if (!r.ok) {
       const msg = await r.text();
@@ -545,7 +563,7 @@ async function load3dSurface() {
     const r = await apiFetch("/deflectometry/heightmap", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ mask_threshold: getMaskThreshold() }),
+      body: JSON.stringify({ mask_threshold: getMaskThreshold(), smooth_sigma: getSmoothSigma() }),
     });
     if (!r.ok) {
       if (empty) empty.textContent = "Failed to load heightmap.";
@@ -673,7 +691,7 @@ async function runDiagnostics() {
     const r = await apiFetch("/deflectometry/diagnostics", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({}),
+      body: JSON.stringify({ smooth_sigma: getSmoothSigma() }),
     });
     if (!r.ok) {
       const msg = await r.text();

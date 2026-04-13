@@ -88,6 +88,7 @@ class ResetBody(BaseModel):
 
 class ComputeBody(BaseModel):
     mask_threshold: float = Field(default=0.02, ge=0.0, le=0.5)
+    smooth_sigma: float = Field(default=0.0, ge=0.0, le=10.0)
 
 
 class CaptureBody(BaseModel):
@@ -102,6 +103,7 @@ class CaptureReferenceBody(BaseModel):
 
 class HeightmapBody(BaseModel):
     mask_threshold: float = Field(default=0.02, ge=0.0, le=0.5)
+    smooth_sigma: float = Field(default=0.0, ge=0.0, le=10.0)
 
 
 class CalibrateSphereBody(BaseModel):
@@ -193,7 +195,7 @@ def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
 
         return {"status": "ok", "has_flat_field": True}
 
-    def _compute_unwrapped(s: _Session):
+    def _compute_unwrapped(s: _Session, smooth_sigma: float = 0.0):
         """Shared pipeline: flat-field correct, wrap, unwrap, tilt-remove.
 
         Returns (unw_x, unw_y, frames_x, frames_y) where frames are the
@@ -214,6 +216,11 @@ def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
             denom = white - black + 1e-6
             frames_x = [(f - black) / denom for f in frames_x]
             frames_y = [(f - black) / denom for f in frames_y]
+
+        if smooth_sigma > 0:
+            from scipy.ndimage import gaussian_filter
+            frames_x = [gaussian_filter(f, sigma=smooth_sigma) for f in frames_x]
+            frames_y = [gaussian_filter(f, sigma=smooth_sigma) for f in frames_y]
 
         wrap_x = compute_wrapped_phase(frames_x)
         wrap_y = compute_wrapped_phase(frames_y)
@@ -368,7 +375,7 @@ def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
                 detail=f"Need 8 captured frames before compute (have {have})",
             )
 
-        unw_x, unw_y, frames_x, frames_y = _compute_unwrapped(s)
+        unw_x, unw_y, frames_x, frames_y = _compute_unwrapped(s, smooth_sigma=body.smooth_sigma)
 
         # Reference subtraction
         has_reference = False
@@ -423,6 +430,10 @@ def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
                 denom = white - black + 1e-6
                 frames_x = [(f - black) / denom for f in frames_x]
                 frames_y = [(f - black) / denom for f in frames_y]
+            if body.smooth_sigma > 0:
+                from scipy.ndimage import gaussian_filter
+                frames_x = [gaussian_filter(f, sigma=body.smooth_sigma) for f in frames_x]
+                frames_y = [gaussian_filter(f, sigma=body.smooth_sigma) for f in frames_y]
             mod_x = compute_modulation(frames_x)
             mod_y = compute_modulation(frames_y)
             mask = create_modulation_mask(mod_x, mod_y, threshold_frac=body.mask_threshold)
@@ -522,8 +533,11 @@ def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
             s.last_result["cal_factor"] = result["cal_factor"]
         return result
 
+    class DiagnosticsBody(BaseModel):
+        smooth_sigma: float = Field(default=0.0, ge=0.0, le=10.0)
+
     @router.post("/deflectometry/diagnostics", dependencies=[Depends(_reject_hosted)])
-    async def deflectometry_diagnostics():
+    async def deflectometry_diagnostics(body: DiagnosticsBody = DiagnosticsBody()):  # noqa: B008
         """Save captured frames to disk and return diagnostic data.
 
         Writes each frame as a PNG in poc_output/deflectometry/ and returns
@@ -571,6 +585,11 @@ def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
             denom = white - black + 1e-6
             frames_x = [(f - black) / denom for f in frames_x]
             frames_y = [(f - black) / denom for f in frames_y]
+
+        if body.smooth_sigma > 0:
+            from scipy.ndimage import gaussian_filter
+            frames_x = [gaussian_filter(f, sigma=body.smooth_sigma) for f in frames_x]
+            frames_y = [gaussian_filter(f, sigma=body.smooth_sigma) for f in frames_y]
 
         # Modulation (fringe contrast)
         mod_x = compute_modulation(frames_x)
