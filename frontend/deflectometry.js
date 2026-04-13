@@ -1,9 +1,8 @@
 // deflectometry.js — Full-window deflectometry workspace.
 //
-// Three-column layout:
-//   Left:   camera preview + status badges + settings
-//   Center: workflow step checklist
-//   Right:  tabbed results (Phase Maps | 3D Surface | Diagnostics)
+// Two-column layout:
+//   Left:   camera preview + status badges + setup + sphere cal + settings
+//   Right:  action bar + tabbed results (Phase Maps | 3D Surface | Diagnostics)
 //
 // Lives inside #mode-deflectometry, managed by modes.js.
 
@@ -17,24 +16,6 @@ const df = {
 };
 
 function $(id) { return document.getElementById(id); }
-
-function setStepStatus(stepId, status, text) {
-  const indicator = $("defl-ind-" + stepId);
-  const statusEl = $("defl-status-" + stepId);
-  if (indicator) {
-    indicator.className = "defl-step-indicator" + (status === "done" ? " done" : status === "error" ? " error" : "");
-    indicator.textContent = status === "done" ? "\u2713" : status === "error" ? "\u2717" : "";
-  }
-  if (statusEl && text !== undefined) statusEl.textContent = text;
-}
-
-function setStepEnabled(stepId, enabled) {
-  const el = $("defl-step-" + stepId);
-  if (el) {
-    if (enabled) el.classList.remove("disabled");
-    else el.classList.add("disabled");
-  }
-}
 
 function setBadge(id, active) {
   const el = $(id);
@@ -73,10 +54,32 @@ function buildWorkspace() {
         <div class="defl-badge-row">
           <span class="defl-badge" id="defl-badge-ipad">iPad: \u2014</span>
           <span class="defl-badge" id="defl-badge-flat">Flat field: \u2014</span>
-          <span class="defl-badge" id="defl-badge-ref">Reference: \u2014</span>
+          <span class="defl-badge" id="defl-badge-ref">Baseline: \u2014</span>
           <span class="defl-badge" id="defl-badge-cal">Calibration: \u2014</span>
         </div>
-        <div class="defl-setting-group">
+        <div class="defl-setting-group" style="margin-top:6px;padding-top:8px;border-top:1px solid var(--border)">
+          <div style="font-size:12px;font-weight:600;opacity:0.7">Setup</div>
+          <div style="display:flex;align-items:center;gap:6px">
+            <button class="detect-btn" id="defl-btn-flat">Flat Field</button>
+            <span class="defl-step-status" id="defl-status-flat" style="font-size:11px;opacity:0.7">\u2014</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:6px">
+            <button class="detect-btn" id="defl-btn-ref">Baseline</button>
+            <span class="defl-step-status" id="defl-status-ref" style="font-size:11px;opacity:0.7">Optional</span>
+          </div>
+        </div>
+        <div class="defl-setting-group" style="margin-top:6px;padding-top:8px;border-top:1px solid var(--border)">
+          <div style="font-size:12px;font-weight:600;opacity:0.7">Sphere Calibration</div>
+          <label>Sphere diameter (mm)
+            <input type="number" id="defl-sphere-diam" min="0.1" max="500" step="0.1" value="25.0" />
+          </label>
+          <div class="defl-step-controls">
+            <button class="detect-btn" id="defl-btn-calibrate">Calibrate Sphere</button>
+          </div>
+          <div class="defl-step-status" id="defl-status-calibrate">\u2014</div>
+        </div>
+        <div class="defl-setting-group" style="margin-top:6px;padding-top:8px;border-top:1px solid var(--border)">
+          <div style="font-size:12px;font-weight:600;opacity:0.7">Settings</div>
           <label>Display device
             <select id="defl-display-device">
               <option value="0.0962">iPad Air 1 (264 ppi)</option>
@@ -95,91 +98,25 @@ function buildWorkspace() {
           <label>Display gamma
             <input type="number" id="defl-gamma" min="1.0" max="3.0" step="0.1" value="2.2" style="width:65px" />
           </label>
-          <label>Mask threshold
-            <input type="range" id="defl-mask-thresh" min="0" max="20" step="1" value="2" style="width:100px" />
-            <span id="defl-mask-thresh-val" style="min-width:28px;font-size:11px">2%</span>
-          </label>
-          <label>Smoothing
-            <input type="range" id="defl-smooth" min="0" max="5" step="0.5" value="0" style="width:100px" />
-            <span id="defl-smooth-val" style="min-width:28px;font-size:11px">0</span>
-            <button class="detect-btn" id="defl-btn-auto-smooth" style="font-size:10px;padding:1px 6px;margin-left:4px">Auto</button>
-          </label>
-        </div>
-        <div class="defl-setting-group" style="margin-top:6px;padding-top:8px;border-top:1px solid var(--border)">
-          <div style="font-size:12px;font-weight:600;opacity:0.7">Sphere Calibration</div>
-          <label>Sphere diameter (mm)
-            <input type="number" id="defl-sphere-diam" min="0.1" max="500" step="0.1" value="25.0" />
-          </label>
-          <div class="defl-step-controls">
-            <button class="detect-btn" id="defl-btn-calibrate">Calibrate Sphere</button>
-          </div>
-          <div class="defl-step-status" id="defl-status-calibrate">\u2014</div>
         </div>
       </div>
 
-      <!-- Center: workflow steps -->
-      <div class="defl-workflow-col">
-        <div class="defl-workflow-title">Workflow</div>
-
-        <div class="defl-step" id="defl-step-connect">
-          <div class="defl-step-indicator" id="defl-ind-connect"></div>
-          <div class="defl-step-body">
-            <div class="defl-step-name">1. Connect iPad</div>
-            <div class="defl-step-status" id="defl-status-connect">Waiting\u2026</div>
-          </div>
-        </div>
-
-        <div class="defl-step disabled" id="defl-step-flat">
-          <div class="defl-step-indicator" id="defl-ind-flat"></div>
-          <div class="defl-step-body">
-            <div class="defl-step-name">2. Flat Field</div>
-            <div class="defl-step-status" id="defl-status-flat">\u2014</div>
-            <div class="defl-step-controls">
-              <button class="detect-btn" id="defl-btn-flat">Capture</button>
-            </div>
-          </div>
-        </div>
-
-        <div class="defl-step disabled" id="defl-step-ref">
-          <div class="defl-step-indicator" id="defl-ind-ref"></div>
-          <div class="defl-step-body">
-            <div class="defl-step-name">3. Capture Reference</div>
-            <div class="defl-step-status" id="defl-status-ref">Optional \u2014 flat mirror</div>
-            <div class="defl-step-controls">
-              <button class="detect-btn" id="defl-btn-ref">Capture</button>
-            </div>
-          </div>
-        </div>
-
-        <div class="defl-step disabled" id="defl-step-capture">
-          <div class="defl-step-indicator" id="defl-ind-capture"></div>
-          <div class="defl-step-body">
-            <div class="defl-step-name">4. Capture Part</div>
-            <div class="defl-step-status" id="defl-status-capture">\u2014</div>
-            <div class="defl-step-controls">
-              <button class="detect-btn" id="defl-btn-capture">Capture</button>
-            </div>
-          </div>
-        </div>
-
-        <div class="defl-step disabled" id="defl-step-compute">
-          <div class="defl-step-indicator" id="defl-ind-compute"></div>
-          <div class="defl-step-body">
-            <div class="defl-step-name">5. Compute</div>
-            <div class="defl-step-status" id="defl-status-compute">\u2014</div>
-            <div class="defl-step-controls">
-              <button class="detect-btn" id="defl-btn-compute">Compute</button>
-            </div>
-          </div>
-        </div>
-
-        <div class="defl-workflow-footer">
-          <button class="detect-btn" id="defl-btn-reset" style="width:100%">Reset Capture</button>
-        </div>
-      </div>
-
-      <!-- Right: results -->
+      <!-- Right: action bar + results -->
       <div class="defl-results-col">
+        <div class="defl-action-bar">
+          <button class="detect-btn" id="defl-btn-capture">Capture Part</button>
+          <span class="defl-step-status" id="defl-status-capture" style="font-size:11px;opacity:0.7">\u2014</span>
+          <button class="detect-btn" id="defl-btn-compute">Compute</button>
+          <span class="defl-step-status" id="defl-status-compute" style="font-size:11px;opacity:0.7">\u2014</span>
+          <button class="detect-btn" id="defl-btn-reset" style="font-size:11px;padding:2px 8px">Reset</button>
+          <span style="margin-left:auto;display:flex;align-items:center;gap:8px;font-size:12px">
+            Mask <input type="range" id="defl-mask-thresh" min="0" max="20" step="1" value="2" style="width:80px" />
+            <span id="defl-mask-thresh-val" style="min-width:22px;font-size:11px">2%</span>
+            Smoothing <input type="range" id="defl-smooth" min="0" max="5" step="0.5" value="0" style="width:80px" />
+            <span id="defl-smooth-val" style="min-width:22px;font-size:11px">0</span>
+            <button class="detect-btn" id="defl-btn-auto-smooth" style="font-size:10px;padding:1px 6px">Auto</button>
+          </span>
+        </div>
         <div class="defl-tab-bar">
           <button class="defl-tab active" data-tab="phase">Phase Maps</button>
           <button class="defl-tab" data-tab="3d">3D Surface</button>
@@ -373,7 +310,8 @@ async function autoSmooth() {
 async function flatField() {
   const btn = $("defl-btn-flat");
   if (btn) btn.disabled = true;
-  setStepStatus("flat", "", "Capturing\u2026");
+  const statusEl = $("defl-status-flat");
+  if (statusEl) statusEl.textContent = "Capturing\u2026";
   try {
     const r = await apiFetch("/deflectometry/flat-field", {
       method: "POST",
@@ -382,12 +320,12 @@ async function flatField() {
     });
     if (!r.ok) {
       const msg = await r.text();
-      setStepStatus("flat", "error", "Failed: " + msg);
+      if (statusEl) statusEl.textContent = "Failed: " + msg;
       return;
     }
-    setStepStatus("flat", "done", "Captured");
+    if (statusEl) statusEl.textContent = "Captured";
   } catch (e) {
-    setStepStatus("flat", "error", "Failed: " + (e?.message || e));
+    if (statusEl) statusEl.textContent = "Failed: " + (e?.message || e);
   } finally {
     if (btn) btn.disabled = false;
   }
@@ -396,7 +334,8 @@ async function flatField() {
 async function captureReference() {
   const btn = $("defl-btn-ref");
   if (btn) btn.disabled = true;
-  setStepStatus("ref", "", "Capturing\u2026");
+  const statusEl = $("defl-status-ref");
+  if (statusEl) statusEl.textContent = "Capturing\u2026";
   try {
     const r = await apiFetch("/deflectometry/capture-reference", {
       method: "POST",
@@ -405,12 +344,12 @@ async function captureReference() {
     });
     if (!r.ok) {
       const msg = await r.text();
-      setStepStatus("ref", "error", "Failed: " + msg);
+      if (statusEl) statusEl.textContent = "Failed: " + msg;
       return;
     }
-    setStepStatus("ref", "done", "Captured");
+    if (statusEl) statusEl.textContent = "Captured";
   } catch (e) {
-    setStepStatus("ref", "error", "Failed: " + (e?.message || e));
+    if (statusEl) statusEl.textContent = "Failed: " + (e?.message || e);
   } finally {
     if (btn) btn.disabled = false;
   }
@@ -419,7 +358,8 @@ async function captureReference() {
 async function captureSequence() {
   const btn = $("defl-btn-capture");
   if (btn) btn.disabled = true;
-  setStepStatus("capture", "", "Capturing 8 frames\u2026");
+  const statusEl = $("defl-status-capture");
+  if (statusEl) statusEl.textContent = "Capturing 8 frames\u2026";
   try {
     const r = await apiFetch("/deflectometry/capture-sequence", {
       method: "POST",
@@ -428,13 +368,13 @@ async function captureSequence() {
     });
     if (!r.ok) {
       const msg = await r.text();
-      setStepStatus("capture", "error", "Failed: " + msg);
+      if (statusEl) statusEl.textContent = "Failed: " + msg;
       return;
     }
     const data = await r.json();
-    setStepStatus("capture", "done", data.captured_count + " frames");
+    if (statusEl) statusEl.textContent = data.captured_count + " frames";
   } catch (e) {
-    setStepStatus("capture", "error", "Failed: " + (e?.message || e));
+    if (statusEl) statusEl.textContent = "Failed: " + (e?.message || e);
   } finally {
     if (btn) btn.disabled = false;
   }
@@ -443,7 +383,8 @@ async function captureSequence() {
 async function compute() {
   const btn = $("defl-btn-compute");
   if (btn) btn.disabled = true;
-  setStepStatus("compute", "", "Computing\u2026");
+  const statusEl = $("defl-status-compute");
+  if (statusEl) statusEl.textContent = "Computing\u2026";
   try {
     const r = await apiFetch("/deflectometry/compute", {
       method: "POST",
@@ -452,14 +393,14 @@ async function compute() {
     });
     if (!r.ok) {
       const msg = await r.text();
-      setStepStatus("compute", "error", "Failed: " + msg);
+      if (statusEl) statusEl.textContent = "Failed: " + msg;
       return;
     }
     const result = await r.json();
-    setStepStatus("compute", "done", "Done");
+    if (statusEl) statusEl.textContent = "Done";
     renderPhaseResult(result);
   } catch (e) {
-    setStepStatus("compute", "error", "Failed: " + (e?.message || e));
+    if (statusEl) statusEl.textContent = "Failed: " + (e?.message || e);
   } finally {
     if (btn) btn.disabled = false;
   }
@@ -516,8 +457,10 @@ async function resetSession() {
       body: JSON.stringify({}),
     });
   } catch { /* ignore */ }
-  setStepStatus("capture", "", "\u2014");
-  setStepStatus("compute", "", "\u2014");
+  const capStatus = $("defl-status-capture");
+  if (capStatus) capStatus.textContent = "\u2014";
+  const compStatus = $("defl-status-compute");
+  if (compStatus) compStatus.textContent = "\u2014";
   // Hide results
   const content = $("defl-phase-content");
   const empty = $("defl-phase-empty");
@@ -555,27 +498,21 @@ async function refreshStatus() {
     const connected = !!d.ipad_connected;
     setBadge("defl-badge-ipad", connected);
     $("defl-badge-ipad").textContent = "iPad: " + (connected ? "connected" : "\u2014");
-    setStepStatus("connect", connected ? "done" : "", connected ? "Connected" : "Waiting\u2026");
-    // Enable/disable steps based on iPad
-    setStepEnabled("flat", connected);
-    setStepEnabled("ref", connected);
-    setStepEnabled("capture", connected);
     // Flat field
     setBadge("defl-badge-flat", !!d.has_flat_field);
     $("defl-badge-flat").textContent = "Flat field: " + (d.has_flat_field ? "\u2713" : "\u2014");
-    // Reference
+    // Baseline
     setBadge("defl-badge-ref", !!d.has_reference);
-    $("defl-badge-ref").textContent = "Reference: " + (d.has_reference ? "\u2713" : "\u2014");
+    $("defl-badge-ref").textContent = "Baseline: " + (d.has_reference ? "\u2713" : "\u2014");
     // Calibration
     const hasCal = d.cal_factor != null;
     setBadge("defl-badge-cal", hasCal);
     $("defl-badge-cal").textContent = "Calibration: " + (hasCal ? "\u2713" : "\u2014");
-    // Compute step enable
-    setStepEnabled("compute", d.captured_count >= 8);
     // Render last result if we have one and phase content is not showing
     if (d.last_result && $("defl-phase-content")?.hidden) {
       renderPhaseResult(d.last_result);
-      setStepStatus("compute", "done", "Done");
+      const compStatus = $("defl-status-compute");
+      if (compStatus) compStatus.textContent = "Done";
     }
   } catch { /* ignore */ }
 }

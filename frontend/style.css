@@ -1996,62 +1996,14 @@ body.no-camera .camera-section { display: none; }
   max-width: 160px;
 }
 
-/* Center column: workflow steps */
-.defl-workflow-col {
-  width: 280px;
-  min-width: 280px;
-  display: flex;
-  flex-direction: column;
-  border-right: 1px solid var(--border);
-  padding: 10px;
-  gap: 0;
-  overflow-y: auto;
-}
-.defl-workflow-title {
-  font-size: 13px;
-  font-weight: 600;
-  margin-bottom: 8px;
-  opacity: 0.7;
-}
-.defl-step {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  padding: 8px 6px;
-  border-bottom: 1px solid var(--border);
-}
-.defl-step.disabled {
-  opacity: 0.35;
-  pointer-events: none;
-}
-.defl-step-indicator {
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
-  border: 2px solid #555;
-  flex-shrink: 0;
-  margin-top: 1px;
+/* Action bar above result tabs */
+.defl-action-bar {
   display: flex;
   align-items: center;
-  justify-content: center;
-  font-size: 11px;
-}
-.defl-step-indicator.done {
-  border-color: #4ade80;
-  color: #4ade80;
-}
-.defl-step-indicator.error {
-  border-color: #f87171;
-  color: #f87171;
-}
-.defl-step-body {
-  flex: 1;
-  min-width: 0;
-}
-.defl-step-name {
-  font-size: 13px;
-  font-weight: 500;
-  margin-bottom: 3px;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
 }
 .defl-step-status {
   font-size: 11px;
@@ -2063,14 +2015,6 @@ body.no-camera .camera-section { display: none; }
   align-items: center;
   gap: 6px;
   flex-wrap: wrap;
-}
-.defl-step-controls input[type="number"] {
-  width: 65px;
-}
-.defl-workflow-footer {
-  margin-top: auto;
-  padding-top: 10px;
-  border-top: 1px solid var(--border);
 }
 
 /* Right column: results */
