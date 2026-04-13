@@ -97,6 +97,16 @@ function buildWorkspace() {
             <span id="defl-mask-thresh-val" style="min-width:28px;font-size:11px">2%</span>
           </label>
         </div>
+        <div class="defl-setting-group" style="margin-top:6px;padding-top:8px;border-top:1px solid var(--border)">
+          <div style="font-size:12px;font-weight:600;opacity:0.7">Sphere Calibration</div>
+          <label>Sphere diameter (mm)
+            <input type="number" id="defl-sphere-diam" min="0.1" max="500" step="0.1" value="25.0" />
+          </label>
+          <div class="defl-step-controls">
+            <button class="detect-btn" id="defl-btn-calibrate">Calibrate Sphere</button>
+          </div>
+          <div class="defl-step-status" id="defl-status-calibrate">\u2014</div>
+        </div>
       </div>
 
       <!-- Center: workflow steps -->
@@ -155,20 +165,6 @@ function buildWorkspace() {
           </div>
         </div>
 
-        <div class="defl-step disabled" id="defl-step-calibrate">
-          <div class="defl-step-indicator" id="defl-ind-calibrate"></div>
-          <div class="defl-step-body">
-            <div class="defl-step-name">6. Calibrate</div>
-            <div class="defl-step-status" id="defl-status-calibrate">Optional \u2014 sphere</div>
-            <div class="defl-step-controls">
-              <label style="font-size:12px">Sphere \u2300 (mm)
-                <input type="number" id="defl-sphere-diam" min="0.1" max="500" step="0.1" value="25.0" style="width:65px" />
-              </label>
-              <button class="detect-btn" id="defl-btn-calibrate">Calibrate</button>
-            </div>
-          </div>
-        </div>
-
         <div class="defl-workflow-footer">
           <button class="detect-btn" id="defl-btn-reset" style="width:100%">Reset Capture</button>
         </div>
@@ -203,12 +199,13 @@ function buildWorkspace() {
         <div class="defl-tab-panel" id="defl-panel-3d" hidden>
           <div class="defl-empty-state" id="defl-3d-empty">Compute results first, then view the 3D surface.</div>
           <div id="defl-3d-content" hidden style="display:flex;flex-direction:column;flex:1;min-height:0">
-            <div class="defl-3d-host" id="defl-3d-host"></div>
-            <div class="defl-3d-controls" id="defl-3d-controls">
-              <label style="font-size:12px">Z exaggeration:
-                <input type="range" id="defl-3d-z-scale" min="1" max="200" step="1" value="10" style="width:120px" />
-                <span id="defl-3d-z-val">10x</span>
-              </label>
+            <div class="defl-3d-host" id="defl-3d-host">
+              <div class="defl-3d-controls" id="defl-3d-controls">
+                <label style="font-size:12px">Z exaggeration:
+                  <input type="range" id="defl-3d-z-scale" min="1" max="200" step="1" value="10" style="width:120px" />
+                  <span id="defl-3d-z-val">10x</span>
+                </label>
+              </div>
             </div>
           </div>
         </div>
@@ -407,20 +404,21 @@ async function compute() {
 }
 
 async function calibrateSphere() {
+  const statusEl = $("defl-status-calibrate");
   const ppm = state.calibration?.pixelsPerMm;
   if (!ppm || ppm <= 0) {
-    setStepStatus("calibrate", "error", "Camera calibration (px/mm) required first");
+    if (statusEl) statusEl.textContent = "Camera calibration (px/mm) required first";
     return;
   }
   const diamEl = $("defl-sphere-diam");
   let diam = parseFloat(diamEl ? diamEl.value : "25");
   if (!Number.isFinite(diam) || diam <= 0) {
-    setStepStatus("calibrate", "error", "Enter a valid sphere diameter");
+    if (statusEl) statusEl.textContent = "Enter a valid sphere diameter";
     return;
   }
   const btn = $("defl-btn-calibrate");
   if (btn) btn.disabled = true;
-  setStepStatus("calibrate", "", "Calibrating\u2026");
+  if (statusEl) statusEl.textContent = "Calibrating\u2026";
   try {
     const r = await apiFetch("/deflectometry/calibrate-sphere", {
       method: "POST",
@@ -429,12 +427,12 @@ async function calibrateSphere() {
     });
     if (!r.ok) {
       const msg = await r.text();
-      setStepStatus("calibrate", "error", "Failed: " + msg);
+      if (statusEl) statusEl.textContent = "Failed: " + msg;
       return;
     }
     const data = await r.json();
-    setStepStatus("calibrate", "done",
-      data.cal_factor_um.toFixed(4) + " \u00b5m/rad, R=" + data.fitted_radius_mm.toFixed(1) + "mm");
+    if (statusEl) statusEl.textContent =
+      data.cal_factor_um.toFixed(4) + " \u00b5m/rad, R=" + data.fitted_radius_mm.toFixed(1) + "mm";
     // Re-render phase results with calibrated units
     const status = await apiFetch("/deflectometry/status");
     if (status.ok) {
@@ -442,7 +440,7 @@ async function calibrateSphere() {
       if (sd.last_result) renderPhaseResult(sd.last_result);
     }
   } catch (e) {
-    setStepStatus("calibrate", "error", "Failed: " + (e?.message || e));
+    if (statusEl) statusEl.textContent = "Failed: " + (e?.message || e);
   } finally {
     if (btn) btn.disabled = false;
   }
@@ -512,8 +510,6 @@ async function refreshStatus() {
     $("defl-badge-cal").textContent = "Calibration: " + (hasCal ? "\u2713" : "\u2014");
     // Compute step enable
     setStepEnabled("compute", d.captured_count >= 8);
-    // Calibrate step enable
-    setStepEnabled("calibrate", d.has_result);
     // Render last result if we have one and phase content is not showing
     if (d.last_result && $("defl-phase-content")?.hidden) {
       renderPhaseResult(d.last_result);
@@ -567,6 +563,7 @@ async function load3dSurface() {
 async function render3d(hm) {
   const host = $("defl-3d-host");
   if (!host) return;
+  const controlsEl = $("defl-3d-controls");
   host.innerHTML = "";
 
   if (!df.threeLoaded) {
@@ -587,6 +584,7 @@ async function render3d(hm) {
   const renderer = new THREE.WebGLRenderer({ antialias: true });
   renderer.setSize(w, h);
   host.appendChild(renderer.domElement);
+  if (controlsEl) host.appendChild(controlsEl);
   const controls = new OrbitControls(camera, renderer.domElement);
 
   const cols = hm.width, rows = hm.height;
