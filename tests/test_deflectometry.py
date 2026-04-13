@@ -22,7 +22,19 @@ def test_generate_fringe_pattern_y_varies_along_axis_0():
     assert np.all(img[0] == img[0, 0])
     assert np.all(img[15] == img[15, 0])
 
-def test_four_phase_extraction_recovers_known_phase():
+def test_eight_phase_extraction_recovers_known_phase():
+    H, W = 16, 32
+    true_phase = np.linspace(-2.5, 2.5, W)[None, :].repeat(H, 0)
+    amplitude = 100.0
+    offset = 127.0
+    frames = [offset + amplitude * np.cos(true_phase + k * np.pi / 4) for k in range(8)]
+    wrapped = compute_wrapped_phase(frames)
+    assert wrapped.shape == (H, W)
+    np.testing.assert_allclose(wrapped, true_phase, atol=1e-6)
+
+
+def test_four_phase_extraction_still_works():
+    """Generalized formula should still work with 4 frames."""
     H, W = 16, 32
     true_phase = np.linspace(-2.5, 2.5, W)[None, :].repeat(H, 0)
     amplitude = 100.0
@@ -36,8 +48,8 @@ def test_compute_wrapped_phase_accepts_3d_frames():
     H, W = 8, 16
     true_phase = np.zeros((H, W)) + 0.7
     frames = []
-    for k in range(4):
-        gray = 127 + 80 * np.cos(true_phase + k * np.pi / 2)
+    for k in range(8):
+        gray = 127 + 80 * np.cos(true_phase + k * np.pi / 4)
         rgb = np.stack([gray, gray, gray], axis=-1).astype(np.uint8)
         frames.append(rgb)
     wrapped = compute_wrapped_phase(frames)
@@ -153,7 +165,7 @@ def test_compute_wrapped_phase_with_smoothing():
     true_phase = np.linspace(-2.5, 2.5, W)[None, :].repeat(H, 0)
     amplitude = 100.0
     offset = 127.0
-    frames = [offset + amplitude * np.cos(true_phase + k * np.pi / 2) for k in range(4)]
+    frames = [offset + amplitude * np.cos(true_phase + k * np.pi / 4) for k in range(8)]
     # Apply same smoothing the pipeline would
     smoothed = [gaussian_filter(f, sigma=1.5) for f in frames]
     wrapped = compute_wrapped_phase(smoothed)
@@ -199,6 +211,37 @@ def test_generate_fringe_pattern_gamma_correction():
     intended = 0.5 + 0.5 * np.cos(2 * np.pi * x / 256.0)
     # Allow some tolerance for quantization
     np.testing.assert_allclose(display_output, intended, atol=0.02)
+
+
+def test_eight_step_suppresses_harmonics():
+    """8-step should handle gamma-distorted sinusoids better than 4-step."""
+    H, W = 16, 64
+    true_phase = np.linspace(-2.0, 2.0, W)[None, :].repeat(H, 0)
+    amplitude = 100.0
+    offset = 127.0
+    gamma = 2.2
+
+    # Generate gamma-distorted frames for 4-step
+    frames_4 = []
+    for k in range(4):
+        linear = offset + amplitude * np.cos(true_phase + k * np.pi / 2)
+        distorted = 255.0 * np.power(np.clip(linear / 255.0, 0, 1), gamma)
+        frames_4.append(distorted)
+
+    # Generate gamma-distorted frames for 8-step
+    frames_8 = []
+    for k in range(8):
+        linear = offset + amplitude * np.cos(true_phase + k * np.pi / 4)
+        distorted = 255.0 * np.power(np.clip(linear / 255.0, 0, 1), gamma)
+        frames_8.append(distorted)
+
+    wrapped_4 = compute_wrapped_phase(frames_4)
+    wrapped_8 = compute_wrapped_phase(frames_8)
+
+    # Both should roughly recover the phase, but 8-step should have lower error
+    error_4 = np.std(wrapped_4 - true_phase)
+    error_8 = np.std(wrapped_8 - true_phase)
+    assert error_8 < error_4, f"8-step error ({error_8:.4f}) should be less than 4-step ({error_4:.4f})"
 
 
 def test_frankot_chellappa_recovers_paraboloid():

@@ -3,9 +3,13 @@
 The workflow uses a paired iPad as a controllable fringe display: the
 backend pushes sinusoidal fringe patterns to the iPad over a WebSocket,
 waits for a render ack, then captures a frame of the specular surface
-through the microscope camera. An 8-frame sequence (4 phase-shifted
+through the microscope camera. A 16-frame sequence (8 phase-shifted
 patterns per orientation, x and y) is reduced to wrapped phase,
 unwrapped, and returned as statistics + pseudocolor previews.
+
+8-step phase shifting (vs. the previous 4-step) suppresses harmonics up
+to the 3rd order, making phase extraction robust against LCD gamma
+non-linearity.
 
 Single active session at a time; all state lives in the router closure.
 """
@@ -215,8 +219,8 @@ def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
                 arr = arr.mean(axis=-1)
             return arr
 
-        frames_x = [_to_gray(f) for f in s.frames[:4]]
-        frames_y = [_to_gray(f) for f in s.frames[4:8]]
+        frames_x = [_to_gray(f) for f in s.frames[:8]]
+        frames_y = [_to_gray(f) for f in s.frames[8:16]]
 
         if s.flat_white is not None and s.flat_black is not None:
             white = _to_gray(s.flat_white)
@@ -245,7 +249,7 @@ def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
         if s.ws is None:
             raise HTTPException(400, detail="iPad not connected")
 
-        phases = [0.0, math.pi / 2.0, math.pi, 3.0 * math.pi / 2.0]
+        phases = [k * math.pi / 4.0 for k in range(8)]
 
         async with s.lock:
             ref_frames: list[np.ndarray] = []
@@ -333,11 +337,11 @@ def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
         if s.ws is None:
             raise HTTPException(400, detail="iPad not connected")
 
-        phases = [0.0, math.pi / 2.0, math.pi, 3.0 * math.pi / 2.0]
+        phases = [k * math.pi / 4.0 for k in range(8)]
 
         async with s.lock:
             # Start of a new capture wipes any previous frames/result so the
-            # 8-frame invariant holds.
+            # 16-frame invariant holds.
             s.frames = []
             s.last_result = None
             s.freq = body.freq
@@ -379,11 +383,11 @@ def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
     @router.post("/deflectometry/compute", dependencies=[Depends(_reject_hosted)])
     async def deflectometry_compute(body: ComputeBody = ComputeBody()):  # noqa: B008
         s = _current()
-        if s is None or len(s.frames) < 8:
+        if s is None or len(s.frames) < 16:
             have = 0 if s is None else len(s.frames)
             raise HTTPException(
                 400,
-                detail=f"Need 8 captured frames before compute (have {have})",
+                detail=f"Need 16 captured frames before compute (have {have})",
             )
 
         unw_x, unw_y, frames_x, frames_y = _compute_unwrapped(s, smooth_sigma=body.smooth_sigma)
@@ -429,12 +433,12 @@ def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
         unw_y = s._last_unw_y
         # Recompute mask with the requested threshold so the 3D view
         # respects the slider value even if it differs from the last compute.
-        if len(s.frames) >= 8:
+        if len(s.frames) >= 16:
             def _to_gray(f):
                 arr = np.asarray(f, dtype=np.float64)
                 return arr.mean(axis=-1) if arr.ndim == 3 else arr
-            frames_x = [_to_gray(f) for f in s.frames[:4]]
-            frames_y = [_to_gray(f) for f in s.frames[4:8]]
+            frames_x = [_to_gray(f) for f in s.frames[:8]]
+            frames_y = [_to_gray(f) for f in s.frames[8:16]]
             if s.flat_white is not None and s.flat_black is not None:
                 white = _to_gray(s.flat_white)
                 black = _to_gray(s.flat_black)
@@ -549,8 +553,8 @@ def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
         s = _current()
         if s is None:
             raise HTTPException(400, detail="No active deflectometry session")
-        if len(s.frames) < 8:
-            raise HTTPException(400, detail="Capture frames first (need at least 8)")
+        if len(s.frames) < 16:
+            raise HTTPException(400, detail="Capture frames first (need at least 16)")
 
         # Use the first X-fringe frame (index 0), converted to grayscale
         frame = np.asarray(s.frames[0], dtype=np.float64)
@@ -581,9 +585,9 @@ def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
         """
         import os
         s = _current()
-        if s is None or len(s.frames) < 8:
+        if s is None or len(s.frames) < 16:
             have = 0 if s is None else len(s.frames)
-            raise HTTPException(400, detail=f"Need 8 frames (have {have})")
+            raise HTTPException(400, detail=f"Need 16 frames (have {have})")
 
         out_dir = os.path.join(os.path.dirname(__file__), "..", "poc_output", "deflectometry")
         os.makedirs(out_dir, exist_ok=True)
@@ -594,9 +598,9 @@ def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
 
         # Save raw frames as PNGs
         frame_stats = []
-        for i, f in enumerate(s.frames[:8]):
-            orientation = "x" if i < 4 else "y"
-            phase_idx = i % 4
+        for i, f in enumerate(s.frames[:16]):
+            orientation = "x" if i < 8 else "y"
+            phase_idx = i % 8
             fname = f"frame_{orientation}_{phase_idx}.png"
             import cv2
             cv2.imwrite(os.path.join(out_dir, fname), f)
@@ -609,8 +613,8 @@ def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
                 "std": float(gray.std()),
             })
 
-        frames_x = [_to_gray(f) for f in s.frames[:4]]
-        frames_y = [_to_gray(f) for f in s.frames[4:8]]
+        frames_x = [_to_gray(f) for f in s.frames[:8]]
+        frames_y = [_to_gray(f) for f in s.frames[8:16]]
 
         # Apply flat-field if available
         if s.flat_white is not None and s.flat_black is not None:

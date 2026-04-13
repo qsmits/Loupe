@@ -1,8 +1,9 @@
 """Deflectometry computation primitives.
 
-Pure functions for fringe generation, 4-step phase shifting, phase
-unwrapping, statistics, and pseudocolor visualization. No state, no I/O
-beyond PNG encoding for the visualization helper.
+Pure functions for fringe generation, N-step phase shifting (generalized
+from 4-step to support 8-step harmonic suppression), phase unwrapping,
+statistics, and pseudocolor visualization. No state, no I/O beyond PNG
+encoding for the visualization helper.
 """
 
 from __future__ import annotations
@@ -52,24 +53,37 @@ def generate_fringe_pattern(
     return np.clip(img, 0, 255).astype(np.uint8)
 
 
-def compute_wrapped_phase(frames4: list[np.ndarray]) -> np.ndarray:
-    """4-step phase extraction: atan2(I3 - I1, I0 - I2).
+def compute_wrapped_phase(frames: list[np.ndarray]) -> np.ndarray:
+    """N-step phase extraction using the generalized formula.
+
+    φ = atan2(-Σ Iₖ·sin(2πk/N), Σ Iₖ·cos(2πk/N))
 
     Frames may be uint8 or float, 2D or 3D (H, W, C). 3D inputs are reduced
     to grayscale by mean over the channel axis. Output is float64 in [-π, π].
+
+    Accepts any number of frames ≥ 3 (typically 4 or 8). The negated sin_sum
+    preserves sign compatibility with the original 4-step formula
+    atan2(I3 - I1, I0 - I2).
     """
-    if len(frames4) != 4:
-        raise ValueError(f"expected 4 frames, got {len(frames4)}")
+    N = len(frames)
+    if N < 3:
+        raise ValueError(f"need at least 3 frames, got {N}")
 
     prepped: list[np.ndarray] = []
-    for f in frames4:
+    for f in frames:
         arr = np.asarray(f, dtype=np.float64)
         if arr.ndim == 3:
             arr = arr.mean(axis=-1)
         prepped.append(arr)
 
-    i0, i1, i2, i3 = prepped
-    return np.arctan2(i3 - i1, i0 - i2)
+    sin_sum = np.zeros_like(prepped[0])
+    cos_sum = np.zeros_like(prepped[0])
+    for k, img in enumerate(prepped):
+        angle = 2.0 * np.pi * k / N
+        sin_sum += img * np.sin(angle)
+        cos_sum += img * np.cos(angle)
+
+    return np.arctan2(-sin_sum, cos_sum)
 
 
 def unwrap_phase(wrapped: np.ndarray, orientation: str) -> np.ndarray:
@@ -102,26 +116,37 @@ def remove_tilt(unwrapped: np.ndarray) -> np.ndarray:
     return u - plane
 
 
-def compute_modulation(frames4: list[np.ndarray]) -> np.ndarray:
-    """Fringe modulation (contrast) map from 4-step frames.
+def compute_modulation(frames: list[np.ndarray]) -> np.ndarray:
+    """Fringe modulation (contrast) map from N phase-shifted frames.
 
-    modulation = sqrt((I3 - I1)^2 + (I0 - I2)^2) / 2
+    Uses the generalized formula:
+        modulation = (2/N) * sqrt((Σ Iₖ·sin(2πk/N))² + (Σ Iₖ·cos(2πk/N))²)
+
+    For N=4 this reduces to sqrt((I3-I1)² + (I0-I2)²) / 2.
 
     High modulation = strong fringe signal = reliable phase.
     Low modulation = the reflected fringes are weak at that pixel (outside
     the iPad reflection, ambient light washing them out, clipped exposure).
     Returned as float64, same spatial shape as the input frames.
     """
-    if len(frames4) != 4:
-        raise ValueError(f"expected 4 frames, got {len(frames4)}")
+    N = len(frames)
+    if N < 3:
+        raise ValueError(f"need at least 3 frames, got {N}")
     prepped = []
-    for f in frames4:
+    for f in frames:
         arr = np.asarray(f, dtype=np.float64)
         if arr.ndim == 3:
             arr = arr.mean(axis=-1)
         prepped.append(arr)
-    i0, i1, i2, i3 = prepped
-    return np.sqrt((i3 - i1) ** 2 + (i0 - i2) ** 2) / 2.0
+
+    sin_sum = np.zeros_like(prepped[0])
+    cos_sum = np.zeros_like(prepped[0])
+    for k, img in enumerate(prepped):
+        angle = 2.0 * np.pi * k / N
+        sin_sum += img * np.sin(angle)
+        cos_sum += img * np.cos(angle)
+
+    return (2.0 / N) * np.sqrt(sin_sum ** 2 + cos_sum ** 2)
 
 
 def create_modulation_mask(mod_x: np.ndarray, mod_y: np.ndarray, threshold_frac: float = 0.02) -> np.ndarray:

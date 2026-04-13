@@ -359,7 +359,7 @@ async function captureSequence() {
   const btn = $("defl-btn-capture");
   if (btn) btn.disabled = true;
   const statusEl = $("defl-status-capture");
-  if (statusEl) statusEl.textContent = "Capturing 8 frames\u2026";
+  if (statusEl) statusEl.textContent = "Capturing 16 frames\u2026";
   try {
     const r = await apiFetch("/deflectometry/capture-sequence", {
       method: "POST",
