@@ -2,6 +2,7 @@ import base64
 import numpy as np
 from backend.vision.deflectometry import (
     create_modulation_mask,
+    fit_sphere_calibration,
     frankot_chellappa,
     generate_fringe_pattern, compute_wrapped_phase, unwrap_phase,
     phase_stats, pseudocolor_png_b64, remove_tilt,
@@ -118,6 +119,31 @@ def test_phase_stats_with_mask():
     # Valid pixels: 0, 1, 3, 5 -> mean=2.25, pv=5.0
     assert abs(s["mean"] - 2.25) < 1e-9
     assert abs(s["pv"] - 5.0) < 1e-9
+
+
+def test_fit_sphere_calibration_recovers_radius():
+    # Simulate a height map from a sphere of radius 25mm, viewed at 100 px/mm.
+    # z = (x^2 + y^2) / (2R), with x,y in mm.
+    R_mm = 25.0
+    px_per_mm = 100.0
+    mm_per_px = 1.0 / px_per_mm
+    h, w = 64, 64
+    y, x = np.mgrid[0:h, 0:w]
+    # Center the sphere in the image
+    cx, cy = w / 2.0, h / 2.0
+    x_mm = (x - cx) * mm_per_px
+    y_mm = (y - cy) * mm_per_px
+    z_mm = (x_mm**2 + y_mm**2) / (2.0 * R_mm)
+    # Simulate the height map as if the cal_factor were 5.0 (arbitrary)
+    # so z_measured = z_mm / (cal_factor * 1e-3)... actually let's just
+    # use z_mm directly as if cal_factor=1 mm/rad, then check the fit.
+    # The function should recover cal_factor ≈ 1.0 when the "measured"
+    # height map IS already in mm.
+    cal = fit_sphere_calibration(z_mm, None, R_mm, mm_per_px)
+    # cal_factor should be ~1.0 since input is already in mm
+    assert abs(cal["cal_factor"] - 1.0) < 0.01, f"cal_factor={cal['cal_factor']}"
+    assert abs(cal["fitted_radius_mm"] - R_mm) < 0.5
+    assert cal["residual_rms_um"] < 1.0  # paraboloid fits a sphere well near center
 
 
 def test_frankot_chellappa_recovers_paraboloid():

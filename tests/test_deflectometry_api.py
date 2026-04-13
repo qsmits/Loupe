@@ -93,12 +93,6 @@ def test_deflectometry_reset_without_session_is_ok(client: TestClient):
     assert r.json() == {}
 
 
-def test_deflectometry_pair_without_lobby_returns_404(client: TestClient):
-    client.post("/deflectometry/start", json={})
-    r = client.post("/deflectometry/pair", json={"code": "ZZZZ"})
-    assert r.status_code == 404
-
-
 def test_deflectometry_flat_field_requires_ipad(client: TestClient):
     client.post("/deflectometry/start", json={})
     r = client.post("/deflectometry/flat-field", json={})

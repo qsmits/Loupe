@@ -33,6 +33,7 @@ from .vision.deflectometry import (
     compute_modulation,
     compute_wrapped_phase,
     create_modulation_mask,
+    fit_sphere_calibration,
     frankot_chellappa,
     phase_stats,
     pseudocolor_png_b64,
@@ -59,6 +60,7 @@ class _Session:
         self.flat_black: Optional[np.ndarray] = None
         self.ref_phase_x: Optional[np.ndarray] = None
         self.ref_phase_y: Optional[np.ndarray] = None
+        self.cal_factor: Optional[float] = None  # phase-rad → mm
         # Serializes capture-sequence so two concurrent runs can't interleave
         self.lock: asyncio.Lock = asyncio.Lock()
 
@@ -98,8 +100,13 @@ class CaptureReferenceBody(BaseModel):
     averages: int = Field(default=3, ge=1, le=10)
 
 
-class PairBody(BaseModel):
-    code: str
+class HeightmapBody(BaseModel):
+    mask_threshold: float = Field(default=0.02, ge=0.0, le=0.5)
+
+
+class CalibrateSphereBody(BaseModel):
+    sphere_diameter_mm: float = Field(gt=0)
+    px_per_mm: float = Field(gt=0)
 
 
 def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
@@ -107,8 +114,6 @@ def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
     # Single-active-session container; using a dict so nested functions can
     # rebind without `nonlocal`.
     state: dict[str, Optional[_Session]] = {"session": None}
-    # Lobby: maps pairing codes to iPad WebSocket connections waiting to pair.
-    lobby: dict[str, WebSocket] = {}
 
     def _current() -> Optional[_Session]:
         return state["session"]
@@ -149,25 +154,9 @@ def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
             "has_result": s.last_result is not None,
             "has_flat_field": s.flat_white is not None and s.flat_black is not None,
             "has_reference": s.ref_phase_x is not None,
+            "cal_factor": s.cal_factor,
             "last_result": s.last_result,
         }
-
-    @router.post("/deflectometry/pair", dependencies=[Depends(_reject_hosted)])
-    async def deflectometry_pair(body: PairBody):
-        code = body.code
-        ws = lobby.get(code)
-        if ws is None:
-            raise HTTPException(404, detail="No iPad with that code is waiting")
-        lobby.pop(code, None)
-        # Auto-create session if needed
-        s = _current()
-        if s is None or s.is_unused():
-            sid = uuid.uuid4().hex
-            s = _Session(sid)
-            state["session"] = s
-        s.ws = ws
-        await ws.send_json({"type": "paired", "session_id": s.id})
-        return {"session_id": s.id, "ipad_connected": True}
 
     @router.post("/deflectometry/flat-field", dependencies=[Depends(_reject_hosted)])
     async def deflectometry_flat_field():
@@ -396,6 +385,7 @@ def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
             "stats_y": phase_stats(unw_y, mask=mask),
             "has_reference": has_reference,
             "mask_valid_frac": mask_valid_frac,
+            "cal_factor": s.cal_factor,
         }
         s.last_result = result
         # Store unwrapped phases and mask for heightmap endpoint
@@ -403,9 +393,6 @@ def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
         s._last_unw_y = unw_y
         s._last_mask = mask
         return result
-
-    class HeightmapBody(BaseModel):
-        mask_threshold: float = Field(default=0.02, ge=0.0, le=0.5)
 
     @router.post("/deflectometry/heightmap", dependencies=[Depends(_reject_hosted)])
     async def deflectometry_heightmap(body: HeightmapBody = HeightmapBody()):  # noqa: B008
@@ -437,6 +424,13 @@ def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
             mask = s._last_mask
 
         height = frankot_chellappa(unw_x, unw_y, mask=mask)
+
+        # Apply calibration if available (phase-rad → mm → µm)
+        cal = s.cal_factor
+        unit = "rad"
+        if cal is not None:
+            height = height * cal * 1000.0  # → µm
+            unit = "µm"
 
         # Downsampled dimensions: max 256px on long edge
         h, w = height.shape
@@ -490,7 +484,37 @@ def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
             "mask": mask_list,
             "stats": stats,
             "has_reference": has_reference,
+            "unit": unit,
+            "cal_factor": cal,
         }
+
+    @router.post("/deflectometry/calibrate-sphere", dependencies=[Depends(_reject_hosted)])
+    async def deflectometry_calibrate_sphere(body: CalibrateSphereBody):
+        s = _current()
+        if s is None or s.last_result is None:
+            raise HTTPException(400, detail="Run compute first")
+        if not hasattr(s, "_last_unw_x"):
+            raise HTTPException(400, detail="No height data — run compute first")
+
+        # Build height map from stored unwrapped phases
+        mask = s._last_mask
+        height = frankot_chellappa(s._last_unw_x, s._last_unw_y, mask=mask)
+
+        mm_per_px = 1.0 / body.px_per_mm
+        sphere_radius_mm = body.sphere_diameter_mm / 2.0
+
+        try:
+            result = fit_sphere_calibration(
+                height, mask, sphere_radius_mm, mm_per_px
+            )
+        except ValueError as e:
+            raise HTTPException(400, detail=str(e))
+
+        s.cal_factor = result["cal_factor"]
+        # Update stored result so status polling reflects calibration
+        if s.last_result is not None:
+            s.last_result["cal_factor"] = result["cal_factor"]
+        return result
 
     @router.post("/deflectometry/diagnostics", dependencies=[Depends(_reject_hosted)])
     async def deflectometry_diagnostics():
@@ -587,42 +611,34 @@ def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
 
         await websocket.accept()
 
-        # Wait for the first message — must be a hello with a pairing code.
-        try:
-            first = await websocket.receive_json()
-        except WebSocketDisconnect:
-            return
-        if first.get("type") != "hello" or "pairing_code" not in first:
-            await websocket.close(code=1008)
-            return
-
-        pairing_code: str = first["pairing_code"]
-        lobby[pairing_code] = websocket
+        # Auto-attach to the current session (create one if needed).
+        s = _current()
+        if s is None or s.is_unused():
+            sid = uuid.uuid4().hex
+            s = _Session(sid)
+            state["session"] = s
+        s.ws = websocket
+        await websocket.send_json({"type": "paired", "session_id": s.id})
 
         try:
             while True:
                 msg = await websocket.receive_json()
                 mtype = msg.get("type")
                 if mtype == "ack":
-                    # Resolve pending ack on the session this WS is paired to
-                    s = _current()
-                    if s is not None and s.ws is websocket:
+                    s2 = _current()
+                    if s2 is not None and s2.ws is websocket:
                         try:
                             pid = int(msg["pattern_id"])
                         except (KeyError, TypeError, ValueError):
                             continue
-                        ev = s.pending_acks.get(pid)
+                        ev = s2.pending_acks.get(pid)
                         if ev is not None:
                             ev.set()
-                # Unknown message types are silently ignored
         except WebSocketDisconnect:
             pass
         finally:
-            # Clean up lobby entry if still present
-            lobby.pop(pairing_code, None)
-            # Unset session.ws if this was the paired WS
-            s = _current()
-            if s is not None and s.ws is websocket:
-                s.ws = None
+            s2 = _current()
+            if s2 is not None and s2.ws is websocket:
+                s2.ws = None
 
     return router

@@ -1,7 +1,7 @@
 // deflectometry.js — Phase-measuring deflectometry wizard UI.
 //
 // Drives a deflectometry session from the measurement PC:
-//   1. Starts a backend session (server issues a pairing URL for the iPad).
+//   1. Starts a backend session. iPad auto-connects via WebSocket.
 //   2. Polls iPad connection status while the dialog is open.
 //   3. Triggers a capture sequence (displays 8 phase-shifted fringe patterns
 //      on the iPad and grabs a frame per pattern).
@@ -12,6 +12,7 @@
 // `×` button. State is scoped to this module — does NOT touch core `state`.
 
 import { apiFetch } from './api.js';
+import { state } from './state.js';
 
 const df = {
   sessionId: null,
@@ -43,12 +44,10 @@ function buildDialog() {
         </p>
 
         <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;padding:8px 10px;background:#161616;border:1px solid #2a2a2a;border-radius:3px;flex-wrap:wrap">
-          <label style="font-size:13px">iPad pairing code:</label>
-          <input type="text" id="deflectometry-pair-code" maxlength="4" placeholder="A3X7" style="width:80px;text-transform:uppercase;font-family:monospace;font-size:18px;text-align:center;letter-spacing:4px" />
-          <button class="detect-btn" id="btn-deflectometry-pair" style="flex-shrink:0">Pair</button>
           <span id="deflectometry-ipad-status" style="font-size:12px;padding:3px 8px;border-radius:3px;background:#3a1a1a;color:#f87171;border:1px solid #7a2a2a">iPad: disconnected</span>
           <span id="deflectometry-flatfield-status" style="font-size:12px;padding:3px 8px;border-radius:3px;background:#1a1a2a;color:#888;border:1px solid #333">Flat field: \u2014</span>
           <span id="deflectometry-ref-status" style="font-size:12px;padding:3px 8px;border-radius:3px;background:#1a1a2a;color:#888;border:1px solid #333">Reference: \u2014</span>
+          <span id="deflectometry-cal-status" style="font-size:12px;padding:3px 8px;border-radius:3px;background:#1a1a2a;color:#888;border:1px solid #333">Calibration: \u2014</span>
         </div>
 
         <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap">
@@ -66,6 +65,26 @@ function buildDialog() {
           <button class="detect-btn" id="btn-deflectometry-reset" style="min-width:80px">Reset</button>
           <button class="detect-btn" id="btn-deflectometry-diag" style="min-width:100px">Diagnostics</button>
           <button class="detect-btn" id="btn-deflectometry-3d" style="min-width:100px" disabled>3D Surface</button>
+        </div>
+
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;padding:8px 10px;background:#161616;border:1px solid #2a2a2a;border-radius:3px;flex-wrap:wrap">
+          <label style="font-size:13px">Display:
+            <select id="deflectometry-display-device" style="margin-left:4px">
+              <option value="0.0962">iPad Air 1 (264 ppi)</option>
+              <option value="0.0962">iPad Air 2 (264 ppi)</option>
+              <option value="0.0846">iPad Pro 11" (264 ppi)</option>
+              <option value="0.0846">iPad Pro 12.9" (264 ppi)</option>
+              <option value="custom">Custom\u2026</option>
+            </select>
+          </label>
+          <label id="deflectometry-custom-pitch-label" style="font-size:13px;display:none">Pixel pitch (mm):
+            <input type="number" id="deflectometry-custom-pitch" min="0.01" max="1" step="0.001" value="0.096" style="width:70px" />
+          </label>
+          <span style="opacity:0.4;font-size:13px">\u2502</span>
+          <label style="font-size:13px">Sphere \u2300 (mm):
+            <input type="number" id="deflectometry-sphere-diam" min="0.1" max="500" step="0.1" value="25.0" style="width:70px" />
+          </label>
+          <button class="detect-btn" id="btn-deflectometry-calibrate" style="min-width:80px">Calibrate</button>
         </div>
 
         <div id="deflectometry-progress" style="font-size:12px;opacity:0.85;min-height:1.4em;margin-bottom:10px;font-variant-numeric:tabular-nums"></div>
@@ -121,7 +140,6 @@ function buildDialog() {
   document.body.appendChild(dlg);
 
   $("btn-deflectometry-close").addEventListener("click", closeDialog);
-  $("btn-deflectometry-pair").addEventListener("click", pairIpad);
   $("btn-deflectometry-flatfield").addEventListener("click", flatField);
   $("btn-deflectometry-ref").addEventListener("click", captureReference);
   $("btn-deflectometry-capture").addEventListener("click", captureSequence);
@@ -129,6 +147,16 @@ function buildDialog() {
   $("btn-deflectometry-reset").addEventListener("click", resetSession);
   $("btn-deflectometry-diag").addEventListener("click", runDiagnostics);
   $("btn-deflectometry-3d").addEventListener("click", openDeflectometry3d);
+  $("btn-deflectometry-calibrate").addEventListener("click", calibrateSphere);
+
+  // Display device dropdown: show/hide custom pitch input
+  const deviceSel = $("deflectometry-display-device");
+  const customLabel = $("deflectometry-custom-pitch-label");
+  if (deviceSel && customLabel) {
+    deviceSel.addEventListener("change", () => {
+      customLabel.style.display = deviceSel.value === "custom" ? "" : "none";
+    });
+  }
 
   // Mask threshold slider: update label + debounced recompute
   const maskSlider = $("deflectometry-mask-thresh");
@@ -170,38 +198,6 @@ function setIpadStatus(connected) {
   }
 }
 
-async function pairIpad() {
-  const input = $("deflectometry-pair-code");
-  if (!input) return;
-  const code = input.value.trim().toUpperCase();
-  if (!code || code.length < 1) {
-    setProgress("Enter the code shown on the iPad.");
-    return;
-  }
-  setProgress("Pairing...");
-  try {
-    const r = await apiFetch("/deflectometry/pair", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ code }),
-    });
-    if (r.status === 404) {
-      setProgress("No iPad with that code found.");
-      return;
-    }
-    if (!r.ok) {
-      const msg = await r.text();
-      setProgress("Pair failed: " + msg);
-      return;
-    }
-    input.value = "";
-    setIpadStatus(true);
-    setProgress("iPad paired.");
-  } catch (e) {
-    setProgress("Pair failed: " + (e && e.message ? e.message : String(e)));
-  }
-}
-
 async function flatField() {
   const btn = $("btn-deflectometry-flatfield");
   if (btn) btn.disabled = true;
@@ -220,6 +216,49 @@ async function flatField() {
     setProgress("Flat field captured.");
   } catch (e) {
     setProgress("Flat field failed: " + (e && e.message ? e.message : String(e)));
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function calibrateSphere() {
+  const ppm = state.calibration?.pixelsPerMm;
+  if (!ppm || ppm <= 0) {
+    setProgress("Camera calibration required first (px/mm). Use the calibration tool on the main screen.");
+    return;
+  }
+  const diamEl = $("deflectometry-sphere-diam");
+  let diam = parseFloat(diamEl ? diamEl.value : "25");
+  if (!Number.isFinite(diam) || diam <= 0) {
+    setProgress("Enter a valid sphere diameter in mm.");
+    return;
+  }
+  const btn = $("btn-deflectometry-calibrate");
+  if (btn) btn.disabled = true;
+  setProgress("Calibrating with sphere (d=" + diam.toFixed(1) + " mm)\u2026");
+  try {
+    const r = await apiFetch("/deflectometry/calibrate-sphere", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sphere_diameter_mm: diam, px_per_mm: ppm }),
+    });
+    if (!r.ok) {
+      const msg = await r.text();
+      setProgress("Calibration failed: " + msg);
+      return;
+    }
+    const data = await r.json();
+    const resMicron = data.residual_rms_um.toFixed(2);
+    const fitR = data.fitted_radius_mm.toFixed(3);
+    setProgress(
+      `Calibrated! Factor: ${data.cal_factor_um.toFixed(4)} \u00b5m/rad, ` +
+      `fitted R: ${fitR} mm, residual RMS: ${resMicron} \u00b5m`
+    );
+    // Re-render current results with calibrated units
+    const status = await refreshStatus();
+    if (status && status.last_result) renderResult(status.last_result);
+  } catch (e) {
+    setProgress("Calibration failed: " + (e && e.message ? e.message : String(e)));
   } finally {
     if (btn) btn.disabled = false;
   }
@@ -252,8 +291,16 @@ async function captureReference() {
   }
 }
 
-function formatStats(stats) {
+function formatStats(stats, calFactor) {
   if (!stats) return "—";
+  if (calFactor) {
+    // Convert from rad to µm
+    const k = Math.abs(calFactor) * 1000;
+    const pv = Number.isFinite(stats.pv) ? (stats.pv * k).toFixed(2) : "—";
+    const rms = Number.isFinite(stats.rms) ? (stats.rms * k).toFixed(2) : "—";
+    const mean = Number.isFinite(stats.mean) ? (stats.mean * k).toFixed(2) : "—";
+    return `PV:   ${pv} \u00b5m\nRMS:  ${rms} \u00b5m\nMean: ${mean} \u00b5m`;
+  }
   const pv = Number.isFinite(stats.pv) ? stats.pv.toFixed(3) : "—";
   const rms = Number.isFinite(stats.rms) ? stats.rms.toFixed(3) : "—";
   const mean = Number.isFinite(stats.mean) ? stats.mean.toFixed(3) : "—";
@@ -270,8 +317,9 @@ function renderResult(result) {
   if (result.phase_y_png_b64) {
     $("deflectometry-phase-y-img").src = `data:image/png;base64,${result.phase_y_png_b64}`;
   }
-  $("deflectometry-phase-x-stats").textContent = formatStats(result.stats_x);
-  $("deflectometry-phase-y-stats").textContent = formatStats(result.stats_y);
+  const cal = result.cal_factor || null;
+  $("deflectometry-phase-x-stats").textContent = formatStats(result.stats_x, cal);
+  $("deflectometry-phase-y-stats").textContent = formatStats(result.stats_y, cal);
   resultEl.hidden = false;
 }
 
@@ -299,6 +347,7 @@ async function refreshStatus() {
     setIpadStatus(!!data.ipad_connected);
     setCalibrationStatus("deflectometry-flatfield-status", "Flat field", !!data.has_flat_field);
     setCalibrationStatus("deflectometry-ref-status", "Reference", !!data.has_reference);
+    setCalibrationStatus("deflectometry-cal-status", "Calibration", data.cal_factor != null);
     return data;
   } catch {
     return null;

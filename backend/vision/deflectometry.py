@@ -182,6 +182,91 @@ def pseudocolor_png_b64(unwrapped: np.ndarray, mask: np.ndarray | None = None) -
     return base64.b64encode(buf.tobytes()).decode("ascii")
 
 
+def fit_sphere_calibration(
+    height: np.ndarray,
+    mask: np.ndarray | None,
+    sphere_radius_mm: float,
+    mm_per_px: float,
+) -> dict:
+    """Fit a paraboloid to a height map and derive the phase-to-mm scale factor.
+
+    For a sphere of radius R, the sag is z = (x² + y²) / (2R).
+    We fit z_meas = a*(x² + y²) + bx + cy + d to the valid pixels,
+    then solve for the calibration factor k such that z_mm = k * z_meas.
+
+    Parameters
+    ----------
+    height : 2D array from frankot_chellappa (units: phase-radians).
+    mask : boolean mask (True = valid).
+    sphere_radius_mm : known radius of the calibration sphere.
+    mm_per_px : lateral calibration (1 / pixelsPerMm).
+
+    Returns
+    -------
+    dict with keys:
+        cal_factor    : multiply any height map by this to get mm.
+        cal_factor_um : same, but height map → µm.
+        fitted_radius_mm : radius implied by the paraboloid fit (sanity check).
+        residual_rms_um  : RMS of (measured − fitted paraboloid) in µm.
+        center_px        : (cx, cy) center of fitted paraboloid in pixel coords.
+    """
+    h, w = height.shape
+    yy, xx = np.mgrid[0:h, 0:w]
+
+    if mask is not None:
+        valid = mask.astype(bool)
+    else:
+        valid = ~np.isnan(height)
+
+    xv = xx[valid].astype(np.float64)
+    yv = yy[valid].astype(np.float64)
+    zv = height[valid].astype(np.float64)
+
+    if zv.size < 6:
+        raise ValueError("Too few valid pixels for sphere fit")
+
+    # Fit z = a*x² + b*y² + c*x + d*y + e
+    # For a sphere a ≈ b, but we fit independently for robustness.
+    A = np.column_stack([xv**2, yv**2, xv, yv, np.ones(len(xv))])
+    coeffs, _, _, _ = np.linalg.lstsq(A, zv, rcond=None)
+    a_x, a_y, b_x, b_y, const = coeffs
+
+    # Average curvature (should be nearly equal for a sphere)
+    a_avg = (a_x + a_y) / 2.0
+
+    if abs(a_avg) < 1e-15:
+        raise ValueError("Paraboloid fit has zero curvature — is there a sphere in the field?")
+
+    # Physical curvature: 1/(2R) in mm per mm²
+    # Measured curvature: a_avg in phase-rad per px²
+    # z_mm = k * z_phase_rad
+    # k * a_avg [rad/px²] = (mm_per_px²) / (2R)
+    # k = mm_per_px² / (2 * R * a_avg)
+    cal_factor = (mm_per_px ** 2) / (2.0 * sphere_radius_mm * a_avg)
+
+    # Fitted radius as sanity check (should match input)
+    fitted_radius_mm = (mm_per_px ** 2) / (2.0 * abs(a_avg) * abs(cal_factor))
+
+    # Residual
+    z_fit = coeffs[0] * xv**2 + coeffs[1] * yv**2 + coeffs[2] * xv + coeffs[3] * yv + coeffs[4]
+    residual = (zv - z_fit) * abs(cal_factor) * 1000.0  # → µm
+    residual_rms_um = float(np.sqrt(np.mean(residual ** 2)))
+
+    # Paraboloid center in pixel coords: x0 = -c/(2a), y0 = -d/(2b)
+    cx = -b_x / (2.0 * a_x) if abs(a_x) > 1e-15 else w / 2.0
+    cy = -b_y / (2.0 * a_y) if abs(a_y) > 1e-15 else h / 2.0
+
+    return {
+        "cal_factor": float(cal_factor),
+        "cal_factor_um": float(cal_factor * 1000.0),
+        "fitted_radius_mm": float(fitted_radius_mm),
+        "residual_rms_um": residual_rms_um,
+        "center_px": [float(cx), float(cy)],
+        "curvature_x": float(a_x),
+        "curvature_y": float(a_y),
+    }
+
+
 def frankot_chellappa(dzdx: np.ndarray, dzdy: np.ndarray, mask: np.ndarray | None = None) -> np.ndarray:
     """Integrate two slope fields into a height map via Frankot-Chellappa (1988).
 
