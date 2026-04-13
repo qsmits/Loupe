@@ -669,8 +669,17 @@
           <button class="help-nav-item top-level" data-page="defl-capture" data-help-modes="deflectometry">Capture &amp; Compute</button>
           <button class="help-nav-item top-level" data-page="defl-results" data-help-modes="deflectometry">Results</button>
 
-          <div class="help-nav-section" data-help-modes="fringe">Fringe Analysis</div>
-          <button class="help-nav-item top-level" data-page="fringe-analysis" data-help-modes="fringe">Fringe Analysis</button>
+          <div class="help-nav-section" data-help-modes="fringe">Overview</div>
+          <button class="help-nav-item top-level" data-page="fringe-overview" data-help-modes="fringe">How It Works</button>
+          <button class="help-nav-item top-level" data-page="fringe-setup" data-help-modes="fringe">Setup</button>
+
+          <div class="help-nav-section" data-help-modes="fringe">Analysis</div>
+          <button class="help-nav-item top-level" data-page="fringe-capture" data-help-modes="fringe">Capture &amp; Analyze</button>
+          <button class="help-nav-item top-level" data-page="fringe-zernike" data-help-modes="fringe">Zernike Subtraction</button>
+
+          <div class="help-nav-section" data-help-modes="fringe">Results</div>
+          <button class="help-nav-item top-level" data-page="fringe-results" data-help-modes="fringe">Results &amp; Tabs</button>
+          <button class="help-nav-item top-level" data-page="fringe-tips" data-help-modes="fringe">Tips &amp; Troubleshooting</button>
         </nav>
 
         <!-- Right content -->
@@ -702,7 +711,7 @@
               <tbody>
                 <tr><td><strong>Microscope</strong></td><td>Precision 2D measurement of camera or imported images — calibration, annotation, DXF overlay, guided inspection.</td></tr>
                 <tr><td><strong>Deflectometry</strong></td><td>Phase-shifting deflectometry for measuring surface form of specular (reflective) parts using an iPad as a structured-light display.</td></tr>
-                <tr><td><strong>Fringe Analysis</strong></td><td>Interferometric fringe analysis. <em>Coming soon.</em></td></tr>
+                <tr><td><strong>Fringe Analysis</strong></td><td>Interferometric fringe analysis for quantitative surface flatness measurement using an optical flat and monochromatic light.</td></tr>
               </tbody>
             </table>
             <div class="help-section-label">Workspace isolation</div>
@@ -797,11 +806,95 @@
             <p class="help-p">Troubleshooting view with fringe modulation map, histogram of modulation values, and coverage statistics (percentage of pixels above the mask threshold). Low coverage or uneven modulation usually indicates stray light, poor surface reflectivity, or an out-of-focus image.</p>
           </div>
 
-          <!-- Fringe Analysis -->
-          <div class="help-page" id="help-page-fringe-analysis" hidden>
-            <h2 class="help-page-title">Fringe Analysis</h2>
-            <p class="help-page-sub">Interferometric fringe analysis for high-precision surface measurement.</p>
-            <p class="help-p">This mode is currently under development. Documentation will be added when the feature is available.</p>
+          <!-- Fringe: How It Works -->
+          <div class="help-page" id="help-page-fringe-overview" hidden>
+            <h2 class="help-page-title">How It Works</h2>
+            <p class="help-page-sub">Monochromatic interferometric fringe analysis for quantitative surface flatness measurement.</p>
+            <div class="help-section-label">Principle</div>
+            <p class="help-p">When a flat optical reference (an optical flat) is placed on a lapped surface and illuminated with monochromatic light, interference fringes form. Each fringe represents a contour of constant air gap, spaced at half the wavelength of light (~295 nm for sodium). Straight, evenly spaced fringes indicate a flat surface; curved or irregularly spaced fringes indicate surface errors.</p>
+            <div class="help-section-label">Digital analysis</div>
+            <p class="help-p">Loupe digitizes this process: a single photograph of the interferogram is analyzed using 2D Fourier transform (DFT) phase extraction. The carrier frequency (the regular fringe spacing) is isolated in the frequency domain, and the surface-error phase is extracted from the sideband. This phase is then unwrapped, decomposed into Zernike polynomials, and converted to physical height using the known wavelength.</p>
+            <div class="help-section-label">What you need</div>
+            <p class="help-p">A monochromatic light source (sodium lamp, HeNe laser, or narrow-band LED), an optical flat, the part to be measured, and a camera to photograph the fringes. No iPad or multi-frame capture is required, unlike deflectometry.</p>
+          </div>
+
+          <!-- Fringe: Setup -->
+          <div class="help-page" id="help-page-fringe-setup" hidden>
+            <h2 class="help-page-title">Setup</h2>
+            <p class="help-page-sub">Prepare the system before analyzing an interferogram.</p>
+            <div class="help-section-label">Wavelength</div>
+            <p class="help-p">Select the correct wavelength for your light source from the dropdown. Common choices: Sodium (589 nm), HeNe laser (632.8 nm), or Green LED (532 nm). If your source is different, select Custom and enter the wavelength in nanometers. The wavelength determines the physical height conversion: height = phase &times; &lambda; / (4&pi;).</p>
+            <div class="help-section-label">Mask threshold</div>
+            <p class="help-p">The mask threshold slider controls how aggressively the auto-masking rejects low-contrast pixels. Increase it if background noise is contaminating the results; decrease it if valid fringe areas are being excluded. Default is 15%.</p>
+            <div class="help-section-label">Focus quality</div>
+            <p class="help-p">The focus quality bar shows a real-time sharpness score (0-100) for the camera preview. Higher is better. Adjust focus and lighting until the score is above 60 before capturing.</p>
+          </div>
+
+          <!-- Fringe: Capture & Analyze -->
+          <div class="help-page" id="help-page-fringe-capture" hidden>
+            <h2 class="help-page-title">Capture &amp; Analyze</h2>
+            <p class="help-page-sub">How to acquire and analyze an interferogram.</p>
+            <div class="help-section-label">From camera</div>
+            <p class="help-p">Click <strong>Freeze &amp; Analyze</strong> to capture the current camera frame and run the full analysis pipeline. The camera frame is frozen, converted to grayscale, and processed through DFT phase extraction, Zernike fitting, and surface rendering.</p>
+            <div class="help-section-label">From file</div>
+            <p class="help-p">Drag and drop any image file (PNG, JPEG, TIFF) onto the drop zone in the left column. This is useful for analyzing saved interferograms or images from other cameras.</p>
+            <div class="help-section-label">Pipeline</div>
+            <div class="help-step"><span class="help-step-num">1</span><span>Auto-mask: pixels with low fringe contrast are excluded.</span></div>
+            <div class="help-step"><span class="help-step-num">2</span><span>2D FFT extracts the carrier frequency and isolates the surface-error sideband.</span></div>
+            <div class="help-step"><span class="help-step-num">3</span><span>Phase unwrapping resolves 2&pi; ambiguities into a continuous surface.</span></div>
+            <div class="help-step"><span class="help-step-num">4</span><span>Zernike polynomial fitting (36 terms) decomposes the surface into known aberration modes.</span></div>
+            <div class="help-step"><span class="help-step-num">5</span><span>Selected terms are subtracted and the residual is converted to physical height.</span></div>
+          </div>
+
+          <!-- Fringe: Zernike Subtraction -->
+          <div class="help-page" id="help-page-fringe-zernike" hidden>
+            <h2 class="help-page-title">Zernike Subtraction</h2>
+            <p class="help-page-sub">Control which surface error modes are removed from the measurement.</p>
+            <div class="help-section-label">Why subtract?</div>
+            <p class="help-p">Zernike polynomials describe common optical aberrations. Subtracting certain terms isolates the surface errors you care about. For example, tilt (Z2, Z3) is caused by the optical flat not being perfectly parallel to the surface; removing it shows only the actual surface shape error.</p>
+            <div class="help-section-label">Available terms</div>
+            <table>
+              <thead><tr><th>Checkbox</th><th>Terms</th><th>What it removes</th></tr></thead>
+              <tbody>
+                <tr><td><strong>Tilt X/Y</strong></td><td>Z2, Z3</td><td>Overall tilt (always on)</td></tr>
+                <tr><td><strong>Power</strong></td><td>Z4</td><td>Curvature / defocus (concavity or convexity)</td></tr>
+                <tr><td><strong>Astigmatism</strong></td><td>Z5, Z6</td><td>Saddle-shaped error</td></tr>
+                <tr><td><strong>Coma</strong></td><td>Z7, Z8</td><td>Comet-shaped aberration</td></tr>
+                <tr><td><strong>Spherical</strong></td><td>Z11</td><td>Center-to-edge variation (bowl shape)</td></tr>
+              </tbody>
+            </table>
+            <div class="help-tip">Toggling checkboxes triggers instant re-analysis (no re-capture needed). The Zernike bar chart tab shows all 36 fitted coefficients with subtracted terms grayed out.</div>
+          </div>
+
+          <!-- Fringe: Results & Tabs -->
+          <div class="help-page" id="help-page-fringe-results" hidden>
+            <h2 class="help-page-title">Results &amp; Tabs</h2>
+            <p class="help-page-sub">Understanding the output of a fringe analysis.</p>
+            <div class="help-section-label">Summary bar</div>
+            <p class="help-p">Shows PV (peak-to-valley) and RMS in both waves (&lambda;) and nanometers (nm). PV is the total range of surface error; RMS is the statistical spread. A surface with PV &lt; 1&lambda; is considered "optically flat" for many applications.</p>
+            <div class="help-section-label">Surface Map tab</div>
+            <p class="help-p">False-color height map: red = high, blue = low (relative). The colormap is symmetric around zero after Zernike subtraction. Masked pixels appear black. Scroll to zoom, drag to pan.</p>
+            <div class="help-section-label">3D View tab</div>
+            <p class="help-p">Interactive 3D surface visualization. Drag to rotate, scroll to zoom, right-drag to pan. The Z exaggeration slider amplifies the height for visibility.</p>
+            <div class="help-section-label">Zernike tab</div>
+            <p class="help-p">Bar chart of all 36 fitted Zernike coefficients in units of waves. Subtracted terms are shown in gray; active terms in blue. Large coefficients indicate dominant surface error modes.</p>
+            <div class="help-section-label">Profiles tab</div>
+            <p class="help-p">Cross-section height profiles through the center of the surface: one horizontal, one vertical. Useful for identifying whether errors are primarily in one direction.</p>
+          </div>
+
+          <!-- Fringe: Tips & Troubleshooting -->
+          <div class="help-page" id="help-page-fringe-tips" hidden>
+            <h2 class="help-page-title">Tips &amp; Troubleshooting</h2>
+            <p class="help-page-sub">Common issues and how to get the best results.</p>
+            <div class="help-section-label">Getting good fringes</div>
+            <div class="help-tip">Use a diffuse monochromatic source. Point sources create uneven illumination that degrades the auto-mask.</div>
+            <div class="help-tip">Clean both the optical flat and the part surface. Dust particles create localized bright spots that confuse the phase extraction.</div>
+            <div class="help-tip">Adjust the camera exposure so that fringes are clearly visible without clipping (no fully white or fully black regions).</div>
+            <div class="help-section-label">Troubleshooting</div>
+            <div class="help-tip"><strong>No fringes detected:</strong> Check that the mask threshold is not too high. Try lowering it to 5-10%.</div>
+            <div class="help-tip"><strong>Noisy surface map:</strong> The fringe density may be too high for the camera resolution. Reduce the number of fringes by adjusting the angle of the optical flat.</div>
+            <div class="help-tip"><strong>Phase unwrapping errors:</strong> These appear as sharp step discontinuities in the surface map. They occur when fringes are too closely spaced or when the image is noisy. Try increasing the mask threshold to exclude low-quality regions.</div>
+            <div class="help-tip"><strong>Wrong wavelength:</strong> If PV/RMS values seem unreasonable, verify the wavelength setting matches your actual light source.</div>
           </div>
 
           <!-- Camera Controls -->
