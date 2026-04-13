@@ -157,6 +157,38 @@
     drawSessionLabel();
   }
 
+  function renderCentering() {
+    const W = canvas.width, H = canvas.height;
+    ctx.fillStyle = '#000000';
+    ctx.fillRect(0, 0, W, H);
+
+    const cx = W / 2;
+    const cy = H / 2;
+    const maxR = Math.min(W, H) / 2;
+    const spacing = Math.min(W, H) / 12;
+    const ringCount = Math.floor(maxR / spacing);
+
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = Math.max(1, Math.round(window.devicePixelRatio || 1));
+
+    for (let i = 1; i <= ringCount; i++) {
+      ctx.beginPath();
+      ctx.arc(cx, cy, i * spacing, 0, 2 * Math.PI);
+      ctx.stroke();
+    }
+
+    // Center crosshair
+    const crossSize = Math.round(8 * (window.devicePixelRatio || 1));
+    ctx.beginPath();
+    ctx.moveTo(cx - crossSize, cy);
+    ctx.lineTo(cx + crossSize, cy);
+    ctx.moveTo(cx, cy - crossSize);
+    ctx.lineTo(cx, cy + crossSize);
+    ctx.stroke();
+
+    drawSessionLabel();
+  }
+
   function handleCommand(cmd) {
     if (!cmd || typeof cmd !== 'object') return;
     if (cmd.type === 'pattern') {
@@ -165,6 +197,8 @@
       renderSolid(cmd.value);
     } else if (cmd.type === 'clear') {
       renderSolid(128);
+    } else if (cmd.type === 'centering') {
+      renderCentering();
     } else {
       return;
     }
@@ -191,6 +225,7 @@
       if (lastCommand.type === 'pattern') renderPattern(lastCommand);
       else if (lastCommand.type === 'solid') renderSolid(lastCommand.value);
       else if (lastCommand.type === 'clear') renderSolid(128);
+      else if (lastCommand.type === 'centering') renderCentering();
     } else {
       renderSolid(128);
     }
@@ -226,8 +261,8 @@
       if (msg.type === 'paired') {
         sessionId = msg.session_id;
         paired = true;
-        lastCommand = null;
-        renderSolid(128);
+        lastCommand = { type: 'centering' };
+        renderCentering();
         return;
       }
       handleCommand(msg);

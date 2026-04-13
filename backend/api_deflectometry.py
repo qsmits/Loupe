@@ -187,11 +187,9 @@ def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
                 raise HTTPException(503, detail="Camera returned no frame")
             s.flat_black = frame_b.copy()
 
-            # Return iPad to mid-gray
-            await _push_and_wait(
-                s,
-                {"type": "clear", "pattern_id": 3},
-            )
+            # Return iPad to centering pattern
+            if s.ws is not None:
+                await s.ws.send_json({"type": "centering"})
 
         return {"status": "ok", "has_flat_field": True}
 
@@ -274,6 +272,10 @@ def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
         s.ref_phase_x = unw_x
         s.ref_phase_y = unw_y
 
+        # Return iPad to centering pattern
+        if s.ws is not None:
+            await s.ws.send_json({"type": "centering"})
+
         return {"status": "ok", "has_reference": True}
 
     @router.post("/deflectometry/reset", dependencies=[Depends(_reject_hosted)])
@@ -349,6 +351,10 @@ def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
                         if _avg < body.averages - 1:
                             await asyncio.sleep(0.05)
                     s.frames.append((accum / body.averages).astype(np.uint8))
+
+        # Return iPad to centering pattern
+        if s.ws is not None:
+            await s.ws.send_json({"type": "centering"})
 
         return {"captured_count": len(s.frames)}
 
@@ -619,6 +625,7 @@ def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
             state["session"] = s
         s.ws = websocket
         await websocket.send_json({"type": "paired", "session_id": s.id})
+        await websocket.send_json({"type": "centering"})
 
         try:
             while True:
