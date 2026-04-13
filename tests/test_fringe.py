@@ -397,3 +397,71 @@ class TestReanalyze:
         assert r2["pv_nm"] >= 0
         assert "surface_map" in r1
         assert "surface_map" in r2
+
+
+class TestFringeAPI:
+    """API-level tests using the FastAPI test client."""
+
+    @pytest.fixture
+    def client(self):
+        from backend.main import create_app
+        from tests.conftest import FakeCamera
+        from fastapi.testclient import TestClient
+
+        camera = FakeCamera()
+        app = create_app(camera)
+        with TestClient(app) as c:
+            yield c
+
+    def test_analyze_from_camera(self, client):
+        """POST /fringe/analyze with no image uses camera frame."""
+        r = client.post("/fringe/analyze", json={
+            "wavelength_nm": 632.8,
+            "mask_threshold": 0.15,
+            "subtract_terms": [1, 2, 3],
+        })
+        assert r.status_code == 200
+        data = r.json()
+        assert "surface_map" in data
+        assert "coefficients" in data
+        assert len(data["coefficients"]) == 36
+
+    def test_analyze_with_image(self, client):
+        """POST /fringe/analyze with base64 image."""
+        h, w = 64, 64
+        xx = np.arange(w)
+        img = (128 + 80 * np.cos(2 * np.pi * 4 * xx / w)).astype(np.uint8)
+        img_2d = np.tile(img, (h, 1))
+        _, buf = cv2.imencode(".png", img_2d)
+        b64 = base64.b64encode(buf.tobytes()).decode("ascii")
+
+        r = client.post("/fringe/analyze", json={
+            "wavelength_nm": 632.8,
+            "image_b64": b64,
+        })
+        assert r.status_code == 200
+        data = r.json()
+        assert "pv_nm" in data
+        assert data["pv_nm"] >= 0
+
+    def test_reanalyze(self, client):
+        """POST /fringe/reanalyze with cached coefficients."""
+        r = client.post("/fringe/reanalyze", json={
+            "coefficients": [0.1] * 36,
+            "subtract_terms": [1, 2, 3],
+            "wavelength_nm": 632.8,
+            "surface_height": 64,
+            "surface_width": 64,
+        })
+        assert r.status_code == 200
+        data = r.json()
+        assert "surface_map" in data
+        assert "pv_nm" in data
+
+    def test_focus_quality(self, client):
+        """GET /fringe/focus-quality returns a score."""
+        r = client.get("/fringe/focus-quality")
+        assert r.status_code == 200
+        data = r.json()
+        assert "score" in data
+        assert 0 <= data["score"] <= 100
