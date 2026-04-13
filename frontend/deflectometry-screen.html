@@ -100,13 +100,16 @@
     const freq = cmd.freq;
     const phase = cmd.phase;
     const orientation = cmd.orientation;
+    const gamma = cmd.gamma || 2.2;
+    const invGamma = 1.0 / gamma;
 
     if (orientation === 'x') {
       const rowValues = new Uint8ClampedArray(W);
       const k = 2 * Math.PI * freq / W;
       for (let x = 0; x < W; x++) {
         const v = Math.round(127 + 127 * Math.cos(k * x + phase));
-        rowValues[x] = v < 0 ? 0 : (v > 255 ? 255 : v);
+        const clamped = v < 0 ? 0 : (v > 255 ? 255 : v);
+        rowValues[x] = Math.round(255 * Math.pow(clamped / 255, invGamma));
       }
       for (let y = 0; y < H; y++) {
         const yOff = y * W * 4;
@@ -124,7 +127,8 @@
       const k = 2 * Math.PI * freq / H;
       for (let y = 0; y < H; y++) {
         const v = Math.round(127 + 127 * Math.cos(k * y + phase));
-        colValues[y] = v < 0 ? 0 : (v > 255 ? 255 : v);
+        const clamped = v < 0 ? 0 : (v > 255 ? 255 : v);
+        colValues[y] = Math.round(255 * Math.pow(clamped / 255, invGamma));
       }
       for (let y = 0; y < H; y++) {
         const v = colValues[y];

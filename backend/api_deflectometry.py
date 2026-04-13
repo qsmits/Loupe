@@ -96,11 +96,13 @@ class ComputeBody(BaseModel):
 class CaptureBody(BaseModel):
     freq: int = Field(default=16, ge=1, le=256)
     averages: int = Field(default=3, ge=1, le=10)
+    gamma: float = Field(default=2.2, ge=1.0, le=3.0)
 
 
 class CaptureReferenceBody(BaseModel):
     freq: int = Field(default=16, ge=1, le=256)
     averages: int = Field(default=3, ge=1, le=10)
+    gamma: float = Field(default=2.2, ge=1.0, le=3.0)
 
 
 class HeightmapBody(BaseModel):
@@ -259,6 +261,7 @@ def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
                             "freq": int(body.freq),
                             "phase": float(phase),
                             "orientation": orientation,
+                            "gamma": float(body.gamma),
                         },
                     )
                     accum = None
@@ -350,6 +353,7 @@ def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
                             "freq": int(body.freq),
                             "phase": float(phase),
                             "orientation": orientation,
+                            "gamma": float(body.gamma),
                         },
                     )
                     # Average multiple captures to reduce random noise

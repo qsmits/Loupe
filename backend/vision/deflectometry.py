@@ -14,7 +14,8 @@ import numpy as np
 
 
 def generate_fringe_pattern(
-    width: int, height: int, phase: float, freq: int, orientation: str
+    width: int, height: int, phase: float, freq: int, orientation: str,
+    gamma: float = 1.0,
 ) -> np.ndarray:
     """Return an (H, W) uint8 sinusoidal fringe image.
 
@@ -22,19 +23,31 @@ def generate_fringe_pattern(
 
     orientation='x' → varies along axis 1 (width), producing vertical stripes.
     orientation='y' → varies along axis 0 (height), producing horizontal stripes.
+
+    If gamma != 1.0, apply inverse gamma pre-correction so that a display
+    with the given gamma curve produces linear sinusoidal light output:
+      corrected = 255 * (v/255)^(1/gamma)
     """
     if orientation == "x":
         coord = np.arange(width, dtype=np.float64)
         extent = float(width)
         wave = 127.0 + 127.0 * np.cos(2.0 * np.pi * freq * coord / extent + phase)
-        img = np.broadcast_to(wave[None, :], (height, width))
     elif orientation == "y":
         coord = np.arange(height, dtype=np.float64)
         extent = float(height)
         wave = 127.0 + 127.0 * np.cos(2.0 * np.pi * freq * coord / extent + phase)
-        img = np.broadcast_to(wave[:, None], (height, width))
     else:
         raise ValueError(f"orientation must be 'x' or 'y', got {orientation!r}")
+
+    if gamma != 1.0:
+        inv_gamma = 1.0 / gamma
+        wave_normalized = np.clip(wave / 255.0, 0.0, 1.0)
+        wave = 255.0 * np.power(wave_normalized, inv_gamma)
+
+    if orientation == "x":
+        img = np.broadcast_to(wave[None, :], (height, width))
+    else:
+        img = np.broadcast_to(wave[:, None], (height, width))
 
     return np.clip(img, 0, 255).astype(np.uint8)
 

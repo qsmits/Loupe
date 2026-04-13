@@ -187,6 +187,20 @@ def test_find_optimal_smooth_sigma_returns_zero_for_clean_signal():
     assert sigma == 0.0, f"Clean signal should need no smoothing, got {sigma}"
 
 
+def test_generate_fringe_pattern_gamma_correction():
+    """Gamma-corrected pattern should linearize display output."""
+    img = generate_fringe_pattern(256, 1, phase=0.0, freq=1, orientation="x", gamma=2.2)
+    # After display gamma (2.2), output should be sinusoidal
+    # Simulate display: output = (pixel/255)^2.2
+    pixel_norm = img[0].astype(np.float64) / 255.0
+    display_output = np.power(pixel_norm, 2.2)
+    # The display output should be close to the intended linear sinusoid
+    x = np.arange(256)
+    intended = 0.5 + 0.5 * np.cos(2 * np.pi * x / 256.0)
+    # Allow some tolerance for quantization
+    np.testing.assert_allclose(display_output, intended, atol=0.02)
+
+
 def test_frankot_chellappa_recovers_paraboloid():
     # z = x^2 + y^2 -> dz/dx = 2x, dz/dy = 2y
     h, w = 64, 64

@@ -92,6 +92,9 @@ function buildWorkspace() {
           <label>Fringe frequency (cycles)
             <input type="number" id="defl-freq" min="2" max="64" step="1" value="16" />
           </label>
+          <label>Display gamma
+            <input type="number" id="defl-gamma" min="1.0" max="3.0" step="0.1" value="2.2" style="width:65px" />
+          </label>
           <label>Mask threshold
             <input type="range" id="defl-mask-thresh" min="0" max="20" step="1" value="2" style="width:100px" />
             <span id="defl-mask-thresh-val" style="min-width:28px;font-size:11px">2%</span>
@@ -318,6 +321,14 @@ function getFreq() {
   return freq;
 }
 
+function getGamma() {
+  const el = $("defl-gamma");
+  let g = parseFloat(el ? el.value : "2.2");
+  if (!Number.isFinite(g) || g < 1.0) g = 1.0;
+  if (g > 3.0) g = 3.0;
+  return g;
+}
+
 function getMaskThreshold() {
   const el = $("defl-mask-thresh");
   return el ? parseInt(el.value, 10) / 100 : 0.02;
@@ -390,7 +401,7 @@ async function captureReference() {
     const r = await apiFetch("/deflectometry/capture-reference", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ freq: getFreq() }),
+      body: JSON.stringify({ freq: getFreq(), gamma: getGamma() }),
     });
     if (!r.ok) {
       const msg = await r.text();
@@ -413,7 +424,7 @@ async function captureSequence() {
     const r = await apiFetch("/deflectometry/capture-sequence", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ freq: getFreq() }),
+      body: JSON.stringify({ freq: getFreq(), gamma: getGamma() }),
     });
     if (!r.ok) {
       const msg = await r.text();
