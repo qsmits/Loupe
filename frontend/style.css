@@ -2144,3 +2144,259 @@ body.no-camera .camera-section { display: none; }
   font-size: 10px;
 }
 
+/* ── Fringe Analysis workspace ───────────────────────────── */
+
+.fringe-workspace {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  gap: 0;
+}
+
+/* Left column: preview + settings */
+.fringe-preview-col {
+  width: 260px;
+  min-width: 260px;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--border);
+  padding: 10px;
+  gap: 10px;
+  overflow-y: auto;
+}
+.fringe-preview-container {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  background: #111;
+  border-radius: 3px;
+}
+.fringe-preview-col img#fringe-preview {
+  width: 100%;
+  display: block;
+  transition: transform 0.15s ease;
+}
+.fringe-enlarge-overlay {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0,0,0,0.85);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9000;
+}
+.fringe-enlarge-overlay img {
+  max-width: 90vw;
+  max-height: 90vh;
+  border: 1px solid var(--border);
+}
+.fringe-enlarge-close {
+  position: absolute;
+  top: 20px;
+  right: 20px;
+  font-size: 24px;
+  color: #fff;
+  background: rgba(0,0,0,0.5);
+  border-radius: 50%;
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.fringe-focus-bar-container {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.fringe-focus-bar {
+  flex: 1;
+  height: 8px;
+  background: var(--surface-2);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.fringe-focus-fill {
+  height: 100%;
+  background: var(--success);
+  border-radius: 4px;
+  transition: width 0.3s ease, background 0.3s ease;
+}
+
+.fringe-drop-zone {
+  border: 2px dashed var(--border);
+  border-radius: 6px;
+  padding: 12px;
+  text-align: center;
+  cursor: pointer;
+  transition: border-color 0.2s, background 0.2s;
+}
+.fringe-drop-zone.fringe-drop-active {
+  border-color: var(--accent);
+  background: rgba(10, 132, 255, 0.08);
+}
+
+.fringe-setting-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.fringe-setting-group label {
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.fringe-setting-group input[type="number"],
+.fringe-setting-group select {
+  width: 100%;
+  max-width: 160px;
+}
+.fringe-zernike-cb {
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+.fringe-zernike-cb input[type="checkbox"] {
+  accent-color: var(--accent);
+}
+
+/* Right column: results */
+.fringe-results-col {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* Summary bar */
+.fringe-summary-bar {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  flex-shrink: 0;
+}
+.fringe-stat {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+}
+.fringe-stat-label {
+  font-size: 11px;
+  font-weight: 600;
+  opacity: 0.7;
+  min-width: 28px;
+}
+.fringe-stat-value {
+  font-size: 16px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.fringe-stat-nm {
+  font-size: 12px;
+  font-weight: 400;
+  opacity: 0.7;
+  margin-left: 8px;
+}
+.fringe-stat-unit {
+  font-size: 11px;
+  opacity: 0.5;
+}
+
+/* Tabs */
+.fringe-tab-bar {
+  display: flex;
+  border-bottom: 1px solid var(--border);
+  padding: 0 10px;
+}
+.fringe-tab {
+  padding: 8px 16px;
+  font-size: 13px;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  opacity: 0.6;
+  background: none;
+  border-top: none;
+  border-left: none;
+  border-right: none;
+  color: var(--text);
+}
+.fringe-tab:hover { opacity: 0.85; }
+.fringe-tab.active {
+  opacity: 1;
+  border-bottom-color: var(--accent);
+}
+
+/* Tab panels */
+.fringe-tab-panel {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.fringe-tab-panel[hidden] {
+  display: none !important;
+}
+
+.fringe-empty-state {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  opacity: 0.4;
+  font-size: 14px;
+  min-height: 200px;
+}
+
+/* Surface map */
+.fringe-surface-container {
+  display: flex;
+  justify-content: center;
+}
+.fringe-surface-container img {
+  max-width: 100%;
+  max-height: calc(100vh - 200px);
+  border: 1px solid #444;
+  background: #111;
+}
+
+/* 3D */
+.fringe-3d-host {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+}
+.fringe-3d-host canvas {
+  width: 100% !important;
+  height: 100% !important;
+}
+.fringe-3d-controls {
+  position: absolute;
+  bottom: 10px;
+  left: 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(0,0,0,0.7);
+  padding: 6px 12px;
+  border-radius: 4px;
+  font-size: 12px;
+}
+
+/* Profiles */
+#fringe-profiles-content canvas {
+  width: 100%;
+  max-width: 900px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  margin-bottom: 10px;
+}
+
