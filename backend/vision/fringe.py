@@ -2,9 +2,10 @@
 
 Zernike polynomial fitting: Noll indexing, radial polynomial evaluation,
 basis matrix construction, and least-squares coefficient fitting.
+DFT-based phase extraction, 2D phase unwrapping, modulation-based
+auto-masking, and focus quality scoring.
 
-DFT phase extraction, spatial unwrapping, auto-masking, surface statistics,
-and false-color rendering are added in subsequent tasks.
+Surface statistics and false-color rendering are added in subsequent tasks.
 """
 
 from __future__ import annotations
@@ -13,6 +14,7 @@ import math
 
 import cv2
 import numpy as np
+from scipy.ndimage import uniform_filter
 
 
 # ── Zernike polynomial names (Noll ordering, 1-indexed) ─────────────────
@@ -291,8 +293,6 @@ def compute_fringe_modulation(image: np.ndarray) -> np.ndarray:
     -------
     Modulation map as float64, same shape as input.  Values in [0, 1].
     """
-    from scipy.ndimage import uniform_filter
-
     img = np.asarray(image, dtype=np.float64)
     if img.ndim == 3:
         img = img.mean(axis=-1)
@@ -420,15 +420,11 @@ def extract_phase_dft(image: np.ndarray, mask: np.ndarray | None = None
 
 def unwrap_phase_2d(wrapped: np.ndarray, mask: np.ndarray | None = None
                     ) -> np.ndarray:
-    """Quality-guided 2D spatial phase unwrapping.
+    """Two-pass 2D spatial phase unwrapping.
 
-    Uses the phase gradient reliability as quality metric.  Pixels are
-    unwrapped in order of decreasing reliability (highest quality first).
-
-    For a simpler implementation that works well with interferograms,
-    we unwrap along rows first (axis=1), then along columns (axis=0),
-    using numpy.unwrap.  This two-pass approach handles most
-    interferograms where the fringe density is moderate.
+    Unwraps along rows first (axis=1), then along columns (axis=0),
+    using numpy.unwrap.  This approach handles most interferograms
+    where the fringe density is moderate.
 
     Parameters
     ----------

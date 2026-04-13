@@ -198,16 +198,15 @@ class TestDFTPhaseExtraction:
 
         wrapped = extract_phase_dft(interferogram)
         assert wrapped.shape == (h, w)
-        # The extracted phase should vary monotonically across the image
-        # Check that the phase difference across center row is roughly correct
-        center_row = wrapped[h // 2, :]
-        phase_range = center_row[-10] - center_row[10]
-        # Surface phase range is about 2*pi*0.5 = pi across the image
-        # DFT sideband isolation with Gaussian windowing can scale the
-        # recovered phase, so we use a generous tolerance.
-        assert abs(abs(phase_range) - np.pi) < 2.0, (
-            f"Phase range {phase_range:.3f} not close to pi"
-        )
+        # Unwrap and check correlation with known surface phase.
+        # Use interior region (25%-75%) to avoid Hann window edge effects.
+        unwrapped = unwrap_phase_2d(wrapped)
+        lo, hi = w // 4, 3 * w // 4
+        center_uw = unwrapped[h // 2, lo:hi]
+        center_true = surface_phase[h // 2, lo:hi]
+        # Correlation: extracted phase should track the true surface phase
+        corr = np.corrcoef(center_uw, center_true)[0, 1]
+        assert abs(corr) > 0.95, f"Phase correlation {corr:.3f} too low"
 
     def test_returns_correct_shape(self):
         img = np.random.rand(64, 128) * 255
