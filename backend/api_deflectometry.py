@@ -33,6 +33,7 @@ from .vision.deflectometry import (
     compute_modulation,
     compute_wrapped_phase,
     create_modulation_mask,
+    find_optimal_smooth_sigma,
     fit_sphere_calibration,
     frankot_chellappa,
     phase_stats,
@@ -61,6 +62,7 @@ class _Session:
         self.ref_phase_x: Optional[np.ndarray] = None
         self.ref_phase_y: Optional[np.ndarray] = None
         self.cal_factor: Optional[float] = None  # phase-rad → mm
+        self.freq: int = 16  # fringe frequency used during last capture
         # Serializes capture-sequence so two concurrent runs can't interleave
         self.lock: asyncio.Lock = asyncio.Lock()
 
@@ -331,6 +333,7 @@ def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
             # 8-frame invariant holds.
             s.frames = []
             s.last_result = None
+            s.freq = body.freq
             pid = 0
             for orientation in ("x", "y"):
                 for phase in phases:
@@ -532,6 +535,32 @@ def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
         if s.last_result is not None:
             s.last_result["cal_factor"] = result["cal_factor"]
         return result
+
+    @router.post("/deflectometry/auto-smooth", dependencies=[Depends(_reject_hosted)])
+    async def deflectometry_auto_smooth():
+        s = _current()
+        if s is None:
+            raise HTTPException(400, detail="No active deflectometry session")
+        if len(s.frames) < 8:
+            raise HTTPException(400, detail="Capture frames first (need at least 8)")
+
+        # Use the first X-fringe frame (index 0), converted to grayscale
+        frame = np.asarray(s.frames[0], dtype=np.float64)
+        if frame.ndim == 3:
+            frame = frame.mean(axis=-1)
+
+        # Apply flat-field correction if available
+        if s.flat_white is not None and s.flat_black is not None:
+            white = np.asarray(s.flat_white, dtype=np.float64)
+            black = np.asarray(s.flat_black, dtype=np.float64)
+            if white.ndim == 3:
+                white = white.mean(axis=-1)
+            if black.ndim == 3:
+                black = black.mean(axis=-1)
+            frame = (frame - black) / (white - black + 1e-6)
+
+        sigma = find_optimal_smooth_sigma(frame, fringe_freq=s.freq or 16)
+        return {"sigma": sigma}
 
     class DiagnosticsBody(BaseModel):
         smooth_sigma: float = Field(default=0.0, ge=0.0, le=10.0)

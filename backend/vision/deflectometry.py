@@ -267,6 +267,65 @@ def fit_sphere_calibration(
     }
 
 
+def find_optimal_smooth_sigma(
+    frame: np.ndarray,
+    fringe_freq: int,
+    candidates: list[float] | None = None,
+    target_suppression: float = 0.05,
+) -> float:
+    """Find the minimum Gaussian sigma that suppresses LCD pixel grid noise.
+
+    Takes a single grayscale fringe frame, computes the 1D power spectrum
+    perpendicular to the fringes, and finds the smallest sigma where the
+    high-frequency energy (above 2× the fringe frequency) drops below
+    `target_suppression` of its unsmoothed level.
+
+    Parameters
+    ----------
+    frame : 2D float array — a single grayscale (optionally flat-field-corrected) fringe frame
+    fringe_freq : the number of fringe cycles displayed (what the user set)
+    candidates : sigma values to try, default [0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0]
+    target_suppression : fraction of original noise band energy to target (0.05 = 95% suppression)
+
+    Returns
+    -------
+    float — recommended sigma (0.0 if no smoothing needed)
+    """
+    from scipy.ndimage import gaussian_filter
+
+    if candidates is None:
+        candidates = [0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0]
+
+    # Use power spectrum along rows (perpendicular to vertical fringes)
+    # Average over all rows for robustness
+    def high_freq_energy(img, cutoff_bin):
+        """Mean power above cutoff frequency, averaged across rows."""
+        spectrum = np.abs(np.fft.rfft(img, axis=1)) ** 2
+        return spectrum[:, cutoff_bin:].mean()
+
+    h, w = frame.shape[:2]
+    # The fringe frequency in the image corresponds to fringe_freq cycles across the width
+    # High-frequency noise is anything above 2x the fringe frequency
+    cutoff_bin = min(2 * fringe_freq, w // 2)
+
+    # Baseline: energy in the noise band without smoothing
+    baseline = high_freq_energy(frame, cutoff_bin)
+    if baseline < 1e-10:
+        return 0.0  # No high-frequency content to suppress
+
+    for sigma in candidates:
+        if sigma == 0.0:
+            smoothed = frame
+        else:
+            smoothed = gaussian_filter(frame, sigma=sigma)
+        energy = high_freq_energy(smoothed, cutoff_bin)
+        if energy / baseline <= target_suppression:
+            return sigma
+
+    # If none achieved target, return the largest candidate
+    return candidates[-1]
+
+
 def frankot_chellappa(dzdx: np.ndarray, dzdy: np.ndarray, mask: np.ndarray | None = None) -> np.ndarray:
     """Integrate two slope fields into a height map via Frankot-Chellappa (1988).
 

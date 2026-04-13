@@ -161,6 +161,32 @@ def test_compute_wrapped_phase_with_smoothing():
     np.testing.assert_allclose(wrapped, true_phase, atol=0.15)
 
 
+def test_find_optimal_smooth_sigma_detects_high_freq_noise():
+    from backend.vision.deflectometry import find_optimal_smooth_sigma
+    H, W = 64, 256
+    # Create a fringe pattern with freq=4 cycles
+    x = np.linspace(0, 2 * np.pi * 4, W)
+    fringe = 127.0 + 100.0 * np.cos(x)
+    frame = np.tile(fringe, (H, 1))
+    # Add high-frequency noise (simulating LCD pixel grid)
+    hf_noise = 20.0 * np.cos(np.linspace(0, 2 * np.pi * 80, W))
+    frame += np.tile(hf_noise, (H, 1))
+    sigma = find_optimal_smooth_sigma(frame, fringe_freq=4)
+    assert sigma > 0, "Should recommend some smoothing for noisy frame"
+    assert sigma <= 3.0, f"Sigma {sigma} seems too high for this noise level"
+
+
+def test_find_optimal_smooth_sigma_returns_zero_for_clean_signal():
+    from backend.vision.deflectometry import find_optimal_smooth_sigma
+    H, W = 64, 256
+    # Use arange for exact periodicity (no spectral leakage)
+    x = np.arange(W) * (2 * np.pi * 4 / W)
+    frame = 127.0 + 100.0 * np.cos(x)
+    frame = np.tile(frame, (H, 1))
+    sigma = find_optimal_smooth_sigma(frame, fringe_freq=4)
+    assert sigma == 0.0, f"Clean signal should need no smoothing, got {sigma}"
+
+
 def test_frankot_chellappa_recovers_paraboloid():
     # z = x^2 + y^2 -> dz/dx = 2x, dz/dy = 2y
     h, w = 64, 64

@@ -99,6 +99,7 @@ function buildWorkspace() {
           <label>Smoothing
             <input type="range" id="defl-smooth" min="0" max="5" step="0.5" value="0" style="width:100px" />
             <span id="defl-smooth-val" style="min-width:28px;font-size:11px">0</span>
+            <button class="detect-btn" id="defl-btn-auto-smooth" style="font-size:10px;padding:1px 6px;margin-left:4px">Auto</button>
           </label>
         </div>
         <div class="defl-setting-group" style="margin-top:6px;padding-top:8px;border-top:1px solid var(--border)">
@@ -305,6 +306,7 @@ function wireEvents() {
   $("defl-btn-capture")?.addEventListener("click", captureSequence);
   $("defl-btn-compute")?.addEventListener("click", compute);
   $("defl-btn-calibrate")?.addEventListener("click", calibrateSphere);
+  $("defl-btn-auto-smooth")?.addEventListener("click", autoSmooth);
   $("defl-btn-reset")?.addEventListener("click", resetSession);
 }
 
@@ -324,6 +326,37 @@ function getMaskThreshold() {
 function getSmoothSigma() {
   const el = $("defl-smooth");
   return el ? parseFloat(el.value) : 0;
+}
+
+async function autoSmooth() {
+  const btn = $("defl-btn-auto-smooth");
+  if (btn) btn.disabled = true;
+  try {
+    const r = await apiFetch("/deflectometry/auto-smooth", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    if (!r.ok) {
+      const msg = await r.text();
+      console.warn("Auto-smooth failed:", msg);
+      return;
+    }
+    const data = await r.json();
+    const slider = $("defl-smooth");
+    const label = $("defl-smooth-val");
+    if (slider) {
+      slider.value = data.sigma;
+      if (label) label.textContent = data.sigma;
+      // Recompute if we have results showing
+      const content = $("defl-phase-content");
+      if (content && !content.hidden) compute();
+    }
+  } catch (e) {
+    console.warn("Auto-smooth error:", e);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
 }
 
 async function flatField() {
