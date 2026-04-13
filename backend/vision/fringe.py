@@ -656,50 +656,55 @@ def surface_stats(surface: np.ndarray, mask: np.ndarray | None = None
 
 def render_surface_map(surface: np.ndarray, mask: np.ndarray | None = None
                        ) -> str:
-    """Render a false-color surface map as a PNG, base64-encoded.
+    """Render a false-color surface map with contour lines as a PNG, base64-encoded.
 
     Uses the RdBu_r (red-blue reversed) colormap: red = high, blue = low.
-    Masked-out pixels are rendered as black.
+    Masked-out pixels are rendered as black.  Semi-transparent contour lines
+    are overlaid to show iso-height curves.
 
     Returns base64 string (no 'data:' prefix).
     """
-    s = np.asarray(surface, dtype=np.float64)
+    from matplotlib.figure import Figure
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
+
+    s = np.asarray(surface, dtype=np.float64).copy()
     if mask is not None:
         valid = mask.astype(bool)
+        s[~valid] = np.nan
         if valid.any():
-            smin = float(s[valid].min())
-            smax = float(s[valid].max())
+            smin = float(np.nanmin(s))
+            smax = float(np.nanmax(s))
         else:
             smin, smax = 0.0, 0.0
     else:
         smin = float(s.min())
         smax = float(s.max())
 
+    vmax = max(abs(smin), abs(smax)) if smax > smin else 1.0
+
+    h, w = s.shape
+    dpi = 100
+    fig = Figure(figsize=(w / dpi, h / dpi), dpi=dpi, facecolor='black')
+    canvas = FigureCanvasAgg(fig)
+    ax = fig.add_axes([0, 0, 1, 1])
+    ax.set_axis_off()
+
+    # Colormap background
+    ax.imshow(s, cmap='RdBu_r', vmin=-vmax, vmax=vmax,
+              interpolation='bilinear', aspect='equal')
+
+    # Contour lines
     if smax > smin:
-        # Center around zero for symmetric colormap
-        vmax = max(abs(smin), abs(smax))
-        norm = ((s + vmax) / (2.0 * vmax) * 255.0)
-    else:
-        norm = np.full_like(s, 128.0)
+        n_levels = min(12, max(4, int((smax - smin) / (vmax * 0.1))))
+        levels = np.linspace(smin, smax, n_levels + 2)[1:-1]
+        ax.contour(s, levels=levels, colors='black', linewidths=0.6, alpha=0.4)
 
-    gray = np.clip(norm, 0, 255).astype(np.uint8)
-    if mask is not None:
-        gray[~valid] = 0
-
-    # Apply RdBu_r colormap via matplotlib LUT
-    cmap = plt.cm.RdBu_r
-    lut = (cmap(np.linspace(0, 1, 256))[:, :3] * 255).astype(np.uint8)
-    colored = lut[gray]
-    # Convert RGB to BGR for cv2.imencode
-    colored = colored[:, :, ::-1].copy()
-
-    if mask is not None:
-        colored[~valid] = 0
-
-    ok, buf = cv2.imencode(".png", colored)
-    if not ok:
-        raise RuntimeError("cv2.imencode failed for surface map PNG")
-    return base64.b64encode(buf.tobytes()).decode("ascii")
+    canvas.draw()
+    buf = io.BytesIO()
+    fig.savefig(buf, format='png', facecolor='black', dpi=dpi, pad_inches=0)
+    plt.close(fig)
+    buf.seek(0)
+    return base64.b64encode(buf.read()).decode('ascii')
 
 
 def render_profile(surface: np.ndarray, mask: np.ndarray | None = None,
