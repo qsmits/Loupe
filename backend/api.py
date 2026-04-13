@@ -17,7 +17,6 @@ from .run_store import RunStore
 
 
 class UiConfig(BaseModel):
-    app_name: str = Field(min_length=1, max_length=100)
     theme: str = Field(max_length=50, pattern=r"^[a-z0-9-]+$")
     subpixel_method: str = Field(default="parabola")
 
@@ -40,7 +39,6 @@ router = APIRouter()
 def get_ui_config(request: Request):
     cfg = load_config()
     return {
-        "app_name":        cfg.get("app_name", "Microscope"),
         "theme":           cfg.get("theme",    "macos-dark"),
         "subpixel_method": cfg.get("subpixel_method", "parabola"),
         "hosted":          getattr(request.app.state, "hosted", False),
@@ -51,8 +49,8 @@ def get_ui_config(request: Request):
 def post_ui_config(body: UiConfig, request: Request):
     if getattr(request.app.state, "hosted", False):
         raise HTTPException(403, detail="Read-only in hosted mode")
-    save_config({"app_name": body.app_name, "theme": body.theme, "subpixel_method": body.subpixel_method})
-    return {"app_name": body.app_name, "theme": body.theme, "subpixel_method": body.subpixel_method}
+    save_config({"theme": body.theme, "subpixel_method": body.subpixel_method})
+    return {"theme": body.theme, "subpixel_method": body.subpixel_method}
 
 
 @router.get("/config/tolerances")

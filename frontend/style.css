@@ -56,16 +56,6 @@ input[type=range] { cursor: pointer; accent-color: var(--accent); }
   flex-shrink: 0;
 }
 
-#app-title {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text);
-  letter-spacing: -0.02em;
-  margin-right: 4px;
-  white-space: nowrap;
-  user-select: none;
-}
-
 .top-bar-divider {
   width: 1px;
   height: 16px;
@@ -1268,9 +1258,32 @@ body.no-camera .camera-section { display: none; }
 /* ─── Help dialog ───────────────────────────────────────────── */
 #help-dialog .dialog-content {
   width: min(900px, 92vw);
-  max-height: 80vh;
+  height: 80vh;
   display: flex;
   flex-direction: column;
+}
+
+.help-mode-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--border);
+  padding: 0 12px;
+  gap: 0;
+  flex-shrink: 0;
+}
+.help-mode-tab {
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 500;
+  padding: 8px 14px;
+  cursor: pointer;
+}
+.help-mode-tab:hover { color: var(--text); }
+.help-mode-tab.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
 }
 
 .help-layout {
@@ -1283,6 +1296,7 @@ body.no-camera .camera-section { display: none; }
 /* Left navigation sidebar */
 .help-nav {
   width: 190px;
+  min-width: 190px;
   flex-shrink: 0;
   border-right: 1px solid var(--border);
   overflow-y: auto;

@@ -10,7 +10,6 @@ _DEFAULTS = {
     "version": 1,
     "no_camera": False,
     "hosted": False,
-    "app_name": "Microscope",
     "theme": "macos-dark",
     "tolerance_warn": 0.10,
     "tolerance_fail": 0.25,

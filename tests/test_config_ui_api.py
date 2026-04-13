@@ -11,23 +11,21 @@ def client(tmp_path, monkeypatch):
     return TestClient(app)
 
 
-def test_get_config_ui_returns_app_name_and_theme(client):
+def test_get_config_ui_returns_theme(client):
     resp = client.get("/config/ui")
     assert resp.status_code == 200
     data = resp.json()
-    assert "app_name" in data
     assert "theme" in data
 
 
 def test_get_config_ui_defaults(client):
     resp = client.get("/config/ui")
     data = resp.json()
-    assert data["app_name"] == "Microscope"
     assert data["theme"] == "macos-dark"
 
 
 def test_post_config_ui_accepts_valid_payload(client):
-    resp = client.post("/config/ui", json={"app_name": "MyScope", "theme": "macos-dark"})
+    resp = client.post("/config/ui", json={"theme": "macos-dark"})
     assert resp.status_code == 200
 
 
@@ -38,6 +36,6 @@ def test_post_config_ui_rejects_missing_required_fields(client):
 
 
 def test_post_then_get_round_trip(client):
-    client.post("/config/ui", json={"app_name": "NewName", "theme": "macos-dark"})
+    client.post("/config/ui", json={"theme": "macos-dark"})
     resp = client.get("/config/ui")
-    assert resp.json()["app_name"] == "NewName"
+    assert resp.json()["theme"] == "macos-dark"

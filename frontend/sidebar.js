@@ -354,11 +354,7 @@ export async function loadTolerances() {
 export async function loadUiConfig() {
   try {
     const data = await apiFetch("/config/ui").then(r => r.json());
-    document.getElementById("app-title").textContent = data.app_name || "Microscope";
-    document.title = data.app_name || "Microscope";
     document.documentElement.className = `theme-${data.theme || "macos-dark"}`;
-    const nameInput = document.getElementById("app-name-input");
-    if (nameInput) nameInput.value = data.app_name || "Microscope";
     const themeSelect = document.getElementById("theme-select");
     if (themeSelect) themeSelect.value = data.theme || "macos-dark";
     if (data.hosted) {

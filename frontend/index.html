@@ -537,10 +537,6 @@
 
       <div class="settings-panel active" id="settings-general-panel">
         <div class="settings-row">
-          <label class="settings-label" for="app-name-input">App name</label>
-          <input type="text" id="app-name-input" class="settings-input" value="Microscope" />
-        </div>
-        <div class="settings-row">
           <label class="settings-label" for="theme-select">Theme</label>
           <select id="theme-select" class="settings-select">
             <option value="macos-dark">macOS Dark</option>
@@ -608,48 +604,73 @@
         <span class="dialog-title">Documentation</span>
         <button class="dialog-close" id="btn-help-close">✕</button>
       </div>
+      <div class="help-mode-tabs">
+        <button class="help-mode-tab active" data-help-mode="general">General</button>
+        <button class="help-mode-tab" data-help-mode="microscope">Microscope</button>
+        <button class="help-mode-tab" data-help-mode="deflectometry">Deflectometry</button>
+        <button class="help-mode-tab" data-help-mode="fringe">Fringe Analysis</button>
+      </div>
       <div class="help-layout">
 
         <!-- Left nav -->
         <nav class="help-nav">
-          <div class="help-nav-section">Overview</div>
-          <button class="help-nav-item top-level active" data-page="start">Getting Started</button>
+          <div class="help-nav-section" data-help-modes="general">Overview</div>
+          <button class="help-nav-item top-level active" data-page="start" data-help-modes="general">Getting Started</button>
+          <button class="help-nav-item top-level" data-page="modes-overview" data-help-modes="general">Modes</button>
 
-          <div class="help-nav-section">Measurement Tools</div>
-          <button class="help-nav-item top-level" data-page="tool-calibrate">Calibrate</button>
-          <button class="help-nav-item top-level" data-page="lens-cal">Lens Calibration</button>
-          <button class="help-nav-item top-level" data-page="perspective-cal">Perspective Correction</button>
-          <button class="help-nav-item top-level" data-page="tool-distance">Distance</button>
-          <button class="help-nav-item top-level" data-page="tool-angle">Angle</button>
-          <button class="help-nav-item top-level" data-page="tool-circle">Circle</button>
-          <button class="help-nav-item top-level" data-page="tool-arc-fit">Fit Arc</button>
-          <button class="help-nav-item top-level" data-page="tool-arc-measure">Arc Measure</button>
-          <button class="help-nav-item top-level" data-page="tool-center-dist">Center Distance</button>
-          <button class="help-nav-item top-level" data-page="tool-perp">Perp Distance</button>
-          <button class="help-nav-item top-level" data-page="tool-para">Para Distance</button>
-          <button class="help-nav-item top-level" data-page="tool-pt-circle">Pt-Circle Distance</button>
-          <button class="help-nav-item top-level" data-page="tool-intersect">Line Intersect</button>
-          <button class="help-nav-item top-level" data-page="tool-slot">Slot Distance</button>
-          <button class="help-nav-item top-level" data-page="tool-area">Area</button>
-          <button class="help-nav-item top-level" data-page="tool-spline">Bézier Spline</button>
+          <div class="help-nav-section" data-help-modes="general">Camera</div>
+          <button class="help-nav-item top-level" data-page="camera" data-help-modes="general">Camera Controls</button>
 
-          <div class="help-nav-section">Controls</div>
-          <button class="help-nav-item top-level" data-page="shortcuts">Keyboard Shortcuts</button>
-          <button class="help-nav-item top-level" data-page="mouse">Mouse &amp; Modifiers</button>
+          <div class="help-nav-section" data-help-modes="general">How It Works</div>
+          <button class="help-nav-item top-level" data-page="algo-subpixel" data-help-modes="general">Sub-pixel Snapping</button>
+          <button class="help-nav-item top-level" data-page="algo-detection" data-help-modes="general">Edge Detection</button>
+          <button class="help-nav-item top-level" data-page="algo-alignment" data-help-modes="general">DXF Auto-alignment</button>
+          <button class="help-nav-item top-level" data-page="algo-fitting" data-help-modes="general">Circle &amp; Arc Fitting</button>
 
-          <div class="help-nav-section">Detection &amp; DXF</div>
-          <button class="help-nav-item top-level" data-page="detection">Auto-Detection</button>
-          <button class="help-nav-item top-level" data-page="dxf">DXF Overlay</button>
-          <button class="help-nav-item top-level" data-page="inspection">Guided Inspection</button>
+          <div class="help-nav-section" data-help-modes="general">Output</div>
+          <button class="help-nav-item top-level" data-page="exporting" data-help-modes="general">Exporting</button>
 
-          <div class="help-nav-section">How It Works</div>
-          <button class="help-nav-item top-level" data-page="algo-subpixel">Sub-pixel Snapping</button>
-          <button class="help-nav-item top-level" data-page="algo-detection">Edge Detection</button>
-          <button class="help-nav-item top-level" data-page="algo-alignment">DXF Auto-alignment</button>
-          <button class="help-nav-item top-level" data-page="algo-fitting">Circle &amp; Arc Fitting</button>
+          <div class="help-nav-section" data-help-modes="microscope">Tools</div>
+          <button class="help-nav-item top-level" data-page="tool-calibrate" data-help-modes="microscope">Calibrate</button>
+          <button class="help-nav-item top-level" data-page="lens-cal" data-help-modes="microscope">Lens Calibration</button>
+          <button class="help-nav-item top-level" data-page="perspective-cal" data-help-modes="microscope">Perspective Correction</button>
+          <button class="help-nav-item top-level" data-page="tool-distance" data-help-modes="microscope">Distance</button>
+          <button class="help-nav-item top-level" data-page="tool-angle" data-help-modes="microscope">Angle</button>
+          <button class="help-nav-item top-level" data-page="tool-circle" data-help-modes="microscope">Circle</button>
+          <button class="help-nav-item top-level" data-page="tool-arc-fit" data-help-modes="microscope">Fit Arc</button>
+          <button class="help-nav-item top-level" data-page="tool-arc-measure" data-help-modes="microscope">Arc Measure</button>
+          <button class="help-nav-item top-level" data-page="tool-center-dist" data-help-modes="microscope">Center Distance</button>
+          <button class="help-nav-item top-level" data-page="tool-perp" data-help-modes="microscope">Perp Distance</button>
+          <button class="help-nav-item top-level" data-page="tool-para" data-help-modes="microscope">Para Distance</button>
+          <button class="help-nav-item top-level" data-page="tool-pt-circle" data-help-modes="microscope">Pt-Circle Distance</button>
+          <button class="help-nav-item top-level" data-page="tool-intersect" data-help-modes="microscope">Line Intersect</button>
+          <button class="help-nav-item top-level" data-page="tool-slot" data-help-modes="microscope">Slot Distance</button>
+          <button class="help-nav-item top-level" data-page="tool-area" data-help-modes="microscope">Area</button>
+          <button class="help-nav-item top-level" data-page="tool-spline" data-help-modes="microscope">Bézier Spline</button>
 
-          <div class="help-nav-section">Output</div>
-          <button class="help-nav-item top-level" data-page="exporting">Exporting</button>
+          <div class="help-nav-section" data-help-modes="microscope">Controls</div>
+          <button class="help-nav-item top-level" data-page="shortcuts" data-help-modes="microscope">Keyboard Shortcuts</button>
+          <button class="help-nav-item top-level" data-page="mouse" data-help-modes="microscope">Mouse &amp; Modifiers</button>
+
+          <div class="help-nav-section" data-help-modes="microscope">Features</div>
+          <button class="help-nav-item top-level" data-page="detection" data-help-modes="microscope">Auto-Detection</button>
+          <button class="help-nav-item top-level" data-page="dxf" data-help-modes="microscope">DXF Overlay</button>
+          <button class="help-nav-item top-level" data-page="inspection" data-help-modes="microscope">Guided Inspection</button>
+
+          <div class="help-nav-section" data-help-modes="deflectometry">Overview</div>
+          <button class="help-nav-item top-level" data-page="defl-overview" data-help-modes="deflectometry">How It Works</button>
+
+          <div class="help-nav-section" data-help-modes="deflectometry">Setup &amp; Calibration</div>
+          <button class="help-nav-item top-level" data-page="defl-setup" data-help-modes="deflectometry">Setup</button>
+          <button class="help-nav-item top-level" data-page="defl-calibration" data-help-modes="deflectometry">Sphere Calibration</button>
+          <button class="help-nav-item top-level" data-page="defl-settings" data-help-modes="deflectometry">Settings</button>
+
+          <div class="help-nav-section" data-help-modes="deflectometry">Measurement</div>
+          <button class="help-nav-item top-level" data-page="defl-capture" data-help-modes="deflectometry">Capture &amp; Compute</button>
+          <button class="help-nav-item top-level" data-page="defl-results" data-help-modes="deflectometry">Results</button>
+
+          <div class="help-nav-section" data-help-modes="fringe">Fringe Analysis</div>
+          <button class="help-nav-item top-level" data-page="fringe-analysis" data-help-modes="fringe">Fringe Analysis</button>
         </nav>
 
         <!-- Right content -->
@@ -658,7 +679,7 @@
           <!-- Getting Started -->
           <div class="help-page" id="help-page-start">
             <h2 class="help-page-title">Getting Started</h2>
-            <p class="help-page-sub">Loupe is a web-based precision measurement tool for microscope images.</p>
+            <p class="help-page-sub">Loupe supports multiple instrument modes — Microscope, Deflectometry, and Fringe Analysis — selectable from the mode dropdown in the top bar. Microscope is the default mode and provides precision measurement tools for camera or imported images.</p>
             <div class="help-section-label">Basic workflow</div>
             <div class="help-step"><span class="help-step-num">1</span><span>Freeze a frame using the <strong>❄ Live</strong> button, or drag and drop an image onto the viewer.</span></div>
             <div class="help-step"><span class="help-step-num">2</span><span>Calibrate the image: press <kbd>C</kbd>, click two points of known distance, enter the value in mm.</span></div>
@@ -668,6 +689,168 @@
             <div class="help-tip">Hover over the image with a measurement tool active — the cursor snaps to the nearest detected edge automatically. Hold <kbd>Alt</kbd> to bypass snapping and place a point exactly where you click.</div>
             <div class="help-tip">Use <kbd>?</kbd> at any time to open this documentation.</div>
             <div class="help-tip">Sessions auto-save to your browser every 30 seconds. Press <kbd>S</kbd> to save manually as a JSON file you can reload later.</div>
+          </div>
+
+          <!-- Modes Overview -->
+          <div class="help-page" id="help-page-modes-overview" hidden>
+            <h2 class="help-page-title">Modes</h2>
+            <p class="help-page-sub">Loupe is a multi-instrument platform. Each mode provides a dedicated workspace tailored to a different measurement technique.</p>
+            <div class="help-section-label">Switching modes</div>
+            <p class="help-p">Use the <strong>mode dropdown</strong> in the top bar to switch between instruments. The three available modes are:</p>
+            <table>
+              <thead><tr><th>Mode</th><th>Purpose</th></tr></thead>
+              <tbody>
+                <tr><td><strong>Microscope</strong></td><td>Precision 2D measurement of camera or imported images — calibration, annotation, DXF overlay, guided inspection.</td></tr>
+                <tr><td><strong>Deflectometry</strong></td><td>Phase-shifting deflectometry for measuring surface form of specular (reflective) parts using an iPad as a structured-light display.</td></tr>
+                <tr><td><strong>Fringe Analysis</strong></td><td>Interferometric fringe analysis. <em>Coming soon.</em></td></tr>
+              </tbody>
+            </table>
+            <div class="help-section-label">Workspace isolation</div>
+            <p class="help-p">Each mode has its own workspace — switching modes does not discard your work in another mode. Toolbar contents, sidebar panels, and keyboard shortcuts are scoped to the active mode.</p>
+            <div class="help-tip">Press <kbd>?</kbd> from any mode to open this help dialog.</div>
+          </div>
+
+          <!-- Deflectometry: How It Works -->
+          <div class="help-page" id="help-page-defl-overview" hidden>
+            <h2 class="help-page-title">How It Works</h2>
+            <p class="help-page-sub">Phase-shifting deflectometry for measuring the surface form of specular (mirror-like, reflective) parts.</p>
+            <div class="help-section-label">Principle</div>
+            <p class="help-p">An iPad displays sinusoidal fringe patterns. The camera observes their reflection off the part surface. Distortions in the reflected fringes encode the surface slope, which is integrated (Frankot-Chellappa) to recover surface height. Eight phase-shifted captures per direction suppress LCD harmonic artifacts.</p>
+            <div class="help-section-label">iPad connection</div>
+            <p class="help-p">The iPad runs a companion page (<code>deflectometry-screen.html</code>) that connects to Loupe via WebSocket. Open the URL shown in the status badge on the iPad's browser. Connection is automatic — the badge turns green when linked.</p>
+            <div class="help-section-label">Workspace layout</div>
+            <p class="help-p">The workspace has two columns. The <strong>left column</strong> shows the live camera preview, status badges, setup buttons, calibration, and settings. The <strong>right column</strong> has an action bar with processing controls and tabbed results below.</p>
+            <div class="help-tip">Deflectometry only works on specular (mirror-like) surfaces. Ground, brushed, or matte surfaces scatter the reflected fringes and will not produce usable results. A dark enclosure with minimal internal reflections dramatically improves results.</div>
+          </div>
+
+          <!-- Deflectometry: Setup -->
+          <div class="help-page" id="help-page-defl-setup" hidden>
+            <h2 class="help-page-title">Setup</h2>
+            <p class="help-page-sub">Prepare the system before measuring a part. Both steps are in the left column under Setup.</p>
+            <div class="help-section-label">Flat Field</div>
+            <p class="help-p">Captures frames with the display off to measure ambient light and sensor noise. This is subtracted from all subsequent captures. Re-run if lighting conditions change.</p>
+            <div class="help-section-label">Baseline</div>
+            <p class="help-p">Place a flat reference mirror in the field of view, then click <strong>Baseline</strong>. Captures 8-step phase-shifted fringes in both X and Y directions. This establishes the reference surface that part measurements are compared against.</p>
+            <div class="help-tip">Use an optical flat or first-surface mirror for the baseline. The quality of your reference directly limits measurement accuracy.</div>
+          </div>
+
+          <!-- Deflectometry: Sphere Calibration -->
+          <div class="help-page" id="help-page-defl-calibration" hidden>
+            <h2 class="help-page-title">Sphere Calibration</h2>
+            <p class="help-page-sub">Converts the computed phase map from arbitrary phase units to physical surface height (micrometres).</p>
+            <div class="help-section-label">How to calibrate</div>
+            <div class="help-step"><span class="help-step-num">1</span><span>Place a precision sphere of known radius in the field of view.</span></div>
+            <div class="help-step"><span class="help-step-num">2</span><span>Capture it as a part (Capture Part + Compute).</span></div>
+            <div class="help-step"><span class="help-step-num">3</span><span>Click <strong>Sphere Calibration</strong> in the left column and enter the sphere radius.</span></div>
+            <p class="help-p">Loupe fits a paraboloid to the measured phase and derives a phase-to-height scale factor from the known sphere geometry. After calibration, all results are reported in micrometres.</p>
+            <div class="help-section-label">Sphere requirements</div>
+            <p class="help-p">The sphere must be specular — chrome steel or ceramic balls work well. Use DIN 5401 grade G28 or better (G28 = 0.7 µm form tolerance). The sphere should fill a reasonable portion of the field of view for a good fit.</p>
+          </div>
+
+          <!-- Deflectometry: Settings -->
+          <div class="help-page" id="help-page-defl-settings" hidden>
+            <h2 class="help-page-title">Settings</h2>
+            <p class="help-page-sub">Configuration options in the left column under Settings.</p>
+            <table>
+              <thead><tr><th>Setting</th><th>Description</th></tr></thead>
+              <tbody>
+                <tr><td><strong>Display device</strong></td><td>Preset selector for the iPad model being used. Sets the pixel pitch (mm/pixel) so fringe frequency is calculated correctly for the physical display size.</td></tr>
+                <tr><td><strong>Fringe frequency</strong></td><td>Number of fringe periods across the display. Higher frequency gives more sensitivity but may alias on coarse surfaces.</td></tr>
+                <tr><td><strong>Gamma</strong></td><td>Pre-correction exponent (default 2.2) that compensates for nonlinear LCD response, so the sinusoidal pattern is truly sinusoidal as seen by the camera. Corrected value = 255 &times; (v/255)<sup>1/&gamma;</sup>.</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <!-- Deflectometry: Capture & Compute -->
+          <div class="help-page" id="help-page-defl-capture" hidden>
+            <h2 class="help-page-title">Capture &amp; Compute</h2>
+            <p class="help-page-sub">The action bar at the top of the right column.</p>
+            <div class="help-section-label">Buttons</div>
+            <table>
+              <thead><tr><th>Button</th><th>Description</th></tr></thead>
+              <tbody>
+                <tr><td><strong>Capture Part</strong></td><td>Captures 8-step phase-shifted fringes of the part under test (both X and Y directions, 16 frames total).</td></tr>
+                <tr><td><strong>Compute</strong></td><td>Calculates wrapped phase, unwraps, subtracts the baseline, applies smoothing, and produces the surface deviation map. Also reloads the 3D view if it was open.</td></tr>
+                <tr><td><strong>Reset</strong></td><td>Clears all captured data and results.</td></tr>
+              </tbody>
+            </table>
+            <div class="help-section-label">Processing controls</div>
+            <table>
+              <thead><tr><th>Control</th><th>Description</th></tr></thead>
+              <tbody>
+                <tr><td><strong>Mask threshold</strong></td><td>Slider — reject pixels with low fringe modulation (faint reflections or absent part). Adjusting this and recomputing updates the results.</td></tr>
+                <tr><td><strong>Smoothing</strong></td><td>Slider — Gaussian sigma applied to the unwrapped phase map. Reduces noise at the cost of spatial resolution.</td></tr>
+                <tr><td><strong>Auto</strong></td><td>Analyses the captured frame's frequency spectrum and selects a smoothing value that suppresses high-frequency noise while preserving surface features.</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <!-- Deflectometry: Results -->
+          <div class="help-page" id="help-page-defl-results" hidden>
+            <h2 class="help-page-title">Results</h2>
+            <p class="help-page-sub">Three tabs in the right column, below the action bar.</p>
+            <div class="help-section-label">Phase Maps</div>
+            <p class="help-p">Shows wrapped and unwrapped phase maps for both X and Y fringe directions. The wrapped phase contains 2&pi; jumps; the unwrapped phase is continuous and proportional to surface slope. Updates when you recompute.</p>
+            <div class="help-section-label">3D Surface</div>
+            <p class="help-p">Interactive Three.js viewer showing the reconstructed surface height as a 3D mesh. Use the <strong>Z exaggeration</strong> slider to amplify small deviations for visibility. Drag to rotate, scroll to zoom. Reloads automatically when you recompute.</p>
+            <div class="help-section-label">Diagnostics</div>
+            <p class="help-p">Troubleshooting view with fringe modulation map, histogram of modulation values, and coverage statistics (percentage of pixels above the mask threshold). Low coverage or uneven modulation usually indicates stray light, poor surface reflectivity, or an out-of-focus image.</p>
+          </div>
+
+          <!-- Fringe Analysis -->
+          <div class="help-page" id="help-page-fringe-analysis" hidden>
+            <h2 class="help-page-title">Fringe Analysis</h2>
+            <p class="help-page-sub">Interferometric fringe analysis for high-precision surface measurement.</p>
+            <p class="help-p">This mode is currently under development. Documentation will be added when the feature is available.</p>
+          </div>
+
+          <!-- Camera Controls -->
+          <div class="help-page" id="help-page-camera" hidden>
+            <h2 class="help-page-title">Camera Controls</h2>
+            <p class="help-page-sub">The camera panel is opened via the <strong>Camera &#9662;</strong> button in the top bar.</p>
+            <div class="help-section-label">Camera selection</div>
+            <p class="help-p">The dropdown lists available cameras grouped by type:</p>
+            <table>
+              <thead><tr><th>Group</th><th>Description</th></tr></thead>
+              <tbody>
+                <tr><td><strong>Scientific cameras</strong></td><td>Aravis / GigE / USB3 Vision industrial cameras (e.g. Baumer)</td></tr>
+                <tr><td><strong>Webcams</strong></td><td>USB webcams detected by OpenCV</td></tr>
+                <tr><td><strong>Browser cameras</strong></td><td>Browser built-in camera API (getUserMedia)</td></tr>
+              </tbody>
+            </table>
+            <p class="help-p">When no hardware cameras are found and no browser cam is active, a "Select camera..." placeholder is shown.</p>
+            <div class="help-section-label">Pixel format</div>
+            <p class="help-p">Select the sensor output format:</p>
+            <table>
+              <thead><tr><th>Format</th><th>Description</th></tr></thead>
+              <tbody>
+                <tr><td><strong>BayerRG8</strong></td><td>8-bit Bayer (colour, default)</td></tr>
+                <tr><td><strong>BayerRG12</strong></td><td>12-bit Bayer (higher dynamic range)</td></tr>
+                <tr><td><strong>Mono8</strong></td><td>8-bit monochrome</td></tr>
+              </tbody>
+            </table>
+            <div class="help-section-label">Exposure</div>
+            <p class="help-p">Log-scale slider + numeric input (in &micro;s). Range comes from the connected camera's capabilities.</p>
+            <div class="help-section-label">Gain</div>
+            <p class="help-p">Log-scale slider + numeric input (in dB). Range comes from the connected camera.</p>
+            <div class="help-section-label">Histogram</div>
+            <p class="help-p">Live histogram of the current frame with signal statistics (min, max, mean).</p>
+            <div class="help-section-label">Gamma</div>
+            <p class="help-p">Slider from 0.5 to 2.0. Hidden by default, shown when the camera supports it.</p>
+            <div class="help-section-label">Auto Exposure</div>
+            <p class="help-p">Runs a histogram-driven bisection loop to find optimal exposure.</p>
+            <div class="help-section-label">Auto WB</div>
+            <p class="help-p">One-shot automatic white balance.</p>
+            <div class="help-section-label">White Balance</div>
+            <p class="help-p">Collapsible section with per-channel R / G / B gain sliders (0.5 &ndash; 2.5).</p>
+            <div class="help-section-label">Region of Interest (ROI)</div>
+            <p class="help-p">Collapsible section for cropping the camera sensor to a sub-region:</p>
+            <ul class="help-ul">
+              <li><strong>Set from view</strong> &mdash; freeze the image, zoom into the area of interest, click to crop the camera sensor to that region.</li>
+              <li><strong>Reset</strong> &mdash; return to the full sensor frame.</li>
+            </ul>
+            <p class="help-p">Shows current ROI dimensions or "Full frame".</p>
+            <div class="help-tip">Reducing the ROI can increase frame rates on bandwidth-limited cameras and avoids processing pixels you do not need.</div>
           </div>
 
           <!-- TOOL PAGES -->
@@ -850,6 +1033,7 @@
           <!-- SHORTCUTS -->
           <div class="help-page" id="help-page-shortcuts" hidden>
             <h2 class="help-page-title">Keyboard Shortcuts</h2>
+            <div class="help-tip">The shortcuts listed below are for <strong>Microscope mode</strong>. Other modes define their own shortcuts. Press <kbd>?</kbd> in any mode to open this help dialog.</div>
             <div class="help-section-label">Tool keys</div>
             <table>
               <thead><tr><th>Key</th><th>Tool</th><th>Key</th><th>Tool</th></tr></thead>

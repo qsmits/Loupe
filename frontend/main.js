@@ -563,12 +563,55 @@ document.getElementById("btn-gradient-overlay")?.addEventListener("change", asyn
 document.getElementById("cal-badge")?.addEventListener("click", () => setTool("calibrate"));
 
 // ── Help dialog ──────────────────────────────────────────────────────────────
+const helpDialog = document.getElementById("help-dialog");
+
 document.getElementById("btn-help")?.addEventListener("click", () => {
-  document.getElementById("help-dialog").hidden = false;
+  helpDialog.hidden = false;
 });
 document.getElementById("btn-help-close").addEventListener("click", () => {
-  document.getElementById("help-dialog").hidden = true;
+  helpDialog.hidden = true;
 });
+
+// Close help dialog on Escape
+document.addEventListener("keydown", e => {
+  if (e.key === "Escape" && !helpDialog.hidden) {
+    e.preventDefault();
+    e.stopPropagation();
+    helpDialog.hidden = true;
+  }
+}, true);
+
+// Close help dialog on backdrop click
+helpDialog.addEventListener("click", e => {
+  if (e.target === helpDialog) helpDialog.hidden = true;
+});
+
+// ── Help mode tab switching ──
+function switchHelpMode(mode) {
+  // Update tab active state
+  document.querySelectorAll(".help-mode-tab").forEach(t => {
+    t.classList.toggle("active", t.dataset.helpMode === mode);
+  });
+  // Show/hide nav sections and items by data-help-modes
+  document.querySelectorAll(".help-nav-section[data-help-modes], .help-nav-item[data-help-modes]").forEach(el => {
+    const modes = el.dataset.helpModes.split(",").map(s => s.trim());
+    el.hidden = !modes.includes(mode);
+  });
+  // Auto-select first visible nav item
+  const firstVisible = document.querySelector(".help-nav-item[data-help-modes]:not([hidden])");
+  if (firstVisible) {
+    document.querySelectorAll(".help-nav-item").forEach(i => i.classList.remove("active"));
+    document.querySelectorAll(".help-page").forEach(p => { p.hidden = true; });
+    firstVisible.classList.add("active");
+    document.getElementById("help-page-" + firstVisible.dataset.page).hidden = false;
+  }
+}
+
+document.querySelectorAll(".help-mode-tab").forEach(tab => {
+  tab.addEventListener("click", () => switchHelpMode(tab.dataset.helpMode));
+});
+
+// Nav item page switching (existing logic)
 document.querySelectorAll(".help-nav-item").forEach(item => {
   item.addEventListener("click", () => {
     document.querySelectorAll(".help-nav-item").forEach(i => i.classList.remove("active"));
@@ -577,6 +620,9 @@ document.querySelectorAll(".help-nav-item").forEach(item => {
     document.getElementById("help-page-" + item.dataset.page).hidden = false;
   });
 });
+
+// Initialize: show only "general" tab items on first open
+switchHelpMode("general");
 
 // ── Settings dialog ────────────────────────────────────��──────────────────────
 const settingsDialog = document.getElementById("settings-dialog");
@@ -607,23 +653,18 @@ document.querySelectorAll(".settings-tab").forEach(tab => {
 
 // General tab Save button
 document.getElementById("btn-save-general").addEventListener("click", async () => {
-  const appName = document.getElementById("app-name-input").value.trim() || "Microscope";
   const theme   = document.getElementById("theme-select").value;
   try {
     const resp = await apiFetch("/config/ui", {
       method:  "POST",
       headers: { "Content-Type": "application/json" },
-      body:    JSON.stringify({ app_name: appName, theme }),
+      body:    JSON.stringify({ theme }),
     });
     if (resp.status === 403) {
       // Hosted mode — apply locally only
-      document.getElementById("app-title").textContent = appName;
-      document.title = appName;
       document.documentElement.className = `theme-${theme}`;
       document.getElementById("settings-status").textContent = "Applied (local only)";
     } else if (resp.ok) {
-      document.getElementById("app-title").textContent = appName;
-      document.title = appName;
       document.documentElement.className = `theme-${theme}`;
       document.getElementById("settings-status").textContent = "Saved.";
       setTimeout(() => { document.getElementById("settings-status").textContent = ""; }, 2000);
