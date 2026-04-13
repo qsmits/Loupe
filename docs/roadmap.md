@@ -262,17 +262,31 @@ changes which tools/HUD are available and which calibration type applies.
 shortcuts land here become tech debt for every future mode, so the
 refactor needs to be done properly.
 
-### Deflectometry mode *(second mode, hardware already on hand)*
-*Priority: medium. Effort: high. Start with a standalone Python
-prototype before integrating into Loupe.*
+### Deflectometry mode *(integrated, iterating)*
+*Priority: active. Effort: ongoing.*
 
-All hardware is already present: monitor, camera, workshop space. Needs a
-stable rig to hold screen, camera, and part. Distinct value is
-**non-contact measurement of compliant or thin parts that would deform
-under the weight of an optical flat** — thin gage blocks, shim stock,
-feeler gauges, spring steel stampings, thin windows. Classical interferometry
-gives the wrong answer on these because the part conforms to the loaded
-flats. Also handles curved/specular surfaces.
+Full-window deflectometry workspace with mode switcher, iPad-as-display
+architecture, and working measurement pipeline. Current state (2026-04-13):
+8-step phase shifting, gamma pre-correction, Gaussian smoothing, sphere
+calibration, Frankot-Chellappa height integration, inline 3D viewer,
+diagnostics tab. Cardboard-box testing confirms stray light was the
+dominant artifact source — proper enclosure in progress.
+
+**Hardware in progress:**
+- Modular 3D-printed enclosure (stackable frame segments, iPad-as-ceiling,
+  threaded extension tubes for camera lens)
+- G28 25mm calibration sphere on order (ERIKS, DIN 5401 100Cr6)
+
+**Future improvements:**
+- Per-pixel gamma calibration (capture LCD response curve spatially)
+- Monochrome display (resin printer LCD + backlight) for higher contrast
+  and elimination of RGB subpixel artifacts
+- Phase-shifting with more steps (12/16) if 8-step proves insufficient
+  for challenging surfaces
+- Zernike polynomial fitting for optical surface characterization
+- Export to standard surface formats (Zygo MetroPro .dat, x3p)
+- Multi-capture averaging for noise reduction
+- Automated capture sequencing (auto-trigger compute after capture)
 
 Concrete hello-world target: measure the free-state shape of a visibly-bent
 0.1 mm gage block.
@@ -416,9 +430,11 @@ These have been discussed and **will not** be built into Loupe:
 ✅ Z-stack texture params + noise    — 2026-04-10
 ✅ Annotation visibility toggles     — 2026-04-10
 ✅ Cal profile export/import         — 2026-04-10
+✅ Deflectometry mode (core)         — 2026-04-13: mode switcher, workspace UI, 8-step phase shifting,
+                                       gamma pre-correction, smoothing, sphere calibration, iPad centering,
+                                       3D viewer, diagnostics. Enclosure + calibration ball pending.
 
 Next:      Autocollimator mode         — when Nikon unit arrives; establishes mode-replacement pattern
-Then:      Deflectometry mode          — non-contact compliant-part metrology; prototype in Python first
 Then:      STEP import (geometry+PMI)  — auto inspection setup from STEP file drop
 Then:      SPC: control charts         — X-bar/R, Pp/Ppk
 Then:      GD&T: form tolerances       — roundness, flatness (after STEP/PMI)
