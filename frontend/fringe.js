@@ -208,6 +208,7 @@ function buildWorkspace() {
           <div id="fringe-zernike-content" hidden>
             <p style="font-size:11px;opacity:0.6;margin:0 0 6px">Each bar = one type of surface error (tilt, curvature, astigmatism, etc). Taller bars = more of that error. Gray bars have been subtracted from the surface map.</p>
             <img id="fringe-zernike-chart" style="width:100%;max-width:900px" />
+            <div id="fringe-zernike-table-container" style="margin-top:12px;max-height:400px;overflow-y:auto"></div>
           </div>
         </div>
 
@@ -1215,6 +1216,51 @@ function renderResults(data) {
     zernikeContent.hidden = false;
     if (zernikeEmpty) zernikeEmpty.hidden = true;
     $("fringe-zernike-chart").src = "data:image/png;base64," + data.zernike_chart;
+
+    // Build Zernike coefficient table
+    const tableContainer = $("fringe-zernike-table-container");
+    if (tableContainer && fr.lastResult) {
+      const coeffs = fr.lastResult.coefficients || [];
+      const names = fr.lastResult.coefficient_names || {};
+      const subtracted = new Set((fr.lastResult.subtracted_terms || []).map(Number));
+      const wl = fr.lastResult.wavelength_nm || 632.8;
+
+      if (coeffs.length > 0) {
+        // Find dominant term (largest |coeff| among non-subtracted)
+        let dominantIdx = -1;
+        let dominantAbs = 0;
+        for (let i = 0; i < coeffs.length; i++) {
+          const noll = i + 1;
+          if (!subtracted.has(noll) && Math.abs(coeffs[i]) > dominantAbs) {
+            dominantAbs = Math.abs(coeffs[i]);
+            dominantIdx = i;
+          }
+        }
+
+        let html = "<table><thead><tr><th>#</th><th>Term</th><th>Coeff (rad)</th><th>Surface (nm)</th></tr></thead><tbody>";
+        for (let i = 0; i < coeffs.length; i++) {
+          const noll = i + 1;
+          const coeff = coeffs[i];
+          const name = names[String(noll)] || ("Z" + noll);
+          const surfNm = coeff * wl / (4 * Math.PI);
+          const isSub = subtracted.has(noll);
+          const isDom = i === dominantIdx;
+          let cls = "";
+          if (isSub) cls = "fringe-z-subtracted";
+          else if (isDom) cls = "fringe-z-dominant";
+          html += '<tr class="' + cls + '">'
+            + "<td>" + noll + "</td>"
+            + "<td>" + name + (isSub ? " <span style='font-size:10px'>(sub)</span>" : "") + "</td>"
+            + "<td>" + coeff.toFixed(3) + "</td>"
+            + "<td>" + surfNm.toFixed(1) + "</td>"
+            + "</tr>";
+        }
+        html += "</tbody></table>";
+        tableContainer.innerHTML = html;
+      } else {
+        tableContainer.innerHTML = "";
+      }
+    }
   }
 
   // Profiles

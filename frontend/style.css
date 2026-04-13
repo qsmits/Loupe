@@ -2439,3 +2439,8 @@ body.no-camera .camera-section { display: none; }
   opacity: 0.9;
   min-height: 18px;
 }
+#fringe-zernike-table-container table { width:100%; border-collapse:collapse; font-size:12px; }
+#fringe-zernike-table-container th { text-align:left; padding:4px 8px; border-bottom:1px solid rgba(255,255,255,0.2); opacity:0.7; font-weight:normal; }
+#fringe-zernike-table-container td { padding:3px 8px; }
+#fringe-zernike-table-container tr.fringe-z-subtracted { opacity:0.35; }
+#fringe-zernike-table-container tr.fringe-z-dominant { color: #ff6b6b; }
