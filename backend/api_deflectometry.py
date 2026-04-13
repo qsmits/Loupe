@@ -113,6 +113,10 @@ class CalibrateSphereBody(BaseModel):
     px_per_mm: float = Field(gt=0)
 
 
+class DiagnosticsBody(BaseModel):
+    smooth_sigma: float = Field(default=0.0, ge=0.0, le=10.0)
+
+
 def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
     router = APIRouter()
     # Single-active-session container; using a dict so nested functions can
@@ -561,9 +565,6 @@ def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
 
         sigma = find_optimal_smooth_sigma(frame, fringe_freq=s.freq or 16)
         return {"sigma": sigma}
-
-    class DiagnosticsBody(BaseModel):
-        smooth_sigma: float = Field(default=0.0, ge=0.0, le=10.0)
 
     @router.post("/deflectometry/diagnostics", dependencies=[Depends(_reject_hosted)])
     async def deflectometry_diagnostics(body: DiagnosticsBody = DiagnosticsBody()):  # noqa: B008

@@ -766,10 +766,10 @@ async function runDiagnostics() {
 function wireTabActivation() {
   document.querySelectorAll(".defl-tab").forEach(tab => {
     tab.addEventListener("click", () => {
-      if (tab.dataset.tab === "3d" && $("defl-3d-content")?.hidden) {
+      if (tab.dataset.tab === "3d") {
         load3dSurface();
       }
-      if (tab.dataset.tab === "diag" && $("defl-diag-content")?.hidden) {
+      if (tab.dataset.tab === "diag") {
         runDiagnostics();
       }
     });
