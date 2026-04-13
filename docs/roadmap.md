@@ -346,6 +346,7 @@ image-upload mode.
 | Cross-mode annotation overlay | Show microscope annotations (hole positions, feature dimensions) as an overlay in fringe mode for spatial correlation. |
 | Fringe mode: custom profile lines | Click on surface map to place arbitrary cross-section lines instead of only center H/V profiles. |
 | Fringe mode: phase-shifting capture | Add piezo-based multi-frame phase shifting as an alternative to single-image DFT extraction — higher accuracy, requires hardware. |
+| Fringe mode: DXF-based mask | Use aligned DXF overlay from microscope mode as the fringe analysis aperture mask — precise boundaries for complex part shapes (rings, cutouts, irregular outlines) without manual tracing. |
 | Fringe mode: lens distortion correction | Apply microscope lens cal to fringe images for more accurate Zernike fitting and spatial localization. |
 | Digital level app (Digi-Pas DWL-3500XY ×3, BLE) | **Separate app, not a Loupe mode.** Shares backend plumbing with Loupe. Needs BLE protocol reverse engineering. |
 | Gear inspection | Separate domain. Wait for gear machine. |
