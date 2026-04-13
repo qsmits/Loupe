@@ -798,6 +798,126 @@ def render_zernike_chart(coefficients: list[float],
     return base64.b64encode(buf.read()).decode("ascii")
 
 
+def render_psf(surface_waves: np.ndarray, mask: np.ndarray | None = None) -> str:
+    """Compute and render the PSF from a wavefront error map.
+
+    Parameters
+    ----------
+    surface_waves : 2D wavefront error in waves (not nm).
+    mask : boolean mask (True = valid). Defines the pupil.
+
+    Returns
+    -------
+    Base64-encoded PNG image of the PSF (log scale, inferno colormap).
+    """
+    h, w = surface_waves.shape
+    # Build pupil: circular mask x complex phase
+    if mask is not None:
+        pupil = mask.astype(np.float64)
+    else:
+        pupil = np.ones((h, w), dtype=np.float64)
+
+    # Zero-pad to at least 512x512 for decent PSF resolution
+    pad = max(512, h, w)
+    padded = np.zeros((pad, pad), dtype=np.complex128)
+    y0 = (pad - h) // 2
+    x0 = (pad - w) // 2
+    phase = 2.0 * np.pi * surface_waves
+    padded[y0:y0+h, x0:x0+w] = pupil * np.exp(1j * phase)
+
+    # PSF = |FFT(pupil)|^2
+    psf = np.abs(np.fft.fftshift(np.fft.fft2(padded))) ** 2
+    psf /= max(psf.max(), 1e-30)  # normalize to [0, 1]
+
+    # Log scale for display (dynamic range ~4 decades)
+    psf_log = np.log10(psf + 1e-6)
+    psf_log = np.clip((psf_log + 6) / 6, 0, 1)  # map [-6, 0] to [0, 1]
+
+    # Crop to center (show ~1/4 of the padded field)
+    crop = pad // 4
+    cy, cx = pad // 2, pad // 2
+    psf_crop = psf_log[cy-crop:cy+crop, cx-crop:cx+crop]
+
+    # Render with inferno colormap
+    gray = (psf_crop * 255).astype(np.uint8)
+    cmap = plt.cm.inferno
+    lut = (cmap(np.linspace(0, 1, 256))[:, :3] * 255).astype(np.uint8)
+    colored = lut[gray]
+    colored_bgr = colored[:, :, ::-1].copy()
+
+    ok, buf = cv2.imencode(".png", colored_bgr)
+    if not ok:
+        raise RuntimeError("PSF encoding failed")
+    return base64.b64encode(buf.tobytes()).decode("ascii")
+
+
+def render_mtf(surface_waves: np.ndarray, mask: np.ndarray | None = None) -> dict:
+    """Compute the MTF from a wavefront error map.
+
+    Returns a dict with 'freq' (normalized, 0-1) and 'mtf' (contrast, 0-1)
+    arrays, plus 'mtf_diff' for the diffraction-limited MTF.
+    """
+    h, w = surface_waves.shape
+    if mask is not None:
+        pupil = mask.astype(np.float64)
+    else:
+        pupil = np.ones((h, w), dtype=np.float64)
+
+    pad = max(512, h, w)
+
+    # Aberrated PSF
+    padded = np.zeros((pad, pad), dtype=np.complex128)
+    y0 = (pad - h) // 2
+    x0 = (pad - w) // 2
+    phase = 2.0 * np.pi * surface_waves
+    padded[y0:y0+h, x0:x0+w] = pupil * np.exp(1j * phase)
+    psf = np.abs(np.fft.fftshift(np.fft.fft2(padded))) ** 2
+
+    # Diffraction-limited PSF (no aberrations)
+    padded_diff = np.zeros((pad, pad), dtype=np.complex128)
+    padded_diff[y0:y0+h, x0:x0+w] = pupil
+    psf_diff = np.abs(np.fft.fftshift(np.fft.fft2(padded_diff))) ** 2
+
+    # MTF = |FFT(PSF)| (OTF modulus)
+    otf = np.fft.fftshift(np.fft.fft2(np.fft.ifftshift(psf)))
+    otf_diff = np.fft.fftshift(np.fft.fft2(np.fft.ifftshift(psf_diff)))
+    mtf_2d = np.abs(otf)
+    mtf_diff_2d = np.abs(otf_diff)
+
+    # Normalize
+    mtf_2d /= max(mtf_2d.max(), 1e-30)
+    mtf_diff_2d /= max(mtf_diff_2d.max(), 1e-30)
+
+    # Radial average
+    cy, cx = pad // 2, pad // 2
+    y, x = np.ogrid[:pad, :pad]
+    r = np.sqrt((x - cx)**2 + (y - cy)**2).astype(int)
+    max_r = pad // 2
+
+    mtf_radial = np.zeros(max_r)
+    mtf_diff_radial = np.zeros(max_r)
+
+    for ri in range(max_r):
+        ring = r == ri
+        if ring.any():
+            mtf_radial[ri] = mtf_2d[ring].mean()
+            mtf_diff_radial[ri] = mtf_diff_2d[ring].mean()
+
+    # Trim to where diffraction limit drops to ~0
+    cutoff = max_r
+    for i in range(max_r - 1, 0, -1):
+        if mtf_diff_radial[i] > 0.01:
+            cutoff = min(i + 10, max_r)
+            break
+
+    freq = np.linspace(0, 1, cutoff)
+    return {
+        "freq": [round(float(f), 4) for f in freq],
+        "mtf": [round(float(v), 4) for v in mtf_radial[:cutoff] / max(mtf_radial[0], 1e-30)],
+        "mtf_diff": [round(float(v), 4) for v in mtf_diff_radial[:cutoff] / max(mtf_diff_radial[0], 1e-30)],
+    }
+
+
 def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 632.8,
                           mask_threshold: float = 0.15,
                           subtract_terms: list[int] | None = None,
@@ -879,7 +999,12 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 632.8,
     profile_x = render_profile(height_nm, mask, axis="x")
     profile_y = render_profile(height_nm, mask, axis="y")
 
-    # Step 10: Zernike chart
+    # Step 10: PSF and MTF
+    surface_waves = height_nm / wavelength_nm
+    psf_b64 = render_psf(surface_waves, mask)
+    mtf_data = render_mtf(surface_waves, mask)
+
+    # Step 11: Zernike chart
     zernike_chart_b64 = render_zernike_chart(
         coeffs.tolist(), subtract_terms, wavelength_nm
     )
@@ -920,6 +1045,8 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 632.8,
         "zernike_chart": zernike_chart_b64,
         "profile_x": profile_x,
         "profile_y": profile_y,
+        "psf": psf_b64,
+        "mtf": mtf_data,
         "coefficients": coeffs.tolist(),
         "coefficient_names": {str(j): ZERNIKE_NAMES.get(j, f"Z{j}")
                               for j in range(1, n_zernike + 1)},
@@ -1010,11 +1137,18 @@ def reanalyze(coefficients: list[float], subtract_terms: list[int],
     profile_x = render_profile(height_nm, mask, axis="x")
     profile_y = render_profile(height_nm, mask, axis="y")
 
+    # PSF and MTF
+    surface_waves = height_nm / wavelength_nm
+    psf_b64 = render_psf(surface_waves, mask)
+    mtf_data = render_mtf(surface_waves, mask)
+
     return {
         "surface_map": surface_map_b64,
         "zernike_chart": zernike_chart_b64,
         "profile_x": profile_x,
         "profile_y": profile_y,
+        "psf": psf_b64,
+        "mtf": mtf_data,
         "pv_nm": stats["pv"],
         "rms_nm": stats["rms"],
         "pv_waves": stats["pv"] / wavelength_nm,

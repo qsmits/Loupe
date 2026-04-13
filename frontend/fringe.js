@@ -177,6 +177,7 @@ function buildWorkspace() {
           <button class="fringe-tab" data-tab="3d">3D View</button>
           <button class="fringe-tab" data-tab="zernike">Zernike</button>
           <button class="fringe-tab" data-tab="profiles">Profiles</button>
+          <button class="fringe-tab" data-tab="psf">PSF / MTF</button>
         </div>
 
         <div class="fringe-tab-panel" id="fringe-panel-surface">
@@ -232,6 +233,20 @@ function buildWorkspace() {
             <p style="font-size:11px;opacity:0.6;margin:0 0 6px">Cross-sections through the center of the surface. Shows height (nm) across the part horizontally and vertically.</p>
             <canvas id="fringe-profile-x-canvas" width="800" height="200"></canvas>
             <canvas id="fringe-profile-y-canvas" width="800" height="200"></canvas>
+          </div>
+        </div>
+
+        <div class="fringe-tab-panel" id="fringe-panel-psf" hidden>
+          <div class="fringe-empty-state" id="fringe-psf-empty">Analyze an image first.</div>
+          <div id="fringe-psf-content" hidden style="display:flex;gap:16px;flex-wrap:wrap;align-items:flex-start">
+            <div>
+              <p style="font-size:11px;opacity:0.6;margin:0 0 6px">Point Spread Function (log scale)</p>
+              <img id="fringe-psf-img" style="width:256px;height:256px;image-rendering:pixelated" />
+            </div>
+            <div style="flex:1;min-width:300px">
+              <p style="font-size:11px;opacity:0.6;margin:0 0 6px">Modulation Transfer Function</p>
+              <canvas id="fringe-mtf-canvas" width="400" height="250" style="width:100%;max-width:500px"></canvas>
+            </div>
           </div>
         </div>
       </div>
@@ -1208,6 +1223,8 @@ async function addToAverage() {
         fr.lastResult.subtracted_terms = avgData.subtracted_terms;
         fr.lastResult.coefficients = avgCoeffs;
         if (avgData.strehl !== undefined) fr.lastResult.strehl = avgData.strehl;
+        if (avgData.psf) fr.lastResult.psf = avgData.psf;
+        if (avgData.mtf) fr.lastResult.mtf = avgData.mtf;
       }
     }
     renderResults(fr.lastResult);
@@ -1256,6 +1273,8 @@ async function doReanalyze() {
     fr.lastResult.rms_waves = data.rms_waves;
     fr.lastResult.subtracted_terms = data.subtracted_terms;
     if (data.strehl !== undefined) fr.lastResult.strehl = data.strehl;
+    if (data.psf) fr.lastResult.psf = data.psf;
+    if (data.mtf) fr.lastResult.mtf = data.mtf;
     renderResults(fr.lastResult);
   } catch (e) {
     console.warn("Re-analyze error:", e);
@@ -1377,6 +1396,18 @@ function renderResults(data) {
     drawProfile($("fringe-profile-y-canvas"), data.profile_y, "Vertical Profile (center col)");
   }
 
+  // PSF / MTF
+  const psfContent = $("fringe-psf-content");
+  const psfEmpty = $("fringe-psf-empty");
+  if (psfContent && data.psf) {
+    psfContent.hidden = false;
+    if (psfEmpty) psfEmpty.hidden = true;
+    $("fringe-psf-img").src = "data:image/png;base64," + data.psf;
+    if (data.mtf) {
+      drawMtfChart(data.mtf);
+    }
+  }
+
   // Hide 3D empty state if we have results
   if (fr.lastResult) {
     const empty3d = $("fringe-3d-empty");
@@ -1445,6 +1476,86 @@ function drawProfile(canvas, profile, title) {
     else ctx.lineTo(x, y);
   }
   ctx.stroke();
+}
+
+function drawMtfChart(mtfData) {
+  const canvas = $("fringe-mtf-canvas");
+  if (!canvas) return;
+  const ctx = canvas.getContext("2d");
+  const W = canvas.width, H = canvas.height;
+  const pad = { top: 20, right: 20, bottom: 35, left: 45 };
+  const pw = W - pad.left - pad.right;
+  const ph = H - pad.top - pad.bottom;
+
+  ctx.clearRect(0, 0, W, H);
+  ctx.fillStyle = "#1a1a2e";
+  ctx.fillRect(0, 0, W, H);
+
+  // Grid lines
+  ctx.strokeStyle = "rgba(255,255,255,0.1)";
+  ctx.lineWidth = 0.5;
+  for (let i = 0; i <= 4; i++) {
+    const y = pad.top + ph * (1 - i / 4);
+    ctx.beginPath(); ctx.moveTo(pad.left, y); ctx.lineTo(pad.left + pw, y); ctx.stroke();
+  }
+
+  // Axes labels
+  ctx.fillStyle = "rgba(255,255,255,0.5)";
+  ctx.font = "10px sans-serif";
+  ctx.textAlign = "center";
+  ctx.fillText("Normalized spatial frequency", pad.left + pw / 2, H - 5);
+  ctx.save();
+  ctx.translate(12, pad.top + ph / 2);
+  ctx.rotate(-Math.PI / 2);
+  ctx.fillText("Contrast", 0, 0);
+  ctx.restore();
+
+  // Y-axis tick labels
+  ctx.textAlign = "right";
+  for (let i = 0; i <= 4; i++) {
+    const y = pad.top + ph * (1 - i / 4);
+    ctx.fillText((i * 0.25).toFixed(2), pad.left - 4, y + 3);
+  }
+
+  // X-axis tick labels
+  ctx.textAlign = "center";
+  for (let i = 0; i <= 4; i++) {
+    const x = pad.left + pw * i / 4;
+    ctx.fillText((i * 0.25).toFixed(2), x, pad.top + ph + 15);
+  }
+
+  const n = mtfData.freq.length;
+
+  // Diffraction limit (dashed, white)
+  ctx.strokeStyle = "rgba(255,255,255,0.5)";
+  ctx.setLineDash([4, 3]);
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  for (let i = 0; i < n; i++) {
+    const x = pad.left + mtfData.freq[i] * pw;
+    const y = pad.top + ph * (1 - mtfData.mtf_diff[i]);
+    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  // Measured MTF (solid, colored)
+  ctx.strokeStyle = "#4fc3f7";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  for (let i = 0; i < n; i++) {
+    const x = pad.left + mtfData.freq[i] * pw;
+    const y = pad.top + ph * (1 - mtfData.mtf[i]);
+    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+
+  // Legend
+  ctx.font = "10px sans-serif";
+  ctx.fillStyle = "#4fc3f7";
+  ctx.fillText("Measured", pad.left + pw - 60, pad.top + 12);
+  ctx.fillStyle = "rgba(255,255,255,0.5)";
+  ctx.fillText("Diffraction limit", pad.left + pw - 60, pad.top + 24);
 }
 
 // ── 3D View ─────────────────────────────────────────────────────────────
