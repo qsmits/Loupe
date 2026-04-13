@@ -1,8 +1,10 @@
 """Fringe analysis computation primitives.
 
-Pure functions for Zernike polynomial fitting, DFT-based phase extraction,
-spatial phase unwrapping, auto-masking, surface statistics, and false-color
-rendering.  No state, no I/O beyond PNG encoding for visualization helpers.
+Zernike polynomial fitting: Noll indexing, radial polynomial evaluation,
+basis matrix construction, and least-squares coefficient fitting.
+
+DFT phase extraction, spatial unwrapping, auto-masking, surface statistics,
+and false-color rendering are added in subsequent tasks.
 """
 
 from __future__ import annotations
