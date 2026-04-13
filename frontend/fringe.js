@@ -608,8 +608,8 @@ function drawProfileLine(p1, p2) {
     setMeasureReadout("Not enough valid points on line");
     return;
   }
-  const lineMin = Math.min(...valid);
-  const lineMax = Math.max(...valid);
+  let lineMin = Infinity, lineMax = -Infinity;
+  for (const v of valid) { if (v < lineMin) lineMin = v; if (v > lineMax) lineMax = v; }
   const linePV = lineMax - lineMin;
   const mean = valid.reduce((a, b) => a + b, 0) / valid.length;
   const rms = Math.sqrt(valid.reduce((a, v) => a + (v - mean) ** 2, 0) / valid.length);
@@ -732,8 +732,8 @@ function computeAreaStats(p1, p2) {
     return;
   }
 
-  const min = Math.min(...values);
-  const max = Math.max(...values);
+  let min = Infinity, max = -Infinity;
+  for (const v of values) { if (v < min) min = v; if (v > max) max = v; }
   const pv = max - min;
   const mean = values.reduce((a, b) => a + b, 0) / values.length;
   const rms = Math.sqrt(values.reduce((a, v) => a + (v - mean) ** 2, 0) / values.length);
@@ -1191,16 +1191,15 @@ function renderResults(data) {
     fr.gridCols = data.grid_cols;
   }
 
-  // Draw peak/valley markers (delay to ensure img is rendered)
-  setTimeout(drawPeakValleyMarkers, 100);
-
   // Surface map
   const surfaceContent = $("fringe-surface-content");
   const empty = $("fringe-empty");
   if (surfaceContent && data.surface_map) {
     surfaceContent.hidden = false;
     if (empty) empty.hidden = true;
-    $("fringe-surface-img").src = "data:image/png;base64," + data.surface_map;
+    const surfImg = $("fringe-surface-img");
+    surfImg.onload = () => drawPeakValleyMarkers();
+    surfImg.src = "data:image/png;base64," + data.surface_map;
   }
 
   // Zernike chart
@@ -1243,8 +1242,8 @@ function drawProfile(canvas, profile, title) {
   const values = profile.values.filter(v => v !== null);
   if (values.length < 2) return;
 
-  const vMin = Math.min(...values);
-  const vMax = Math.max(...values);
+  let vMin = Infinity, vMax = -Infinity;
+  for (const v of values) { if (v < vMin) vMin = v; if (v > vMax) vMax = v; }
   const vRange = vMax - vMin || 1;
 
   const padL = 60, padR = 20, padT = 30, padB = 30;
