@@ -147,6 +147,10 @@ function buildWorkspace() {
             <span class="fringe-stat-value fringe-stat-nm" id="fringe-rms-nm">--</span>
             <span class="fringe-stat-unit">nm</span>
           </div>
+          <div class="fringe-stat">
+            <span class="fringe-stat-label" title="Strehl ratio: 1.0 = diffraction-limited. Computed as exp(-(2\u03c0\u00b7RMS)\u00b2)">Strehl</span>
+            <span class="fringe-stat-value" id="fringe-strehl">--</span>
+          </div>
           <div class="fringe-stat" style="margin-left:auto">
             <span class="fringe-stat-label" style="min-width:auto">\u03bb</span>
             <span id="fringe-summary-wl" style="font-size:12px;opacity:0.7">589 nm</span>
@@ -1146,6 +1150,7 @@ async function doReanalyze() {
     fr.lastResult.pv_waves = data.pv_waves;
     fr.lastResult.rms_waves = data.rms_waves;
     fr.lastResult.subtracted_terms = data.subtracted_terms;
+    if (data.strehl !== undefined) fr.lastResult.strehl = data.strehl;
     renderResults(fr.lastResult);
   } catch (e) {
     console.warn("Re-analyze error:", e);
@@ -1166,6 +1171,8 @@ function renderResults(data) {
   $("fringe-pv-nm").textContent = fmtNm(data.pv_nm);
   $("fringe-rms-waves").textContent = fmt(data.rms_waves);
   $("fringe-rms-nm").textContent = fmtNm(data.rms_nm);
+  const strehlEl = $("fringe-strehl");
+  if (strehlEl) strehlEl.textContent = Number.isFinite(data.strehl) ? data.strehl.toFixed(3) : "--";
 
   // Wavelength and subtracted terms in summary bar
   const wlEl = $("fringe-summary-wl");

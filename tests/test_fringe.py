@@ -390,7 +390,7 @@ class TestAnalyzeInterferogram:
         expected_keys = {
             "surface_map", "zernike_chart", "profile_x", "profile_y",
             "coefficients", "coefficient_names", "pv_nm", "rms_nm",
-            "pv_waves", "rms_waves", "modulation_stats", "focus_score",
+            "pv_waves", "rms_waves", "strehl", "modulation_stats", "focus_score",
             "subtracted_terms", "wavelength_nm", "n_valid_pixels", "n_total_pixels",
         }
         assert expected_keys.issubset(set(result.keys()))
@@ -398,6 +398,13 @@ class TestAnalyzeInterferogram:
         assert result["pv_nm"] >= 0
         assert result["rms_nm"] >= 0
         assert 0 <= result["focus_score"] <= 100
+
+    def test_strehl_in_range(self):
+        """Strehl ratio should be between 0 and 1."""
+        image = _make_fringe_image(128, 128)
+        result = analyze_interferogram(image, wavelength_nm=632.8)
+        assert "strehl" in result
+        assert 0 < result["strehl"] <= 1.0
 
 
 class TestReanalyze:
@@ -425,6 +432,9 @@ class TestReanalyze:
         assert r2["pv_nm"] >= 0
         assert "surface_map" in r1
         assert "surface_map" in r2
+        # Strehl should be present and valid
+        assert 0 < r1["strehl"] <= 1.0
+        assert 0 < r2["strehl"] <= 1.0
 
 
 class TestFringeAPI:

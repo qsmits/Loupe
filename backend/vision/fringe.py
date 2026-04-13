@@ -922,6 +922,7 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 632.8,
         "rms_nm": rms_nm,
         "pv_waves": pv_waves,
         "rms_waves": rms_waves,
+        "strehl": float(np.exp(-(2.0 * np.pi * rms_waves) ** 2)),
         "modulation_stats": mod_stats,
         "focus_score": f_score,
         "subtracted_terms": subtract_terms,
@@ -994,6 +995,7 @@ def reanalyze(coefficients: list[float], subtract_terms: list[int],
 
     # Stats
     stats = surface_stats(height_nm, mask)
+    rms_waves = stats["rms"] / wavelength_nm
 
     # Renderings
     surface_map_b64 = render_surface_map(height_nm, mask)
@@ -1011,6 +1013,7 @@ def reanalyze(coefficients: list[float], subtract_terms: list[int],
         "pv_nm": stats["pv"],
         "rms_nm": stats["rms"],
         "pv_waves": stats["pv"] / wavelength_nm,
-        "rms_waves": stats["rms"] / wavelength_nm,
+        "rms_waves": rms_waves,
+        "strehl": float(np.exp(-(2.0 * np.pi * rms_waves) ** 2)),
         "subtracted_terms": subtract_terms,
     }
