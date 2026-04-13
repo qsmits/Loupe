@@ -104,9 +104,9 @@ function buildWorkspace() {
       <!-- Right: action bar + results -->
       <div class="defl-results-col">
         <div class="defl-action-bar">
-          <button class="detect-btn" id="defl-btn-capture">Capture Part</button>
+          <button class="detect-btn" id="defl-btn-capture" style="padding:6px 16px;font-size:13px;font-weight:600">Capture Part</button>
           <span class="defl-step-status" id="defl-status-capture" style="font-size:11px;opacity:0.7">\u2014</span>
-          <button class="detect-btn" id="defl-btn-compute">Compute</button>
+          <button class="detect-btn" id="defl-btn-compute" style="padding:6px 16px;font-size:13px;font-weight:600">Compute</button>
           <span class="defl-step-status" id="defl-status-compute" style="font-size:11px;opacity:0.7">\u2014</span>
           <button class="detect-btn" id="defl-btn-reset" style="font-size:11px;padding:2px 8px">Reset</button>
           <span style="margin-left:auto;display:flex;align-items:center;gap:8px;font-size:12px">
@@ -399,6 +399,10 @@ async function compute() {
     const result = await r.json();
     if (statusEl) statusEl.textContent = "Done";
     renderPhaseResult(result);
+    // Reload 3D view if it's been opened before
+    if (!$("defl-3d-content")?.hidden) {
+      load3dSurface();
+    }
   } catch (e) {
     if (statusEl) statusEl.textContent = "Failed: " + (e?.message || e);
   } finally {
