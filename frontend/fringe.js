@@ -18,6 +18,12 @@ const fr = {
   roi: null,         // {x, y, w, h} in image coordinates (0-1 normalized)
   roiDrawing: false,  // currently drawing?
   roiStart: null,     // {x, y} in normalized coords
+  measureMode: null,       // null | "cursor" | "point2point" | "lineProfile" | "area"
+  measurePoints: [],       // array of {nx, ny} normalized coords for active measurement
+  heightGrid: null,        // Float32Array from server
+  maskGrid: null,          // Uint8Array from server
+  gridRows: 0,
+  gridCols: 0,
 };
 
 function $(id) { return document.getElementById(id); }
@@ -73,7 +79,7 @@ function buildWorkspace() {
           </button>
         </div>
         <div id="fringe-roi-hint" style="font-size:10px;opacity:0.5;text-align:center" hidden>
-          Click and drag on preview to select the analysis region
+          Click two corners on the enlarged preview to select the analysis region
         </div>
 
         <div class="fringe-drop-zone" id="fringe-drop-zone">
@@ -159,11 +165,20 @@ function buildWorkspace() {
           <div class="fringe-empty-state" id="fringe-empty">
             Freeze a frame or drop an interferogram image to analyze.
           </div>
-          <div id="fringe-surface-content" hidden>
-            <p style="font-size:11px;opacity:0.6;margin:0 0 6px">Height map of the surface after Zernike subtraction. Blue = low, red = high. Black = masked. Scroll to zoom, drag to pan.</p>
-            <div class="fringe-surface-container" id="fringe-surface-viewport" style="overflow:hidden;cursor:grab">
-              <img id="fringe-surface-img" style="transform-origin:0 0" />
+          <div id="fringe-surface-content" hidden style="display:flex;flex-direction:column;flex:1;min-height:0">
+            <div class="fringe-measure-toolbar" id="fringe-measure-toolbar">
+              <button class="fringe-measure-btn active" data-mode="" title="Pan / zoom (no measurement)">↔ Pan</button>
+              <button class="fringe-measure-btn" data-mode="cursor" title="Hover to see height at cursor">⊹ Cursor</button>
+              <button class="fringe-measure-btn" data-mode="point2point" title="Click two points to measure height difference">⬍ Δh</button>
+              <button class="fringe-measure-btn" data-mode="lineProfile" title="Click two points to draw a line profile">╲ Profile</button>
+              <button class="fringe-measure-btn" data-mode="area" title="Click two corners to get area statistics">▭ Area</button>
+              <span class="fringe-measure-readout" id="fringe-measure-readout"></span>
             </div>
+            <div class="fringe-surface-container" id="fringe-surface-viewport" style="overflow:hidden;cursor:grab;position:relative">
+              <img id="fringe-surface-img" draggable="false" style="transform-origin:0 0" />
+              <svg id="fringe-measure-svg" style="position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;overflow:visible;transform-origin:0 0"></svg>
+            </div>
+            <canvas id="fringe-line-profile-chart" width="800" height="150" hidden></canvas>
           </div>
         </div>
 
@@ -280,16 +295,19 @@ function wireEvents() {
     });
   }
   $("fringe-enlarge-close")?.addEventListener("click", () => {
+    if (fr.roiDrawing) { exitRoiDrawMode(); return; }
     const overlay = $("fringe-enlarge-overlay");
     if (overlay) overlay.hidden = true;
   });
   $("fringe-enlarge-overlay")?.addEventListener("click", (e) => {
+    if (fr.roiDrawing) return; // don't close during ROI drawing
     if (e.target === e.currentTarget) {
       e.currentTarget.hidden = true;
     }
   });
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape") {
+      if (fr.roiDrawing) { exitRoiDrawMode(); return; }
       const overlay = $("fringe-enlarge-overlay");
       if (overlay && !overlay.hidden) overlay.hidden = true;
     }
@@ -309,29 +327,17 @@ function wireEvents() {
     });
   }
 
-  // ROI drawing
+  // ROI drawing — opens enlarge overlay, click two corners to define rectangle
   const roiBtn = $("fringe-btn-roi");
   const roiClearBtn = $("fringe-btn-roi-clear");
   const roiHint = $("fringe-roi-hint");
-  const roiCanvas = $("fringe-roi-canvas");
-  const previewImg = $("fringe-preview");
 
   if (roiBtn) {
     roiBtn.addEventListener("click", () => {
       if (fr.roiDrawing) {
-        // Cancel draw mode
-        fr.roiDrawing = false;
-        roiBtn.textContent = "Draw ROI";
-        roiBtn.style.background = "";
-        if (roiCanvas) roiCanvas.style.pointerEvents = "none";
-        if (roiHint) roiHint.hidden = true;
+        exitRoiDrawMode();
       } else {
-        // Enter draw mode
-        fr.roiDrawing = true;
-        roiBtn.textContent = "Cancel";
-        roiBtn.style.background = "var(--accent)";
-        if (roiCanvas) roiCanvas.style.pointerEvents = "auto";
-        if (roiHint) roiHint.hidden = false;
+        enterRoiDrawMode();
       }
     });
   }
@@ -345,61 +351,16 @@ function wireEvents() {
     });
   }
 
-  if (roiCanvas) {
-    roiCanvas.style.cursor = "crosshair";
-    roiCanvas.addEventListener("mousedown", (e) => {
-      if (!fr.roiDrawing) return;
-      const rect = roiCanvas.getBoundingClientRect();
-      fr.roiStart = {
-        x: (e.clientX - rect.left) / rect.width,
-        y: (e.clientY - rect.top) / rect.height,
-      };
-    });
-    roiCanvas.addEventListener("mousemove", (e) => {
-      if (!fr.roiDrawing || !fr.roiStart) return;
-      const rect = roiCanvas.getBoundingClientRect();
-      const cx = (e.clientX - rect.left) / rect.width;
-      const cy = (e.clientY - rect.top) / rect.height;
-      // Draw temporary rectangle
-      drawRoiOverlay({
-        x: Math.min(fr.roiStart.x, cx),
-        y: Math.min(fr.roiStart.y, cy),
-        w: Math.abs(cx - fr.roiStart.x),
-        h: Math.abs(cy - fr.roiStart.y),
-      });
-    });
-    roiCanvas.addEventListener("mouseup", (e) => {
-      if (!fr.roiDrawing || !fr.roiStart) return;
-      const rect = roiCanvas.getBoundingClientRect();
-      const cx = (e.clientX - rect.left) / rect.width;
-      const cy = (e.clientY - rect.top) / rect.height;
-      const roi = {
-        x: Math.min(fr.roiStart.x, cx),
-        y: Math.min(fr.roiStart.y, cy),
-        w: Math.abs(cx - fr.roiStart.x),
-        h: Math.abs(cy - fr.roiStart.y),
-      };
-      // Only accept if region is big enough
-      if (roi.w > 0.02 && roi.h > 0.02) {
-        fr.roi = roi;
-        if (roiClearBtn) { roiClearBtn.disabled = false; roiClearBtn.style.opacity = "1"; }
-      }
-      fr.roiStart = null;
-      fr.roiDrawing = false;
-      if (roiBtn) { roiBtn.textContent = "Draw ROI"; roiBtn.style.background = ""; }
-      if (roiCanvas) roiCanvas.style.pointerEvents = "none";
-      if (roiHint) roiHint.hidden = true;
-      drawRoiOverlay();
-    });
-  }
-
   // Surface map zoom/pan
   const viewport = $("fringe-surface-viewport");
   if (viewport) {
     let smZoom = 1, smPanX = 0, smPanY = 0, smDragging = false, smDragX = 0, smDragY = 0;
     const applySm = () => {
       const img = $("fringe-surface-img");
-      if (img) img.style.transform = `translate(${smPanX}px,${smPanY}px) scale(${smZoom})`;
+      const svg = $("fringe-measure-svg");
+      const transform = `translate(${smPanX}px,${smPanY}px) scale(${smZoom})`;
+      if (img) img.style.transform = transform;
+      if (svg) svg.style.transform = transform;
     };
     viewport.addEventListener("wheel", (e) => {
       e.preventDefault();
@@ -413,6 +374,8 @@ function wireEvents() {
       applySm();
     });
     viewport.addEventListener("mousedown", (e) => {
+      e.preventDefault(); // prevent native image drag
+      if (fr.measureMode) return; // measurement mode handles its own clicks
       if (smZoom <= 1) return;
       smDragging = true; smDragX = e.clientX - smPanX; smDragY = e.clientY - smPanY;
       viewport.style.cursor = "grabbing";
@@ -423,9 +386,26 @@ function wireEvents() {
       applySm();
     });
     window.addEventListener("mouseup", () => {
-      smDragging = false; viewport.style.cursor = "grab";
+      smDragging = false; viewport.style.cursor = fr.measureMode ? "crosshair" : "grab";
     });
   }
+
+  // Measurement toolbar
+  document.querySelectorAll(".fringe-measure-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      document.querySelectorAll(".fringe-measure-btn").forEach(b => b.classList.remove("active"));
+      btn.classList.add("active");
+      const mode = btn.dataset.mode || null;
+      fr.measureMode = mode;
+      fr.measurePoints = [];
+      const viewport = $("fringe-surface-viewport");
+      if (viewport) viewport.style.cursor = mode ? "crosshair" : "grab";
+      clearMeasureSvg();
+      setMeasureReadout("");
+      const chart = $("fringe-line-profile-chart");
+      if (chart) chart.hidden = true;
+    });
+  });
 
   // Zernike checkbox change → re-analyze
   const checkboxIds = [
@@ -471,6 +451,42 @@ function getSubtractTerms() {
   return terms;
 }
 
+function setMeasureReadout(text) {
+  const el = $("fringe-measure-readout");
+  if (el) el.textContent = text;
+}
+
+function clearMeasureSvg() {
+  const svg = $("fringe-measure-svg");
+  if (svg) svg.innerHTML = "";
+}
+
+function getHeightAt(nx, ny) {
+  if (!fr.heightGrid || !fr.maskGrid) return null;
+  const col = Math.min(fr.gridCols - 1, Math.max(0, Math.floor(nx * fr.gridCols)));
+  const row = Math.min(fr.gridRows - 1, Math.max(0, Math.floor(ny * fr.gridRows)));
+  const idx = row * fr.gridCols + col;
+  if (!fr.maskGrid[idx]) return null;
+  return fr.heightGrid[idx];
+}
+
+function surfaceMouseCoords(e) {
+  const imgEl = $("fringe-surface-img");
+  if (!imgEl) return null;
+  const imgRect = imgEl.getBoundingClientRect();
+  const nx = (e.clientX - imgRect.left) / imgRect.width;
+  const ny = (e.clientY - imgRect.top) / imgRect.height;
+  if (nx < 0 || nx > 1 || ny < 0 || ny > 1) return null;
+  return { nx, ny };
+}
+
+function fmtNm(v) {
+  if (v === null || v === undefined) return "masked";
+  const abs = Math.abs(v);
+  if (abs >= 1000) return (v / 1000).toFixed(2) + " µm";
+  return v.toFixed(1) + " nm";
+}
+
 function drawRoiOverlay(tempRoi) {
   const canvas = $("fringe-roi-canvas");
   const img = $("fringe-preview");
@@ -495,6 +511,157 @@ function drawRoiOverlay(tempRoi) {
   ctx.strokeRect(x, y, w, h);
 }
 
+// ── ROI draw mode (enlarge overlay + click-to-place corners) ────────────
+
+function enterRoiDrawMode() {
+  fr.roiDrawing = true;
+  fr.roiStart = null;
+  const roiBtn = $("fringe-btn-roi");
+  const roiHint = $("fringe-roi-hint");
+  if (roiBtn) { roiBtn.textContent = "Cancel"; roiBtn.style.background = "var(--accent)"; }
+  if (roiHint) roiHint.hidden = false;
+
+  // Open the enlarge overlay with a drawing canvas on top
+  const overlay = $("fringe-enlarge-overlay");
+  const enlargeImg = $("fringe-enlarge-img");
+  const preview = $("fringe-preview");
+  if (!overlay || !enlargeImg || !preview) return;
+
+  enlargeImg.src = preview.src;
+  overlay.hidden = false;
+
+  // Create or reuse the ROI drawing canvas on the enlarge overlay
+  let roiCanvas = $("fringe-enlarge-roi-canvas");
+  if (!roiCanvas) {
+    roiCanvas = document.createElement("canvas");
+    roiCanvas.id = "fringe-enlarge-roi-canvas";
+    roiCanvas.style.cssText = "position:absolute;top:0;left:0;width:100%;height:100%;cursor:crosshair;z-index:10";
+    overlay.appendChild(roiCanvas);
+  }
+  roiCanvas.style.pointerEvents = "auto";
+
+  // Wait for image to load so we can size the canvas over the image
+  const setupCanvas = () => {
+    const imgRect = enlargeImg.getBoundingClientRect();
+    roiCanvas.width = imgRect.width;
+    roiCanvas.height = imgRect.height;
+    roiCanvas.style.left = imgRect.left + "px";
+    roiCanvas.style.top = imgRect.top + "px";
+    roiCanvas.style.width = imgRect.width + "px";
+    roiCanvas.style.height = imgRect.height + "px";
+    roiCanvas.style.position = "fixed";
+    drawEnlargeRoiOverlay(roiCanvas, null);
+  };
+  if (enlargeImg.complete && enlargeImg.naturalWidth > 0) {
+    // Use rAF to ensure layout is settled after overlay becomes visible
+    requestAnimationFrame(setupCanvas);
+  } else {
+    enlargeImg.onload = () => requestAnimationFrame(setupCanvas);
+  }
+
+  // Click handler — first click = corner 1, second click = corner 2
+  const handleClick = (e) => {
+    const rect = roiCanvas.getBoundingClientRect();
+    const nx = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    const ny = Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height));
+
+    if (!fr.roiStart) {
+      // First corner
+      fr.roiStart = { x: nx, y: ny };
+      drawEnlargeRoiOverlay(roiCanvas, null);
+      // Draw the first point marker
+      const ctx = roiCanvas.getContext("2d");
+      ctx.fillStyle = "#0a84ff";
+      ctx.beginPath();
+      ctx.arc(nx * roiCanvas.width, ny * roiCanvas.height, 5, 0, Math.PI * 2);
+      ctx.fill();
+    } else {
+      // Second corner — finalize ROI
+      const roi = {
+        x: Math.min(fr.roiStart.x, nx),
+        y: Math.min(fr.roiStart.y, ny),
+        w: Math.abs(nx - fr.roiStart.x),
+        h: Math.abs(ny - fr.roiStart.y),
+      };
+      if (roi.w > 0.02 && roi.h > 0.02) {
+        fr.roi = roi;
+        const roiClearBtn = $("fringe-btn-roi-clear");
+        if (roiClearBtn) { roiClearBtn.disabled = false; roiClearBtn.style.opacity = "1"; }
+      }
+      roiCanvas.removeEventListener("click", handleClick);
+      roiCanvas.removeEventListener("mousemove", handleMove);
+      exitRoiDrawMode();
+    }
+  };
+
+  // Mousemove handler — show rectangle preview after first corner placed
+  const handleMove = (e) => {
+    if (!fr.roiStart) return;
+    const rect = roiCanvas.getBoundingClientRect();
+    const nx = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    const ny = Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height));
+    drawEnlargeRoiOverlay(roiCanvas, {
+      x: Math.min(fr.roiStart.x, nx),
+      y: Math.min(fr.roiStart.y, ny),
+      w: Math.abs(nx - fr.roiStart.x),
+      h: Math.abs(ny - fr.roiStart.y),
+    });
+  };
+
+  roiCanvas.addEventListener("click", handleClick);
+  roiCanvas.addEventListener("mousemove", handleMove);
+
+  // Store cleanup refs so exitRoiDrawMode can remove them
+  fr._roiCleanup = () => {
+    roiCanvas.removeEventListener("click", handleClick);
+    roiCanvas.removeEventListener("mousemove", handleMove);
+    roiCanvas.style.pointerEvents = "none";
+    const ctx = roiCanvas.getContext("2d");
+    ctx.clearRect(0, 0, roiCanvas.width, roiCanvas.height);
+  };
+}
+
+function exitRoiDrawMode() {
+  fr.roiDrawing = false;
+  fr.roiStart = null;
+  const roiBtn = $("fringe-btn-roi");
+  const roiHint = $("fringe-roi-hint");
+  if (roiBtn) { roiBtn.textContent = "Draw ROI"; roiBtn.style.background = ""; }
+  if (roiHint) roiHint.hidden = true;
+  if (fr._roiCleanup) { fr._roiCleanup(); fr._roiCleanup = null; }
+  // Close the enlarge overlay
+  const overlay = $("fringe-enlarge-overlay");
+  if (overlay) overlay.hidden = true;
+  // Update the small preview ROI overlay
+  drawRoiOverlay();
+}
+
+function drawEnlargeRoiOverlay(canvas, tempRoi) {
+  const ctx = canvas.getContext("2d");
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  const roi = tempRoi;
+  if (!roi) return;
+  const x = roi.x * canvas.width;
+  const y = roi.y * canvas.height;
+  const w = roi.w * canvas.width;
+  const h = roi.h * canvas.height;
+  // Dim everything outside
+  ctx.fillStyle = "rgba(0, 0, 0, 0.4)";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.clearRect(x, y, w, h);
+  // Draw border
+  ctx.strokeStyle = "#0a84ff";
+  ctx.lineWidth = 2;
+  ctx.strokeRect(x, y, w, h);
+  // Draw corner markers
+  ctx.fillStyle = "#0a84ff";
+  for (const [cx, cy] of [[x, y], [x + w, y], [x, y + h], [x + w, y + h]]) {
+    ctx.beginPath();
+    ctx.arc(cx, cy, 4, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
 function setStatus(msg) {
   const btn = $("fringe-btn-analyze");
   if (btn) btn.textContent = msg;
@@ -512,15 +679,17 @@ async function analyzeFromCamera() {
   if (btn) btn.disabled = true;
   setStatus("Analyzing...");
   try {
+    const payload = {
+      wavelength_nm: getWavelength(),
+      mask_threshold: getMaskThreshold(),
+      subtract_terms: getSubtractTerms(),
+      roi: fr.roi || undefined,
+    };
+    console.log("[fringe] analyze payload:", JSON.stringify(payload));
     const r = await apiFetch("/fringe/analyze", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        wavelength_nm: getWavelength(),
-        mask_threshold: getMaskThreshold(),
-        subtract_terms: getSubtractTerms(),
-        roi: fr.roi || undefined,
-      }),
+      body: JSON.stringify(payload),
     });
     if (!r.ok) {
       const msg = await r.text();
@@ -590,12 +759,8 @@ async function doReanalyze() {
         coefficients: fr.lastResult.coefficients,
         subtract_terms: getSubtractTerms(),
         wavelength_nm: getWavelength(),
-        surface_height: fr.lastResult.n_total_pixels
-          ? Math.round(Math.sqrt(fr.lastResult.n_total_pixels))
-          : 128,
-        surface_width: fr.lastResult.n_total_pixels
-          ? Math.round(Math.sqrt(fr.lastResult.n_total_pixels))
-          : 128,
+        surface_height: fr.lastResult.surface_height || 128,
+        surface_width: fr.lastResult.surface_width || 128,
       }),
     });
     if (!r.ok) return;
@@ -644,6 +809,14 @@ function renderResults(data) {
     if (sub.includes(7)) names.push("Coma");
     if (sub.includes(11)) names.push("Sph");
     subEl.textContent = names.length ? names.join(", ") + " subtracted" : "None subtracted";
+  }
+
+  // Cache height grid for measurements
+  if (data.height_grid) {
+    fr.heightGrid = new Float32Array(data.height_grid);
+    fr.maskGrid = new Uint8Array(data.mask_grid);
+    fr.gridRows = data.grid_rows;
+    fr.gridCols = data.grid_cols;
   }
 
   // Surface map
@@ -787,7 +960,13 @@ async function render3dView() {
   if (!profileX || !profileY) return;
 
   const gridSize = 128;  // fixed grid, not full resolution
-  const geo = new THREE.PlaneGeometry(2, 2, gridSize - 1, gridSize - 1);
+  const sw = fr.lastResult.surface_width || 1;
+  const sh = fr.lastResult.surface_height || 1;
+  const aspect = sw / sh;
+  // Normalize so the longer side = 2
+  const planeW = aspect >= 1 ? 2 : 2 * aspect;
+  const planeH = aspect >= 1 ? 2 / aspect : 2;
+  const geo = new THREE.PlaneGeometry(planeW, planeH, gridSize - 1, gridSize - 1);
   const pos = geo.attributes.position;
   const colors = new Float32Array(pos.count * 3);
 
