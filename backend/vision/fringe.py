@@ -1,19 +1,20 @@
 """Fringe analysis computation primitives.
 
-Zernike polynomial fitting: Noll indexing, radial polynomial evaluation,
-basis matrix construction, and least-squares coefficient fitting.
-DFT-based phase extraction, 2D phase unwrapping, modulation-based
-auto-masking, and focus quality scoring.
-
-Surface statistics and false-color rendering are added in subsequent tasks.
+Zernike polynomial fitting, DFT-based phase extraction, 2D phase unwrapping,
+modulation-based auto-masking, focus quality scoring, surface statistics
+(PV/RMS), false-color rendering, and the full analyze/reanalyze pipeline.
 """
 
 from __future__ import annotations
 
 import base64
+import io
 import math
 
 import cv2
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np
 from scipy.ndimage import uniform_filter
 
@@ -560,20 +561,12 @@ def render_surface_map(surface: np.ndarray, mask: np.ndarray | None = None
     if mask is not None:
         gray[~valid] = 0
 
-    # Apply RdBu_r-like colormap via OpenCV
-    # OpenCV COLORMAP_JET is similar; use custom LUT for RdBu_r
-    # For simplicity, use matplotlib to generate the LUT
-    try:
-        import matplotlib.pyplot as plt
-        cmap = plt.cm.RdBu_r
-        lut = (cmap(np.linspace(0, 1, 256))[:, :3] * 255).astype(np.uint8)
-        # Apply LUT manually
-        colored = lut[gray]
-        # Convert RGB to BGR for cv2
-        colored = colored[:, :, ::-1].copy()
-    except ImportError:
-        # Fallback to VIRIDIS
-        colored = cv2.applyColorMap(gray, cv2.COLORMAP_VIRIDIS)
+    # Apply RdBu_r colormap via matplotlib LUT
+    cmap = plt.cm.RdBu_r
+    lut = (cmap(np.linspace(0, 1, 256))[:, :3] * 255).astype(np.uint8)
+    colored = lut[gray]
+    # Convert RGB to BGR for cv2.imencode
+    colored = colored[:, :, ::-1].copy()
 
     if mask is not None:
         colored[~valid] = 0
@@ -630,16 +623,11 @@ def render_zernike_chart(coefficients: list[float],
 
     Returns base64 string (no 'data:' prefix).
     """
-    import matplotlib
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-
     n_terms = len(coefficients)
     indices = list(range(1, n_terms + 1))
 
     # Convert coefficients to waves (1 wave = 2*pi radians)
     coeff_waves = [c / (2 * np.pi) for c in coefficients]
-    coeff_nm = [c * wavelength_nm / (4 * np.pi) for c in coefficients]
 
     colors = []
     for j in indices:
@@ -652,7 +640,7 @@ def render_zernike_chart(coefficients: list[float],
     fig.patch.set_facecolor("#1c1c1e")
     ax.set_facecolor("#1c1c1e")
 
-    bars = ax.bar(indices, coeff_waves, color=colors, edgecolor="none", width=0.7)
+    ax.bar(indices, coeff_waves, color=colors, edgecolor="none", width=0.7)
     ax.set_xlabel("Zernike term (Noll index)", color="#e8e8e8", fontsize=9)
     ax.set_ylabel("Coefficient (waves)", color="#e8e8e8", fontsize=9)
     ax.set_title("Zernike Coefficients", color="#e8e8e8", fontsize=11)
@@ -663,7 +651,7 @@ def render_zernike_chart(coefficients: list[float],
     ax.spines["right"].set_visible(False)
     ax.axhline(y=0, color="#3a3a3c", linewidth=0.5)
 
-    # Add term names as x-tick labels for first 11 terms
+    # Add term names as x-tick labels when there are 15 or fewer terms
     if n_terms <= 15:
         labels = [ZERNIKE_NAMES.get(j, str(j)) for j in indices]
         ax.set_xticks(indices)
@@ -673,7 +661,6 @@ def render_zernike_chart(coefficients: list[float],
 
     plt.tight_layout()
 
-    import io
     buf = io.BytesIO()
     fig.savefig(buf, format="png", facecolor=fig.get_facecolor(), edgecolor="none")
     plt.close(fig)
@@ -700,6 +687,9 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 632.8,
     Dict with keys: surface_map, zernike_chart, profile_x, profile_y,
     coefficients, pv_nm, rms_nm, pv_waves, rms_waves, modulation_stats,
     focus_score, subtracted_terms, wavelength_nm, n_valid_pixels, n_total_pixels.
+
+    Performance: at 1024x1024 this pipeline takes >2s. API callers must
+    run this via run_in_executor() to avoid blocking the event loop.
     """
     if subtract_terms is None:
         subtract_terms = [1, 2, 3]  # Piston + Tilt X + Tilt Y
@@ -783,8 +773,12 @@ def reanalyze(coefficients: list[float], subtract_terms: list[int],
               n_zernike: int = 36) -> dict:
     """Re-analyze with different Zernike subtraction without redoing FFT.
 
-    This is the fast path: reconstruct the full surface from coefficients,
+    This is the fast path: reconstruct the surface from Zernike coefficients,
     subtract the requested terms, recompute stats and renderings.
+
+    Note: this reconstructs from the Zernike model only. Surface detail at
+    spatial frequencies higher than the n_zernike terms is excluded, so
+    PV/RMS may differ slightly from a full analyze_interferogram call.
 
     Parameters
     ----------

@@ -6,3 +6,5 @@ python-multipart==0.0.22
 pytest==9.0.2
 httpx==0.28.1
 ezdxf==1.4.3
+scipy>=1.14,<2.0
+matplotlib>=3.9,<4.0
