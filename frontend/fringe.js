@@ -404,6 +404,7 @@ function wireEvents() {
       setMeasureReadout("");
       const chart = $("fringe-line-profile-chart");
       if (chart) chart.hidden = true;
+      if (!mode) drawPeakValleyMarkers(); // restore markers in pan mode
     });
   });
 
@@ -778,6 +779,60 @@ function clearMeasureSvg() {
   if (svg) svg.innerHTML = "";
 }
 
+function findPeakValley() {
+  if (!fr.heightGrid || !fr.maskGrid) return null;
+  let peakIdx = -1, valleyIdx = -1;
+  let peakVal = -Infinity, valleyVal = Infinity;
+  for (let i = 0; i < fr.heightGrid.length; i++) {
+    if (!fr.maskGrid[i]) continue;
+    const v = fr.heightGrid[i];
+    if (v > peakVal) { peakVal = v; peakIdx = i; }
+    if (v < valleyVal) { valleyVal = v; valleyIdx = i; }
+  }
+  if (peakIdx < 0 || valleyIdx < 0) return null;
+  return {
+    peak: {
+      nx: ((peakIdx % fr.gridCols) + 0.5) / fr.gridCols,
+      ny: (Math.floor(peakIdx / fr.gridCols) + 0.5) / fr.gridRows,
+      h: peakVal,
+    },
+    valley: {
+      nx: ((valleyIdx % fr.gridCols) + 0.5) / fr.gridCols,
+      ny: (Math.floor(valleyIdx / fr.gridCols) + 0.5) / fr.gridRows,
+      h: valleyVal,
+    },
+  };
+}
+
+function drawPeakValleyMarkers() {
+  const pv = findPeakValley();
+  if (!pv) return;
+  const svg = $("fringe-measure-svg");
+  const imgEl = $("fringe-surface-img");
+  if (!svg || !imgEl) return;
+  if (fr.measureMode) return; // don't draw when measurement mode is active
+
+  const w = imgEl.clientWidth;
+  const h = imgEl.clientHeight;
+  svg.setAttribute("viewBox", `0 0 ${w} ${h}`);
+
+  const px = pv.peak.nx * w, py = pv.peak.ny * h;
+  const vx = pv.valley.nx * w, vy = pv.valley.ny * h;
+
+  svg.innerHTML = `
+    <g>
+      <polygon points="${px},${py - 10} ${px - 6},${py} ${px + 6},${py}"
+        fill="#ff4d6d" stroke="#000" stroke-width="0.5"/>
+      <text x="${px + 10}" y="${py - 2}" fill="#ff4d6d" font-size="10"
+        font-weight="600" stroke="#000" stroke-width="2" paint-order="stroke">▲ ${fmtNm(pv.peak.h)}</text>
+      <polygon points="${vx},${vy + 10} ${vx - 6},${vy} ${vx + 6},${vy}"
+        fill="#4a9eff" stroke="#000" stroke-width="0.5"/>
+      <text x="${vx + 10}" y="${vy + 14}" fill="#4a9eff" font-size="10"
+        font-weight="600" stroke="#000" stroke-width="2" paint-order="stroke">▼ ${fmtNm(pv.valley.h)}</text>
+    </g>
+  `;
+}
+
 function getHeightAt(nx, ny) {
   if (!fr.heightGrid || !fr.maskGrid) return null;
   const col = Math.min(fr.gridCols - 1, Math.max(0, Math.floor(nx * fr.gridCols)));
@@ -1136,6 +1191,9 @@ function renderResults(data) {
     fr.gridCols = data.grid_cols;
   }
 
+  // Draw peak/valley markers (delay to ensure img is rendered)
+  setTimeout(drawPeakValleyMarkers, 100);
+
   // Surface map
   const surfaceContent = $("fringe-surface-content");
   const empty = $("fringe-empty");
@@ -1271,47 +1329,41 @@ async function render3dView() {
   if (controlsEl) host.appendChild(controlsEl);
   const controls = new OrbitControls(camera, renderer.domElement);
 
-  // Build mesh from profile data (downsampled to reasonable grid)
-  const profileX = fr.lastResult.profile_x;
-  const profileY = fr.lastResult.profile_y;
-  if (!profileX || !profileY) return;
+  // Use actual height grid data (not profile approximation)
+  if (!fr.heightGrid || !fr.maskGrid) return;
 
-  const gridSize = 128;  // fixed grid, not full resolution
+  const gridSize = 128;
   const sw = fr.lastResult.surface_width || 1;
   const sh = fr.lastResult.surface_height || 1;
   const aspect = sw / sh;
-  // Normalize so the longer side = 2
   const planeW = aspect >= 1 ? 2 : 2 * aspect;
   const planeH = aspect >= 1 ? 2 / aspect : 2;
   const geo = new THREE.PlaneGeometry(planeW, planeH, gridSize - 1, gridSize - 1);
   const pos = geo.attributes.position;
   const colors = new Float32Array(pos.count * 3);
 
-  // Sample profiles at grid resolution
-  const pxVals = profileX.values;
-  const pyVals = profileY.values;
-
   const zSlider = $("fringe-3d-z-scale");
   const zLabel = $("fringe-3d-z-val");
   let zScale = zSlider ? parseFloat(zSlider.value) : 10;
 
   function applyZ() {
-    // Build a simple height grid from cross profiles
-    // Use bilinear interpolation of X and Y profiles
     let zMin = Infinity, zMax = -Infinity;
     const zVals = new Float32Array(gridSize * gridSize);
     for (let r = 0; r < gridSize; r++) {
       for (let c = 0; c < gridSize; c++) {
-        const xi = (c / (gridSize - 1)) * (pxVals.length - 1);
-        const yi = (r / (gridSize - 1)) * (pyVals.length - 1);
-        const xv = pxVals[Math.round(xi)] ?? 0;
-        const yv = pyVals[Math.round(yi)] ?? 0;
-        const z = (xv + yv) * 0.5;
+        // Sample from height grid
+        const gx = (c / (gridSize - 1)) * (fr.gridCols - 1);
+        const gy = (r / (gridSize - 1)) * (fr.gridRows - 1);
+        const gi = Math.round(gy) * fr.gridCols + Math.round(gx);
+        const z = fr.maskGrid[gi] ? fr.heightGrid[gi] : 0;
         zVals[r * gridSize + c] = z;
-        if (z < zMin) zMin = z;
-        if (z > zMax) zMax = z;
+        if (fr.maskGrid[gi]) {
+          if (z < zMin) zMin = z;
+          if (z > zMax) zMax = z;
+        }
       }
     }
+    if (!isFinite(zMin)) { zMin = 0; zMax = 1; }
     const zRange = zMax - zMin || 1;
     for (let r = 0; r < gridSize; r++) {
       for (let c = 0; c < gridSize; c++) {
