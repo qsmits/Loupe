@@ -24,6 +24,10 @@ const fr = {
   maskGrid: null,          // Uint8Array from server
   gridRows: 0,
   gridCols: 0,
+  avgCoefficients: null,   // Float64Array of accumulated coefficient sums
+  avgCount: 0,             // number of captures averaged
+  avgSurfaceHeight: 0,
+  avgSurfaceWidth: 0,
 };
 
 function $(id) { return document.getElementById(id); }
@@ -69,6 +73,16 @@ function buildWorkspace() {
         <button class="detect-btn" id="fringe-btn-analyze" style="padding:8px 16px;font-size:13px;font-weight:600;width:100%">
           Freeze &amp; Analyze
         </button>
+
+        <div id="fringe-avg-controls" style="display:flex;gap:4px;align-items:center;margin-top:4px">
+          <button class="detect-btn" id="fringe-btn-avg-add" style="padding:4px 10px;font-size:11px;flex:1" disabled title="Freeze a frame and add its Zernike coefficients to the running average">
+            + Add to Avg
+          </button>
+          <span id="fringe-avg-count" style="font-size:11px;opacity:0.6;min-width:20px;text-align:center">0</span>
+          <button class="detect-btn" id="fringe-btn-avg-reset" style="padding:4px 10px;font-size:11px;opacity:0.6" disabled>
+            Reset
+          </button>
+        </div>
 
         <div style="display:flex;gap:4px;align-items:center">
           <button class="detect-btn" id="fringe-btn-roi" style="padding:4px 10px;font-size:11px;flex:1">
@@ -267,6 +281,10 @@ function wireEvents() {
 
   // Analyze button
   $("fringe-btn-analyze")?.addEventListener("click", analyzeFromCamera);
+
+  // Averaging buttons
+  $("fringe-btn-avg-add")?.addEventListener("click", addToAverage);
+  $("fringe-btn-avg-reset")?.addEventListener("click", resetAverage);
 
   // Drag and drop
   const dropZone = $("fringe-drop-zone");
@@ -1078,6 +1096,8 @@ async function analyzeFromCamera() {
     fr.lastResult = data;
     renderResults(data);
     resetStatus();
+    const avgBtn = $("fringe-btn-avg-add");
+    if (avgBtn) avgBtn.disabled = false;
   } catch (e) {
     console.warn("Fringe analysis error:", e);
     setStatus("Error");
@@ -1116,6 +1136,8 @@ async function analyzeFromFile(file) {
     fr.lastResult = data;
     renderResults(data);
     resetStatus();
+    const avgBtn = $("fringe-btn-avg-add");
+    if (avgBtn) avgBtn.disabled = false;
   } catch (e) {
     console.warn("Fringe analysis error:", e);
     setStatus("Error");
@@ -1123,6 +1145,88 @@ async function analyzeFromFile(file) {
   } finally {
     if (btn) btn.disabled = false;
   }
+}
+
+async function addToAverage() {
+  const btn = $("fringe-btn-avg-add");
+  if (btn) btn.disabled = true;
+  setStatus("Averaging...");
+  try {
+    const r = await apiFetch("/fringe/analyze", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        wavelength_nm: getWavelength(),
+        mask_threshold: getMaskThreshold(),
+        subtract_terms: getSubtractTerms(),
+        roi: fr.roi || undefined,
+      }),
+    });
+    if (!r.ok) { setStatus("Failed"); setTimeout(resetStatus, 2000); return; }
+    const data = await r.json();
+    fr.lastResult = data;
+
+    // Accumulate coefficients
+    if (!fr.avgCoefficients) {
+      fr.avgCoefficients = new Float64Array(data.coefficients.length);
+      fr.avgCount = 0;
+      fr.avgSurfaceHeight = data.surface_height;
+      fr.avgSurfaceWidth = data.surface_width;
+    }
+    for (let i = 0; i < data.coefficients.length; i++) {
+      fr.avgCoefficients[i] += data.coefficients[i];
+    }
+    fr.avgCount++;
+    $("fringe-avg-count").textContent = fr.avgCount;
+    $("fringe-btn-avg-reset").disabled = false;
+
+    if (fr.avgCount >= 2) {
+      // Reanalyze with averaged coefficients
+      setStatus(`Averaging (${fr.avgCount})...`);
+      const avgCoeffs = Array.from(fr.avgCoefficients).map(c => c / fr.avgCount);
+      const r2 = await apiFetch("/fringe/reanalyze", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          coefficients: avgCoeffs,
+          subtract_terms: getSubtractTerms(),
+          wavelength_nm: getWavelength(),
+          surface_height: fr.avgSurfaceHeight,
+          surface_width: fr.avgSurfaceWidth,
+        }),
+      });
+      if (r2.ok) {
+        const avgData = await r2.json();
+        fr.lastResult.surface_map = avgData.surface_map;
+        fr.lastResult.zernike_chart = avgData.zernike_chart;
+        fr.lastResult.profile_x = avgData.profile_x;
+        fr.lastResult.profile_y = avgData.profile_y;
+        fr.lastResult.pv_nm = avgData.pv_nm;
+        fr.lastResult.rms_nm = avgData.rms_nm;
+        fr.lastResult.pv_waves = avgData.pv_waves;
+        fr.lastResult.rms_waves = avgData.rms_waves;
+        fr.lastResult.subtracted_terms = avgData.subtracted_terms;
+        fr.lastResult.coefficients = avgCoeffs;
+        if (avgData.strehl !== undefined) fr.lastResult.strehl = avgData.strehl;
+      }
+    }
+    renderResults(fr.lastResult);
+    resetStatus();
+  } catch (e) {
+    console.warn("Average error:", e);
+    setStatus("Error");
+    setTimeout(resetStatus, 2000);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+function resetAverage() {
+  fr.avgCoefficients = null;
+  fr.avgCount = 0;
+  $("fringe-avg-count").textContent = "0";
+  $("fringe-btn-avg-reset").disabled = true;
+  if (fr.lastResult) renderResults(fr.lastResult);
 }
 
 async function doReanalyze() {
