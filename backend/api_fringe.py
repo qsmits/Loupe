@@ -28,12 +28,20 @@ def _reject_hosted(request: Request):
         raise HTTPException(403, detail="Fringe analysis is not available in hosted mode")
 
 
+class RoiRect(BaseModel):
+    x: float = Field(ge=0, le=1)
+    y: float = Field(ge=0, le=1)
+    w: float = Field(gt=0, le=1)
+    h: float = Field(gt=0, le=1)
+
+
 class AnalyzeBody(BaseModel):
     wavelength_nm: float = Field(default=632.8, gt=0, le=2000)
     mask_threshold: float = Field(default=0.15, ge=0.0, le=1.0)
     subtract_terms: list[int] = Field(default=[1, 2, 3])
     n_zernike: int = Field(default=36, ge=1, le=66)
     image_b64: Optional[str] = Field(default=None)
+    roi: Optional[RoiRect] = Field(default=None)
 
 
 class ReanalyzeBody(BaseModel):
@@ -78,6 +86,16 @@ def make_fringe_router(camera: BaseCamera) -> APIRouter:
             image = frame
             if image.ndim == 3:
                 image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+
+        # Crop to ROI if specified
+        if body.roi:
+            ih, iw = image.shape[:2]
+            x0 = int(body.roi.x * iw)
+            y0 = int(body.roi.y * ih)
+            x1 = min(int((body.roi.x + body.roi.w) * iw), iw)
+            y1 = min(int((body.roi.y + body.roi.h) * ih), ih)
+            if x1 - x0 > 10 and y1 - y0 > 10:
+                image = image[y0:y1, x0:x1]
 
         result = analyze_interferogram(
             image,

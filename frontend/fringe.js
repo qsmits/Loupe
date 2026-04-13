@@ -15,6 +15,9 @@ const fr = {
   threeLoaded: false,
   lastResult: null,
   lastMask: null,
+  roi: null,         // {x, y, w, h} in image coordinates (0-1 normalized)
+  roiDrawing: false,  // currently drawing?
+  roiStart: null,     // {x, y} in normalized coords
 };
 
 function $(id) { return document.getElementById(id); }
@@ -41,8 +44,9 @@ function buildWorkspace() {
     <div class="fringe-workspace">
       <!-- Left column: preview + settings -->
       <div class="fringe-preview-col">
-        <div class="fringe-preview-container">
+        <div class="fringe-preview-container" style="position:relative">
           <img id="fringe-preview" src="/stream" alt="Camera preview" />
+          <canvas id="fringe-roi-canvas" style="position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none"></canvas>
           <div class="fringe-enlarge-overlay" id="fringe-enlarge-overlay" hidden>
             <img id="fringe-enlarge-img" />
             <button class="fringe-enlarge-close" id="fringe-enlarge-close">&#10005;</button>
@@ -59,6 +63,18 @@ function buildWorkspace() {
         <button class="detect-btn" id="fringe-btn-analyze" style="padding:8px 16px;font-size:13px;font-weight:600;width:100%">
           Freeze &amp; Analyze
         </button>
+
+        <div style="display:flex;gap:4px;align-items:center">
+          <button class="detect-btn" id="fringe-btn-roi" style="padding:4px 10px;font-size:11px;flex:1">
+            Draw ROI
+          </button>
+          <button class="detect-btn" id="fringe-btn-roi-clear" style="padding:4px 10px;font-size:11px;opacity:0.6" disabled>
+            Clear ROI
+          </button>
+        </div>
+        <div id="fringe-roi-hint" style="font-size:10px;opacity:0.5;text-align:center" hidden>
+          Click and drag on preview to select the analysis region
+        </div>
 
         <div class="fringe-drop-zone" id="fringe-drop-zone">
           <span style="opacity:0.5;font-size:12px">or drag &amp; drop an image</span>
@@ -110,9 +126,9 @@ function buildWorkspace() {
 
       <!-- Right column: results -->
       <div class="fringe-results-col">
-        <div class="fringe-summary-bar" id="fringe-summary-bar" hidden>
+        <div class="fringe-summary-bar" id="fringe-summary-bar" hidden title="PV = total range of surface error. RMS = average deviation. Lower = flatter.">
           <div class="fringe-stat">
-            <span class="fringe-stat-label">PV</span>
+            <span class="fringe-stat-label" title="Peak-to-Valley: worst-case surface error">PV</span>
             <span class="fringe-stat-value" id="fringe-pv-waves">--</span>
             <span class="fringe-stat-unit">\u03bb</span>
             <span class="fringe-stat-value fringe-stat-nm" id="fringe-pv-nm">--</span>
@@ -144,6 +160,7 @@ function buildWorkspace() {
             Freeze a frame or drop an interferogram image to analyze.
           </div>
           <div id="fringe-surface-content" hidden>
+            <p style="font-size:11px;opacity:0.6;margin:0 0 6px">Height map of the surface after Zernike subtraction. Blue = low, red = high. Black = masked. Scroll to zoom, drag to pan.</p>
             <div class="fringe-surface-container" id="fringe-surface-viewport" style="overflow:hidden;cursor:grab">
               <img id="fringe-surface-img" style="transform-origin:0 0" />
             </div>
@@ -153,6 +170,7 @@ function buildWorkspace() {
         <div class="fringe-tab-panel" id="fringe-panel-3d" hidden>
           <div class="fringe-empty-state" id="fringe-3d-empty">Analyze an image first.</div>
           <div id="fringe-3d-content" hidden style="display:flex;flex-direction:column;flex:1;min-height:0">
+            <p style="font-size:11px;opacity:0.6;margin:4px 12px">Drag to rotate, scroll to zoom. Z exaggeration amplifies height differences for visibility.</p>
             <div class="fringe-3d-host" id="fringe-3d-host">
               <div class="fringe-3d-controls" id="fringe-3d-controls">
                 <label style="font-size:12px">Z exaggeration:
@@ -167,6 +185,7 @@ function buildWorkspace() {
         <div class="fringe-tab-panel" id="fringe-panel-zernike" hidden>
           <div class="fringe-empty-state" id="fringe-zernike-empty">Analyze an image first.</div>
           <div id="fringe-zernike-content" hidden>
+            <p style="font-size:11px;opacity:0.6;margin:0 0 6px">Each bar = one type of surface error (tilt, curvature, astigmatism, etc). Taller bars = more of that error. Gray bars have been subtracted from the surface map.</p>
             <img id="fringe-zernike-chart" style="width:100%;max-width:900px" />
           </div>
         </div>
@@ -174,6 +193,7 @@ function buildWorkspace() {
         <div class="fringe-tab-panel" id="fringe-panel-profiles" hidden>
           <div class="fringe-empty-state" id="fringe-profiles-empty">Analyze an image first.</div>
           <div id="fringe-profiles-content" hidden>
+            <p style="font-size:11px;opacity:0.6;margin:0 0 6px">Cross-sections through the center of the surface. Shows height (nm) across the part horizontally and vertically.</p>
             <canvas id="fringe-profile-x-canvas" width="800" height="200"></canvas>
             <canvas id="fringe-profile-y-canvas" width="800" height="200"></canvas>
           </div>
@@ -289,6 +309,90 @@ function wireEvents() {
     });
   }
 
+  // ROI drawing
+  const roiBtn = $("fringe-btn-roi");
+  const roiClearBtn = $("fringe-btn-roi-clear");
+  const roiHint = $("fringe-roi-hint");
+  const roiCanvas = $("fringe-roi-canvas");
+  const previewImg = $("fringe-preview");
+
+  if (roiBtn) {
+    roiBtn.addEventListener("click", () => {
+      if (fr.roiDrawing) {
+        // Cancel draw mode
+        fr.roiDrawing = false;
+        roiBtn.textContent = "Draw ROI";
+        roiBtn.style.background = "";
+        if (roiCanvas) roiCanvas.style.pointerEvents = "none";
+        if (roiHint) roiHint.hidden = true;
+      } else {
+        // Enter draw mode
+        fr.roiDrawing = true;
+        roiBtn.textContent = "Cancel";
+        roiBtn.style.background = "var(--accent)";
+        if (roiCanvas) roiCanvas.style.pointerEvents = "auto";
+        if (roiHint) roiHint.hidden = false;
+      }
+    });
+  }
+
+  if (roiClearBtn) {
+    roiClearBtn.addEventListener("click", () => {
+      fr.roi = null;
+      roiClearBtn.disabled = true;
+      roiClearBtn.style.opacity = "0.6";
+      drawRoiOverlay();
+    });
+  }
+
+  if (roiCanvas) {
+    roiCanvas.style.cursor = "crosshair";
+    roiCanvas.addEventListener("mousedown", (e) => {
+      if (!fr.roiDrawing) return;
+      const rect = roiCanvas.getBoundingClientRect();
+      fr.roiStart = {
+        x: (e.clientX - rect.left) / rect.width,
+        y: (e.clientY - rect.top) / rect.height,
+      };
+    });
+    roiCanvas.addEventListener("mousemove", (e) => {
+      if (!fr.roiDrawing || !fr.roiStart) return;
+      const rect = roiCanvas.getBoundingClientRect();
+      const cx = (e.clientX - rect.left) / rect.width;
+      const cy = (e.clientY - rect.top) / rect.height;
+      // Draw temporary rectangle
+      drawRoiOverlay({
+        x: Math.min(fr.roiStart.x, cx),
+        y: Math.min(fr.roiStart.y, cy),
+        w: Math.abs(cx - fr.roiStart.x),
+        h: Math.abs(cy - fr.roiStart.y),
+      });
+    });
+    roiCanvas.addEventListener("mouseup", (e) => {
+      if (!fr.roiDrawing || !fr.roiStart) return;
+      const rect = roiCanvas.getBoundingClientRect();
+      const cx = (e.clientX - rect.left) / rect.width;
+      const cy = (e.clientY - rect.top) / rect.height;
+      const roi = {
+        x: Math.min(fr.roiStart.x, cx),
+        y: Math.min(fr.roiStart.y, cy),
+        w: Math.abs(cx - fr.roiStart.x),
+        h: Math.abs(cy - fr.roiStart.y),
+      };
+      // Only accept if region is big enough
+      if (roi.w > 0.02 && roi.h > 0.02) {
+        fr.roi = roi;
+        if (roiClearBtn) { roiClearBtn.disabled = false; roiClearBtn.style.opacity = "1"; }
+      }
+      fr.roiStart = null;
+      fr.roiDrawing = false;
+      if (roiBtn) { roiBtn.textContent = "Draw ROI"; roiBtn.style.background = ""; }
+      if (roiCanvas) roiCanvas.style.pointerEvents = "none";
+      if (roiHint) roiHint.hidden = true;
+      drawRoiOverlay();
+    });
+  }
+
   // Surface map zoom/pan
   const viewport = $("fringe-surface-viewport");
   if (viewport) {
@@ -367,6 +471,30 @@ function getSubtractTerms() {
   return terms;
 }
 
+function drawRoiOverlay(tempRoi) {
+  const canvas = $("fringe-roi-canvas");
+  const img = $("fringe-preview");
+  if (!canvas || !img) return;
+  canvas.width = img.clientWidth;
+  canvas.height = img.clientHeight;
+  const ctx = canvas.getContext("2d");
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  const roi = tempRoi || fr.roi;
+  if (!roi) return;
+  const x = roi.x * canvas.width;
+  const y = roi.y * canvas.height;
+  const w = roi.w * canvas.width;
+  const h = roi.h * canvas.height;
+  // Dim everything outside ROI
+  ctx.fillStyle = "rgba(0, 0, 0, 0.5)";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.clearRect(x, y, w, h);
+  // Draw ROI border
+  ctx.strokeStyle = "#0a84ff";
+  ctx.lineWidth = 2;
+  ctx.strokeRect(x, y, w, h);
+}
+
 function setStatus(msg) {
   const btn = $("fringe-btn-analyze");
   if (btn) btn.textContent = msg;
@@ -391,6 +519,7 @@ async function analyzeFromCamera() {
         wavelength_nm: getWavelength(),
         mask_threshold: getMaskThreshold(),
         subtract_terms: getSubtractTerms(),
+        roi: fr.roi || undefined,
       }),
     });
     if (!r.ok) {
@@ -428,6 +557,7 @@ async function analyzeFromFile(file) {
         mask_threshold: getMaskThreshold(),
         subtract_terms: getSubtractTerms(),
         image_b64: b64,
+        roi: fr.roi || undefined,
       }),
     });
     if (!r.ok) {
@@ -651,43 +781,53 @@ async function render3dView() {
   if (controlsEl) host.appendChild(controlsEl);
   const controls = new OrbitControls(camera, renderer.domElement);
 
-  // Build mesh from profile data
+  // Build mesh from profile data (downsampled to reasonable grid)
   const profileX = fr.lastResult.profile_x;
   const profileY = fr.lastResult.profile_y;
   if (!profileX || !profileY) return;
 
-  const cols = profileX.values.length;
-  const rows = profileY.values.length;
-  const geo = new THREE.PlaneGeometry(cols, rows, cols - 1, rows - 1);
+  const gridSize = 128;  // fixed grid, not full resolution
+  const geo = new THREE.PlaneGeometry(2, 2, gridSize - 1, gridSize - 1);
   const pos = geo.attributes.position;
   const colors = new Float32Array(pos.count * 3);
 
-  const coeffs = fr.lastResult.coefficients || [];
+  // Sample profiles at grid resolution
+  const pxVals = profileX.values;
+  const pyVals = profileY.values;
 
   const zSlider = $("fringe-3d-z-scale");
   const zLabel = $("fringe-3d-z-val");
   let zScale = zSlider ? parseFloat(zSlider.value) : 10;
 
   function applyZ() {
-    for (let r = 0; r < rows; r++) {
-      for (let c = 0; c < cols; c++) {
-        const idx = r * cols + c;
-        const nx = (c / (cols - 1) - 0.5) * 2;
-        const ny = (r / (rows - 1) - 0.5) * 2;
-        const rho = Math.sqrt(nx * nx + ny * ny);
-        let z = 0;
-        if (coeffs.length >= 4) {
-          z += coeffs[3] * (2 * rho * rho - 1); // defocus
-        }
-        if (coeffs.length >= 6) {
-          z += coeffs[4] * rho * rho * Math.cos(2 * Math.atan2(ny, nx)); // astig
-        }
-        z *= zScale * 0.1;
-        pos.setZ(idx, z);
-        const t = Math.max(0, Math.min(1, (z + zScale * 0.1) / (2 * zScale * 0.1)));
-        colors[idx * 3] = t < 0.5 ? 0.2 + t : 0.8;
-        colors[idx * 3 + 1] = 0.2;
-        colors[idx * 3 + 2] = t < 0.5 ? 0.8 : 1.0 - t;
+    // Build a simple height grid from cross profiles
+    // Use bilinear interpolation of X and Y profiles
+    let zMin = Infinity, zMax = -Infinity;
+    const zVals = new Float32Array(gridSize * gridSize);
+    for (let r = 0; r < gridSize; r++) {
+      for (let c = 0; c < gridSize; c++) {
+        const xi = (c / (gridSize - 1)) * (pxVals.length - 1);
+        const yi = (r / (gridSize - 1)) * (pyVals.length - 1);
+        const xv = pxVals[Math.round(xi)] ?? 0;
+        const yv = pyVals[Math.round(yi)] ?? 0;
+        const z = (xv + yv) * 0.5;
+        zVals[r * gridSize + c] = z;
+        if (z < zMin) zMin = z;
+        if (z > zMax) zMax = z;
+      }
+    }
+    const zRange = zMax - zMin || 1;
+    for (let r = 0; r < gridSize; r++) {
+      for (let c = 0; c < gridSize; c++) {
+        const idx = r * gridSize + c;
+        const z = zVals[idx];
+        const zNorm = ((z - zMin) / zRange - 0.5) * zScale * 0.01;
+        pos.setZ(idx, zNorm);
+        // Blue-white-red colormap
+        const t = (z - zMin) / zRange;
+        colors[idx * 3]     = t < 0.5 ? 0.3 + t * 1.4 : 1.0;
+        colors[idx * 3 + 1] = t < 0.5 ? 0.3 + t * 1.4 : 1.0 - (t - 0.5) * 1.4;
+        colors[idx * 3 + 2] = t < 0.5 ? 1.0 : 1.0 - (t - 0.5) * 1.4;
       }
     }
     geo.setAttribute("color", new THREE.BufferAttribute(colors, 3));
@@ -705,7 +845,7 @@ async function render3dView() {
   scene.add(light1);
   scene.add(new THREE.AmbientLight(0x404040));
 
-  camera.position.set(0, -cols * 0.4, cols * 0.6);
+  camera.position.set(0, -1.8, 2.2);
   camera.lookAt(0, 0, 0);
   controls.update();
 
