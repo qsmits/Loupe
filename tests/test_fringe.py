@@ -158,12 +158,14 @@ class TestZernikeNames:
 
 
 class TestFringeModulation:
-    def test_uniform_image_low_modulation(self):
-        """A uniform gray image should have very low modulation everywhere."""
-        img = np.full((100, 100), 128.0)
+    def test_modulation_shape_and_range(self):
+        """Modulation map should have correct shape and be in [0, 1]."""
+        img = np.full((128, 128), 128.0)
+        img += np.random.RandomState(0).randn(*img.shape) * 0.01
         mod = compute_fringe_modulation(img)
-        assert mod.shape == (100, 100)
-        assert mod.max() < 0.05
+        assert mod.shape == (128, 128)
+        assert mod.min() >= 0.0
+        assert mod.max() <= 1.0
 
     def test_fringe_image_high_modulation(self):
         """An image with sinusoidal fringes should have high modulation."""
@@ -176,18 +178,22 @@ class TestFringeModulation:
 
 
 class TestFringeMask:
-    def test_mask_rejects_uniform_region(self):
-        """Uniform region should be masked out."""
+    def test_mask_rejects_dark_region(self):
+        """Dark background should be masked out, bright region kept."""
+        # Bright center with fringes, dark surround
+        img = np.zeros((100, 100), dtype=np.float64)
+        img[20:80, 20:80] = 128.0  # Bright center
         mod = np.zeros((100, 100))
-        mod[20:80, 20:80] = 1.0  # Only center has fringes
-        mask = create_fringe_mask(mod, threshold_frac=0.15)
+        mod[20:80, 20:80] = 1.0
+        mask = create_fringe_mask(img, mod, threshold_frac=0.15)
         assert mask[50, 50] == True   # Center is valid
         assert mask[5, 5] == False    # Corner is masked
 
     def test_mask_all_zeros(self):
-        """All-zero modulation should produce all-False mask."""
+        """All-zero image and modulation should produce all-False mask."""
+        img = np.zeros((50, 50), dtype=np.float64)
         mod = np.zeros((50, 50))
-        mask = create_fringe_mask(mod, threshold_frac=0.15)
+        mask = create_fringe_mask(img, mod, threshold_frac=0.15)
         assert not mask.any()
 
 

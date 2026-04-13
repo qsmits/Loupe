@@ -280,12 +280,67 @@ def subtract_zernike(surface: np.ndarray, coeffs: np.ndarray,
 # ── Fringe modulation, masking, DFT phase extraction, unwrapping ──────
 
 
-def compute_fringe_modulation(image: np.ndarray) -> np.ndarray:
-    """Compute a local contrast (modulation) map for auto-masking.
+def _find_carrier(image: np.ndarray) -> tuple[int, int, float]:
+    """Find the carrier frequency peak in an interferogram.
 
-    Uses a sliding-window approach: for each pixel, modulation is the
-    local standard deviation within a 15x15 window, normalized by the
-    local mean.  High modulation = fringes present = valid data.
+    Returns (peak_y, peak_x, distance) in the fftshift coordinate system.
+    The peak is always in the upper half-plane (or left half for
+    horizontal fringes) to select the +1 order consistently.
+    """
+    img = np.asarray(image, dtype=np.float64)
+    if img.ndim == 3:
+        img = img.mean(axis=-1)
+    h, w = img.shape
+
+    # Downsample large images for speed (carrier detection doesn't need full res)
+    scale = 1
+    if max(h, w) > 1024:
+        scale = max(h, w) / 1024
+        img = cv2.resize(img, (int(w / scale), int(h / scale)),
+                         interpolation=cv2.INTER_AREA)
+        h, w = img.shape
+
+    img = img - img.mean()
+    wy = np.hanning(h)
+    wx = np.hanning(w)
+    img_windowed = img * np.outer(wy, wx)
+
+    F = np.fft.fft2(img_windowed)
+    F_shifted = np.fft.fftshift(F)
+    magnitude = np.abs(F_shifted)
+
+    cy, cx = h // 2, w // 2
+    dc_margin_y = max(3, h // 20)
+    dc_margin_x = max(3, w // 20)
+    mag_search = magnitude.copy()
+    mag_search[cy - dc_margin_y:cy + dc_margin_y + 1,
+               cx - dc_margin_x:cx + dc_margin_x + 1] = 0
+
+    peak_idx = np.unravel_index(np.argmax(mag_search), mag_search.shape)
+    py, px = peak_idx
+
+    if py > cy or (py == cy and px > cx):
+        py = h - py
+        px = w - px
+
+    dist = math.sqrt((py - cy) ** 2 + (px - cx) ** 2)
+
+    # Scale back to original coordinates
+    py_orig = int(py * scale)
+    px_orig = int(px * scale)
+    dist_orig = dist * scale
+    return py_orig, px_orig, dist_orig
+
+
+def compute_fringe_modulation(image: np.ndarray) -> np.ndarray:
+    """Compute a carrier-aware modulation map for auto-masking.
+
+    Two-step approach:
+    1. Detect the carrier frequency from the FFT.
+    2. Bandpass around the carrier using a complex demodulation:
+       multiply by exp(-j * carrier), low-pass, take amplitude.
+    This measures local fringe amplitude, which is high where fringes
+    are present and low in the background / edges.
 
     Parameters
     ----------
@@ -298,50 +353,108 @@ def compute_fringe_modulation(image: np.ndarray) -> np.ndarray:
     img = np.asarray(image, dtype=np.float64)
     if img.ndim == 3:
         img = img.mean(axis=-1)
-    ksize = 15
-    local_mean = uniform_filter(img, size=ksize)
-    local_sq_mean = uniform_filter(img ** 2, size=ksize)
-    local_var = np.maximum(local_sq_mean - local_mean ** 2, 0.0)
-    local_std = np.sqrt(local_var)
-    # Normalize: modulation = std / (mean + eps) clipped to [0, 1]
-    modulation = local_std / (local_mean + 1e-6)
-    return np.clip(modulation, 0.0, 1.0)
+    h, w = img.shape
+
+    # Step 1: find carrier frequency
+    py, px, dist = _find_carrier(img)
+    # Convert peak position to spatial frequency (cycles/pixel)
+    # In fftshift coords, center is (h//2, w//2)
+    fy = (py - h // 2) / h  # cycles per pixel
+    fx = (px - w // 2) / w
+
+    # Step 2: complex demodulation — shift carrier to DC
+    yy, xx = np.mgrid[0:h, 0:w]
+    demod = img * np.exp(-2j * np.pi * (fy * yy + fx * xx))
+
+    # Low-pass filter (envelope extraction)
+    # Window size ~ 2x the fringe period for good locality
+    fringe_period = h / max(dist, 1)
+    ksize = max(5, int(fringe_period * 2)) | 1  # odd
+    ksize = min(ksize, 61)  # cap for efficiency
+    envelope = np.abs(uniform_filter(demod.real, size=ksize) +
+                      1j * uniform_filter(demod.imag, size=ksize))
+
+    # Normalize to [0, 1]
+    emax = envelope.max()
+    if emax > 0:
+        envelope = envelope / emax
+    return np.clip(envelope, 0.0, 1.0)
 
 
-def create_fringe_mask(modulation: np.ndarray, threshold_frac: float = 0.15
-                       ) -> np.ndarray:
-    """Create a boolean mask from modulation map.
+def create_fringe_mask(image: np.ndarray, modulation: np.ndarray,
+                       threshold_frac: float = 0.15) -> np.ndarray:
+    """Create a boolean mask combining brightness and modulation.
+
+    For real interferograms the fringe region is the illuminated aperture.
+    We use a two-stage approach:
+    1. Brightness mask via Otsu thresholding (finds the lit area).
+    2. Morphological cleanup: close small holes, erode edges slightly
+       to avoid rim artifacts.
+    3. Within the bright region, reject pixels where fringe modulation
+       is below threshold_frac of the median modulation in that region.
 
     Parameters
     ----------
+    image : 2D grayscale float64 image.
     modulation : float64 modulation map from compute_fringe_modulation.
-    threshold_frac : fraction of max modulation below which pixels are masked out.
+    threshold_frac : modulation rejection threshold within the bright
+        region, as fraction of the median modulation there.
 
     Returns
     -------
     Boolean mask: True = valid pixel with adequate fringe contrast.
     """
-    thresh = threshold_frac * float(modulation.max()) if modulation.max() > 0 else 0.0
-    return modulation > thresh
+    img = np.asarray(image, dtype=np.float64)
+    if img.ndim == 3:
+        img = img.mean(axis=-1)
+
+    # Step 1: Otsu brightness threshold to find illuminated aperture
+    img_u8 = np.clip(img / max(img.max(), 1) * 255, 0, 255).astype(np.uint8)
+    _, bright_mask = cv2.threshold(img_u8, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    bright = bright_mask > 0
+
+    # Step 2: morphological cleanup — close gaps, then erode edges
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (15, 15))
+    bright_closed = cv2.morphologyEx(bright.astype(np.uint8), cv2.MORPH_CLOSE, kernel)
+    # Erode by ~5px to pull away from the rim
+    kernel_erode = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (11, 11))
+    bright_eroded = cv2.erode(bright_closed, kernel_erode)
+    aperture = bright_eroded > 0
+
+    # Step 3: within the aperture, reject low-modulation pixels
+    if aperture.any() and modulation[aperture].size > 0:
+        median_mod = float(np.median(modulation[aperture]))
+        if median_mod > 0:
+            mod_thresh = threshold_frac * median_mod
+            mask = aperture & (modulation >= mod_thresh)
+        else:
+            mask = aperture
+    else:
+        mask = aperture
+
+    return mask
 
 
 def extract_phase_dft(image: np.ndarray, mask: np.ndarray | None = None
                       ) -> np.ndarray:
-    """Extract wrapped phase from an interferogram using 2D DFT sideband isolation.
+    """Extract wrapped phase via spatial-domain complex demodulation.
 
     Pipeline:
-    1. Window the image (Hann) to reduce spectral leakage
-    2. 2D FFT
-    3. Find the +1 order carrier peak (strongest off-center peak)
-    4. Isolate the sideband with a Gaussian window
-    5. Shift to origin, inverse FFT
-    6. Extract wrapped phase: atan2(Im, Re)
+    1. Background subtraction (Gaussian blur) to enhance fringe contrast
+    2. Detect carrier frequency via _find_carrier
+    3. Multiply by conjugate carrier exp(-j*carrier) to shift fringes to DC
+    4. Low-pass filter (Gaussian) to extract the envelope/phase
+    5. Extract wrapped phase: atan2(Im, Re)
+
+    This approach handles aperture boundaries naturally and works well
+    on low-contrast real-world interferograms where FFT sideband isolation
+    struggles with weak carrier peaks.
 
     Parameters
     ----------
     image : 2D grayscale image (float64 or uint8).
-    mask : optional boolean mask (True = valid). Masked-out pixels are set to
-           the image mean before FFT to reduce ringing.
+    mask : optional boolean mask (True = valid). Masked-out pixels are zeroed
+           after background subtraction.
 
     Returns
     -------
@@ -352,81 +465,44 @@ def extract_phase_dft(image: np.ndarray, mask: np.ndarray | None = None
         img = img.mean(axis=-1)
     h, w = img.shape
 
-    # Fill masked pixels with mean to reduce spectral leakage
+    # Step 1: background subtraction to enhance fringe contrast
+    bg_sigma = max(50, h // 20)
+    background = cv2.GaussianBlur(img, (0, 0), bg_sigma)
+    enhanced = img - background
     if mask is not None:
-        valid = mask.astype(bool)
-        if valid.any():
-            mean_val = img[valid].mean()
-        else:
-            mean_val = img.mean()
-        img_work = img.copy()
-        img_work[~valid] = mean_val
-    else:
-        img_work = img
+        enhanced[~mask.astype(bool)] = 0
 
-    # Subtract DC and apply 2D Hann window
-    img_work = img_work - img_work.mean()
-    wy = np.hanning(h)
-    wx = np.hanning(w)
-    window = np.outer(wy, wx)
-    img_windowed = img_work * window
+    # Step 2: find carrier frequency
+    py, px, dist = _find_carrier(enhanced)
+    fy = (py - h // 2) / h  # cycles per pixel
+    fx = (px - w // 2) / w
 
-    # 2D FFT
-    F = np.fft.fft2(img_windowed)
-    F_shifted = np.fft.fftshift(F)
-    magnitude = np.abs(F_shifted)
-
-    # Find the +1 order peak: strongest peak away from center
-    cy, cx = h // 2, w // 2
-    # Zero out the DC region (center +/-5% of image)
-    dc_margin_y = max(3, h // 20)
-    dc_margin_x = max(3, w // 20)
-    mag_search = magnitude.copy()
-    mag_search[cy - dc_margin_y:cy + dc_margin_y + 1,
-               cx - dc_margin_x:cx + dc_margin_x + 1] = 0
-
-    # Find peak location
-    peak_idx = np.unravel_index(np.argmax(mag_search), mag_search.shape)
-    py, px = peak_idx
-
-    # Use only the peak in the upper half-plane (or left half for horizontal fringes)
-    # to select the +1 order consistently.  If the peak is in the lower/right half,
-    # use its conjugate.
-    if py > cy or (py == cy and px > cx):
-        py = h - py
-        px = w - px
-
-    # Gaussian window centered on the sideband peak
+    # Step 3: complex demodulation — shift carrier to DC
     yy, xx = np.mgrid[0:h, 0:w]
-    # Window radius: ~1/3 of distance from peak to center
-    dist_to_center = math.sqrt((py - cy) ** 2 + (px - cx) ** 2)
-    sigma = max(dist_to_center / 3.0, 3.0)
-    gauss = np.exp(-((yy - py) ** 2 + (xx - px) ** 2) / (2 * sigma ** 2))
+    carrier = np.exp(-2j * np.pi * (fy * yy + fx * xx))
+    demod = enhanced * carrier
 
-    # Isolate sideband
-    sideband = F_shifted * gauss
+    # Step 4: low-pass filter (envelope extraction)
+    # Sigma ~1.5x the fringe period gives good locality
+    fringe_freq = math.sqrt(fy ** 2 + fx ** 2)
+    fringe_period = 1.0 / max(fringe_freq, 1e-10)
+    lp_sigma = max(fringe_period * 1.5, 5.0)
+    demod_lp = (cv2.GaussianBlur(demod.real, (0, 0), lp_sigma) +
+                1j * cv2.GaussianBlur(demod.imag, (0, 0), lp_sigma))
 
-    # Shift sideband to origin
-    shift_y = cy - py
-    shift_x = cx - px
-    sideband_shifted = np.roll(np.roll(sideband, int(shift_y), axis=0),
-                               int(shift_x), axis=1)
-
-    # Inverse FFT to get analytic signal
-    analytic = np.fft.ifft2(np.fft.ifftshift(sideband_shifted))
-
-    # Extract wrapped phase
-    wrapped = np.angle(analytic)
+    # Step 5: extract wrapped phase
+    wrapped = np.angle(demod_lp)
     return wrapped.astype(np.float64)
 
 
 def unwrap_phase_2d(wrapped: np.ndarray, mask: np.ndarray | None = None
                     ) -> np.ndarray:
-    """Two-pass 2D spatial phase unwrapping.
+    """2D spatial phase unwrapping using skimage's algorithm.
 
-    Unwraps along rows first (axis=1), then along columns (axis=0),
-    using numpy.unwrap.  This approach handles most interferograms
-    where the fringe density is moderate.
+    Uses scikit-image's unwrap_phase which implements a proper 2D
+    unwrapping algorithm that handles complex wrap topologies
+    (closed-contour isophase lines) that simple row/column unwrapping
+    cannot.
 
     Parameters
     ----------
@@ -437,18 +513,15 @@ def unwrap_phase_2d(wrapped: np.ndarray, mask: np.ndarray | None = None
     -------
     Unwrapped phase map, float64.
     """
-    # Two-pass unwrap: horizontal then vertical
+    from skimage.restoration import unwrap_phase
+
     phase = wrapped.copy()
     if mask is not None:
-        # Fill masked pixels with neighbor average to avoid discontinuities
         valid = mask.astype(bool)
         if valid.any():
             phase[~valid] = 0.0
 
-    # Unwrap along rows
-    unwrapped = np.unwrap(phase, axis=1)
-    # Unwrap along columns
-    unwrapped = np.unwrap(unwrapped, axis=0)
+    unwrapped = unwrap_phase(phase).astype(np.float64)
 
     if mask is not None:
         unwrapped[~valid] = 0.0
@@ -700,7 +773,7 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 632.8,
 
     # Step 1: Modulation & mask
     modulation = compute_fringe_modulation(img)
-    mask = create_fringe_mask(modulation, threshold_frac=mask_threshold)
+    mask = create_fringe_mask(img, modulation, threshold_frac=mask_threshold)
     n_valid = int(mask.sum())
     n_total = int(mask.size)
 
