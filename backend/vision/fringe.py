@@ -277,6 +277,39 @@ def subtract_zernike(surface: np.ndarray, coeffs: np.ndarray,
     return result
 
 
+# ── Plane subtraction (residual tilt on rectangular apertures) ────────
+
+
+def _subtract_plane(surface: np.ndarray, mask: np.ndarray | None = None
+                    ) -> np.ndarray:
+    """Fit and subtract a least-squares plane from the surface.
+
+    Zernike tilt terms (Z2, Z3) are defined on a circular domain.  When the
+    aperture is rectangular (e.g. a user-drawn ROI), the circular fit can
+    leave residual linear slope that dominates the color scale.  This
+    function removes that residual by fitting ax + by + c directly to the
+    valid pixels.
+    """
+    h, w = surface.shape
+    yy, xx = np.mgrid[0:h, 0:w]
+    if mask is not None:
+        valid = mask.astype(bool)
+        xs, ys, zs = xx[valid], yy[valid], surface[valid]
+    else:
+        xs, ys, zs = xx.ravel(), yy.ravel(), surface.ravel()
+
+    if len(zs) < 3:
+        return surface  # not enough points for a plane fit
+
+    A = np.column_stack([xs, ys, np.ones(len(xs))])
+    coeffs, _, _, _ = np.linalg.lstsq(A, zs, rcond=None)
+    plane = coeffs[0] * xx + coeffs[1] * yy + coeffs[2]
+    result = surface - plane
+    if mask is not None:
+        result[~valid] = 0.0
+    return result
+
+
 # ── Fringe modulation, masking, DFT phase extraction, unwrapping ──────
 
 
@@ -310,8 +343,12 @@ def _find_carrier(image: np.ndarray) -> tuple[int, int, float]:
     magnitude = np.abs(F_shifted)
 
     cy, cx = h // 2, w // 2
-    dc_margin_y = max(3, h // 20)
-    dc_margin_x = max(3, w // 20)
+    # Keep margin small: the Hanning window confines DC leakage to a few
+    # pixels, and real interferograms can have as few as 2-3 fringes (carrier
+    # peak very close to DC).  dim//20 was too large — it masked the real
+    # carrier on low-fringe-count images like gage blocks.
+    dc_margin_y = max(3, h // 80)
+    dc_margin_x = max(3, w // 80)
     mag_search = magnitude.copy()
     mag_search[cy - dc_margin_y:cy + dc_margin_y + 1,
                cx - dc_margin_x:cx + dc_margin_x + 1] = 0
@@ -488,10 +525,13 @@ def extract_phase_dft(image: np.ndarray, mask: np.ndarray | None = None
     demod = enhanced * carrier
 
     # Step 4: low-pass filter (envelope extraction)
-    # Sigma ~1.5x the fringe period gives good locality
+    # Sigma ~2.5x the fringe period smooths inter-fringe noise well enough
+    # to prevent phase unwrapping artifacts (the "clouds with hard lines"
+    # pattern caused by 2π jump errors).  The trade-off is reduced spatial
+    # resolution, but for optical flats / gage blocks that's acceptable.
     fringe_freq = math.sqrt(fy ** 2 + fx ** 2)
     fringe_period = 1.0 / max(fringe_freq, 1e-10)
-    lp_sigma = max(fringe_period * 1.5, 5.0)
+    lp_sigma = max(fringe_period * 2.5, 5.0)
     demod_lp = (cv2.GaussianBlur(demod.real, (0, 0), lp_sigma) +
                 1j * cv2.GaussianBlur(demod.imag, (0, 0), lp_sigma))
 
@@ -518,6 +558,7 @@ def unwrap_phase_2d(wrapped: np.ndarray, mask: np.ndarray | None = None
     -------
     Unwrapped phase map, float64.
     """
+    from scipy.ndimage import median_filter
     from skimage.restoration import unwrap_phase
 
     phase = wrapped.copy()
@@ -527,6 +568,12 @@ def unwrap_phase_2d(wrapped: np.ndarray, mask: np.ndarray | None = None
             phase[~valid] = 0.0
 
     unwrapped = unwrap_phase(phase).astype(np.float64)
+
+    # Post-unwrapping correction: detect pixels that differ from their local
+    # median by ~2π (unwrapping jump errors) and snap them back.  This fixes
+    # the "clouds with hard lines" artifact on noisy interferograms.
+    med = median_filter(unwrapped, size=9)
+    unwrapped -= 2.0 * np.pi * np.round((unwrapped - med) / (2.0 * np.pi))
 
     if mask is not None:
         unwrapped[~valid] = 0.0
@@ -802,6 +849,13 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 632.8,
     # Step 5: Subtract selected terms
     corrected = subtract_zernike(unwrapped, coeffs, subtract_terms, rho, theta, mask)
 
+    # Step 5b: If tilt terms were subtracted, also remove any residual
+    # linear tilt via direct plane fit.  Zernike tilt (Z2/Z3) is defined on
+    # a circular domain; on rectangular apertures the fit can leave residual
+    # slope that dominates the color scale and obscures real topography.
+    if 2 in subtract_terms or 3 in subtract_terms:
+        corrected = _subtract_plane(corrected, mask)
+
     # Step 6: Convert to height
     height_nm = phase_to_height(corrected, wavelength_nm)
 
@@ -930,6 +984,10 @@ def reanalyze(coefficients: list[float], subtract_terms: list[int],
     # Subtract selected terms
     corrected = subtract_zernike(full_surface, coeffs, subtract_terms,
                                  rho, theta, mask)
+
+    # Residual plane subtraction (same as analyze_interferogram)
+    if 2 in subtract_terms or 3 in subtract_terms:
+        corrected = _subtract_plane(corrected, mask)
 
     # Convert to height
     height_nm = phase_to_height(corrected, wavelength_nm)

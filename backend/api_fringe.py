@@ -103,6 +103,7 @@ def make_fringe_router(camera: BaseCamera) -> APIRouter:
             mask_threshold=body.mask_threshold,
             subtract_terms=body.subtract_terms,
             n_zernike=body.n_zernike,
+            use_full_mask=body.roi is not None,
         )
         return result
 
