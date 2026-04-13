@@ -174,9 +174,11 @@ function buildWorkspace() {
               <button class="fringe-measure-btn" data-mode="area" title="Click two corners to get area statistics">▭ Area</button>
               <span class="fringe-measure-readout" id="fringe-measure-readout"></span>
             </div>
-            <div class="fringe-surface-container" id="fringe-surface-viewport" style="overflow:hidden;cursor:grab;position:relative">
-              <img id="fringe-surface-img" draggable="false" style="transform-origin:0 0" />
-              <svg id="fringe-measure-svg" style="position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;overflow:visible;transform-origin:0 0"></svg>
+            <div class="fringe-surface-container" id="fringe-surface-viewport" style="overflow:hidden;cursor:grab">
+              <div id="fringe-surface-wrapper" style="position:relative;display:inline-block;transform-origin:0 0">
+                <img id="fringe-surface-img" draggable="false" style="display:block" />
+                <svg id="fringe-measure-svg" style="position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;overflow:visible"></svg>
+              </div>
             </div>
             <canvas id="fringe-line-profile-chart" width="800" height="150" hidden></canvas>
           </div>
@@ -356,11 +358,8 @@ function wireEvents() {
   if (viewport) {
     let smZoom = 1, smPanX = 0, smPanY = 0, smDragging = false, smDragX = 0, smDragY = 0;
     const applySm = () => {
-      const img = $("fringe-surface-img");
-      const svg = $("fringe-measure-svg");
-      const transform = `translate(${smPanX}px,${smPanY}px) scale(${smZoom})`;
-      if (img) img.style.transform = transform;
-      if (svg) svg.style.transform = transform;
+      const wrapper = $("fringe-surface-wrapper");
+      if (wrapper) wrapper.style.transform = `translate(${smPanX}px,${smPanY}px) scale(${smZoom})`;
     };
     viewport.addEventListener("wheel", (e) => {
       e.preventDefault();
