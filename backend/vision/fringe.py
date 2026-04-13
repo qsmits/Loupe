@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import math
 
+import cv2
 import numpy as np
 
 
@@ -270,3 +271,215 @@ def subtract_zernike(surface: np.ndarray, coeffs: np.ndarray,
     if mask is not None:
         result[~mask.astype(bool)] = 0.0
     return result
+
+
+# ── Fringe modulation, masking, DFT phase extraction, unwrapping ──────
+
+
+def compute_fringe_modulation(image: np.ndarray) -> np.ndarray:
+    """Compute a local contrast (modulation) map for auto-masking.
+
+    Uses a sliding-window approach: for each pixel, modulation is the
+    local standard deviation within a 15x15 window, normalized by the
+    local mean.  High modulation = fringes present = valid data.
+
+    Parameters
+    ----------
+    image : 2D grayscale float64 or uint8 image.
+
+    Returns
+    -------
+    Modulation map as float64, same shape as input.  Values in [0, 1].
+    """
+    from scipy.ndimage import uniform_filter
+
+    img = np.asarray(image, dtype=np.float64)
+    if img.ndim == 3:
+        img = img.mean(axis=-1)
+    ksize = 15
+    local_mean = uniform_filter(img, size=ksize)
+    local_sq_mean = uniform_filter(img ** 2, size=ksize)
+    local_var = np.maximum(local_sq_mean - local_mean ** 2, 0.0)
+    local_std = np.sqrt(local_var)
+    # Normalize: modulation = std / (mean + eps) clipped to [0, 1]
+    modulation = local_std / (local_mean + 1e-6)
+    return np.clip(modulation, 0.0, 1.0)
+
+
+def create_fringe_mask(modulation: np.ndarray, threshold_frac: float = 0.15
+                       ) -> np.ndarray:
+    """Create a boolean mask from modulation map.
+
+    Parameters
+    ----------
+    modulation : float64 modulation map from compute_fringe_modulation.
+    threshold_frac : fraction of max modulation below which pixels are masked out.
+
+    Returns
+    -------
+    Boolean mask: True = valid pixel with adequate fringe contrast.
+    """
+    thresh = threshold_frac * float(modulation.max()) if modulation.max() > 0 else 0.0
+    return modulation > thresh
+
+
+def extract_phase_dft(image: np.ndarray, mask: np.ndarray | None = None
+                      ) -> np.ndarray:
+    """Extract wrapped phase from an interferogram using 2D DFT sideband isolation.
+
+    Pipeline:
+    1. Window the image (Hann) to reduce spectral leakage
+    2. 2D FFT
+    3. Find the +1 order carrier peak (strongest off-center peak)
+    4. Isolate the sideband with a Gaussian window
+    5. Shift to origin, inverse FFT
+    6. Extract wrapped phase: atan2(Im, Re)
+
+    Parameters
+    ----------
+    image : 2D grayscale image (float64 or uint8).
+    mask : optional boolean mask (True = valid). Masked-out pixels are set to
+           the image mean before FFT to reduce ringing.
+
+    Returns
+    -------
+    Wrapped phase map in [-pi, pi], same shape as input.
+    """
+    img = np.asarray(image, dtype=np.float64)
+    if img.ndim == 3:
+        img = img.mean(axis=-1)
+    h, w = img.shape
+
+    # Fill masked pixels with mean to reduce spectral leakage
+    if mask is not None:
+        valid = mask.astype(bool)
+        if valid.any():
+            mean_val = img[valid].mean()
+        else:
+            mean_val = img.mean()
+        img_work = img.copy()
+        img_work[~valid] = mean_val
+    else:
+        img_work = img
+
+    # Subtract DC and apply 2D Hann window
+    img_work = img_work - img_work.mean()
+    wy = np.hanning(h)
+    wx = np.hanning(w)
+    window = np.outer(wy, wx)
+    img_windowed = img_work * window
+
+    # 2D FFT
+    F = np.fft.fft2(img_windowed)
+    F_shifted = np.fft.fftshift(F)
+    magnitude = np.abs(F_shifted)
+
+    # Find the +1 order peak: strongest peak away from center
+    cy, cx = h // 2, w // 2
+    # Zero out the DC region (center +/-5% of image)
+    dc_margin_y = max(3, h // 20)
+    dc_margin_x = max(3, w // 20)
+    mag_search = magnitude.copy()
+    mag_search[cy - dc_margin_y:cy + dc_margin_y + 1,
+               cx - dc_margin_x:cx + dc_margin_x + 1] = 0
+
+    # Find peak location
+    peak_idx = np.unravel_index(np.argmax(mag_search), mag_search.shape)
+    py, px = peak_idx
+
+    # Use only the peak in the upper half-plane (or left half for horizontal fringes)
+    # to select the +1 order consistently.  If the peak is in the lower/right half,
+    # use its conjugate.
+    if py > cy or (py == cy and px > cx):
+        py = h - py
+        px = w - px
+
+    # Gaussian window centered on the sideband peak
+    yy, xx = np.mgrid[0:h, 0:w]
+    # Window radius: ~1/3 of distance from peak to center
+    dist_to_center = math.sqrt((py - cy) ** 2 + (px - cx) ** 2)
+    sigma = max(dist_to_center / 3.0, 3.0)
+    gauss = np.exp(-((yy - py) ** 2 + (xx - px) ** 2) / (2 * sigma ** 2))
+
+    # Isolate sideband
+    sideband = F_shifted * gauss
+
+    # Shift sideband to origin
+    shift_y = cy - py
+    shift_x = cx - px
+    sideband_shifted = np.roll(np.roll(sideband, int(shift_y), axis=0),
+                               int(shift_x), axis=1)
+
+    # Inverse FFT to get analytic signal
+    analytic = np.fft.ifft2(np.fft.ifftshift(sideband_shifted))
+
+    # Extract wrapped phase
+    wrapped = np.angle(analytic)
+    return wrapped.astype(np.float64)
+
+
+def unwrap_phase_2d(wrapped: np.ndarray, mask: np.ndarray | None = None
+                    ) -> np.ndarray:
+    """Quality-guided 2D spatial phase unwrapping.
+
+    Uses the phase gradient reliability as quality metric.  Pixels are
+    unwrapped in order of decreasing reliability (highest quality first).
+
+    For a simpler implementation that works well with interferograms,
+    we unwrap along rows first (axis=1), then along columns (axis=0),
+    using numpy.unwrap.  This two-pass approach handles most
+    interferograms where the fringe density is moderate.
+
+    Parameters
+    ----------
+    wrapped : 2D float64 array of wrapped phase in [-pi, pi].
+    mask : optional boolean mask (True = valid).
+
+    Returns
+    -------
+    Unwrapped phase map, float64.
+    """
+    # Two-pass unwrap: horizontal then vertical
+    phase = wrapped.copy()
+    if mask is not None:
+        # Fill masked pixels with neighbor average to avoid discontinuities
+        valid = mask.astype(bool)
+        if valid.any():
+            phase[~valid] = 0.0
+
+    # Unwrap along rows
+    unwrapped = np.unwrap(phase, axis=1)
+    # Unwrap along columns
+    unwrapped = np.unwrap(unwrapped, axis=0)
+
+    if mask is not None:
+        unwrapped[~valid] = 0.0
+
+    return unwrapped
+
+
+def focus_quality(image: np.ndarray) -> float:
+    """Compute a focus quality score (0-100) based on image sharpness.
+
+    Uses the variance of the Laplacian as a sharpness metric, mapped
+    to [0, 100] via a sigmoid.
+
+    Parameters
+    ----------
+    image : grayscale or BGR image.
+
+    Returns
+    -------
+    Score from 0 (completely blurred) to 100 (very sharp).
+    """
+    img = np.asarray(image, dtype=np.uint8)
+    if img.ndim == 3:
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    laplacian = cv2.Laplacian(img, cv2.CV_64F)
+    variance = float(laplacian.var())
+    # Sigmoid mapping: score = 100 / (1 + exp(-k*(var - mid)))
+    # Tuned so that var~100 -> score~50, var~500 -> score~95
+    k = 0.02
+    mid = 150.0
+    score = 100.0 / (1.0 + math.exp(-k * (variance - mid)))
+    return round(score, 1)

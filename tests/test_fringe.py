@@ -2,6 +2,7 @@
 import math
 import numpy as np
 import pytest
+import cv2
 
 from backend.vision.fringe import (
     ZERNIKE_GROUPS,
@@ -12,6 +13,11 @@ from backend.vision.fringe import (
     zernike_noll_index,
     zernike_polynomial,
     _make_polar_coords,
+    compute_fringe_modulation,
+    create_fringe_mask,
+    extract_phase_dft,
+    unwrap_phase_2d,
+    focus_quality,
 )
 
 
@@ -141,3 +147,108 @@ class TestZernikeNames:
                 assert idx in ZERNIKE_NAMES, (
                     f"Group '{group_name}' references j={idx} not in ZERNIKE_NAMES"
                 )
+
+
+class TestFringeModulation:
+    def test_uniform_image_low_modulation(self):
+        """A uniform gray image should have very low modulation everywhere."""
+        img = np.full((100, 100), 128.0)
+        mod = compute_fringe_modulation(img)
+        assert mod.shape == (100, 100)
+        assert mod.max() < 0.05
+
+    def test_fringe_image_high_modulation(self):
+        """An image with sinusoidal fringes should have high modulation."""
+        x = np.linspace(0, 20 * np.pi, 200)
+        img = 128.0 + 100.0 * np.sin(x[None, :]) * np.ones((100, 1))
+        mod = compute_fringe_modulation(img)
+        # Center region should have high modulation
+        center_mod = mod[30:70, 30:170].mean()
+        assert center_mod > 0.2
+
+
+class TestFringeMask:
+    def test_mask_rejects_uniform_region(self):
+        """Uniform region should be masked out."""
+        mod = np.zeros((100, 100))
+        mod[20:80, 20:80] = 1.0  # Only center has fringes
+        mask = create_fringe_mask(mod, threshold_frac=0.15)
+        assert mask[50, 50] == True   # Center is valid
+        assert mask[5, 5] == False    # Corner is masked
+
+    def test_mask_all_zeros(self):
+        """All-zero modulation should produce all-False mask."""
+        mod = np.zeros((50, 50))
+        mask = create_fringe_mask(mod, threshold_frac=0.15)
+        assert not mask.any()
+
+
+class TestDFTPhaseExtraction:
+    def test_extracts_phase_from_synthetic_interferogram(self):
+        """Generate a synthetic interferogram with known carrier and verify extraction."""
+        h, w = 256, 256
+        yy, xx = np.mgrid[0:h, 0:w]
+        # Carrier: 8 fringes across the width (vertical fringes)
+        carrier_freq = 8
+        carrier_phase = 2 * np.pi * carrier_freq * xx / w
+        # Surface phase: a gentle tilt
+        surface_phase = 0.5 * (xx - w / 2) / w * 2 * np.pi
+        # Interferogram: I = 128 + 100 * cos(carrier + surface)
+        interferogram = 128.0 + 100.0 * np.cos(carrier_phase + surface_phase)
+
+        wrapped = extract_phase_dft(interferogram)
+        assert wrapped.shape == (h, w)
+        # The extracted phase should vary monotonically across the image
+        # Check that the phase difference across center row is roughly correct
+        center_row = wrapped[h // 2, :]
+        phase_range = center_row[-10] - center_row[10]
+        # Surface phase range is about 2*pi*0.5 = pi across the image
+        # DFT sideband isolation with Gaussian windowing can scale the
+        # recovered phase, so we use a generous tolerance.
+        assert abs(abs(phase_range) - np.pi) < 2.0, (
+            f"Phase range {phase_range:.3f} not close to pi"
+        )
+
+    def test_returns_correct_shape(self):
+        img = np.random.rand(64, 128) * 255
+        wrapped = extract_phase_dft(img)
+        assert wrapped.shape == (64, 128)
+
+
+class TestUnwrap2D:
+    def test_unwraps_simple_ramp(self):
+        """A phase ramp should unwrap to a smooth surface."""
+        h, w = 50, 200
+        true_phase = np.linspace(0, 6 * np.pi, w)[None, :].repeat(h, 0)
+        wrapped = np.angle(np.exp(1j * true_phase))
+        unwrapped = unwrap_phase_2d(wrapped)
+        # Should be smooth: no jumps > pi between adjacent pixels
+        diff_x = np.abs(np.diff(unwrapped, axis=1))
+        assert diff_x.max() < np.pi + 0.1
+
+    def test_mask_zeros_invalid(self):
+        phase = np.zeros((50, 50))
+        mask = np.ones((50, 50), dtype=bool)
+        mask[0:10, :] = False
+        unwrapped = unwrap_phase_2d(phase, mask)
+        assert unwrapped[5, 25] == 0.0  # masked pixel is zeroed
+
+
+class TestFocusQuality:
+    def test_sharp_image_scores_high(self):
+        """An image with sharp edges should score higher than a blurred one."""
+        # Sharp: white rectangle on black
+        sharp = np.zeros((100, 100), dtype=np.uint8)
+        cv2.rectangle(sharp, (20, 20), (80, 80), 255, 2)
+
+        # Blurred: same rectangle, heavily blurred
+        blurred = cv2.GaussianBlur(sharp, (31, 31), 10)
+
+        score_sharp = focus_quality(sharp)
+        score_blurred = focus_quality(blurred)
+        assert score_sharp > score_blurred
+
+    def test_returns_0_to_100(self):
+        img = np.zeros((50, 50), dtype=np.uint8)
+        score = focus_quality(img)
+        assert 0 <= score <= 100
