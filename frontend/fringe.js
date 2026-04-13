@@ -68,14 +68,14 @@ function buildWorkspace() {
           <div style="font-size:12px;font-weight:600;opacity:0.7">Settings</div>
           <label>Wavelength
             <select id="fringe-wavelength">
-              <option value="sodium">Sodium (589 nm)</option>
-              <option value="hene" selected>HeNe (632.8 nm)</option>
+              <option value="sodium" selected>Sodium (589 nm)</option>
+              <option value="hene">HeNe (632.8 nm)</option>
               <option value="green">Green LED (532 nm)</option>
               <option value="custom">Custom...</option>
             </select>
           </label>
           <label id="fringe-custom-wl-label" hidden>Custom wavelength (nm)
-            <input type="number" id="fringe-custom-wl" min="200" max="2000" step="0.1" value="632.8" />
+            <input type="number" id="fringe-custom-wl" min="200" max="2000" step="0.1" value="589.0" />
           </label>
           <label>Mask threshold
             <input type="range" id="fringe-mask-thresh" min="0" max="100" step="1" value="15" style="width:100px" />
@@ -125,6 +125,11 @@ function buildWorkspace() {
             <span class="fringe-stat-value fringe-stat-nm" id="fringe-rms-nm">--</span>
             <span class="fringe-stat-unit">nm</span>
           </div>
+          <div class="fringe-stat" style="margin-left:auto">
+            <span class="fringe-stat-label" style="min-width:auto">\u03bb</span>
+            <span id="fringe-summary-wl" style="font-size:12px;opacity:0.7">589 nm</span>
+            <span style="margin-left:12px;font-size:11px;opacity:0.5" id="fringe-summary-sub">Tilt subtracted</span>
+          </div>
         </div>
 
         <div class="fringe-tab-bar" id="fringe-tab-bar">
@@ -139,8 +144,8 @@ function buildWorkspace() {
             Freeze a frame or drop an interferogram image to analyze.
           </div>
           <div id="fringe-surface-content" hidden>
-            <div class="fringe-surface-container">
-              <img id="fringe-surface-img" />
+            <div class="fringe-surface-container" id="fringe-surface-viewport" style="overflow:hidden;cursor:grab">
+              <img id="fringe-surface-img" style="transform-origin:0 0" />
             </div>
           </div>
         </div>
@@ -258,6 +263,17 @@ function wireEvents() {
     const overlay = $("fringe-enlarge-overlay");
     if (overlay) overlay.hidden = true;
   });
+  $("fringe-enlarge-overlay")?.addEventListener("click", (e) => {
+    if (e.target === e.currentTarget) {
+      e.currentTarget.hidden = true;
+    }
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      const overlay = $("fringe-enlarge-overlay");
+      if (overlay && !overlay.hidden) overlay.hidden = true;
+    }
+  });
 
   // Preview scroll-to-zoom
   const previewContainer = $("fringe-preview")?.parentElement;
@@ -270,6 +286,40 @@ function wireEvents() {
       zoomLevel = Math.max(1, Math.min(5, zoomLevel + (e.deltaY < 0 ? 0.2 : -0.2)));
       img.style.transform = `scale(${zoomLevel})`;
       img.style.transformOrigin = "center center";
+    });
+  }
+
+  // Surface map zoom/pan
+  const viewport = $("fringe-surface-viewport");
+  if (viewport) {
+    let smZoom = 1, smPanX = 0, smPanY = 0, smDragging = false, smDragX = 0, smDragY = 0;
+    const applySm = () => {
+      const img = $("fringe-surface-img");
+      if (img) img.style.transform = `translate(${smPanX}px,${smPanY}px) scale(${smZoom})`;
+    };
+    viewport.addEventListener("wheel", (e) => {
+      e.preventDefault();
+      const prev = smZoom;
+      smZoom = Math.max(1, Math.min(10, smZoom + (e.deltaY < 0 ? 0.3 : -0.3)));
+      if (smZoom === 1) { smPanX = 0; smPanY = 0; }
+      else {
+        smPanX *= smZoom / prev;
+        smPanY *= smZoom / prev;
+      }
+      applySm();
+    });
+    viewport.addEventListener("mousedown", (e) => {
+      if (smZoom <= 1) return;
+      smDragging = true; smDragX = e.clientX - smPanX; smDragY = e.clientY - smPanY;
+      viewport.style.cursor = "grabbing";
+    });
+    window.addEventListener("mousemove", (e) => {
+      if (!smDragging) return;
+      smPanX = e.clientX - smDragX; smPanY = e.clientY - smDragY;
+      applySm();
+    });
+    window.addEventListener("mouseup", () => {
+      smDragging = false; viewport.style.cursor = "grab";
     });
   }
 
@@ -293,13 +343,13 @@ function wireEvents() {
 
 function getWavelength() {
   const sel = $("fringe-wavelength");
-  if (!sel) return 632.8;
+  if (!sel) return 589.0;
   if (sel.value === "custom") {
     const el = $("fringe-custom-wl");
-    const v = parseFloat(el?.value || "632.8");
-    return Number.isFinite(v) && v > 0 ? v : 632.8;
+    const v = parseFloat(el?.value || "589.0");
+    return Number.isFinite(v) && v > 0 ? v : 589.0;
   }
-  return WAVELENGTHS[sel.value]?.nm || 632.8;
+  return WAVELENGTHS[sel.value]?.nm || 589.0;
 }
 
 function getMaskThreshold() {
@@ -450,6 +500,21 @@ function renderResults(data) {
   $("fringe-pv-nm").textContent = fmtNm(data.pv_nm);
   $("fringe-rms-waves").textContent = fmt(data.rms_waves);
   $("fringe-rms-nm").textContent = fmtNm(data.rms_nm);
+
+  // Wavelength and subtracted terms in summary bar
+  const wlEl = $("fringe-summary-wl");
+  if (wlEl) wlEl.textContent = getWavelength() + " nm";
+  const subEl = $("fringe-summary-sub");
+  if (subEl) {
+    const sub = getSubtractTerms();
+    const names = [];
+    if (sub.includes(2)) names.push("Tilt");
+    if (sub.includes(4)) names.push("Power");
+    if (sub.includes(5)) names.push("Astig");
+    if (sub.includes(7)) names.push("Coma");
+    if (sub.includes(11)) names.push("Sph");
+    subEl.textContent = names.length ? names.join(", ") + " subtracted" : "None subtracted";
+  }
 
   // Surface map
   const surfaceContent = $("fringe-surface-content");
