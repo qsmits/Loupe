@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 
 from backend.vision.fringe import (
+    ZERNIKE_GROUPS,
     ZERNIKE_NAMES,
     fit_zernike,
     subtract_zernike,
@@ -20,6 +21,7 @@ class TestZernikeNollIndex:
         assert zernike_noll_index(2) == (1, 1)   # Tilt X
         assert zernike_noll_index(3) == (1, -1)  # Tilt Y
         assert zernike_noll_index(4) == (2, 0)   # Defocus
+        assert zernike_noll_index(11) == (4, 0)  # Spherical
 
     def test_invalid_index_raises(self):
         with pytest.raises(ValueError):
@@ -39,6 +41,17 @@ class TestZernikePolynomial:
         Z1 = zernike_polynomial(1, rho, theta)
         # Piston Z1 = 1.0 (normalized)
         np.testing.assert_allclose(Z1, 1.0, atol=1e-10)
+
+    def test_tilt_x_is_linear(self):
+        """Tilt X (j=2) should be linear in x."""
+        N = 100
+        rho = np.linspace(0, 1, N)
+        theta = np.zeros(N)  # along x-axis, theta=0
+        Z2 = zernike_polynomial(2, rho, theta)
+        # Should be proportional to rho*cos(0) = rho (linear in x)
+        # Normalize both to compare shape
+        Z2_norm = Z2 / Z2[-1] if Z2[-1] != 0 else Z2
+        np.testing.assert_allclose(Z2_norm, rho / rho[-1], atol=1e-10)
 
     def test_orthogonality_on_unit_disk(self):
         """Verify orthogonality of first few Zernike polynomials via numerical integration."""
@@ -120,3 +133,11 @@ class TestZernikeNames:
         assert ZERNIKE_NAMES[2] == "Tilt X"
         assert ZERNIKE_NAMES[3] == "Tilt Y"
         assert ZERNIKE_NAMES[4] == "Power (Defocus)"
+
+    def test_groups_reference_valid_indices(self):
+        """All Noll indices in ZERNIKE_GROUPS must be valid keys in ZERNIKE_NAMES."""
+        for group_name, indices in ZERNIKE_GROUPS.items():
+            for idx in indices:
+                assert idx in ZERNIKE_NAMES, (
+                    f"Group '{group_name}' references j={idx} not in ZERNIKE_NAMES"
+                )

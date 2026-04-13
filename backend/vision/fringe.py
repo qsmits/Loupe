@@ -7,10 +7,8 @@ rendering.  No state, no I/O beyond PNG encoding for visualization helpers.
 
 from __future__ import annotations
 
-import base64
 import math
 
-import cv2
 import numpy as np
 
 
