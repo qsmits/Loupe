@@ -2033,3 +2033,251 @@ body.no-camera .camera-section { display: none; }
   display: none !important;
 }
 
+/* ── Deflectometry workspace ─────────────────────────────── */
+
+.defl-workspace {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  gap: 0;
+}
+
+/* Left column: preview + settings */
+.defl-preview-col {
+  width: 250px;
+  min-width: 250px;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--border);
+  padding: 10px;
+  gap: 10px;
+  overflow-y: auto;
+}
+.defl-preview-col img {
+  width: 100%;
+  border: 1px solid var(--border);
+  background: #111;
+  display: block;
+}
+.defl-badge-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.defl-badge {
+  font-size: 11px;
+  padding: 2px 7px;
+  border-radius: 3px;
+  border: 1px solid #333;
+  background: #1a1a2a;
+  color: #888;
+}
+.defl-badge.active {
+  background: #0f2a16;
+  color: #4ade80;
+  border-color: #1f5a2e;
+}
+.defl-setting-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.defl-setting-group label {
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.defl-setting-group input[type="number"],
+.defl-setting-group select {
+  width: 100%;
+  max-width: 160px;
+}
+
+/* Center column: workflow steps */
+.defl-workflow-col {
+  width: 280px;
+  min-width: 280px;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--border);
+  padding: 10px;
+  gap: 0;
+  overflow-y: auto;
+}
+.defl-workflow-title {
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 8px;
+  opacity: 0.7;
+}
+.defl-step {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 6px;
+  border-bottom: 1px solid var(--border);
+}
+.defl-step.disabled {
+  opacity: 0.35;
+  pointer-events: none;
+}
+.defl-step-indicator {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 2px solid #555;
+  flex-shrink: 0;
+  margin-top: 1px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+}
+.defl-step-indicator.done {
+  border-color: #4ade80;
+  color: #4ade80;
+}
+.defl-step-indicator.error {
+  border-color: #f87171;
+  color: #f87171;
+}
+.defl-step-body {
+  flex: 1;
+  min-width: 0;
+}
+.defl-step-name {
+  font-size: 13px;
+  font-weight: 500;
+  margin-bottom: 3px;
+}
+.defl-step-status {
+  font-size: 11px;
+  opacity: 0.7;
+  margin-bottom: 4px;
+}
+.defl-step-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.defl-step-controls input[type="number"] {
+  width: 65px;
+}
+.defl-workflow-footer {
+  margin-top: auto;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
+/* Right column: results */
+.defl-results-col {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+.defl-tab-bar {
+  display: flex;
+  border-bottom: 1px solid var(--border);
+  padding: 0 10px;
+}
+.defl-tab {
+  padding: 8px 16px;
+  font-size: 13px;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  opacity: 0.6;
+  background: none;
+  border-top: none;
+  border-left: none;
+  border-right: none;
+  color: var(--text);
+}
+.defl-tab:hover { opacity: 0.85; }
+.defl-tab.active {
+  opacity: 1;
+  border-bottom-color: var(--accent);
+}
+.defl-tab-panel {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px;
+  min-height: 0;
+}
+.defl-tab-panel[hidden] {
+  display: none !important;
+}
+.defl-phase-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.defl-phase-grid img {
+  width: 100%;
+  border: 1px solid #444;
+  background: #111;
+  display: block;
+}
+.defl-phase-grid pre {
+  margin: 6px 0 0;
+  padding: 6px 8px;
+  background: #0b0b0b;
+  border: 1px solid #2a2a2a;
+  border-radius: 3px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: pre;
+}
+.defl-empty-state {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  opacity: 0.4;
+  font-size: 14px;
+  min-height: 200px;
+}
+.defl-3d-host {
+  flex: 1;
+  min-height: 400px;
+  position: relative;
+}
+.defl-3d-host canvas {
+  width: 100% !important;
+  height: 100% !important;
+}
+.defl-3d-controls {
+  position: absolute;
+  bottom: 10px;
+  left: 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(0,0,0,0.7);
+  padding: 6px 12px;
+  border-radius: 4px;
+  font-size: 12px;
+}
+.defl-diag-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.defl-diag-grid img {
+  width: 100%;
+  border: 1px solid #444;
+  background: #111;
+  display: block;
+}
+.defl-diag-grid pre {
+  margin: 4px 0 0;
+  padding: 4px 6px;
+  background: #0b0b0b;
+  border: 1px solid #2a2a2a;
+  border-radius: 3px;
+  font-size: 10px;
+}
+

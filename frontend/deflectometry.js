@@ -1,75 +1,84 @@
-// deflectometry.js — Phase-measuring deflectometry wizard UI.
+// deflectometry.js — Full-window deflectometry workspace.
 //
-// Drives a deflectometry session from the measurement PC:
-//   1. Starts a backend session. iPad auto-connects via WebSocket.
-//   2. Polls iPad connection status while the dialog is open.
-//   3. Triggers a capture sequence (displays 8 phase-shifted fringe patterns
-//      on the iPad and grabs a frame per pattern).
-//   4. Computes phase maps and shows them side-by-side with PV/RMS/Mean stats.
+// Three-column layout:
+//   Left:   camera preview + status badges + settings
+//   Center: workflow step checklist
+//   Right:  tabbed results (Phase Maps | 3D Surface | Diagnostics)
 //
-// Mirrors the zstack / superres / stitch wizard pattern: a single dialog
-// built on first open, reused on subsequent opens, closed via the header
-// `×` button. State is scoped to this module — does NOT touch core `state`.
+// Lives inside #mode-deflectometry, managed by modes.js.
 
 import { apiFetch } from './api.js';
 import { state } from './state.js';
 
 const df = {
-  sessionId: null,
-  polling: null,         // setInterval handle while dialog is open
-  initialized: false,    // has the first-open /status probe run?
+  polling: null,
+  built: false,
+  threeLoaded: false,
 };
 
 function $(id) { return document.getElementById(id); }
 
-function buildDialog() {
-  if ($("deflectometry-dialog")) return;
+function setStepStatus(stepId, status, text) {
+  const indicator = $("defl-ind-" + stepId);
+  const statusEl = $("defl-status-" + stepId);
+  if (indicator) {
+    indicator.className = "defl-step-indicator" + (status === "done" ? " done" : status === "error" ? " error" : "");
+    indicator.textContent = status === "done" ? "\u2713" : status === "error" ? "\u2717" : "";
+  }
+  if (statusEl && text !== undefined) statusEl.textContent = text;
+}
 
-  const dlg = document.createElement("div");
-  dlg.id = "deflectometry-dialog";
-  dlg.className = "dialog-overlay";
-  dlg.hidden = true;
-  dlg.innerHTML = `
-    <div class="dialog-content" style="max-width:900px;width:92vw">
-      <div class="dialog-header">
-        <span class="dialog-title">Deflectometry (Phase-Measuring)</span>
-        <button class="dialog-close" id="btn-deflectometry-close">✕</button>
-      </div>
-      <div style="padding:14px 18px;flex:1;min-height:0;overflow-y:auto">
-        <p style="margin:0 0 10px;opacity:0.85;font-size:13px">
-          Pair an iPad as a fringe display, then capture an 8-step phase-shift
-          sequence. The backend computes wrapped phase maps in X and Y; PV/RMS
-          of the phase are a direct proxy for the specular surface's local
-          slope error.
-        </p>
+function setStepEnabled(stepId, enabled) {
+  const el = $("defl-step-" + stepId);
+  if (el) {
+    if (enabled) el.classList.remove("disabled");
+    else el.classList.add("disabled");
+  }
+}
 
-        <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;padding:8px 10px;background:#161616;border:1px solid #2a2a2a;border-radius:3px;flex-wrap:wrap">
-          <span id="deflectometry-ipad-status" style="font-size:12px;padding:3px 8px;border-radius:3px;background:#3a1a1a;color:#f87171;border:1px solid #7a2a2a">iPad: disconnected</span>
-          <span id="deflectometry-flatfield-status" style="font-size:12px;padding:3px 8px;border-radius:3px;background:#1a1a2a;color:#888;border:1px solid #333">Flat field: \u2014</span>
-          <span id="deflectometry-ref-status" style="font-size:12px;padding:3px 8px;border-radius:3px;background:#1a1a2a;color:#888;border:1px solid #333">Reference: \u2014</span>
-          <span id="deflectometry-cal-status" style="font-size:12px;padding:3px 8px;border-radius:3px;background:#1a1a2a;color:#888;border:1px solid #333">Calibration: \u2014</span>
+function setBadge(id, active) {
+  const el = $(id);
+  if (!el) return;
+  if (active) el.classList.add("active");
+  else el.classList.remove("active");
+}
+
+function formatStats(stats, calFactor) {
+  if (!stats) return "\u2014";
+  if (calFactor) {
+    const k = Math.abs(calFactor) * 1000;
+    const pv = Number.isFinite(stats.pv) ? (stats.pv * k).toFixed(2) : "\u2014";
+    const rms = Number.isFinite(stats.rms) ? (stats.rms * k).toFixed(2) : "\u2014";
+    const mean = Number.isFinite(stats.mean) ? (stats.mean * k).toFixed(2) : "\u2014";
+    return `PV:   ${pv} \u00b5m\nRMS:  ${rms} \u00b5m\nMean: ${mean} \u00b5m`;
+  }
+  const pv = Number.isFinite(stats.pv) ? stats.pv.toFixed(3) : "\u2014";
+  const rms = Number.isFinite(stats.rms) ? stats.rms.toFixed(3) : "\u2014";
+  const mean = Number.isFinite(stats.mean) ? stats.mean.toFixed(3) : "\u2014";
+  return `PV:   ${pv} rad\nRMS:  ${rms} rad\nMean: ${mean} rad`;
+}
+
+function buildWorkspace() {
+  if (df.built) return;
+  df.built = true;
+
+  const root = $("mode-deflectometry");
+  if (!root) return;
+
+  root.innerHTML = `
+    <div class="defl-workspace">
+      <!-- Left: preview + settings -->
+      <div class="defl-preview-col">
+        <img id="defl-preview" src="/stream" alt="Camera preview" />
+        <div class="defl-badge-row">
+          <span class="defl-badge" id="defl-badge-ipad">iPad: \u2014</span>
+          <span class="defl-badge" id="defl-badge-flat">Flat field: \u2014</span>
+          <span class="defl-badge" id="defl-badge-ref">Reference: \u2014</span>
+          <span class="defl-badge" id="defl-badge-cal">Calibration: \u2014</span>
         </div>
-
-        <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap">
-          <label style="font-size:13px">Fringe frequency (cycles):</label>
-          <input type="number" id="deflectometry-freq" min="2" max="64" step="1" value="16"
-                 style="width:90px" />
-          <label style="font-size:13px">Mask threshold:
-            <input type="range" id="deflectometry-mask-thresh" min="0" max="20" step="1" value="2" style="width:100px;vertical-align:middle">
-            <span id="deflectometry-mask-thresh-val" style="font-size:12px;min-width:30px;display:inline-block">2%</span>
-          </label>
-          <button class="detect-btn" id="btn-deflectometry-flatfield" style="margin-left:8px;min-width:80px">Flat Field</button>
-          <button class="detect-btn" id="btn-deflectometry-ref" style="min-width:140px">Capture Reference</button>
-          <button class="detect-btn" id="btn-deflectometry-capture" style="min-width:150px">Capture Sequence</button>
-          <button class="detect-btn" id="btn-deflectometry-compute" style="min-width:110px">Compute</button>
-          <button class="detect-btn" id="btn-deflectometry-reset" style="min-width:80px">Reset</button>
-          <button class="detect-btn" id="btn-deflectometry-diag" style="min-width:100px">Diagnostics</button>
-          <button class="detect-btn" id="btn-deflectometry-3d" style="min-width:100px" disabled>3D Surface</button>
-        </div>
-
-        <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;padding:8px 10px;background:#161616;border:1px solid #2a2a2a;border-radius:3px;flex-wrap:wrap">
-          <label style="font-size:13px">Display:
-            <select id="deflectometry-display-device" style="margin-left:4px">
+        <div class="defl-setting-group">
+          <label>Display device
+            <select id="defl-display-device">
               <option value="0.0962">iPad Air 1 (264 ppi)</option>
               <option value="0.0962">iPad Air 2 (264 ppi)</option>
               <option value="0.0846">iPad Pro 11" (264 ppi)</option>
@@ -77,131 +86,235 @@ function buildDialog() {
               <option value="custom">Custom\u2026</option>
             </select>
           </label>
-          <label id="deflectometry-custom-pitch-label" style="font-size:13px;display:none">Pixel pitch (mm):
-            <input type="number" id="deflectometry-custom-pitch" min="0.01" max="1" step="0.001" value="0.096" style="width:70px" />
+          <label id="defl-custom-pitch-label" hidden>Pixel pitch (mm)
+            <input type="number" id="defl-custom-pitch" min="0.01" max="1" step="0.001" value="0.096" />
           </label>
-          <span style="opacity:0.4;font-size:13px">\u2502</span>
-          <label style="font-size:13px">Sphere \u2300 (mm):
-            <input type="number" id="deflectometry-sphere-diam" min="0.1" max="500" step="0.1" value="25.0" style="width:70px" />
+          <label>Fringe frequency (cycles)
+            <input type="number" id="defl-freq" min="2" max="64" step="1" value="16" />
           </label>
-          <button class="detect-btn" id="btn-deflectometry-calibrate" style="min-width:80px">Calibrate</button>
+          <label>Mask threshold
+            <input type="range" id="defl-mask-thresh" min="0" max="20" step="1" value="2" style="width:100px" />
+            <span id="defl-mask-thresh-val" style="min-width:28px;font-size:11px">2%</span>
+          </label>
+        </div>
+      </div>
+
+      <!-- Center: workflow steps -->
+      <div class="defl-workflow-col">
+        <div class="defl-workflow-title">Workflow</div>
+
+        <div class="defl-step" id="defl-step-connect">
+          <div class="defl-step-indicator" id="defl-ind-connect"></div>
+          <div class="defl-step-body">
+            <div class="defl-step-name">1. Connect iPad</div>
+            <div class="defl-step-status" id="defl-status-connect">Waiting\u2026</div>
+          </div>
         </div>
 
-        <div id="deflectometry-progress" style="font-size:12px;opacity:0.85;min-height:1.4em;margin-bottom:10px;font-variant-numeric:tabular-nums"></div>
-
-        <div id="deflectometry-result" hidden style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:6px">
-          <div>
-            <div style="font-size:12px;opacity:0.85;margin-bottom:4px">Phase X (vertical fringes)</div>
-            <img id="deflectometry-phase-x-img" style="width:100%;border:1px solid #444;background:#111;display:block" />
-            <pre id="deflectometry-phase-x-stats" style="margin:6px 0 0;padding:6px 8px;background:#0b0b0b;border:1px solid #2a2a2a;border-radius:3px;font-size:11px;font-variant-numeric:tabular-nums;white-space:pre">—</pre>
-          </div>
-          <div>
-            <div style="font-size:12px;opacity:0.85;margin-bottom:4px">Phase Y (horizontal fringes)</div>
-            <img id="deflectometry-phase-y-img" style="width:100%;border:1px solid #444;background:#111;display:block" />
-            <pre id="deflectometry-phase-y-stats" style="margin:6px 0 0;padding:6px 8px;background:#0b0b0b;border:1px solid #2a2a2a;border-radius:3px;font-size:11px;font-variant-numeric:tabular-nums;white-space:pre">—</pre>
+        <div class="defl-step disabled" id="defl-step-flat">
+          <div class="defl-step-indicator" id="defl-ind-flat"></div>
+          <div class="defl-step-body">
+            <div class="defl-step-name">2. Flat Field</div>
+            <div class="defl-step-status" id="defl-status-flat">\u2014</div>
+            <div class="defl-step-controls">
+              <button class="detect-btn" id="defl-btn-flat">Capture</button>
+            </div>
           </div>
         </div>
 
-        <div id="deflectometry-diag-result" hidden style="margin-top:14px;border-top:1px solid #2a2a2a;padding-top:12px">
-          <div style="font-size:13px;font-weight:600;margin-bottom:8px">Diagnostics</div>
-          <pre id="deflectometry-diag-framestats" style="margin:0 0 10px;padding:6px 8px;background:#0b0b0b;border:1px solid #2a2a2a;border-radius:3px;font-size:11px;overflow-x:auto">—</pre>
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-            <div>
-              <div style="font-size:11px;opacity:0.7;margin-bottom:2px">Modulation X (fringe contrast)</div>
-              <img id="deflectometry-diag-mod-x" style="width:100%;border:1px solid #444;background:#111;display:block" />
-              <pre id="deflectometry-diag-mod-x-stats" style="margin:4px 0 0;padding:4px 6px;background:#0b0b0b;border:1px solid #2a2a2a;border-radius:3px;font-size:10px">—</pre>
+        <div class="defl-step disabled" id="defl-step-ref">
+          <div class="defl-step-indicator" id="defl-ind-ref"></div>
+          <div class="defl-step-body">
+            <div class="defl-step-name">3. Capture Reference</div>
+            <div class="defl-step-status" id="defl-status-ref">Optional \u2014 flat mirror</div>
+            <div class="defl-step-controls">
+              <button class="detect-btn" id="defl-btn-ref">Capture</button>
             </div>
-            <div>
-              <div style="font-size:11px;opacity:0.7;margin-bottom:2px">Modulation Y (fringe contrast)</div>
-              <img id="deflectometry-diag-mod-y" style="width:100%;border:1px solid #444;background:#111;display:block" />
-              <pre id="deflectometry-diag-mod-y-stats" style="margin:4px 0 0;padding:4px 6px;background:#0b0b0b;border:1px solid #2a2a2a;border-radius:3px;font-size:10px">—</pre>
+          </div>
+        </div>
+
+        <div class="defl-step disabled" id="defl-step-capture">
+          <div class="defl-step-indicator" id="defl-ind-capture"></div>
+          <div class="defl-step-body">
+            <div class="defl-step-name">4. Capture Part</div>
+            <div class="defl-step-status" id="defl-status-capture">\u2014</div>
+            <div class="defl-step-controls">
+              <button class="detect-btn" id="defl-btn-capture">Capture</button>
             </div>
-            <div>
-              <div style="font-size:11px;opacity:0.7;margin-bottom:2px">Wrapped phase X</div>
-              <img id="deflectometry-diag-wrap-x" style="width:100%;border:1px solid #444;background:#111;display:block" />
+          </div>
+        </div>
+
+        <div class="defl-step disabled" id="defl-step-compute">
+          <div class="defl-step-indicator" id="defl-ind-compute"></div>
+          <div class="defl-step-body">
+            <div class="defl-step-name">5. Compute</div>
+            <div class="defl-step-status" id="defl-status-compute">\u2014</div>
+            <div class="defl-step-controls">
+              <button class="detect-btn" id="defl-btn-compute">Compute</button>
             </div>
-            <div>
-              <div style="font-size:11px;opacity:0.7;margin-bottom:2px">Wrapped phase Y</div>
-              <img id="deflectometry-diag-wrap-y" style="width:100%;border:1px solid #444;background:#111;display:block" />
+          </div>
+        </div>
+
+        <div class="defl-step disabled" id="defl-step-calibrate">
+          <div class="defl-step-indicator" id="defl-ind-calibrate"></div>
+          <div class="defl-step-body">
+            <div class="defl-step-name">6. Calibrate</div>
+            <div class="defl-step-status" id="defl-status-calibrate">Optional \u2014 sphere</div>
+            <div class="defl-step-controls">
+              <label style="font-size:12px">Sphere \u2300 (mm)
+                <input type="number" id="defl-sphere-diam" min="0.1" max="500" step="0.1" value="25.0" style="width:65px" />
+              </label>
+              <button class="detect-btn" id="defl-btn-calibrate">Calibrate</button>
             </div>
-            <div>
-              <div style="font-size:11px;opacity:0.7;margin-bottom:2px">Unwrapped X (before tilt removal)</div>
-              <img id="deflectometry-diag-unw-x" style="width:100%;border:1px solid #444;background:#111;display:block" />
+          </div>
+        </div>
+
+        <div class="defl-workflow-footer">
+          <button class="detect-btn" id="defl-btn-reset" style="width:100%">Reset Capture</button>
+        </div>
+      </div>
+
+      <!-- Right: results -->
+      <div class="defl-results-col">
+        <div class="defl-tab-bar">
+          <button class="defl-tab active" data-tab="phase">Phase Maps</button>
+          <button class="defl-tab" data-tab="3d">3D Surface</button>
+          <button class="defl-tab" data-tab="diag">Diagnostics</button>
+        </div>
+
+        <div class="defl-tab-panel" id="defl-panel-phase">
+          <div class="defl-empty-state" id="defl-phase-empty">Complete the workflow to see results.</div>
+          <div id="defl-phase-content" hidden>
+            <div class="defl-phase-grid">
+              <div>
+                <div style="font-size:12px;opacity:0.85;margin-bottom:4px">Phase X (vertical fringes)</div>
+                <img id="defl-phase-x-img" />
+                <pre id="defl-phase-x-stats">\u2014</pre>
+              </div>
+              <div>
+                <div style="font-size:12px;opacity:0.85;margin-bottom:4px">Phase Y (horizontal fringes)</div>
+                <img id="defl-phase-y-img" />
+                <pre id="defl-phase-y-stats">\u2014</pre>
+              </div>
             </div>
-            <div>
-              <div style="font-size:11px;opacity:0.7;margin-bottom:2px">Unwrapped Y (before tilt removal)</div>
-              <img id="deflectometry-diag-unw-y" style="width:100%;border:1px solid #444;background:#111;display:block" />
+          </div>
+        </div>
+
+        <div class="defl-tab-panel" id="defl-panel-3d" hidden>
+          <div class="defl-empty-state" id="defl-3d-empty">Compute results first, then view the 3D surface.</div>
+          <div id="defl-3d-content" hidden style="display:flex;flex-direction:column;flex:1;min-height:0">
+            <div class="defl-3d-host" id="defl-3d-host"></div>
+            <div class="defl-3d-controls" id="defl-3d-controls">
+              <label style="font-size:12px">Z exaggeration:
+                <input type="range" id="defl-3d-z-scale" min="1" max="200" step="1" value="10" style="width:120px" />
+                <span id="defl-3d-z-val">10x</span>
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <div class="defl-tab-panel" id="defl-panel-diag" hidden>
+          <div class="defl-empty-state" id="defl-diag-empty">Run diagnostics to see detailed frame analysis.</div>
+          <div id="defl-diag-content" hidden>
+            <pre id="defl-diag-framestats" style="margin:0 0 10px;padding:6px 8px;background:#0b0b0b;border:1px solid #2a2a2a;border-radius:3px;font-size:11px;overflow-x:auto">\u2014</pre>
+            <div class="defl-diag-grid">
+              <div>
+                <div style="font-size:11px;opacity:0.7;margin-bottom:2px">Modulation X</div>
+                <img id="defl-diag-mod-x" />
+                <pre id="defl-diag-mod-x-stats">\u2014</pre>
+              </div>
+              <div>
+                <div style="font-size:11px;opacity:0.7;margin-bottom:2px">Modulation Y</div>
+                <img id="defl-diag-mod-y" />
+                <pre id="defl-diag-mod-y-stats">\u2014</pre>
+              </div>
+              <div>
+                <div style="font-size:11px;opacity:0.7;margin-bottom:2px">Wrapped phase X</div>
+                <img id="defl-diag-wrap-x" />
+              </div>
+              <div>
+                <div style="font-size:11px;opacity:0.7;margin-bottom:2px">Wrapped phase Y</div>
+                <img id="defl-diag-wrap-y" />
+              </div>
+              <div>
+                <div style="font-size:11px;opacity:0.7;margin-bottom:2px">Unwrapped X (before tilt removal)</div>
+                <img id="defl-diag-unw-x" />
+              </div>
+              <div>
+                <div style="font-size:11px;opacity:0.7;margin-bottom:2px">Unwrapped Y (before tilt removal)</div>
+                <img id="defl-diag-unw-y" />
+              </div>
             </div>
           </div>
         </div>
       </div>
     </div>
   `;
-  document.body.appendChild(dlg);
 
-  $("btn-deflectometry-close").addEventListener("click", closeDialog);
-  $("btn-deflectometry-flatfield").addEventListener("click", flatField);
-  $("btn-deflectometry-ref").addEventListener("click", captureReference);
-  $("btn-deflectometry-capture").addEventListener("click", captureSequence);
-  $("btn-deflectometry-compute").addEventListener("click", compute);
-  $("btn-deflectometry-reset").addEventListener("click", resetSession);
-  $("btn-deflectometry-diag").addEventListener("click", runDiagnostics);
-  $("btn-deflectometry-3d").addEventListener("click", openDeflectometry3d);
-  $("btn-deflectometry-calibrate").addEventListener("click", calibrateSphere);
+  wireEvents();
+}
 
-  // Display device dropdown: show/hide custom pitch input
-  const deviceSel = $("deflectometry-display-device");
-  const customLabel = $("deflectometry-custom-pitch-label");
+function wireEvents() {
+  // Tab switching
+  document.querySelectorAll(".defl-tab").forEach(tab => {
+    tab.addEventListener("click", () => {
+      document.querySelectorAll(".defl-tab").forEach(t => t.classList.remove("active"));
+      document.querySelectorAll(".defl-tab-panel").forEach(p => p.hidden = true);
+      tab.classList.add("active");
+      $("defl-panel-" + tab.dataset.tab).hidden = false;
+    });
+  });
+
+  // Display device dropdown
+  const deviceSel = $("defl-display-device");
+  const customLabel = $("defl-custom-pitch-label");
   if (deviceSel && customLabel) {
     deviceSel.addEventListener("change", () => {
-      customLabel.style.display = deviceSel.value === "custom" ? "" : "none";
+      customLabel.hidden = deviceSel.value !== "custom";
     });
   }
 
-  // Mask threshold slider: update label + debounced recompute
-  const maskSlider = $("deflectometry-mask-thresh");
-  const maskLabel = $("deflectometry-mask-thresh-val");
+  // Mask threshold slider
+  const maskSlider = $("defl-mask-thresh");
+  const maskLabel = $("defl-mask-thresh-val");
   let _maskDebounce = null;
-  if (maskSlider) {
+  if (maskSlider && maskLabel) {
     maskSlider.addEventListener("input", () => {
-      if (maskLabel) maskLabel.textContent = maskSlider.value + "%";
-      // Debounced recompute if results are already visible
+      maskLabel.textContent = maskSlider.value + "%";
       if (_maskDebounce) clearTimeout(_maskDebounce);
       _maskDebounce = setTimeout(() => {
-        const resultEl = $("deflectometry-result");
-        if (resultEl && !resultEl.hidden) {
-          compute();
-        }
+        const content = $("defl-phase-content");
+        if (content && !content.hidden) compute();
       }, 300);
     });
   }
+
+  // Workflow buttons
+  $("defl-btn-flat")?.addEventListener("click", flatField);
+  $("defl-btn-ref")?.addEventListener("click", captureReference);
+  $("defl-btn-capture")?.addEventListener("click", captureSequence);
+  $("defl-btn-compute")?.addEventListener("click", compute);
+  $("defl-btn-calibrate")?.addEventListener("click", calibrateSphere);
+  $("defl-btn-reset")?.addEventListener("click", resetSession);
 }
 
-function setProgress(text) {
-  const el = $("deflectometry-progress");
-  if (el) el.textContent = text || "";
+function getFreq() {
+  const el = $("defl-freq");
+  let freq = parseInt(el ? el.value : "16", 10);
+  if (!Number.isFinite(freq) || freq < 2) freq = 2;
+  if (freq > 64) freq = 64;
+  return freq;
 }
 
-function setIpadStatus(connected) {
-  const el = $("deflectometry-ipad-status");
-  if (!el) return;
-  if (connected) {
-    el.textContent = "iPad: connected";
-    el.style.background = "#0f2a16";
-    el.style.color = "#4ade80";
-    el.style.borderColor = "#1f5a2e";
-  } else {
-    el.textContent = "iPad: disconnected";
-    el.style.background = "#3a1a1a";
-    el.style.color = "#f87171";
-    el.style.borderColor = "#7a2a2a";
-  }
+function getMaskThreshold() {
+  const el = $("defl-mask-thresh");
+  return el ? parseInt(el.value, 10) / 100 : 0.02;
 }
 
 async function flatField() {
-  const btn = $("btn-deflectometry-flatfield");
+  const btn = $("defl-btn-flat");
   if (btn) btn.disabled = true;
-  setProgress("Capturing flat field\u2026");
+  setStepStatus("flat", "", "Capturing\u2026");
   try {
     const r = await apiFetch("/deflectometry/flat-field", {
       method: "POST",
@@ -210,12 +323,84 @@ async function flatField() {
     });
     if (!r.ok) {
       const msg = await r.text();
-      setProgress("Flat field failed: " + msg);
+      setStepStatus("flat", "error", "Failed: " + msg);
       return;
     }
-    setProgress("Flat field captured.");
+    setStepStatus("flat", "done", "Captured");
   } catch (e) {
-    setProgress("Flat field failed: " + (e && e.message ? e.message : String(e)));
+    setStepStatus("flat", "error", "Failed: " + (e?.message || e));
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function captureReference() {
+  const btn = $("defl-btn-ref");
+  if (btn) btn.disabled = true;
+  setStepStatus("ref", "", "Capturing\u2026");
+  try {
+    const r = await apiFetch("/deflectometry/capture-reference", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ freq: getFreq() }),
+    });
+    if (!r.ok) {
+      const msg = await r.text();
+      setStepStatus("ref", "error", "Failed: " + msg);
+      return;
+    }
+    setStepStatus("ref", "done", "Captured");
+  } catch (e) {
+    setStepStatus("ref", "error", "Failed: " + (e?.message || e));
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function captureSequence() {
+  const btn = $("defl-btn-capture");
+  if (btn) btn.disabled = true;
+  setStepStatus("capture", "", "Capturing 8 frames\u2026");
+  try {
+    const r = await apiFetch("/deflectometry/capture-sequence", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ freq: getFreq() }),
+    });
+    if (!r.ok) {
+      const msg = await r.text();
+      setStepStatus("capture", "error", "Failed: " + msg);
+      return;
+    }
+    const data = await r.json();
+    setStepStatus("capture", "done", data.captured_count + " frames");
+  } catch (e) {
+    setStepStatus("capture", "error", "Failed: " + (e?.message || e));
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function compute() {
+  const btn = $("defl-btn-compute");
+  if (btn) btn.disabled = true;
+  setStepStatus("compute", "", "Computing\u2026");
+  try {
+    const r = await apiFetch("/deflectometry/compute", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mask_threshold: getMaskThreshold() }),
+    });
+    if (!r.ok) {
+      const msg = await r.text();
+      setStepStatus("compute", "error", "Failed: " + msg);
+      return;
+    }
+    const result = await r.json();
+    setStepStatus("compute", "done", "Done");
+    renderPhaseResult(result);
+  } catch (e) {
+    setStepStatus("compute", "error", "Failed: " + (e?.message || e));
   } finally {
     if (btn) btn.disabled = false;
   }
@@ -224,18 +409,18 @@ async function flatField() {
 async function calibrateSphere() {
   const ppm = state.calibration?.pixelsPerMm;
   if (!ppm || ppm <= 0) {
-    setProgress("Camera calibration required first (px/mm). Use the calibration tool on the main screen.");
+    setStepStatus("calibrate", "error", "Camera calibration (px/mm) required first");
     return;
   }
-  const diamEl = $("deflectometry-sphere-diam");
+  const diamEl = $("defl-sphere-diam");
   let diam = parseFloat(diamEl ? diamEl.value : "25");
   if (!Number.isFinite(diam) || diam <= 0) {
-    setProgress("Enter a valid sphere diameter in mm.");
+    setStepStatus("calibrate", "error", "Enter a valid sphere diameter");
     return;
   }
-  const btn = $("btn-deflectometry-calibrate");
+  const btn = $("defl-btn-calibrate");
   if (btn) btn.disabled = true;
-  setProgress("Calibrating with sphere (d=" + diam.toFixed(1) + " mm)\u2026");
+  setStepStatus("calibrate", "", "Calibrating\u2026");
   try {
     const r = await apiFetch("/deflectometry/calibrate-sphere", {
       method: "POST",
@@ -244,118 +429,108 @@ async function calibrateSphere() {
     });
     if (!r.ok) {
       const msg = await r.text();
-      setProgress("Calibration failed: " + msg);
+      setStepStatus("calibrate", "error", "Failed: " + msg);
       return;
     }
     const data = await r.json();
-    const resMicron = data.residual_rms_um.toFixed(2);
-    const fitR = data.fitted_radius_mm.toFixed(3);
-    setProgress(
-      `Calibrated! Factor: ${data.cal_factor_um.toFixed(4)} \u00b5m/rad, ` +
-      `fitted R: ${fitR} mm, residual RMS: ${resMicron} \u00b5m`
-    );
-    // Re-render current results with calibrated units
-    const status = await refreshStatus();
-    if (status && status.last_result) renderResult(status.last_result);
+    setStepStatus("calibrate", "done",
+      data.cal_factor_um.toFixed(4) + " \u00b5m/rad, R=" + data.fitted_radius_mm.toFixed(1) + "mm");
+    // Re-render phase results with calibrated units
+    const status = await apiFetch("/deflectometry/status");
+    if (status.ok) {
+      const sd = await status.json();
+      if (sd.last_result) renderPhaseResult(sd.last_result);
+    }
   } catch (e) {
-    setProgress("Calibration failed: " + (e && e.message ? e.message : String(e)));
+    setStepStatus("calibrate", "error", "Failed: " + (e?.message || e));
   } finally {
     if (btn) btn.disabled = false;
   }
 }
 
-async function captureReference() {
-  const btn = $("btn-deflectometry-ref");
-  if (btn) btn.disabled = true;
-  const freqEl = $("deflectometry-freq");
-  let freq = parseInt(freqEl ? freqEl.value : "16", 10);
-  if (!Number.isFinite(freq) || freq < 2) freq = 2;
-  if (freq > 64) freq = 64;
-  setProgress("Capturing reference (flat)\u2026");
+async function resetSession() {
   try {
-    const r = await apiFetch("/deflectometry/capture-reference", {
+    await apiFetch("/deflectometry/reset", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ freq }),
+      body: JSON.stringify({}),
     });
-    if (!r.ok) {
-      const msg = await r.text();
-      setProgress("Reference capture failed: " + msg);
-      return;
-    }
-    setProgress("Reference captured. Now capture the part.");
-  } catch (e) {
-    setProgress("Reference failed: " + (e && e.message ? e.message : String(e)));
-  } finally {
-    if (btn) btn.disabled = false;
-  }
+  } catch { /* ignore */ }
+  setStepStatus("capture", "", "\u2014");
+  setStepStatus("compute", "", "\u2014");
+  // Hide results
+  const content = $("defl-phase-content");
+  const empty = $("defl-phase-empty");
+  if (content) content.hidden = true;
+  if (empty) empty.hidden = false;
+  const content3d = $("defl-3d-content");
+  const empty3d = $("defl-3d-empty");
+  if (content3d) content3d.hidden = true;
+  if (empty3d) empty3d.hidden = false;
 }
 
-function formatStats(stats, calFactor) {
-  if (!stats) return "—";
-  if (calFactor) {
-    // Convert from rad to µm
-    const k = Math.abs(calFactor) * 1000;
-    const pv = Number.isFinite(stats.pv) ? (stats.pv * k).toFixed(2) : "—";
-    const rms = Number.isFinite(stats.rms) ? (stats.rms * k).toFixed(2) : "—";
-    const mean = Number.isFinite(stats.mean) ? (stats.mean * k).toFixed(2) : "—";
-    return `PV:   ${pv} \u00b5m\nRMS:  ${rms} \u00b5m\nMean: ${mean} \u00b5m`;
-  }
-  const pv = Number.isFinite(stats.pv) ? stats.pv.toFixed(3) : "—";
-  const rms = Number.isFinite(stats.rms) ? stats.rms.toFixed(3) : "—";
-  const mean = Number.isFinite(stats.mean) ? stats.mean.toFixed(3) : "—";
-  return `PV:   ${pv} rad\nRMS:  ${rms} rad\nMean: ${mean} rad`;
-}
-
-function renderResult(result) {
+function renderPhaseResult(result) {
   if (!result) return;
-  const resultEl = $("deflectometry-result");
-  if (!resultEl) return;
+  const content = $("defl-phase-content");
+  const empty = $("defl-phase-empty");
+  if (content) content.hidden = false;
+  if (empty) empty.hidden = true;
   if (result.phase_x_png_b64) {
-    $("deflectometry-phase-x-img").src = `data:image/png;base64,${result.phase_x_png_b64}`;
+    $("defl-phase-x-img").src = "data:image/png;base64," + result.phase_x_png_b64;
   }
   if (result.phase_y_png_b64) {
-    $("deflectometry-phase-y-img").src = `data:image/png;base64,${result.phase_y_png_b64}`;
+    $("defl-phase-y-img").src = "data:image/png;base64," + result.phase_y_png_b64;
   }
   const cal = result.cal_factor || null;
-  $("deflectometry-phase-x-stats").textContent = formatStats(result.stats_x, cal);
-  $("deflectometry-phase-y-stats").textContent = formatStats(result.stats_y, cal);
-  resultEl.hidden = false;
-}
-
-function setCalibrationStatus(elId, label, hasIt) {
-  const el = $(elId);
-  if (!el) return;
-  if (hasIt) {
-    el.textContent = label + ": \u2713";
-    el.style.background = "#0f2a16";
-    el.style.color = "#4ade80";
-    el.style.borderColor = "#1f5a2e";
-  } else {
-    el.textContent = label + ": \u2014";
-    el.style.background = "#1a1a2a";
-    el.style.color = "#888";
-    el.style.borderColor = "#333";
-  }
+  $("defl-phase-x-stats").textContent = formatStats(result.stats_x, cal);
+  $("defl-phase-y-stats").textContent = formatStats(result.stats_y, cal);
 }
 
 async function refreshStatus() {
   try {
     const r = await apiFetch("/deflectometry/status");
-    if (!r.ok) return null;
-    const data = await r.json();
-    setIpadStatus(!!data.ipad_connected);
-    setCalibrationStatus("deflectometry-flatfield-status", "Flat field", !!data.has_flat_field);
-    setCalibrationStatus("deflectometry-ref-status", "Reference", !!data.has_reference);
-    setCalibrationStatus("deflectometry-cal-status", "Calibration", data.cal_factor != null);
-    return data;
-  } catch {
-    return null;
-  }
+    if (!r.ok) return;
+    const d = await r.json();
+    // iPad
+    const connected = !!d.ipad_connected;
+    setBadge("defl-badge-ipad", connected);
+    $("defl-badge-ipad").textContent = "iPad: " + (connected ? "connected" : "\u2014");
+    setStepStatus("connect", connected ? "done" : "", connected ? "Connected" : "Waiting\u2026");
+    // Enable/disable steps based on iPad
+    setStepEnabled("flat", connected);
+    setStepEnabled("ref", connected);
+    setStepEnabled("capture", connected);
+    // Flat field
+    setBadge("defl-badge-flat", !!d.has_flat_field);
+    $("defl-badge-flat").textContent = "Flat field: " + (d.has_flat_field ? "\u2713" : "\u2014");
+    // Reference
+    setBadge("defl-badge-ref", !!d.has_reference);
+    $("defl-badge-ref").textContent = "Reference: " + (d.has_reference ? "\u2713" : "\u2014");
+    // Calibration
+    const hasCal = d.cal_factor != null;
+    setBadge("defl-badge-cal", hasCal);
+    $("defl-badge-cal").textContent = "Calibration: " + (hasCal ? "\u2713" : "\u2014");
+    // Compute step enable
+    setStepEnabled("compute", d.captured_count >= 8);
+    // Calibrate step enable
+    setStepEnabled("calibrate", d.has_result);
+    // Render last result if we have one and phase content is not showing
+    if (d.last_result && $("defl-phase-content")?.hidden) {
+      renderPhaseResult(d.last_result);
+      setStepStatus("compute", "done", "Done");
+    }
+  } catch { /* ignore */ }
 }
 
 function startPolling() {
   stopPolling();
+  // Immediately fire + start session
+  apiFetch("/deflectometry/start", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({}),
+  }).catch(() => {});
+  refreshStatus();
   df.polling = setInterval(refreshStatus, 1000);
 }
 
@@ -366,82 +541,136 @@ function stopPolling() {
   }
 }
 
-async function startSession() {
-  const r = await apiFetch("/deflectometry/start", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({}),
+async function load3dSurface() {
+  const empty = $("defl-3d-empty");
+  const content = $("defl-3d-content");
+  if (empty) empty.textContent = "Loading 3D surface\u2026";
+  try {
+    const r = await apiFetch("/deflectometry/heightmap", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mask_threshold: getMaskThreshold() }),
+    });
+    if (!r.ok) {
+      if (empty) empty.textContent = "Failed to load heightmap.";
+      return;
+    }
+    const hm = await r.json();
+    if (empty) empty.hidden = true;
+    if (content) content.hidden = false;
+    await render3d(hm);
+  } catch (e) {
+    if (empty) empty.textContent = "Error: " + (e?.message || e);
+  }
+}
+
+async function render3d(hm) {
+  const host = $("defl-3d-host");
+  if (!host) return;
+  host.innerHTML = "";
+
+  if (!df.threeLoaded) {
+    const THREE = await import("https://esm.sh/three@0.160.0");
+    const { OrbitControls } = await import("https://esm.sh/three@0.160.0/examples/jsm/controls/OrbitControls.js");
+    df.THREE = THREE;
+    df.OrbitControls = OrbitControls;
+    df.threeLoaded = true;
+  }
+  const THREE = df.THREE;
+  const OrbitControls = df.OrbitControls;
+
+  const w = host.clientWidth || 600;
+  const h = host.clientHeight || 400;
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x111111);
+  const camera = new THREE.PerspectiveCamera(50, w / h, 0.01, 1000);
+  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setSize(w, h);
+  host.appendChild(renderer.domElement);
+  const controls = new OrbitControls(camera, renderer.domElement);
+
+  const cols = hm.width, rows = hm.height;
+  const geo = new THREE.PlaneGeometry(cols, rows, cols - 1, rows - 1);
+  const pos = geo.attributes.position;
+  const colors = new Float32Array(pos.count * 3);
+
+  // Find min/max for normalization
+  let zMin = Infinity, zMax = -Infinity;
+  for (let i = 0; i < hm.data.length; i++) {
+    const v = hm.data[i];
+    if (v != null) { if (v < zMin) zMin = v; if (v > zMax) zMax = v; }
+  }
+  const zRange = zMax - zMin || 1;
+
+  const zSlider = $("defl-3d-z-scale");
+  const zLabel = $("defl-3d-z-val");
+  let zScale = zSlider ? parseFloat(zSlider.value) : 10;
+
+  function applyZ() {
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        const idx = r * cols + c;
+        const v = hm.data[idx];
+        const z = (v != null) ? ((v - zMin) / zRange - 0.5) * zScale : 0;
+        pos.setZ(idx, z);
+        // Viridis-like color
+        const t = (v != null) ? (v - zMin) / zRange : 0;
+        colors[idx * 3] = t < 0.5 ? t * 1.2 : 0.3 + t * 0.4;
+        colors[idx * 3 + 1] = 0.1 + t * 0.7;
+        colors[idx * 3 + 2] = 0.4 + (1 - t) * 0.5;
+      }
+    }
+    geo.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+    pos.needsUpdate = true;
+    geo.computeVertexNormals();
+  }
+  applyZ();
+
+  const mat = new THREE.MeshStandardMaterial({ vertexColors: true, side: THREE.DoubleSide });
+  const mesh = new THREE.Mesh(geo, mat);
+  scene.add(mesh);
+
+  const light1 = new THREE.DirectionalLight(0xffffff, 1);
+  light1.position.set(1, 1, 2);
+  scene.add(light1);
+  scene.add(new THREE.AmbientLight(0x404040));
+
+  camera.position.set(0, -cols * 0.4, cols * 0.6);
+  camera.lookAt(0, 0, 0);
+  controls.update();
+
+  if (zSlider) {
+    zSlider.oninput = () => {
+      zScale = parseFloat(zSlider.value);
+      if (zLabel) zLabel.textContent = zScale + "x";
+      applyZ();
+    };
+  }
+
+  function animate() {
+    if (!host.isConnected) return;
+    requestAnimationFrame(animate);
+    controls.update();
+    renderer.render(scene, camera);
+  }
+  animate();
+
+  // Handle resize
+  const ro = new ResizeObserver(() => {
+    const nw = host.clientWidth, nh = host.clientHeight;
+    if (nw > 0 && nh > 0) {
+      camera.aspect = nw / nh;
+      camera.updateProjectionMatrix();
+      renderer.setSize(nw, nh);
+    }
   });
-  if (!r.ok) {
-    setProgress("Failed to start deflectometry session.");
-    return false;
-  }
-  const data = await r.json();
-  df.sessionId = data.session_id;
-  setIpadStatus(!!data.ipad_connected);
-  return true;
-}
-
-async function captureSequence() {
-  const btn = $("btn-deflectometry-capture");
-  const freqEl = $("deflectometry-freq");
-  let freq = parseInt(freqEl ? freqEl.value : "16", 10);
-  if (!Number.isFinite(freq) || freq < 2) freq = 2;
-  if (freq > 64) freq = 64;
-  if (btn) { btn.disabled = true; }
-  setProgress(`Capturing phase-shift sequence (freq=${freq})…`);
-  try {
-    const r = await apiFetch("/deflectometry/capture-sequence", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ freq }),
-    });
-    if (!r.ok) {
-      const msg = await r.text();
-      setProgress("Capture failed: " + msg);
-      return;
-    }
-    setProgress("Captured 8/8. Click Compute.");
-  } catch (e) {
-    setProgress("Capture failed: " + (e && e.message ? e.message : String(e)));
-  } finally {
-    if (btn) btn.disabled = false;
-  }
-}
-
-async function compute() {
-  const btn = $("btn-deflectometry-compute");
-  if (btn) { btn.disabled = true; }
-  setProgress("Computing phase maps\u2026");
-  try {
-    const maskThresh = parseFloat($("deflectometry-mask-thresh")?.value || "2") / 100;
-    const r = await apiFetch("/deflectometry/compute", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ mask_threshold: maskThresh }),
-    });
-    if (!r.ok) {
-      const msg = await r.text();
-      setProgress("Compute failed: " + msg);
-      return;
-    }
-    const data = await r.json();
-    renderResult(data);
-    const btn3d = $("btn-deflectometry-3d");
-    if (btn3d) btn3d.disabled = false;
-    const maskPct = data.mask_valid_frac != null ? (data.mask_valid_frac * 100).toFixed(1) : "?";
-    setProgress("Compute complete. Mask: " + maskPct + "% of pixels valid.");
-  } catch (e) {
-    setProgress("Compute failed: " + (e && e.message ? e.message : String(e)));
-  } finally {
-    if (btn) btn.disabled = false;
-  }
+  ro.observe(host);
 }
 
 async function runDiagnostics() {
-  const btn = $("btn-deflectometry-diag");
-  if (btn) btn.disabled = true;
-  setProgress("Running diagnostics…");
+  const empty = $("defl-diag-empty");
+  const content = $("defl-diag-content");
+  if (empty) empty.textContent = "Running diagnostics\u2026";
   try {
     const r = await apiFetch("/deflectometry/diagnostics", {
       method: "POST",
@@ -450,376 +679,69 @@ async function runDiagnostics() {
     });
     if (!r.ok) {
       const msg = await r.text();
-      setProgress("Diagnostics failed: " + msg);
+      if (empty) empty.textContent = "Failed: " + msg;
       return;
     }
     const d = await r.json();
-    const diagEl = $("deflectometry-diag-result");
-    if (!diagEl) return;
-
-    // Frame stats table
-    const lines = d.frame_stats.map(f =>
-      `${f.name.padEnd(16)} min:${f.min.toFixed(1).padStart(6)} max:${f.max.toFixed(1).padStart(6)} mean:${f.mean.toFixed(1).padStart(6)} std:${f.std.toFixed(1).padStart(6)}`
-    );
-    $("deflectometry-diag-framestats").textContent = lines.join("\n");
-
-    // Modulation maps
-    const b64 = s => `data:image/png;base64,${s}`;
-    $("deflectometry-diag-mod-x").src = b64(d.modulation_x.png_b64);
-    $("deflectometry-diag-mod-y").src = b64(d.modulation_y.png_b64);
-    const fmtMod = m => `min:${m.min.toFixed(1)} max:${m.max.toFixed(1)} mean:${m.mean.toFixed(1)} median:${m.median.toFixed(1)}`;
-    $("deflectometry-diag-mod-x-stats").textContent = fmtMod(d.modulation_x);
-    $("deflectometry-diag-mod-y-stats").textContent = fmtMod(d.modulation_y);
-
-    // Wrapped + unwrapped phase
-    $("deflectometry-diag-wrap-x").src = b64(d.wrapped_x_png_b64);
-    $("deflectometry-diag-wrap-y").src = b64(d.wrapped_y_png_b64);
-    $("deflectometry-diag-unw-x").src = b64(d.unwrapped_raw_x_png_b64);
-    $("deflectometry-diag-unw-y").src = b64(d.unwrapped_raw_y_png_b64);
-
-    diagEl.hidden = false;
-    setProgress(`Diagnostics complete. Raw frames saved to ${d.frames_saved_to}`);
+    if (empty) empty.hidden = true;
+    if (content) content.hidden = false;
+    // Frame stats
+    const fs = $("defl-diag-framestats");
+    if (fs && d.frame_stats) {
+      fs.textContent = d.frame_stats.map(f =>
+        `${f.name}  min=${f.min.toFixed(0)}  max=${f.max.toFixed(0)}  mean=${f.mean.toFixed(1)}  std=${f.std.toFixed(1)}`
+      ).join("\n");
+    }
+    // Modulation images and stats
+    if (d.modulation_x) {
+      $("defl-diag-mod-x").src = "data:image/png;base64," + d.modulation_x.png_b64;
+      const el = $("defl-diag-mod-x-stats");
+      if (el) el.textContent = `min=${d.modulation_x.min.toFixed(1)} max=${d.modulation_x.max.toFixed(1)} mean=${d.modulation_x.mean.toFixed(1)} median=${d.modulation_x.median.toFixed(1)}`;
+    }
+    if (d.modulation_y) {
+      $("defl-diag-mod-y").src = "data:image/png;base64," + d.modulation_y.png_b64;
+      const el = $("defl-diag-mod-y-stats");
+      if (el) el.textContent = `min=${d.modulation_y.min.toFixed(1)} max=${d.modulation_y.max.toFixed(1)} mean=${d.modulation_y.mean.toFixed(1)} median=${d.modulation_y.median.toFixed(1)}`;
+    }
+    // Wrapped/unwrapped phase images
+    const b64 = (id, key) => { const el = $(id); if (el && d[key]) el.src = "data:image/png;base64," + d[key]; };
+    b64("defl-diag-wrap-x", "wrapped_x_png_b64");
+    b64("defl-diag-wrap-y", "wrapped_y_png_b64");
+    b64("defl-diag-unw-x", "unwrapped_raw_x_png_b64");
+    b64("defl-diag-unw-y", "unwrapped_raw_y_png_b64");
   } catch (e) {
-    setProgress("Diagnostics failed: " + (e && e.message ? e.message : String(e)));
-  } finally {
-    if (btn) btn.disabled = false;
+    if (empty) empty.textContent = "Error: " + (e?.message || e);
   }
 }
 
-async function resetSession() {
-  const btn = $("btn-deflectometry-reset");
-  if (btn) { btn.disabled = true; }
-  try {
-    const r = await apiFetch("/deflectometry/reset", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({}),
-    });
-    if (!r.ok) {
-      const msg = await r.text();
-      setProgress("Reset failed: " + msg);
-      return;
-    }
-    const resultEl = $("deflectometry-result");
-    if (resultEl) resultEl.hidden = true;
-    setProgress("");
-  } catch (e) {
-    setProgress("Reset failed: " + (e && e.message ? e.message : String(e)));
-  } finally {
-    if (btn) btn.disabled = false;
-  }
-}
-
-// ── 3D Surface Viewer ──────────────────────────────────────────────────
-// Lazy-loaded Three.js heightmap viewer, modelled on zstack-3d.js.
-
-let _THREE_D = null;
-let _OrbitControls_D = null;
-let _active3d = null;
-
-async function loadThreeD() {
-  if (_THREE_D) return;
-  _THREE_D = await import('https://esm.sh/three@0.160.0');
-  const mod = await import('https://esm.sh/three@0.160.0/examples/jsm/controls/OrbitControls.js');
-  _OrbitControls_D = mod.OrbitControls;
-}
-
-async function openDeflectometry3d() {
-  if (_active3d) return;
-
-  // Fetch heightmap data from the backend.
-  let payload;
-  try {
-    const maskThresh = parseFloat($("deflectometry-mask-thresh")?.value || "2") / 100;
-    const resp = await apiFetch("/deflectometry/heightmap", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ mask_threshold: maskThresh }),
-    });
-    if (resp.status === 404) {
-      setProgress("No heightmap available. Run Compute first.");
-      return;
-    }
-    if (!resp.ok) {
-      setProgress("Failed to fetch heightmap: " + resp.status);
-      return;
-    }
-    payload = await resp.json();
-  } catch (err) {
-    setProgress("Failed to fetch heightmap: " + (err && err.message ? err.message : String(err)));
-    return;
-  }
-
-  const modal = buildDeflectometry3dModal();
-  document.body.appendChild(modal);
-  const loadingEl = modal.querySelector("#deflectometry-3d-loading");
-
-  try {
-    await loadThreeD();
-  } catch (err) {
-    loadingEl.textContent = "Failed to load 3D viewer: " + err.message;
-    return;
-  }
-  loadingEl.hidden = true;
-
-  _active3d = initDeflectometry3dScene(modal, payload);
-}
-
-function buildDeflectometry3dModal() {
-  const modal = document.createElement("div");
-  modal.id = "deflectometry-3d-modal";
-  modal.innerHTML = `
-    <div id="deflectometry-3d-canvas-host"></div>
-    <button id="deflectometry-3d-close" title="Close (Esc)">\u2715</button>
-    <div id="deflectometry-3d-settings">
-      <div class="deflectometry-3d-settings-header">View Settings</div>
-      <div class="deflectometry-3d-settings-rows"></div>
-    </div>
-    <div id="deflectometry-3d-loading">Loading 3D viewer\u2026</div>
-  `;
-  return modal;
-}
-
-function initDeflectometry3dScene(modal, payload) {
-  const THREE = _THREE_D;
-  const OrbitControls = _OrbitControls_D;
-
-  const host = modal.querySelector("#deflectometry-3d-canvas-host");
-  const closeBtn = modal.querySelector("#deflectometry-3d-close");
-  const rowsEl = modal.querySelector(".deflectometry-3d-settings-rows");
-
-  const { width: cols, height: rows, data, mask } = payload;
-  const vertexCount = cols * rows;
-
-  // World-space plane: longest side = 1.
-  const aspect = cols / rows;
-  const worldW = aspect >= 1 ? 1.0 : aspect;
-  const worldH = aspect >= 1 ? 1.0 / aspect : 1.0;
-
-  // Scene, camera, renderer
-  const scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x111111);
-
-  const hostRect = host.getBoundingClientRect();
-  const camera = new THREE.PerspectiveCamera(45, hostRect.width / hostRect.height, 0.01, 100);
-  camera.position.set(0, -1.6, 1.3);
-  camera.up.set(0, 0, 1);
-
-  const renderer = new THREE.WebGLRenderer({ antialias: true });
-  renderer.setPixelRatio(window.devicePixelRatio || 1);
-  renderer.setSize(hostRect.width, hostRect.height);
-  host.appendChild(renderer.domElement);
-
-  // Normalize height data to [-0.5, 0.5] range.
-  const rawH = new Float32Array(vertexCount);
-  const validMask = new Uint8Array(vertexCount);
-  let minH = Infinity, maxH = -Infinity;
-  for (let i = 0; i < vertexCount; i++) {
-    const v = data[i];
-    const m = mask ? mask[i] : 1;
-    validMask[i] = (m && Number.isFinite(v)) ? 1 : 0;
-    rawH[i] = validMask[i] ? v : 0;
-    if (validMask[i]) {
-      if (v < minH) minH = v;
-      if (v > maxH) maxH = v;
-    }
-  }
-  const hRange = Math.max(1e-12, maxH - minH);
-  const midH = (minH + maxH) * 0.5;
-
-  // Normalized Z: centered on 0, spans [-0.5, 0.5] at exaggeration 1.
-  const RELIEF = 0.10;
-  const normZ = new Float32Array(vertexCount);
-  for (let i = 0; i < vertexCount; i++) {
-    normZ[i] = validMask[i] ? (rawH[i] - midH) / hRange * RELIEF : 0;
-  }
-
-  // PlaneGeometry
-  const geometry = new THREE.PlaneGeometry(worldW, worldH, cols - 1, rows - 1);
-  const positions = geometry.attributes.position.array;
-
-  // Vertex colors: viridis-like gradient for valid pixels, dark gray for masked.
-  const colors = new Float32Array(vertexCount * 3);
-  function viridisApprox(t) {
-    // Approximate viridis: blue -> teal -> green -> yellow
-    const r = Math.max(0, Math.min(1, -0.35 + 2.5 * t * t));
-    const g = Math.max(0, Math.min(1, -0.1 + 1.2 * t - 0.2 * t * t));
-    const b = Math.max(0, Math.min(1, 0.5 + 0.8 * t - 2.0 * t * t));
-    return [r, g, b];
-  }
-  function updateColors() {
-    for (let i = 0; i < vertexCount; i++) {
-      if (!validMask[i]) {
-        colors[i * 3] = 0.15;
-        colors[i * 3 + 1] = 0.15;
-        colors[i * 3 + 2] = 0.15;
-      } else {
-        const t = Math.max(0, Math.min(1, (rawH[i] - minH) / hRange));
-        const [r, g, b] = viridisApprox(t);
-        colors[i * 3] = r;
-        colors[i * 3 + 1] = g;
-        colors[i * 3 + 2] = b;
+function wireTabActivation() {
+  document.querySelectorAll(".defl-tab").forEach(tab => {
+    tab.addEventListener("click", () => {
+      if (tab.dataset.tab === "3d" && $("defl-3d-content")?.hidden) {
+        load3dSurface();
       }
-    }
-  }
-  updateColors();
-  geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
-
-  // Initial Z displacement
-  const defaultExaggeration = 5.0;
-  applyDeflZ(positions, normZ, defaultExaggeration);
-  geometry.attributes.position.needsUpdate = true;
-  geometry.computeVertexNormals();
-
-  // Material with vertex colors and lighting
-  const material = new THREE.MeshStandardMaterial({
-    vertexColors: true,
-    side: THREE.DoubleSide,
-    roughness: 0.7,
-    metalness: 0.1,
-  });
-  const mesh = new THREE.Mesh(geometry, material);
-  scene.add(mesh);
-
-  // Lighting
-  const ambient = new THREE.AmbientLight(0xffffff, 0.5);
-  scene.add(ambient);
-  const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
-  dirLight.position.set(1, -1, 2);
-  scene.add(dirLight);
-
-  // Controls
-  const controls = new OrbitControls(camera, renderer.domElement);
-  controls.enableDamping = true;
-  controls.dampingFactor = 0.08;
-  controls.target.set(0, 0, 0);
-  controls.update();
-
-  // Settings: Z exaggeration slider
-  const zInput = document.createElement("input");
-  zInput.type = "range";
-  zInput.min = "0.1";
-  zInput.max = "20";
-  zInput.step = "0.1";
-  zInput.value = String(defaultExaggeration);
-  const zValueSpan = document.createElement("span");
-  zValueSpan.className = "deflectometry-3d-value";
-  zValueSpan.textContent = defaultExaggeration.toFixed(1) + "\u00d7";
-  addDefl3dSettingRow(rowsEl, "Z exaggeration", zInput, zValueSpan);
-
-  zInput.addEventListener("input", () => {
-    const ex = parseFloat(zInput.value);
-    zValueSpan.textContent = ex.toFixed(1) + "\u00d7";
-    applyDeflZ(positions, normZ, ex);
-    geometry.attributes.position.needsUpdate = true;
-    geometry.computeVertexNormals();
-    geometry.computeBoundingSphere();
-  });
-
-  // Animation loop
-  let rafId = 0;
-  let disposed = false;
-  function animate() {
-    if (disposed) return;
-    rafId = requestAnimationFrame(animate);
-    controls.update();
-    renderer.render(scene, camera);
-  }
-  animate();
-
-  // Resize handling
-  function onResize() {
-    const r = host.getBoundingClientRect();
-    if (r.width <= 0 || r.height <= 0) return;
-    camera.aspect = r.width / r.height;
-    camera.updateProjectionMatrix();
-    renderer.setSize(r.width, r.height);
-  }
-  window.addEventListener("resize", onResize);
-
-  // Close handling
-  function close() {
-    if (disposed) return;
-    disposed = true;
-    cancelAnimationFrame(rafId);
-    window.removeEventListener("resize", onResize);
-    window.removeEventListener("keydown", onKey);
-    controls.dispose();
-    geometry.dispose();
-    material.dispose();
-    renderer.dispose();
-    if (renderer.domElement && renderer.domElement.parentNode) {
-      renderer.domElement.parentNode.removeChild(renderer.domElement);
-    }
-    if (modal.parentNode) modal.parentNode.removeChild(modal);
-    _active3d = null;
-  }
-  function onKey(e) {
-    if (e.key === "Escape") close();
-  }
-  closeBtn.addEventListener("click", close);
-  window.addEventListener("keydown", onKey);
-
-  return { close };
-}
-
-function applyDeflZ(positions, normZ, exaggeration) {
-  const n = normZ.length;
-  for (let i = 0; i < n; i++) {
-    positions[i * 3 + 2] = normZ[i] * exaggeration;
-  }
-}
-
-function addDefl3dSettingRow(rowsEl, label, inputElement, valueSpan) {
-  const row = document.createElement("div");
-  row.className = "deflectometry-3d-row";
-  const lbl = document.createElement("label");
-  lbl.textContent = label;
-  row.appendChild(lbl);
-  row.appendChild(inputElement);
-  if (valueSpan) row.appendChild(valueSpan);
-  rowsEl.appendChild(row);
-  return row;
-}
-
-async function openDialog() {
-  buildDialog();
-  const dlg = $("deflectometry-dialog");
-  dlg.hidden = false;
-
-  // First open: probe /status. If no session exists, start one. If a session
-  // exists and has a last_result, rehydrate the result area so reopening the
-  // dialog doesn't lose the user's work.
-  if (!df.initialized) {
-    df.initialized = true;
-    const status = await refreshStatus();
-    if (!status || !status.session_id) {
-      await startSession();
-    } else {
-      df.sessionId = status.session_id;
-      // /start is idempotent — re-call to ensure session is active.
-      await startSession();
-      if (status.has_result && status.last_result) {
-        renderResult(status.last_result);
-        const btn3d = $("btn-deflectometry-3d");
-        if (btn3d) btn3d.disabled = false;
+      if (tab.dataset.tab === "diag" && $("defl-diag-content")?.hidden) {
+        runDiagnostics();
       }
-    }
-  } else {
-    // Subsequent opens: just refresh the connection indicator.
-    refreshStatus();
-  }
-
-  startPolling();
-}
-
-function closeDialog() {
-  const dlg = $("deflectometry-dialog");
-  if (dlg) dlg.hidden = true;
-  stopPolling();
+    });
+  });
 }
 
 export function initDeflectometry() {
-  const btn = $("btn-deflectometry");
-  if (btn) btn.addEventListener("click", openDialog);
+  // Build workspace DOM on first init
+  buildWorkspace();
+  wireTabActivation();
+
+  // Start polling when mode becomes active, stop when hidden
+  const observer = new MutationObserver(() => {
+    const root = $("mode-deflectometry");
+    if (!root) return;
+    if (root.hidden) {
+      stopPolling();
+    } else {
+      startPolling();
+    }
+  });
+  const root = $("mode-deflectometry");
+  if (root) observer.observe(root, { attributes: true, attributeFilter: ["hidden"] });
 }
