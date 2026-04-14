@@ -15,9 +15,10 @@ const fr = {
   threeLoaded: false,
   lastResult: null,
   lastMask: null,
-  roi: null,         // {x, y, w, h} in image coordinates (0-1 normalized)
-  roiDrawing: false,  // currently drawing?
-  roiStart: null,     // {x, y} in normalized coords
+  maskPolygons: [],        // [{vertices: [{x,y},...], include: bool}, ...]
+  maskDrawing: false,      // currently drawing a polygon?
+  maskCurrentVertices: [], // vertices being placed for current polygon
+  maskIsHole: false,       // current polygon is a hole?
   measureMode: null,       // null | "cursor" | "point2point" | "lineProfile" | "area"
   measurePoints: [],       // array of {nx, ny} normalized coords for active measurement
   heightGrid: null,        // Float32Array from server
@@ -138,15 +139,18 @@ function buildWorkspace() {
         </div>
 
         <div style="display:flex;gap:4px;align-items:center">
-          <button class="detect-btn" id="fringe-btn-roi" style="padding:4px 10px;font-size:11px;flex:1">
-            Draw ROI
+          <button class="detect-btn" id="fringe-btn-mask" style="padding:4px 10px;font-size:11px;flex:1">
+            Draw Mask
           </button>
-          <button class="detect-btn" id="fringe-btn-roi-clear" style="padding:4px 10px;font-size:11px;opacity:0.6" disabled>
-            Clear ROI
+          <button class="detect-btn" id="fringe-btn-mask-hole" style="padding:4px 10px;font-size:11px;flex:1" hidden>
+            + Add Hole
+          </button>
+          <button class="detect-btn" id="fringe-btn-mask-clear" style="padding:4px 10px;font-size:11px;opacity:0.6" disabled>
+            Clear All
           </button>
         </div>
-        <div id="fringe-roi-hint" style="font-size:10px;opacity:0.5;text-align:center" hidden>
-          Click two corners on the enlarged preview to select the analysis region
+        <div id="fringe-mask-hint" style="font-size:10px;opacity:0.5;text-align:center" hidden>
+          Click vertices to draw polygon. Double-click to close. Right-click to undo last vertex.
         </div>
 
         <div class="fringe-drop-zone" id="fringe-drop-zone">
@@ -436,19 +440,19 @@ function wireEvents() {
     });
   }
   $("fringe-enlarge-close")?.addEventListener("click", () => {
-    if (fr.roiDrawing) { exitRoiDrawMode(); return; }
+    if (fr.maskDrawing) { exitMaskDrawMode(); return; }
     const overlay = $("fringe-enlarge-overlay");
     if (overlay) overlay.hidden = true;
   });
   $("fringe-enlarge-overlay")?.addEventListener("click", (e) => {
-    if (fr.roiDrawing) return; // don't close during ROI drawing
+    if (fr.maskDrawing) return; // don't close during mask drawing
     if (e.target === e.currentTarget) {
       e.currentTarget.hidden = true;
     }
   });
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape") {
-      if (fr.roiDrawing) { exitRoiDrawMode(); return; }
+      if (fr.maskDrawing) { exitMaskDrawMode(); return; }
       const overlay = $("fringe-enlarge-overlay");
       if (overlay && !overlay.hidden) overlay.hidden = true;
     }
@@ -468,29 +472,25 @@ function wireEvents() {
     });
   }
 
-  // ROI drawing — opens enlarge overlay, click two corners to define rectangle
-  const roiBtn = $("fringe-btn-roi");
-  const roiClearBtn = $("fringe-btn-roi-clear");
-  const roiHint = $("fringe-roi-hint");
-
-  if (roiBtn) {
-    roiBtn.addEventListener("click", () => {
-      if (fr.roiDrawing) {
-        exitRoiDrawMode();
-      } else {
-        enterRoiDrawMode();
-      }
-    });
-  }
-
-  if (roiClearBtn) {
-    roiClearBtn.addEventListener("click", () => {
-      fr.roi = null;
-      roiClearBtn.disabled = true;
-      roiClearBtn.style.opacity = "0.6";
-      drawRoiOverlay();
-    });
-  }
+  // Mask polygon drawing
+  $("fringe-btn-mask")?.addEventListener("click", () => {
+    if (fr.maskDrawing) {
+      exitMaskDrawMode();
+    } else {
+      enterMaskDrawMode(false);
+    }
+  });
+  $("fringe-btn-mask-hole")?.addEventListener("click", () => {
+    enterMaskDrawMode(true);
+  });
+  $("fringe-btn-mask-clear")?.addEventListener("click", () => {
+    fr.maskPolygons = [];
+    drawMaskOverlay();
+    const clearBtn = $("fringe-btn-mask-clear");
+    if (clearBtn) { clearBtn.disabled = true; clearBtn.style.opacity = "0.6"; }
+    const holeBtn = $("fringe-btn-mask-hole");
+    if (holeBtn) holeBtn.hidden = true;
+  });
 
   // Surface map zoom/pan
   const viewport = $("fringe-surface-viewport");
@@ -1000,7 +1000,9 @@ function fmtNm(v) {
   return v.toFixed(1) + " nm";
 }
 
-function drawRoiOverlay(tempRoi) {
+// ── Mask polygon overlay (small preview canvas) ─────────────────────────
+
+function drawMaskOverlay() {
   const canvas = $("fringe-roi-canvas");
   const img = $("fringe-preview");
   if (!canvas || !img) return;
@@ -1008,31 +1010,73 @@ function drawRoiOverlay(tempRoi) {
   canvas.height = img.clientHeight;
   const ctx = canvas.getContext("2d");
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-  const roi = tempRoi || fr.roi;
-  if (!roi) return;
-  const x = roi.x * canvas.width;
-  const y = roi.y * canvas.height;
-  const w = roi.w * canvas.width;
-  const h = roi.h * canvas.height;
-  // Dim everything outside ROI
-  ctx.fillStyle = "rgba(0, 0, 0, 0.5)";
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-  ctx.clearRect(x, y, w, h);
-  // Draw ROI border
-  ctx.strokeStyle = "#0a84ff";
-  ctx.lineWidth = 2;
-  ctx.strokeRect(x, y, w, h);
+  _drawPolygonsOnCtx(ctx, canvas.width, canvas.height, fr.maskPolygons, []);
 }
 
-// ── ROI draw mode (enlarge overlay + click-to-place corners) ────────────
+function _drawPolygonsOnCtx(ctx, w, h, polygons, currentVerts) {
+  // Draw completed polygons
+  for (const poly of polygons) {
+    if (poly.vertices.length < 2) continue;
+    const color = poly.include ? "#0a84ff" : "#ff453a";
+    const fill  = poly.include ? "rgba(10,132,255,0.15)" : "rgba(255,69,58,0.15)";
+    ctx.beginPath();
+    ctx.moveTo(poly.vertices[0].x * w, poly.vertices[0].y * h);
+    for (let i = 1; i < poly.vertices.length; i++) {
+      ctx.lineTo(poly.vertices[i].x * w, poly.vertices[i].y * h);
+    }
+    ctx.closePath();
+    ctx.fillStyle = fill;
+    ctx.fill();
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    // Vertex dots
+    ctx.fillStyle = color;
+    for (const v of poly.vertices) {
+      ctx.beginPath();
+      ctx.arc(v.x * w, v.y * h, 3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
 
-function enterRoiDrawMode() {
-  fr.roiDrawing = true;
-  fr.roiStart = null;
-  const roiBtn = $("fringe-btn-roi");
-  const roiHint = $("fringe-roi-hint");
-  if (roiBtn) { roiBtn.textContent = "Cancel"; roiBtn.style.background = "var(--accent)"; }
-  if (roiHint) roiHint.hidden = false;
+  // Draw current in-progress polygon
+  if (currentVerts.length > 0) {
+    const color = fr.maskIsHole ? "#ff9f0a" : "#30d158";
+    ctx.beginPath();
+    ctx.moveTo(currentVerts[0].x * w, currentVerts[0].y * h);
+    for (let i = 1; i < currentVerts.length; i++) {
+      ctx.lineTo(currentVerts[i].x * w, currentVerts[i].y * h);
+    }
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([4, 3]);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    // Vertex dots
+    for (let i = 0; i < currentVerts.length; i++) {
+      const v = currentVerts[i];
+      ctx.beginPath();
+      ctx.arc(v.x * w, v.y * h, i === 0 ? 5 : 3, 0, Math.PI * 2);
+      ctx.fillStyle = i === 0 ? "#fff" : color;
+      ctx.fill();
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+    }
+  }
+}
+
+// ── Polygon mask draw mode (enlarge overlay + click-to-place vertices) ──
+
+function enterMaskDrawMode(isHole) {
+  fr.maskDrawing = true;
+  fr.maskIsHole = isHole;
+  fr.maskCurrentVertices = [];
+
+  const maskBtn = $("fringe-btn-mask");
+  const maskHint = $("fringe-mask-hint");
+  if (maskBtn) { maskBtn.textContent = "Cancel"; maskBtn.style.background = "var(--accent)"; }
+  if (maskHint) maskHint.hidden = false;
 
   // Open the enlarge overlay with a drawing canvas on top
   const overlay = $("fringe-enlarge-overlay");
@@ -1043,136 +1087,297 @@ function enterRoiDrawMode() {
   enlargeImg.src = preview.src;
   overlay.hidden = false;
 
-  // Create or reuse the ROI drawing canvas on the enlarge overlay
-  let roiCanvas = $("fringe-enlarge-roi-canvas");
-  if (!roiCanvas) {
-    roiCanvas = document.createElement("canvas");
-    roiCanvas.id = "fringe-enlarge-roi-canvas";
-    roiCanvas.style.cssText = "position:absolute;top:0;left:0;width:100%;height:100%;cursor:crosshair;z-index:10";
-    overlay.appendChild(roiCanvas);
+  // Create or reuse the drawing canvas on the enlarge overlay
+  let drawCanvas = $("fringe-enlarge-roi-canvas");
+  if (!drawCanvas) {
+    drawCanvas = document.createElement("canvas");
+    drawCanvas.id = "fringe-enlarge-roi-canvas";
+    drawCanvas.style.cssText = "position:fixed;cursor:crosshair;z-index:10";
+    overlay.appendChild(drawCanvas);
   }
-  roiCanvas.style.pointerEvents = "auto";
+  drawCanvas.style.pointerEvents = "auto";
+  drawCanvas.style.cursor = "crosshair";
 
-  // Wait for image to load so we can size the canvas over the image
   const setupCanvas = () => {
     const imgRect = enlargeImg.getBoundingClientRect();
-    roiCanvas.width = imgRect.width;
-    roiCanvas.height = imgRect.height;
-    roiCanvas.style.left = imgRect.left + "px";
-    roiCanvas.style.top = imgRect.top + "px";
-    roiCanvas.style.width = imgRect.width + "px";
-    roiCanvas.style.height = imgRect.height + "px";
-    roiCanvas.style.position = "fixed";
-    drawEnlargeRoiOverlay(roiCanvas, null);
+    drawCanvas.width = imgRect.width;
+    drawCanvas.height = imgRect.height;
+    drawCanvas.style.left = imgRect.left + "px";
+    drawCanvas.style.top = imgRect.top + "px";
+    drawCanvas.style.width = imgRect.width + "px";
+    drawCanvas.style.height = imgRect.height + "px";
+    drawEnlargeMaskOverlay(drawCanvas);
   };
   if (enlargeImg.complete && enlargeImg.naturalWidth > 0) {
-    // Use rAF to ensure layout is settled after overlay becomes visible
     requestAnimationFrame(setupCanvas);
   } else {
     enlargeImg.onload = () => requestAnimationFrame(setupCanvas);
   }
 
-  // Click handler — first click = corner 1, second click = corner 2
-  const handleClick = (e) => {
-    const rect = roiCanvas.getBoundingClientRect();
-    const nx = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-    const ny = Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height));
+  // Helper: get normalized coords from mouse event
+  const getNorm = (e) => {
+    const rect = drawCanvas.getBoundingClientRect();
+    return {
+      x: Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width)),
+      y: Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height)),
+    };
+  };
 
-    if (!fr.roiStart) {
-      // First corner
-      fr.roiStart = { x: nx, y: ny };
-      drawEnlargeRoiOverlay(roiCanvas, null);
-      // Draw the first point marker
-      const ctx = roiCanvas.getContext("2d");
-      ctx.fillStyle = "#0a84ff";
-      ctx.beginPath();
-      ctx.arc(nx * roiCanvas.width, ny * roiCanvas.height, 5, 0, Math.PI * 2);
-      ctx.fill();
+  // Check if cursor is near first vertex (for polygon closing)
+  const nearFirst = (nx, ny) => {
+    if (fr.maskCurrentVertices.length < 3) return false;
+    const first = fr.maskCurrentVertices[0];
+    const rect = drawCanvas.getBoundingClientRect();
+    const dx = (nx - first.x) * rect.width;
+    const dy = (ny - first.y) * rect.height;
+    return Math.sqrt(dx * dx + dy * dy) < 10;
+  };
+
+  const closePoly = () => {
+    if (fr.maskCurrentVertices.length >= 3) {
+      fr.maskPolygons.push({
+        vertices: [...fr.maskCurrentVertices],
+        include: !fr.maskIsHole,
+      });
+    }
+    fr.maskCurrentVertices = [];
+    cleanup();
+    exitMaskDrawMode();
+  };
+
+  let lastClickTime = 0;
+
+  const handleClick = (e) => {
+    if (e.button !== 0) return;
+    const { x, y } = getNorm(e);
+
+    // Double-click or click near first vertex → close polygon
+    const now = Date.now();
+    const isDblClick = now - lastClickTime < 350;
+    lastClickTime = now;
+
+    if (nearFirst(x, y) || isDblClick) {
+      closePoly();
+      return;
+    }
+
+    fr.maskCurrentVertices.push({ x, y });
+    drawEnlargeMaskOverlay(drawCanvas);
+  };
+
+  const handleMove = (e) => {
+    const { x, y } = getNorm(e);
+    drawEnlargeMaskOverlay(drawCanvas, { x, y }, nearFirst(x, y));
+  };
+
+  const handleContext = (e) => {
+    e.preventDefault();
+    if (fr.maskCurrentVertices.length > 0) {
+      fr.maskCurrentVertices.pop();
+      drawEnlargeMaskOverlay(drawCanvas);
     } else {
-      // Second corner — finalize ROI
-      const roi = {
-        x: Math.min(fr.roiStart.x, nx),
-        y: Math.min(fr.roiStart.y, ny),
-        w: Math.abs(nx - fr.roiStart.x),
-        h: Math.abs(ny - fr.roiStart.y),
-      };
-      if (roi.w > 0.02 && roi.h > 0.02) {
-        fr.roi = roi;
-        const roiClearBtn = $("fringe-btn-roi-clear");
-        if (roiClearBtn) { roiClearBtn.disabled = false; roiClearBtn.style.opacity = "1"; }
-      }
-      roiCanvas.removeEventListener("click", handleClick);
-      roiCanvas.removeEventListener("mousemove", handleMove);
-      exitRoiDrawMode();
+      // No vertices: cancel drawing
+      cleanup();
+      exitMaskDrawMode();
     }
   };
 
-  // Mousemove handler — show rectangle preview after first corner placed
-  const handleMove = (e) => {
-    if (!fr.roiStart) return;
-    const rect = roiCanvas.getBoundingClientRect();
-    const nx = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-    const ny = Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height));
-    drawEnlargeRoiOverlay(roiCanvas, {
-      x: Math.min(fr.roiStart.x, nx),
-      y: Math.min(fr.roiStart.y, ny),
-      w: Math.abs(nx - fr.roiStart.x),
-      h: Math.abs(ny - fr.roiStart.y),
-    });
+  drawCanvas.addEventListener("mousedown", handleClick);
+  drawCanvas.addEventListener("mousemove", handleMove);
+  drawCanvas.addEventListener("contextmenu", handleContext);
+
+  const cleanup = () => {
+    drawCanvas.removeEventListener("mousedown", handleClick);
+    drawCanvas.removeEventListener("mousemove", handleMove);
+    drawCanvas.removeEventListener("contextmenu", handleContext);
+    drawCanvas.style.pointerEvents = "none";
+    const ctx = drawCanvas.getContext("2d");
+    ctx.clearRect(0, 0, drawCanvas.width, drawCanvas.height);
   };
 
-  roiCanvas.addEventListener("click", handleClick);
-  roiCanvas.addEventListener("mousemove", handleMove);
+  fr._maskCleanup = cleanup;
 
-  // Store cleanup refs so exitRoiDrawMode can remove them
-  fr._roiCleanup = () => {
-    roiCanvas.removeEventListener("click", handleClick);
-    roiCanvas.removeEventListener("mousemove", handleMove);
-    roiCanvas.style.pointerEvents = "none";
-    const ctx = roiCanvas.getContext("2d");
-    ctx.clearRect(0, 0, roiCanvas.width, roiCanvas.height);
-  };
+  // Right-click context menu on completed polygons (not during drawing)
+  drawCanvas.addEventListener("contextmenu", (e) => {
+    // already handled by handleContext above during drawing
+  });
 }
 
-function exitRoiDrawMode() {
-  fr.roiDrawing = false;
-  fr.roiStart = null;
-  const roiBtn = $("fringe-btn-roi");
-  const roiHint = $("fringe-roi-hint");
-  if (roiBtn) { roiBtn.textContent = "Draw ROI"; roiBtn.style.background = ""; }
-  if (roiHint) roiHint.hidden = true;
-  if (fr._roiCleanup) { fr._roiCleanup(); fr._roiCleanup = null; }
+function exitMaskDrawMode() {
+  fr.maskDrawing = false;
+  fr.maskCurrentVertices = [];
+  const maskBtn = $("fringe-btn-mask");
+  const maskHint = $("fringe-mask-hint");
+  if (maskBtn) { maskBtn.textContent = "Draw Mask"; maskBtn.style.background = ""; }
+  if (maskHint) maskHint.hidden = true;
+  if (fr._maskCleanup) { fr._maskCleanup(); fr._maskCleanup = null; }
+
+  // Show/hide hole and clear buttons based on current state
+  const hasInclude = fr.maskPolygons.some(p => p.include);
+  const holeBtn = $("fringe-btn-mask-hole");
+  if (holeBtn) holeBtn.hidden = !hasInclude;
+  const clearBtn = $("fringe-btn-mask-clear");
+  if (clearBtn) {
+    clearBtn.disabled = fr.maskPolygons.length === 0;
+    clearBtn.style.opacity = fr.maskPolygons.length === 0 ? "0.6" : "1";
+  }
+
   // Close the enlarge overlay
   const overlay = $("fringe-enlarge-overlay");
   if (overlay) overlay.hidden = true;
-  // Update the small preview ROI overlay
-  drawRoiOverlay();
+
+  // Update the small preview overlay
+  drawMaskOverlay();
+
+  // Wire right-click context menu on enlarged view for completed polygons
+  _wireEnlargeContextMenu();
 }
 
-function drawEnlargeRoiOverlay(canvas, tempRoi) {
+function drawEnlargeMaskOverlay(canvas, cursor, nearFirst) {
   const ctx = canvas.getContext("2d");
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-  const roi = tempRoi;
-  if (!roi) return;
-  const x = roi.x * canvas.width;
-  const y = roi.y * canvas.height;
-  const w = roi.w * canvas.width;
-  const h = roi.h * canvas.height;
-  // Dim everything outside
-  ctx.fillStyle = "rgba(0, 0, 0, 0.4)";
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-  ctx.clearRect(x, y, w, h);
-  // Draw border
-  ctx.strokeStyle = "#0a84ff";
-  ctx.lineWidth = 2;
-  ctx.strokeRect(x, y, w, h);
-  // Draw corner markers
-  ctx.fillStyle = "#0a84ff";
-  for (const [cx, cy] of [[x, y], [x + w, y], [x, y + h], [x + w, y + h]]) {
+  const w = canvas.width;
+  const h = canvas.height;
+
+  _drawPolygonsOnCtx(ctx, w, h, fr.maskPolygons, fr.maskCurrentVertices);
+
+  // Draw rubber-band line from last vertex to cursor
+  if (cursor && fr.maskCurrentVertices.length > 0) {
+    const last = fr.maskCurrentVertices[fr.maskCurrentVertices.length - 1];
+    const color = fr.maskIsHole ? "#ff9f0a" : "#30d158";
     ctx.beginPath();
-    ctx.arc(cx, cy, 4, 0, Math.PI * 2);
-    ctx.fill();
+    ctx.moveTo(last.x * w, last.y * h);
+    ctx.lineTo(cursor.x * w, cursor.y * h);
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1;
+    ctx.setLineDash([4, 3]);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Highlight first vertex when near it (close hint)
+    if (nearFirst && fr.maskCurrentVertices.length >= 3) {
+      const first = fr.maskCurrentVertices[0];
+      ctx.beginPath();
+      ctx.arc(first.x * w, first.y * h, 8, 0, Math.PI * 2);
+      ctx.strokeStyle = "#fff";
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    }
   }
+}
+
+// ── Right-click context menu on completed polygons in the enlarged view ──
+
+function _wireEnlargeContextMenu() {
+  // Context menu is only shown when the enlarged overlay is open and NOT in draw mode.
+  // We use the enlarged image itself (or the overlay) as the event target.
+  const overlay = $("fringe-enlarge-overlay");
+  if (!overlay) return;
+
+  // Remove any previously attached handler
+  if (overlay._maskContextHandler) {
+    overlay.removeEventListener("contextmenu", overlay._maskContextHandler);
+  }
+
+  overlay._maskContextHandler = (e) => {
+    if (fr.maskDrawing) return;
+    const enlargeImg = $("fringe-enlarge-img");
+    if (!enlargeImg) return;
+    const imgRect = enlargeImg.getBoundingClientRect();
+    const nx = (e.clientX - imgRect.left) / imgRect.width;
+    const ny = (e.clientY - imgRect.top) / imgRect.height;
+    if (nx < 0 || nx > 1 || ny < 0 || ny > 1) return;
+
+    // Point-in-polygon test (ray casting), reverse order for top-most
+    let hitIdx = -1;
+    for (let i = fr.maskPolygons.length - 1; i >= 0; i--) {
+      if (_pointInPolygon(nx, ny, fr.maskPolygons[i].vertices)) {
+        hitIdx = i;
+        break;
+      }
+    }
+    if (hitIdx === -1) return;
+    e.preventDefault();
+    _showPolyContextMenu(e.clientX, e.clientY, hitIdx);
+  };
+
+  overlay.addEventListener("contextmenu", overlay._maskContextHandler);
+}
+
+function _pointInPolygon(px, py, vertices) {
+  let inside = false;
+  for (let i = 0, j = vertices.length - 1; i < vertices.length; j = i++) {
+    const xi = vertices[i].x, yi = vertices[i].y;
+    const xj = vertices[j].x, yj = vertices[j].y;
+    const intersect = (yi > py) !== (yj > py) &&
+      px < ((xj - xi) * (py - yi)) / (yj - yi) + xi;
+    if (intersect) inside = !inside;
+  }
+  return inside;
+}
+
+function _showPolyContextMenu(cx, cy, idx) {
+  // Remove any existing popup
+  const existing = document.getElementById("fringe-poly-ctx-menu");
+  if (existing) existing.remove();
+
+  const menu = document.createElement("div");
+  menu.id = "fringe-poly-ctx-menu";
+  menu.style.cssText = `position:fixed;left:${cx}px;top:${cy}px;z-index:9999;
+    background:var(--surface,#1c1c1e);border:1px solid var(--border,#3a3a3c);
+    border-radius:6px;padding:4px 0;min-width:160px;box-shadow:0 4px 16px rgba(0,0,0,0.5);
+    font-size:12px`;
+
+  const poly = fr.maskPolygons[idx];
+  const toggleLabel = poly.include ? "Convert to Hole (Exclude)" : "Convert to Include";
+
+  const item1 = document.createElement("div");
+  item1.textContent = toggleLabel;
+  item1.style.cssText = "padding:6px 14px;cursor:pointer;opacity:0.9";
+  item1.addEventListener("mouseover", () => { item1.style.background = "var(--accent,#0a84ff)"; });
+  item1.addEventListener("mouseout", () => { item1.style.background = ""; });
+  item1.addEventListener("click", () => {
+    fr.maskPolygons[idx].include = !fr.maskPolygons[idx].include;
+    menu.remove();
+    // Redraw on the enlarged canvas if open
+    const drawCanvas = $("fringe-enlarge-roi-canvas");
+    if (drawCanvas && drawCanvas.width > 0) drawEnlargeMaskOverlay(drawCanvas);
+    drawMaskOverlay();
+  });
+
+  const item2 = document.createElement("div");
+  item2.textContent = "Delete";
+  item2.style.cssText = "padding:6px 14px;cursor:pointer;color:#ff453a";
+  item2.addEventListener("mouseover", () => { item2.style.background = "rgba(255,69,58,0.15)"; });
+  item2.addEventListener("mouseout", () => { item2.style.background = ""; });
+  item2.addEventListener("click", () => {
+    fr.maskPolygons.splice(idx, 1);
+    menu.remove();
+    const hasInclude = fr.maskPolygons.some(p => p.include);
+    const holeBtn = $("fringe-btn-mask-hole");
+    if (holeBtn) holeBtn.hidden = !hasInclude;
+    const clearBtn = $("fringe-btn-mask-clear");
+    if (clearBtn) {
+      clearBtn.disabled = fr.maskPolygons.length === 0;
+      clearBtn.style.opacity = fr.maskPolygons.length === 0 ? "0.6" : "1";
+    }
+    const drawCanvas = $("fringe-enlarge-roi-canvas");
+    if (drawCanvas && drawCanvas.width > 0) drawEnlargeMaskOverlay(drawCanvas);
+    drawMaskOverlay();
+  });
+
+  menu.appendChild(item1);
+  menu.appendChild(item2);
+  document.body.appendChild(menu);
+
+  // Close menu on any outside click
+  const dismiss = (e) => {
+    if (!menu.contains(e.target)) {
+      menu.remove();
+      document.removeEventListener("mousedown", dismiss, true);
+    }
+  };
+  setTimeout(() => document.addEventListener("mousedown", dismiss, true), 0);
 }
 
 function setStatus(msg) {
@@ -1208,7 +1413,12 @@ async function analyzeFromCamera() {
       wavelength_nm: getWavelength(),
       mask_threshold: getMaskThreshold(),
       subtract_terms: getSubtractTerms(),
-      roi: fr.roi || undefined,
+      mask_polygons: fr.maskPolygons.length > 0
+        ? fr.maskPolygons.map(p => ({
+            vertices: p.vertices.map(v => [v.x, v.y]),
+            include: p.include,
+          }))
+        : undefined,
     };
     console.log("[fringe] analyze payload:", JSON.stringify(payload));
     const r = await apiFetch("/fringe/analyze", {
@@ -1259,7 +1469,12 @@ async function analyzeFromFile(file) {
         mask_threshold: getMaskThreshold(),
         subtract_terms: getSubtractTerms(),
         image_b64: b64,
-        roi: fr.roi || undefined,
+        mask_polygons: fr.maskPolygons.length > 0
+          ? fr.maskPolygons.map(p => ({
+              vertices: p.vertices.map(v => [v.x, v.y]),
+              include: p.include,
+            }))
+          : undefined,
       }),
     });
     if (!r.ok) {
@@ -1302,7 +1517,12 @@ async function addToAverage() {
         wavelength_nm: getWavelength(),
         mask_threshold: getMaskThreshold(),
         subtract_terms: getSubtractTerms(),
-        roi: fr.roi || undefined,
+        mask_polygons: fr.maskPolygons.length > 0
+          ? fr.maskPolygons.map(p => ({
+              vertices: p.vertices.map(v => [v.x, v.y]),
+              include: p.include,
+            }))
+          : undefined,
       }),
     });
     if (!r.ok) { setStatus("Failed"); setTimeout(resetStatus, 2000); return; }
