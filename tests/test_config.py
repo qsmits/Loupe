@@ -7,7 +7,7 @@ from backend.config import load_config, save_config, CONFIG_PATH
 def test_config_load_defaults_when_missing(tmp_path, monkeypatch):
     monkeypatch.setattr("backend.config.CONFIG_PATH", tmp_path / "config.json")
     result = load_config()
-    assert result == {"camera_id": None, "version": 1, "no_camera": False, "hosted": False, "theme": "macos-dark", "tolerance_warn": 0.10, "tolerance_fail": 0.25, "subpixel_method": "parabola", "max_sessions": 50, "session_ttl": 1800}
+    assert result == {"camera_id": None, "version": 1, "no_camera": False, "hosted": False, "theme": "macos-dark", "tolerance_warn": 0.10, "tolerance_fail": 0.25, "subpixel_method": "parabola", "max_sessions": 50, "session_ttl": 1800, "fringe_wavelengths": [{"id": "sodium", "label": "Sodium (589 nm)", "nm": 589.0}, {"id": "hene", "label": "HeNe (632.8 nm)", "nm": 632.8}, {"id": "green", "label": "Green LED (532 nm)", "nm": 532.0}]}
 
 
 def test_config_save_and_load(tmp_path, monkeypatch):

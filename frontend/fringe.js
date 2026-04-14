@@ -33,13 +33,43 @@ const fr = {
 function $(id) { return document.getElementById(id); }
 
 // ── Wavelength presets ──────────────────────────────────────────────────
+// Defaults; overridden at init from /config/fringe if available.
+// "custom" is a UI-only entry, always appended by rebuildWavelengthSelect().
 
-const WAVELENGTHS = {
-  "sodium":  { label: "Sodium (589 nm)",   nm: 589.0 },
-  "hene":    { label: "HeNe (632.8 nm)",   nm: 632.8 },
-  "green":   { label: "Green LED (532 nm)", nm: 532.0 },
-  "custom":  { label: "Custom...",          nm: null },
-};
+let WAVELENGTHS = [
+  { id: "sodium", label: "Sodium (589 nm)",   nm: 589.0 },
+  { id: "hene",   label: "HeNe (632.8 nm)",   nm: 632.8 },
+  { id: "green",  label: "Green LED (532 nm)", nm: 532.0 },
+];
+
+function rebuildWavelengthSelect() {
+  const sel = $("fringe-wavelength");
+  if (!sel) return;
+  sel.innerHTML = "";
+  for (const wl of WAVELENGTHS) {
+    const opt = document.createElement("option");
+    opt.value = wl.id;
+    opt.textContent = wl.label;
+    opt.dataset.nm = wl.nm;
+    sel.appendChild(opt);
+  }
+  const custom = document.createElement("option");
+  custom.value = "custom";
+  custom.textContent = "Custom...";
+  sel.appendChild(custom);
+}
+
+async function loadWavelengthPresets() {
+  try {
+    const r = await apiFetch("/config/fringe");
+    if (!r.ok) return;
+    const cfg = await r.json();
+    if (Array.isArray(cfg.fringe_wavelengths) && cfg.fringe_wavelengths.length > 0) {
+      WAVELENGTHS = cfg.fringe_wavelengths;
+      rebuildWavelengthSelect();
+    }
+  } catch (e) { /* use defaults */ }
+}
 
 // ── Build workspace DOM ─────────────────────────────────────────────────
 
@@ -104,9 +134,9 @@ function buildWorkspace() {
           <div style="font-size:12px;font-weight:600;opacity:0.7">Settings</div>
           <label>Wavelength
             <select id="fringe-wavelength">
-              <option value="sodium" selected>Sodium (589 nm)</option>
-              <option value="hene">HeNe (632.8 nm)</option>
-              <option value="green">Green LED (532 nm)</option>
+              ${WAVELENGTHS.map((wl, i) =>
+                `<option value="${wl.id}"${i === 0 ? " selected" : ""} data-nm="${wl.nm}">${wl.label}</option>`
+              ).join("")}
               <option value="custom">Custom...</option>
             </select>
           </label>
@@ -794,7 +824,10 @@ function getWavelength() {
     const v = parseFloat(el?.value || "589.0");
     return Number.isFinite(v) && v > 0 ? v : 589.0;
   }
-  return WAVELENGTHS[sel.value]?.nm || 589.0;
+  const opt = sel.selectedOptions[0];
+  if (opt && opt.dataset.nm) return parseFloat(opt.dataset.nm);
+  const entry = WAVELENGTHS.find(wl => wl.id === sel.value);
+  return entry?.nm || 589.0;
 }
 
 function getMaskThreshold() {
@@ -1745,6 +1778,7 @@ function stopPolling() {
 
 export function initFringe() {
   buildWorkspace();
+  loadWavelengthPresets();   // async — overrides defaults from config.json
 
   // Start/stop polling when mode becomes visible/hidden
   const observer = new MutationObserver(() => {

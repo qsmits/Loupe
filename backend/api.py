@@ -54,6 +54,14 @@ def post_ui_config(body: UiConfig, request: Request):
     return {"theme": body.theme, "subpixel_method": body.subpixel_method}
 
 
+@router.get("/config/fringe")
+def get_fringe_config():
+    cfg = load_config()
+    return {
+        "fringe_wavelengths": cfg.get("fringe_wavelengths", []),
+    }
+
+
 @router.get("/config/tolerances")
 def get_tolerances():
     cfg = load_config()

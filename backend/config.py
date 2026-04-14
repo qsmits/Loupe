@@ -16,6 +16,11 @@ _DEFAULTS = {
     "subpixel_method": "parabola",
     "max_sessions": 50,
     "session_ttl": 1800,
+    "fringe_wavelengths": [
+        {"id": "sodium", "label": "Sodium (589 nm)", "nm": 589.0},
+        {"id": "hene", "label": "HeNe (632.8 nm)", "nm": 632.8},
+        {"id": "green", "label": "Green LED (532 nm)", "nm": 532.0},
+    ],
 }
 
 
