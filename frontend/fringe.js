@@ -1196,11 +1196,6 @@ function enterMaskDrawMode(isHole) {
   };
 
   fr._maskCleanup = cleanup;
-
-  // Right-click context menu on completed polygons (not during drawing)
-  drawCanvas.addEventListener("contextmenu", (e) => {
-    // already handled by handleContext above during drawing
-  });
 }
 
 function exitMaskDrawMode() {
