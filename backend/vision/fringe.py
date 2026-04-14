@@ -958,6 +958,97 @@ def render_zernike_chart(coefficients: list[float],
     return base64.b64encode(buf.read()).decode("ascii")
 
 
+def render_fft_image(image: np.ndarray, peak_y: int, peak_x: int,
+                    size: int = 256) -> str:
+    """Render the FFT magnitude as a log-scaled PNG with carrier peak marked.
+
+    Parameters
+    ----------
+    image : 2D grayscale image (the original interferogram).
+    peak_y, peak_x : detected carrier peak in fftshift coordinates.
+    size : output image size (square).
+
+    Returns
+    -------
+    Base64-encoded PNG string.
+    """
+    img = np.asarray(image, dtype=np.float64)
+    if img.ndim == 3:
+        img = img.mean(axis=-1)
+
+    # Compute FFT
+    img_windowed = (img - img.mean()) * np.outer(np.hanning(img.shape[0]),
+                                                  np.hanning(img.shape[1]))
+    F = np.fft.fftshift(np.fft.fft2(img_windowed))
+    magnitude = np.abs(F)
+
+    # Log scale
+    log_mag = np.log1p(magnitude)
+    log_mag = log_mag / max(log_mag.max(), 1e-10)
+
+    # Resize to output size
+    display = cv2.resize(log_mag, (size, size), interpolation=cv2.INTER_AREA)
+
+    # Convert to color
+    display_u8 = np.clip(display * 255, 0, 255).astype(np.uint8)
+    colored = cv2.applyColorMap(display_u8, cv2.COLORMAP_INFERNO)
+
+    # Mark peak position (scale to display coords)
+    h, w = img.shape
+    px_disp = int(peak_x / w * size)
+    py_disp = int(peak_y / h * size)
+    cv2.drawMarker(colored, (px_disp, py_disp), (0, 255, 0),
+                   cv2.MARKER_CROSS, 15, 2)
+    # Also mark the conjugate (-1 order)
+    cx, cy = size // 2, size // 2
+    conj_x = 2 * cx - px_disp
+    conj_y = 2 * cy - py_disp
+    cv2.drawMarker(colored, (conj_x, conj_y), (0, 180, 0),
+                   cv2.MARKER_CROSS, 10, 1)
+
+    _, buf = cv2.imencode(".png", colored)
+    return base64.b64encode(buf.tobytes()).decode("ascii")
+
+
+def render_modulation_map(modulation: np.ndarray,
+                          mask: np.ndarray | None = None) -> str:
+    """Render the fringe modulation map as a false-color PNG.
+
+    Green = high modulation (reliable phase), red = low modulation.
+    Masked pixels shown as dark gray.
+
+    Parameters
+    ----------
+    modulation : 2D float64 modulation map in [0, 1].
+    mask : optional boolean mask (True = valid).
+
+    Returns
+    -------
+    Base64-encoded PNG string.
+    """
+    h, w = modulation.shape
+    rgb = np.zeros((h, w, 3), dtype=np.uint8)
+
+    mod_clipped = np.clip(modulation, 0, 1)
+    # BGR format for OpenCV: index 0=B, 1=G, 2=R
+    rgb[:, :, 2] = np.clip((1.0 - mod_clipped) * 255, 0, 255).astype(np.uint8)  # Red channel
+    rgb[:, :, 1] = np.clip(mod_clipped * 255, 0, 255).astype(np.uint8)           # Green channel
+    rgb[:, :, 0] = 30  # slight blue for visibility
+
+    if mask is not None:
+        rgb[~mask.astype(bool)] = [40, 40, 40]  # dark gray for masked
+
+    # Resize if very large
+    max_dim = 512
+    if max(h, w) > max_dim:
+        scale = max_dim / max(h, w)
+        new_h, new_w = max(1, int(h * scale)), max(1, int(w * scale))
+        rgb = cv2.resize(rgb, (new_w, new_h), interpolation=cv2.INTER_AREA)
+
+    _, buf = cv2.imencode(".png", rgb)
+    return base64.b64encode(buf.tobytes()).decode("ascii")
+
+
 def render_psf(surface_waves: np.ndarray, mask: np.ndarray | None = None) -> str:
     """Compute and render the PSF from a wavefront error map.
 
@@ -1165,6 +1256,11 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 632.8,
     profile_x = render_profile(height_nm, mask, axis="x")
     profile_y = render_profile(height_nm, mask, axis="y")
 
+    # Diagnostic images: FFT with carrier peak marked, modulation map
+    carrier_peak_y, carrier_peak_x, _ = _find_carrier(img)
+    fft_b64 = render_fft_image(img, int(carrier_peak_y), int(carrier_peak_x))
+    mod_map_b64 = render_modulation_map(modulation, mask)
+
     # Step 10: PSF and MTF
     surface_waves = height_nm / wavelength_nm
     psf_b64 = render_psf(surface_waves, mask)
@@ -1213,6 +1309,8 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 632.8,
         "profile_y": profile_y,
         "psf": psf_b64,
         "mtf": mtf_data,
+        "fft_image": fft_b64,
+        "modulation_map": mod_map_b64,
         "coefficients": coeffs.tolist(),
         "coefficient_names": {str(j): ZERNIKE_NAMES.get(j, f"Z{j}")
                               for j in range(1, n_zernike + 1)},

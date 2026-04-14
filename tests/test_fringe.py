@@ -496,6 +496,39 @@ class TestPolygonMask:
         assert mask.all()
 
 
+class TestDiagnosticRendering:
+    def test_render_fft_image_returns_base64_png(self):
+        from backend.vision.fringe import render_fft_image
+        h, w = 256, 256
+        yy, xx = np.mgrid[0:h, 0:w]
+        image = 128.0 + 100.0 * np.cos(2 * np.pi * 8 * xx / w)
+        result = render_fft_image(image, peak_y=128, peak_x=160)
+        assert isinstance(result, str)
+        img_bytes = base64.b64decode(result)
+        assert img_bytes[:4] == b"\x89PNG"
+
+    def test_render_modulation_map_returns_base64_png(self):
+        from backend.vision.fringe import render_modulation_map
+        modulation = np.random.rand(100, 100)
+        mask = np.ones((100, 100), dtype=bool)
+        mask[40:60, 40:60] = False
+        result = render_modulation_map(modulation, mask)
+        assert isinstance(result, str)
+        img_bytes = base64.b64decode(result)
+        assert img_bytes[:4] == b"\x89PNG"
+
+    def test_analyze_returns_fft_and_modulation(self):
+        h, w = 256, 256
+        yy, xx = np.mgrid[0:h, 0:w]
+        image = 128 + 80 * np.cos(2 * np.pi * 8 * xx / w + 0.5 * yy / h)
+        image = np.clip(image, 0, 255).astype(np.uint8)
+        result = analyze_interferogram(image, n_zernike=15)
+        assert "fft_image" in result
+        assert "modulation_map" in result
+        assert isinstance(result["fft_image"], str)
+        assert isinstance(result["modulation_map"], str)
+
+
 class TestFringeAPI:
     """API-level tests using the FastAPI test client."""
 
