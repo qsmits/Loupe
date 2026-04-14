@@ -7,12 +7,15 @@ coefficients for instant re-computation when toggling subtraction terms.
 
 from __future__ import annotations
 
+import asyncio
 import base64
+import json
 from typing import Optional
 
 import cv2
 import numpy as np
 from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from .cameras.base import BaseCamera
@@ -139,6 +142,99 @@ def make_fringe_router(camera: BaseCamera) -> APIRouter:
             custom_mask=custom_mask,
         )
         return result
+
+    @router.post("/fringe/analyze-stream", dependencies=[Depends(_reject_hosted)])
+    async def fringe_analyze_stream(body: AnalyzeBody):
+        """Run the full fringe analysis pipeline with SSE progress events.
+
+        Returns a text/event-stream where each event is a JSON object.
+        Progress events: {"stage": str, "progress": float, "message": str}
+        Final event:     {"stage": "done", "progress": 1.0, "result": {...}}
+        Error event:     {"stage": "error", "message": str}
+        """
+        loop = asyncio.get_event_loop()
+        queue: asyncio.Queue = asyncio.Queue()
+
+        # Decode image before starting the stream so we can emit error events
+        # inside the stream rather than returning an HTTP error.
+        if body.image_b64:
+            try:
+                img_bytes = base64.b64decode(body.image_b64)
+                img_array = np.frombuffer(img_bytes, dtype=np.uint8)
+                image = cv2.imdecode(img_array, cv2.IMREAD_GRAYSCALE)
+                if image is None:
+                    raise ValueError("Could not decode image")
+            except Exception as e:
+                err_msg = str(e)
+                async def _error_stream(msg=err_msg):
+                    yield f"data: {json.dumps({'stage': 'error', 'message': msg})}\n\n"
+                return StreamingResponse(_error_stream(), media_type="text/event-stream")
+        else:
+            frame = camera.get_frame()
+            if frame is None:
+                async def _error_stream():
+                    yield f"data: {json.dumps({'stage': 'error', 'message': 'Camera returned no frame'})}\n\n"
+                return StreamingResponse(_error_stream(), media_type="text/event-stream")
+            image = frame
+            if image.ndim == 3:
+                image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+
+        # Crop to ROI if specified (legacy rectangle mode)
+        if body.roi and not body.mask_polygons:
+            ih, iw = image.shape[:2]
+            x0 = int(body.roi.x * iw)
+            y0 = int(body.roi.y * ih)
+            x1 = min(int((body.roi.x + body.roi.w) * iw), iw)
+            y1 = min(int((body.roi.y + body.roi.h) * ih), ih)
+            if x1 - x0 > 10 and y1 - y0 > 10:
+                image = image[y0:y1, x0:x1]
+
+        # Build polygon mask if provided
+        custom_mask = None
+        if body.mask_polygons:
+            ih, iw = image.shape[:2]
+            custom_mask = rasterize_polygon_mask(
+                [{"vertices": p.vertices, "include": p.include} for p in body.mask_polygons],
+                ih, iw,
+            )
+
+        _fringe_cache["last_image"] = image.copy()
+
+        def _on_progress(stage: str, progress: float, message: str) -> None:
+            event = {"stage": stage, "progress": progress, "message": message}
+            loop.call_soon_threadsafe(queue.put_nowait, event)
+
+        async def _run_analysis():
+            try:
+                result = await loop.run_in_executor(
+                    None,
+                    lambda: analyze_interferogram(
+                        image,
+                        wavelength_nm=body.wavelength_nm,
+                        mask_threshold=body.mask_threshold,
+                        subtract_terms=body.subtract_terms,
+                        n_zernike=body.n_zernike,
+                        use_full_mask=body.roi is not None and not body.mask_polygons,
+                        custom_mask=custom_mask,
+                        on_progress=_on_progress,
+                    ),
+                )
+                await queue.put({"stage": "done", "progress": 1.0, "result": result})
+            except Exception as exc:
+                await queue.put({"stage": "error", "message": str(exc)})
+
+        async def _event_stream():
+            task = asyncio.ensure_future(_run_analysis())
+            try:
+                while True:
+                    event = await queue.get()
+                    yield f"data: {json.dumps(event)}\n\n"
+                    if event.get("stage") in ("done", "error"):
+                        break
+            finally:
+                task.cancel()
+
+        return StreamingResponse(_event_stream(), media_type="text/event-stream")
 
     @router.post("/fringe/reanalyze", dependencies=[Depends(_reject_hosted)])
     async def fringe_reanalyze(body: ReanalyzeBody):

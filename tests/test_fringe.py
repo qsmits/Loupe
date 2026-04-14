@@ -1,5 +1,6 @@
 """Tests for fringe analysis vision module."""
 import base64
+import json
 import math
 import numpy as np
 import pytest
@@ -619,3 +620,116 @@ class TestCarrierOverride:
         # Should still produce valid results, just different
         assert result_forced["pv_nm"] >= 0
         assert result_forced["carrier"]["peak_x"] == forced_x
+
+
+class TestProgressCallback:
+    """Tests for the on_progress callback added to analyze_interferogram."""
+
+    def test_progress_callback_receives_all_stages(self):
+        """All 5 expected stages should be reported with monotonically increasing progress."""
+        h, w = 128, 128
+        xx = np.arange(w)
+        img = (128 + 80 * np.cos(2 * np.pi * 6 * xx / w)).astype(np.uint8)
+        img = np.tile(img, (h, 1))
+
+        events: list[tuple[str, float, str]] = []
+
+        def on_progress(stage: str, progress: float, message: str) -> None:
+            events.append((stage, progress, message))
+
+        analyze_interferogram(img, wavelength_nm=632.8, n_zernike=15,
+                              on_progress=on_progress)
+
+        stages_seen = [e[0] for e in events]
+        progresses = [e[1] for e in events]
+
+        # All 5 named stages must be present
+        for expected in ("carrier", "phase", "unwrap", "zernike", "render"):
+            assert expected in stages_seen, f"Stage '{expected}' not reported"
+
+        # Progress must be monotonically non-decreasing
+        for i in range(1, len(progresses)):
+            assert progresses[i] >= progresses[i - 1], (
+                f"Progress went backwards: {progresses[i-1]} -> {progresses[i]}"
+            )
+
+        # Final progress value must be 1.0
+        assert progresses[-1] == 1.0, f"Final progress not 1.0: {progresses[-1]}"
+
+    def test_no_callback_still_works(self):
+        """analyze_interferogram without on_progress must still return normal results."""
+        h, w = 64, 64
+        xx = np.arange(w)
+        img = (128 + 80 * np.cos(2 * np.pi * 4 * xx / w)).astype(np.uint8)
+        img = np.tile(img, (h, 1))
+
+        result = analyze_interferogram(img, wavelength_nm=632.8, n_zernike=15)
+        assert "surface_map" in result
+        assert "pv_nm" in result
+        assert result["pv_nm"] >= 0
+
+
+class TestAnalyzeStream:
+    """API-level tests for the SSE /fringe/analyze-stream endpoint."""
+
+    @pytest.fixture
+    def client(self):
+        from backend.main import create_app
+        from tests.conftest import FakeCamera
+        from fastapi.testclient import TestClient
+
+        camera = FakeCamera()
+        app = create_app(camera)
+        with TestClient(app) as c:
+            yield c
+
+    def _parse_sse(self, raw: str) -> list[dict]:
+        """Parse raw SSE text into a list of JSON event dicts."""
+        events = []
+        for line in raw.splitlines():
+            line = line.strip()
+            if line.startswith("data:"):
+                payload = line[len("data:"):].strip()
+                events.append(json.loads(payload))
+        return events
+
+    def test_stream_returns_progress_events(self, client):
+        """POST with a valid image_b64 should yield progress events and a done event."""
+        h, w = 64, 64
+        xx = np.arange(w)
+        img = (128 + 80 * np.cos(2 * np.pi * 4 * xx / w)).astype(np.uint8)
+        img_2d = np.tile(img, (h, 1))
+        _, buf = cv2.imencode(".png", img_2d)
+        b64 = base64.b64encode(buf.tobytes()).decode("ascii")
+
+        with client.stream("POST", "/fringe/analyze-stream",
+                           json={"image_b64": b64, "n_zernike": 15}) as resp:
+            assert resp.status_code == 200
+            assert "text/event-stream" in resp.headers.get("content-type", "")
+            raw = resp.read().decode("utf-8")
+
+        events = self._parse_sse(raw)
+        assert len(events) > 0, "No SSE events received"
+
+        stages = [e["stage"] for e in events]
+        assert "done" in stages, "No 'done' event received"
+
+        done_event = next(e for e in events if e["stage"] == "done")
+        assert "result" in done_event
+        assert "surface_map" in done_event["result"]
+        assert "pv_nm" in done_event["result"]
+        assert done_event["progress"] == 1.0
+
+    def test_stream_error_returns_error_event(self, client):
+        """POST with bad base64 should return an error SSE event (not an HTTP error)."""
+        with client.stream("POST", "/fringe/analyze-stream",
+                           json={"image_b64": "not-valid-base64!!!"}) as resp:
+            # The response starts as SSE (200) even for errors
+            assert resp.status_code == 200
+            raw = resp.read().decode("utf-8")
+
+        events = self._parse_sse(raw)
+        assert len(events) > 0, "No SSE events received"
+        error_events = [e for e in events if e["stage"] == "error"]
+        assert len(error_events) > 0, "No error event received"
+        assert "message" in error_events[0]

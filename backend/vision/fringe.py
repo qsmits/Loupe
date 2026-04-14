@@ -1244,7 +1244,8 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 632.8,
                           n_zernike: int = 36,
                           use_full_mask: bool = False,
                           custom_mask: np.ndarray | None = None,
-                          carrier_override: tuple[int, int] | None = None) -> dict:
+                          carrier_override: tuple[int, int] | None = None,
+                          on_progress=None) -> dict:
     """Full analysis pipeline: single image in, all results out.
 
     Parameters
@@ -1274,10 +1275,15 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 632.8,
     if subtract_terms is None:
         subtract_terms = [1, 2, 3]  # Piston + Tilt X + Tilt Y
 
+    def _progress(stage: str, progress: float, message: str) -> None:
+        if on_progress is not None:
+            on_progress(stage, progress, message)
+
     img = np.asarray(image, dtype=np.float64)
     if img.ndim == 3:
         img = img.mean(axis=-1)
 
+    _progress("carrier", 0.0, "Detecting carrier...")
     # Step 1: Modulation & mask
     modulation = compute_fringe_modulation(img)
     if custom_mask is not None:
@@ -1291,12 +1297,15 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 632.8,
 
     # Step 2: DFT phase extraction
     wrapped = extract_phase_dft(img, mask, carrier_override=carrier_override)
+    _progress("phase", 0.25, "Extracting phase...")
 
     # Step 3: Phase unwrapping
     unwrapped = unwrap_phase_2d(wrapped, mask, quality=modulation)
+    _progress("unwrap", 0.50, "Unwrapping phase...")
 
     # Step 4: Zernike fitting
     coeffs, rho, theta = fit_zernike(unwrapped, n_terms=n_zernike, mask=mask)
+    _progress("zernike", 0.70, "Fitting Zernike polynomials...")
 
     # Step 5: Subtract selected terms
     corrected = subtract_zernike(unwrapped, coeffs, subtract_terms, rho, theta, mask)
@@ -1321,6 +1330,7 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 632.8,
     # Step 8: Focus quality
     f_score = focus_quality(image)
 
+    _progress("render", 0.85, "Rendering results...")
     # Step 9: Renderings
     surface_map_b64 = render_surface_map(height_nm, mask)
     profile_x = render_profile(height_nm, mask, axis="x")
@@ -1389,6 +1399,7 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 632.8,
     grid_out = grid.copy()
     grid_out[~grid_mask] = 0.0
 
+    _progress("render", 1.0, "Complete")
     return {
         "surface_map": surface_map_b64,
         "zernike_chart": zernike_chart_b64,
