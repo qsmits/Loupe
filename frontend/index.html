@@ -675,11 +675,13 @@
 
           <div class="help-nav-section" data-help-modes="fringe">Analysis</div>
           <button class="help-nav-item top-level" data-page="fringe-capture" data-help-modes="fringe">Capture &amp; Analyze</button>
+          <button class="help-nav-item top-level" data-page="fringe-averaging" data-help-modes="fringe">Wavefront Averaging</button>
           <button class="help-nav-item top-level" data-page="fringe-zernike" data-help-modes="fringe">Zernike Subtraction</button>
 
           <div class="help-nav-section" data-help-modes="fringe">Results</div>
           <button class="help-nav-item top-level" data-page="fringe-results" data-help-modes="fringe">Results &amp; Tabs</button>
           <button class="help-nav-item top-level" data-page="fringe-tips" data-help-modes="fringe">Tips &amp; Troubleshooting</button>
+          <button class="help-nav-item top-level" data-page="fringe-diagnostics" data-help-modes="fringe">Diagnostics</button>
         </nav>
 
         <!-- Right content -->
@@ -844,6 +846,18 @@
             <div class="help-step"><span class="help-step-num">3</span><span>Phase unwrapping resolves 2&pi; ambiguities into a continuous surface.</span></div>
             <div class="help-step"><span class="help-step-num">4</span><span>Zernike polynomial fitting (36 terms) decomposes the surface into known aberration modes.</span></div>
             <div class="help-step"><span class="help-step-num">5</span><span>Selected terms are subtracted and the residual is converted to physical height.</span></div>
+            <div class="help-section-label">Polygon mask</div>
+            <p class="help-p">Click <strong>Draw Mask</strong> to open an enlarged preview and draw a polygon outline of the part. Click vertices to place them, double-click to close the polygon. This defines the analysis boundary. Click <strong>Add Hole</strong> to draw exclusion polygons for holes or cutouts in the part. Right-click any polygon to toggle between include and exclude, or to delete it. The polygon mask replaces the automatic brightness-based masking with your precise part boundary.</p>
+          </div>
+
+          <!-- Fringe: Wavefront Averaging -->
+          <div class="help-page" id="help-page-fringe-averaging" hidden>
+            <h2 class="help-page-title">Wavefront Averaging</h2>
+            <p class="help-page-sub">Reduce random noise by averaging multiple captures of the same surface.</p>
+            <div class="help-section-label">How to average</div>
+            <p class="help-p">Click <strong>Add to Average</strong> after each analysis to accumulate captures. The averaged wavefront is recomputed after each addition. The capture log shows all included captures with their individual RMS values.</p>
+            <div class="help-section-label">Automatic rejection</div>
+            <p class="help-p">Captures with unusually high RMS (indicating vibration, air bubbles, or a bumped flat) are automatically rejected. The threshold is configurable: by default, a capture is rejected if its RMS exceeds 3&times; the running average. Rejected captures appear with a red &cross; in the capture log. Click any entry in the log to manually include or exclude it from the average.</p>
           </div>
 
           <!-- Fringe: Zernike Subtraction -->
@@ -895,6 +909,20 @@
             <div class="help-tip"><strong>Noisy surface map:</strong> The fringe density may be too high for the camera resolution. Reduce the number of fringes by adjusting the angle of the optical flat.</div>
             <div class="help-tip"><strong>Phase unwrapping errors:</strong> These appear as sharp step discontinuities in the surface map. They occur when fringes are too closely spaced or when the image is noisy. Try increasing the mask threshold to exclude low-quality regions.</div>
             <div class="help-tip"><strong>Wrong wavelength:</strong> If PV/RMS values seem unreasonable, verify the wavelength setting matches your actual light source.</div>
+          </div>
+
+          <!-- Fringe: Diagnostics -->
+          <div class="help-page" id="help-page-fringe-diagnostics" hidden>
+            <h2 class="help-page-title">Diagnostics</h2>
+            <p class="help-page-sub">Inspect the carrier detection and modulation quality.</p>
+            <div class="help-section-label">Carrier summary</div>
+            <p class="help-p">After analysis, a carrier summary row appears below the statistics bar showing the detected fringe period (pixels), angle, and confidence level. The confidence dot is green (good, peak ratio &gt;5), amber (fair, 2-5), or red (low, &lt;2). Click the row to open the Diagnostics tab.</p>
+            <div class="help-section-label">FFT magnitude image</div>
+            <p class="help-p">Shows the 2D Fourier transform of the interferogram on a log scale. The detected carrier peak is marked with a green crosshair. A clean interferogram shows two bright sideband peaks (the carrier and its conjugate) clearly separated from the DC center. If the wrong peak was selected, click on the correct peak to override and re-analyze.</p>
+            <div class="help-section-label">Modulation map</div>
+            <p class="help-p">False-color visualization of fringe contrast across the aperture. Green indicates high modulation (reliable phase extraction), red indicates low modulation (noisy or absent fringes). Masked pixels appear dark gray. Use this to verify that the mask threshold is appropriate and to understand where surface map noise originates.</p>
+            <div class="help-section-label">Manual carrier override</div>
+            <p class="help-p">If the auto-detected carrier is wrong (indicated by a low confidence score or unexpected results), click directly on the FFT image to select the correct sideband peak. The analysis re-runs with the forced carrier position. Click <strong>Reset to Auto</strong> to revert to automatic detection.</p>
           </div>
 
           <!-- Camera Controls -->
