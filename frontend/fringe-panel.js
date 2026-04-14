@@ -4,7 +4,7 @@
 // Extracted from fringe.js (Task 6 of fringe UI restructure).
 
 import { fr, $ } from './fringe.js';
-import { getSubtractTerms } from './fringe-results.js';
+import { getSubtractTerms, mergeReanalyzeResult } from './fringe-results.js';
 import { apiFetch } from './api.js';
 import { analyzeWithProgress, createProgressBar } from './fringe-progress.js';
 
@@ -624,17 +624,7 @@ async function recomputeAverage() {
   });
   if (!resp.ok) return;
   const avgData = await resp.json();
-  fr.lastResult.surface_map = avgData.surface_map;
-  fr.lastResult.zernike_chart = avgData.zernike_chart;
-  fr.lastResult.profile_x = avgData.profile_x;
-  fr.lastResult.profile_y = avgData.profile_y;
-  fr.lastResult.psf = avgData.psf;
-  fr.lastResult.mtf = avgData.mtf;
-  fr.lastResult.pv_nm = avgData.pv_nm;
-  fr.lastResult.rms_nm = avgData.rms_nm;
-  fr.lastResult.pv_waves = avgData.pv_waves;
-  fr.lastResult.rms_waves = avgData.rms_waves;
-  fr.lastResult.strehl = avgData.strehl;
+  mergeReanalyzeResult(avgData);
   fr.lastResult.coefficients = avgCoeffs;
   document.dispatchEvent(new CustomEvent("fringe:analyzed", { detail: fr.lastResult }));
 }

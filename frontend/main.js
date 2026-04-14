@@ -34,11 +34,11 @@ import { initModes, getActiveMode } from './modes.js';
 
 // ─── Dropdown helpers ─────��──────────────────────────────────────────────────
 function closeAllDropdowns() {
-  ["dropdown-detect","dropdown-overlay","dropdown-clear","dropdown-camera"].forEach(id => {
+  ["dropdown-detect","dropdown-overlay","dropdown-clear","dropdown-camera","dropdown-fringe-settings","dropdown-fringe-export"].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.hidden = true;
   });
-  ["btn-menu-detect","btn-menu-overlay","btn-menu-clear","btn-menu-camera"].forEach(id => {
+  ["btn-menu-detect","btn-menu-overlay","btn-menu-clear","btn-menu-camera","btn-menu-fringe-settings","btn-menu-fringe-export"].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.classList.remove("open");
   });
@@ -95,6 +95,14 @@ document.getElementById("btn-menu-camera").addEventListener("click", e => {
   toggleDropdown("btn-menu-camera", "dropdown-camera");
   loadCameraInfo();
   loadCameraList();
+});
+document.getElementById("btn-menu-fringe-settings")?.addEventListener("click", e => {
+  e.stopPropagation();
+  toggleDropdown("btn-menu-fringe-settings", "dropdown-fringe-settings");
+});
+document.getElementById("btn-menu-fringe-export")?.addEventListener("click", e => {
+  e.stopPropagation();
+  toggleDropdown("btn-menu-fringe-export", "dropdown-fringe-export");
 });
 
 document.getElementById("btn-clear-detections")?.addEventListener("click", () => { closeAllDropdowns(); clearDetections(); });

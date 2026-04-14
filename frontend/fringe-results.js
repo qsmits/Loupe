@@ -763,6 +763,22 @@ async function render3dView() {
 
 // ── Analysis ────────────────────────────────────────────────────────────
 
+/**
+ * Merge reanalyze API response fields into fr.lastResult.
+ * Used by doReanalyze, invertWavefront, and recomputeAverage (in fringe-panel.js).
+ */
+export function mergeReanalyzeResult(data) {
+  for (const key of [
+    "surface_map", "zernike_chart", "profile_x", "profile_y",
+    "pv_nm", "rms_nm", "pv_waves", "rms_waves", "subtracted_terms",
+  ]) {
+    if (data[key] !== undefined) fr.lastResult[key] = data[key];
+  }
+  if (data.strehl !== undefined) fr.lastResult.strehl = data.strehl;
+  if (data.psf) fr.lastResult.psf = data.psf;
+  if (data.mtf) fr.lastResult.mtf = data.mtf;
+}
+
 async function doReanalyze() {
   if (!fr.lastResult) return;
   try {
@@ -779,19 +795,7 @@ async function doReanalyze() {
     });
     if (!r.ok) return;
     const data = await r.json();
-    // Merge into lastResult
-    fr.lastResult.surface_map = data.surface_map;
-    fr.lastResult.zernike_chart = data.zernike_chart;
-    fr.lastResult.profile_x = data.profile_x;
-    fr.lastResult.profile_y = data.profile_y;
-    fr.lastResult.pv_nm = data.pv_nm;
-    fr.lastResult.rms_nm = data.rms_nm;
-    fr.lastResult.pv_waves = data.pv_waves;
-    fr.lastResult.rms_waves = data.rms_waves;
-    fr.lastResult.subtracted_terms = data.subtracted_terms;
-    if (data.strehl !== undefined) fr.lastResult.strehl = data.strehl;
-    if (data.psf) fr.lastResult.psf = data.psf;
-    if (data.mtf) fr.lastResult.mtf = data.mtf;
+    mergeReanalyzeResult(data);
     renderResults(fr.lastResult);
   } catch (e) {
     console.warn("Re-analyze error:", e);
@@ -828,19 +832,7 @@ async function invertWavefront() {
     });
     if (!r.ok) return;
     const data = await r.json();
-    // Merge results
-    fr.lastResult.surface_map = data.surface_map;
-    fr.lastResult.zernike_chart = data.zernike_chart;
-    fr.lastResult.profile_x = data.profile_x;
-    fr.lastResult.profile_y = data.profile_y;
-    fr.lastResult.pv_nm = data.pv_nm;
-    fr.lastResult.rms_nm = data.rms_nm;
-    fr.lastResult.pv_waves = data.pv_waves;
-    fr.lastResult.rms_waves = data.rms_waves;
-    fr.lastResult.subtracted_terms = data.subtracted_terms;
-    if (data.strehl !== undefined) fr.lastResult.strehl = data.strehl;
-    if (data.psf) fr.lastResult.psf = data.psf;
-    if (data.mtf) fr.lastResult.mtf = data.mtf;
+    mergeReanalyzeResult(data);
     renderResults(fr.lastResult);
   } catch (e) {
     console.warn("Invert error:", e);
