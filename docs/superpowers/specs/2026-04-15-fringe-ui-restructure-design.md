@@ -11,6 +11,7 @@ Reorganize the fringe mode left panel from a flat wall of controls into a clean,
 - No progress feedback during 10-20s analysis
 - Zernike subtraction checkboxes live in the left panel but affect the results display
 - Settings (wavelength, mask threshold, reference standard) are always visible even though they rarely change
+- `fringe.js` is a ~2500-line monolith handling init, UI, analysis, measurements, and rendering
 
 ## Architecture
 
@@ -118,10 +119,30 @@ The existing `POST /fringe/analyze` stays unchanged. It's used by:
 
 Only the initial "Freeze & Analyze" button uses the new streaming endpoint.
 
+### 5. Module Decomposition
+
+Break `fringe.js` (~2500 lines) into focused ES modules:
+
+| Module | Responsibility |
+|--------|---------------|
+| `frontend/fringe.js` | Entry point, state object (`fr`), `initFringe()`, event wiring, coordinator. Imports and delegates to the other modules. |
+| `frontend/fringe-panel.js` | Left panel HTML template, analyze button handler, averaging logic (`addToAverage`, `computeAverage`, `renderAvgLog`, `toggleCapture`, `resetAverage`), mask polygon drawing (`enterMaskDrawMode`, `exitMaskDrawMode`, `drawMaskOverlay`), drop zone, focus bar updates. |
+| `frontend/fringe-results.js` | Results column HTML, subtraction pill row, tab switching, carrier display, summary bar updates, `doReanalyze()`, `invertWavefront()`, surface map rendering, Zernike chart, profiles, PSF/MTF, diagnostics tab content. |
+| `frontend/fringe-progress.js` | SSE streaming fetch, progress bar DOM updates, timeout/retry logic, error states. Exports `analyzeWithProgress(body, onResult, onError)`. |
+| `frontend/fringe-measure.js` | Surface map measurement tools: cursor crosshair, point-to-point Δh, line profile, area stats, peak/valley markers, measurement SVG rendering. |
+
+**Shared state:** All modules import and mutate the same `fr` state object exported from `fringe.js`. This matches the existing pattern (single mutable state object) without introducing new abstractions.
+
+**Export pattern:** Each module exports named functions. `fringe.js` imports them and wires them to DOM events in `initFringe()`. Modules can also import from each other where needed (e.g., `fringe-panel.js` imports `analyzeWithProgress` from `fringe-progress.js`).
+
 ## Files Changed
 
 - `frontend/index.html` — Add `fringe-only` dropdown markup in `#top-bar`
-- `frontend/fringe.js` — Remove settings/export/Zernike HTML from left panel template, add subtraction pills to results area, replace fetch with streaming fetch for analyze, add progress bar logic
+- `frontend/fringe.js` — Slim down to coordinator: state, init, imports. Move logic to sub-modules.
+- `frontend/fringe-panel.js` — New: left panel template + capture workflow logic
+- `frontend/fringe-results.js` — New: results rendering, subtraction pills, tabs
+- `frontend/fringe-progress.js` — New: SSE streaming, progress bar, timeout/retry
+- `frontend/fringe-measure.js` — New: surface map measurement tools
 - `frontend/style.css` — Styles for subtraction pills, progress bar, `fringe-only` class
 - `frontend/modes.js` — Add `fringe-only` class toggling in `switchMode()` (currently only handles `microscope-only`)
 - `backend/api_fringe.py` — New `POST /fringe/analyze-stream` endpoint
