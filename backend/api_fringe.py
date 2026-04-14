@@ -24,6 +24,9 @@ from .vision.fringe import (
 )
 
 
+_fringe_cache: dict = {}
+
+
 def _reject_hosted(request: Request):
     if getattr(request.app.state, "hosted", False):
         raise HTTPException(403, detail="Fringe analysis is not available in hosted mode")
@@ -59,6 +62,17 @@ class ReanalyzeBody(BaseModel):
     surface_width: int = Field(gt=0)
     mask: Optional[list[int]] = Field(default=None)
     n_zernike: int = Field(default=36, ge=1, le=66)
+
+
+class ReanalyzeCarrierBody(BaseModel):
+    carrier_y: int
+    carrier_x: int
+    image_b64: Optional[str] = Field(default=None)
+    wavelength_nm: float = Field(default=632.8, gt=0, le=2000)
+    mask_threshold: float = Field(default=0.15, ge=0.0, le=1.0)
+    subtract_terms: list[int] = Field(default=[1, 2, 3])
+    n_zernike: int = Field(default=36, ge=1, le=66)
+    mask_polygons: Optional[list[MaskPolygon]] = Field(default=None)
 
 
 def make_fringe_router(camera: BaseCamera) -> APIRouter:
@@ -113,6 +127,8 @@ def make_fringe_router(camera: BaseCamera) -> APIRouter:
                 ih, iw,
             )
 
+        _fringe_cache["last_image"] = image.copy()
+
         result = analyze_interferogram(
             image,
             wavelength_nm=body.wavelength_nm,
@@ -145,5 +161,41 @@ def make_fringe_router(camera: BaseCamera) -> APIRouter:
             raise HTTPException(503, detail="Camera returned no frame")
         score = focus_quality(frame)
         return {"score": score}
+
+    @router.post("/fringe/reanalyze-carrier", dependencies=[Depends(_reject_hosted)])
+    async def fringe_reanalyze_carrier(body: ReanalyzeCarrierBody):
+        """Re-analyze with a manually selected carrier peak."""
+        if body.image_b64:
+            try:
+                img_bytes = base64.b64decode(body.image_b64)
+                img_array = np.frombuffer(img_bytes, dtype=np.uint8)
+                image = cv2.imdecode(img_array, cv2.IMREAD_GRAYSCALE)
+                if image is None:
+                    raise ValueError("Could not decode image")
+            except Exception as e:
+                raise HTTPException(400, detail=f"Invalid image: {e}")
+        elif _fringe_cache.get("last_image") is not None:
+            image = _fringe_cache["last_image"]
+        else:
+            raise HTTPException(400, detail="No cached image. Run /fringe/analyze first or provide image_b64.")
+
+        custom_mask = None
+        if body.mask_polygons:
+            ih, iw = image.shape[:2]
+            custom_mask = rasterize_polygon_mask(
+                [{"vertices": p.vertices, "include": p.include} for p in body.mask_polygons],
+                ih, iw,
+            )
+
+        result = analyze_interferogram(
+            image,
+            wavelength_nm=body.wavelength_nm,
+            mask_threshold=body.mask_threshold,
+            subtract_terms=body.subtract_terms,
+            n_zernike=body.n_zernike,
+            custom_mask=custom_mask,
+            carrier_override=(body.carrier_y, body.carrier_x),
+        )
+        return result
 
     return router

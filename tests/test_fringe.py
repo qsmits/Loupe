@@ -595,3 +595,27 @@ class TestFringeAPI:
         data = r.json()
         assert "score" in data
         assert 0 <= data["score"] <= 100
+
+
+class TestCarrierOverride:
+    def test_analyze_with_carrier_override(self):
+        h, w = 256, 256
+        yy, xx = np.mgrid[0:h, 0:w]
+        carrier_freq = 8
+        image = 128.0 + 80.0 * np.cos(2 * np.pi * carrier_freq * xx / w)
+        image = np.clip(image, 0, 255).astype(np.uint8)
+
+        # Auto-detect carrier
+        result_auto = analyze_interferogram(image, n_zernike=15)
+
+        # Force a different carrier (slightly off from auto)
+        auto_peak_x = result_auto["carrier"]["peak_x"]
+        forced_x = auto_peak_x + 5
+        forced_y = h // 2  # center row
+        result_forced = analyze_interferogram(
+            image, n_zernike=15,
+            carrier_override=(forced_y, forced_x),
+        )
+        # Should still produce valid results, just different
+        assert result_forced["pv_nm"] >= 0
+        assert result_forced["carrier"]["peak_x"] == forced_x

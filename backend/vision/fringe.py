@@ -372,6 +372,70 @@ def _find_carrier(image: np.ndarray) -> tuple[int, int, float]:
     return py_orig, px_orig, dist_orig
 
 
+def _analyze_carrier(image: np.ndarray) -> dict:
+    """Analyze carrier frequency and return diagnostic information.
+
+    Returns dict with keys:
+    - peak_y, peak_x: carrier peak position in fftshift coords
+    - distance_px: distance from DC in pixels
+    - fringe_period_px: fringe period in pixels
+    - fringe_angle_deg: fringe orientation in degrees (0-180)
+    - peak_ratio: ratio of carrier peak to secondary peak (confidence metric)
+    - fx_cpp, fy_cpp: carrier frequency in cycles per pixel
+    """
+    img = np.asarray(image, dtype=np.float64)
+    if img.ndim == 3:
+        img = img.mean(axis=-1)
+    h, w = img.shape
+
+    py, px, dist = _find_carrier(img)
+
+    # Frequency in cycles per pixel
+    fy = (py - h // 2) / h
+    fx = (px - w // 2) / w
+    fringe_freq = math.sqrt(fy**2 + fx**2)
+    fringe_period = 1.0 / fringe_freq if fringe_freq > 1e-10 else float("inf")
+    fringe_angle = (math.degrees(math.atan2(fy, fx)) + 90.0) % 180.0
+
+    # Peak ratio: carrier peak magnitude vs secondary peak (confidence)
+    img_c = img - img.mean()
+    img_windowed = img_c * np.outer(np.hanning(h), np.hanning(w))
+    F = np.fft.fftshift(np.fft.fft2(img_windowed))
+    magnitude = np.abs(F)
+
+    carrier_peak_val = magnitude[py, px]
+
+    # Mask out DC area and carrier neighborhood to find secondary peak
+    cy, cx = h // 2, w // 2
+    dc_margin = max(3, min(h, w) // 80)
+    mag_search = magnitude.copy()
+    mag_search[cy - dc_margin:cy + dc_margin + 1, cx - dc_margin:cx + dc_margin + 1] = 0
+    # Mask carrier and conjugate (±5px neighborhood)
+    r = 5
+    y_lo, y_hi = max(0, py - r), min(h, py + r + 1)
+    x_lo, x_hi = max(0, px - r), min(w, px + r + 1)
+    mag_search[y_lo:y_hi, x_lo:x_hi] = 0
+    # Conjugate
+    conj_y, conj_x = 2 * cy - py, 2 * cx - px
+    cy_lo, cy_hi = max(0, conj_y - r), min(h, conj_y + r + 1)
+    cx_lo, cx_hi = max(0, conj_x - r), min(w, conj_x + r + 1)
+    mag_search[cy_lo:cy_hi, cx_lo:cx_hi] = 0
+
+    secondary_peak_val = mag_search.max()
+    peak_ratio = carrier_peak_val / max(secondary_peak_val, 1e-10)
+
+    return {
+        "peak_y": int(py),
+        "peak_x": int(px),
+        "distance_px": float(dist),
+        "fringe_period_px": float(fringe_period),
+        "fringe_angle_deg": float(fringe_angle),
+        "peak_ratio": float(peak_ratio),
+        "fx_cpp": float(fx),
+        "fy_cpp": float(fy),
+    }
+
+
 def compute_fringe_modulation(image: np.ndarray) -> np.ndarray:
     """Compute a carrier-aware modulation map for auto-masking.
 
@@ -515,7 +579,8 @@ def rasterize_polygon_mask(polygons: list[dict], height: int, width: int
     return mask.astype(bool)
 
 
-def extract_phase_dft(image: np.ndarray, mask: np.ndarray | None = None
+def extract_phase_dft(image: np.ndarray, mask: np.ndarray | None = None,
+                      carrier_override: tuple[int, int] | None = None,
                       ) -> np.ndarray:
     """Extract wrapped phase via spatial-domain complex demodulation.
 
@@ -555,7 +620,11 @@ def extract_phase_dft(image: np.ndarray, mask: np.ndarray | None = None
     # Step 2: find carrier frequency (use raw image, not background-subtracted,
     # so the peak selection is consistent with compute_fringe_modulation and
     # doesn't flip sign depending on subtle background subtraction differences)
-    py, px, dist = _find_carrier(img)
+    if carrier_override is not None:
+        py, px = carrier_override
+        dist = math.sqrt((py - h // 2) ** 2 + (px - w // 2) ** 2)
+    else:
+        py, px, dist = _find_carrier(img)
     fy = (py - h // 2) / h  # cycles per pixel
     fx = (px - w // 2) / w
 
@@ -1174,7 +1243,8 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 632.8,
                           subtract_terms: list[int] | None = None,
                           n_zernike: int = 36,
                           use_full_mask: bool = False,
-                          custom_mask: np.ndarray | None = None) -> dict:
+                          custom_mask: np.ndarray | None = None,
+                          carrier_override: tuple[int, int] | None = None) -> dict:
     """Full analysis pipeline: single image in, all results out.
 
     Parameters
@@ -1220,7 +1290,7 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 632.8,
     n_total = int(mask.size)
 
     # Step 2: DFT phase extraction
-    wrapped = extract_phase_dft(img, mask)
+    wrapped = extract_phase_dft(img, mask, carrier_override=carrier_override)
 
     # Step 3: Phase unwrapping
     unwrapped = unwrap_phase_2d(wrapped, mask, quality=modulation)
@@ -1256,9 +1326,26 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 632.8,
     profile_x = render_profile(height_nm, mask, axis="x")
     profile_y = render_profile(height_nm, mask, axis="y")
 
+    # Carrier diagnostics
+    if carrier_override is not None:
+        carrier_info = _analyze_carrier(img)
+        # Override the peak location in the diagnostics
+        carrier_info["peak_y"] = carrier_override[0]
+        carrier_info["peak_x"] = carrier_override[1]
+        fy = (carrier_override[0] - img.shape[0] // 2) / max(img.shape[0], 1)
+        fx = (carrier_override[1] - img.shape[1] // 2) / max(img.shape[1], 1)
+        fringe_freq = math.sqrt(fx**2 + fy**2)
+        carrier_info["fringe_period_px"] = 1.0 / fringe_freq if fringe_freq > 1e-10 else float("inf")
+        carrier_info["fringe_angle_deg"] = (math.degrees(math.atan2(fy, fx)) + 90.0) % 180.0
+        carrier_info["distance_px"] = math.sqrt((carrier_override[0] - img.shape[0] // 2)**2 +
+                                                 (carrier_override[1] - img.shape[1] // 2)**2)
+        carrier_info["fx_cpp"] = fx
+        carrier_info["fy_cpp"] = fy
+    else:
+        carrier_info = _analyze_carrier(img)
+
     # Diagnostic images: FFT with carrier peak marked, modulation map
-    carrier_peak_y, carrier_peak_x, _ = _find_carrier(img)
-    fft_b64 = render_fft_image(img, int(carrier_peak_y), int(carrier_peak_x))
+    fft_b64 = render_fft_image(img, carrier_info["peak_y"], carrier_info["peak_x"])
     mod_map_b64 = render_modulation_map(modulation, mask)
 
     # Step 10: PSF and MTF
@@ -1331,6 +1418,7 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 632.8,
         "mask_grid": [int(v) for v in grid_mask.ravel()],
         "grid_rows": grid_h,
         "grid_cols": grid_w,
+        "carrier": carrier_info,
     }
 
 
