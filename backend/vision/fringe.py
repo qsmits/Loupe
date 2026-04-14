@@ -576,20 +576,32 @@ def _quality_guided_unwrap(wrapped: np.ndarray, quality: np.ndarray,
     unwrapped[seed] = wrapped[seed]
     visited[seed] = True
 
-    # Build edge list: each edge connects two adjacent valid pixels.
+    # Build edge list vectorially (undirected — each edge appears once).
     # Edge quality = min(quality[a], quality[b]).
-    # 4-connected neighbors.
-    edges = []
-    for dy, dx in [(0, 1), (1, 0), (0, -1), (-1, 0)]:
-        for y in range(max(0, -dy), min(h, h - dy)):
-            for x in range(max(0, -dx), min(w, w - dx)):
-                ny, nx = y + dy, x + dx
-                if valid[y, x] and valid[ny, nx]:
-                    eq = min(quality[y, x], quality[ny, nx])
-                    edges.append((eq, y, x, ny, nx))
+    # 4-connected neighbors: horizontal and vertical separately.
+
+    # Horizontal edges: pixel (y, x) <-> (y, x+1)
+    hy, hx = np.where(valid[:, :-1] & valid[:, 1:])
+    h_quality = np.minimum(quality[hy, hx], quality[hy, hx + 1])
+
+    # Vertical edges: pixel (y, x) <-> (y+1, x)
+    vy, vx = np.where(valid[:-1, :] & valid[1:, :])
+    v_quality = np.minimum(quality[vy, vx], quality[vy + 1, vx])
+
+    # Combine into flat arrays
+    edge_y1 = np.concatenate([hy, vy])
+    edge_x1 = np.concatenate([hx, vx])
+    edge_y2 = np.concatenate([hy, vy + 1])
+    edge_x2 = np.concatenate([hx + 1, vx])
+    edge_qual = np.concatenate([h_quality, v_quality])
 
     # Sort descending by quality (process best edges first)
-    edges.sort(key=lambda e: -e[0])
+    order = np.argsort(-edge_qual)
+    edge_y1 = edge_y1[order]
+    edge_x1 = edge_x1[order]
+    edge_y2 = edge_y2[order]
+    edge_x2 = edge_x2[order]
+    edge_qual = edge_qual[order]
 
     # Unwrap: process edges from highest quality to lowest.
     # For each edge, if exactly one endpoint is visited, unwrap the other.
@@ -598,24 +610,31 @@ def _quality_guided_unwrap(wrapped: np.ndarray, quality: np.ndarray,
     changed = True
     while changed:
         changed = False
-        remaining = []
-        for eq, y1, x1, y2, x2 in edges:
+        keep = np.ones(len(edge_y1), dtype=bool)
+        for i in range(len(edge_y1)):
+            y1, x1, y2, x2 = edge_y1[i], edge_x1[i], edge_y2[i], edge_x2[i]
             v1 = visited[y1, x1]
             v2 = visited[y2, x2]
             if v1 and not v2:
                 diff = wrapped[y2, x2] - wrapped[y1, x1]
                 unwrapped[y2, x2] = unwrapped[y1, x1] + diff - 2 * np.pi * round(diff / (2 * np.pi))
                 visited[y2, x2] = True
+                keep[i] = False
                 changed = True
             elif v2 and not v1:
                 diff = wrapped[y1, x1] - wrapped[y2, x2]
                 unwrapped[y1, x1] = unwrapped[y2, x2] + diff - 2 * np.pi * round(diff / (2 * np.pi))
                 visited[y1, x1] = True
+                keep[i] = False
                 changed = True
-            elif not v1 and not v2:
-                remaining.append((eq, y1, x1, y2, x2))
-            # both visited: skip (already consistent)
-        edges = remaining
+            elif v1 and v2:
+                # both visited: skip (already consistent)
+                keep[i] = False
+        edge_y1 = edge_y1[keep]
+        edge_x1 = edge_x1[keep]
+        edge_y2 = edge_y2[keep]
+        edge_x2 = edge_x2[keep]
+        edge_qual = edge_qual[keep]
 
     unwrapped[~valid] = 0.0
     return unwrapped
@@ -658,12 +677,16 @@ def unwrap_phase_2d(wrapped: np.ndarray, mask: np.ndarray | None = None,
         if mask is not None:
             valid = mask.astype(bool)
             if valid.any():
-                phase[~valid] = 0.0
-
-        unwrapped = unwrap_phase(phase).astype(np.float64)
-
-        if mask is not None:
-            unwrapped[~valid] = 0.0
+                phase_ma = np.ma.array(phase, mask=~valid)
+                unwrapped_ma = unwrap_phase(phase_ma)
+                if np.ma.isMaskedArray(unwrapped_ma):
+                    unwrapped = np.asarray(unwrapped_ma.filled(0.0), dtype=np.float64)
+                else:
+                    unwrapped = np.asarray(unwrapped_ma, dtype=np.float64)
+            else:
+                return np.zeros_like(phase, dtype=np.float64)
+        else:
+            unwrapped = unwrap_phase(phase).astype(np.float64)
 
     # Post-unwrapping correction: detect pixels that differ from their local
     # median by ~2π (unwrapping jump errors) and snap them back.  This fixes
