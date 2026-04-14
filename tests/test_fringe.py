@@ -464,6 +464,38 @@ class TestReanalyze:
         assert 0 < r2["strehl"] <= 1.0
 
 
+class TestPolygonMask:
+    def test_single_include_polygon(self):
+        from backend.vision.fringe import rasterize_polygon_mask
+        polygons = [
+            {"vertices": [(0.1, 0.1), (0.9, 0.1), (0.9, 0.9), (0.1, 0.9)], "include": True},
+        ]
+        mask = rasterize_polygon_mask(polygons, 100, 100)
+        assert mask.shape == (100, 100)
+        assert mask.dtype == bool
+        # Center should be included
+        assert mask[50, 50] is np.True_
+        # Corner should be excluded
+        assert mask[0, 0] is np.False_
+
+    def test_include_with_hole(self):
+        from backend.vision.fringe import rasterize_polygon_mask
+        polygons = [
+            {"vertices": [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)], "include": True},
+            {"vertices": [(0.4, 0.4), (0.6, 0.4), (0.6, 0.6), (0.4, 0.6)], "include": False},
+        ]
+        mask = rasterize_polygon_mask(polygons, 100, 100)
+        # Center (inside hole) should be excluded
+        assert mask[50, 50] is np.False_
+        # Outside hole but inside boundary should be included
+        assert mask[10, 10] is np.True_
+
+    def test_no_polygons_returns_full_mask(self):
+        from backend.vision.fringe import rasterize_polygon_mask
+        mask = rasterize_polygon_mask([], 100, 100)
+        assert mask.all()
+
+
 class TestFringeAPI:
     """API-level tests using the FastAPI test client."""
 

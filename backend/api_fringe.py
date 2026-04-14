@@ -20,12 +20,18 @@ from .vision.fringe import (
     analyze_interferogram,
     focus_quality,
     reanalyze,
+    rasterize_polygon_mask,
 )
 
 
 def _reject_hosted(request: Request):
     if getattr(request.app.state, "hosted", False):
         raise HTTPException(403, detail="Fringe analysis is not available in hosted mode")
+
+
+class MaskPolygon(BaseModel):
+    vertices: list[tuple[float, float]]
+    include: bool = True
 
 
 class RoiRect(BaseModel):
@@ -42,6 +48,7 @@ class AnalyzeBody(BaseModel):
     n_zernike: int = Field(default=36, ge=1, le=66)
     image_b64: Optional[str] = Field(default=None)
     roi: Optional[RoiRect] = Field(default=None)
+    mask_polygons: Optional[list[MaskPolygon]] = Field(default=None)
 
 
 class ReanalyzeBody(BaseModel):
@@ -87,8 +94,8 @@ def make_fringe_router(camera: BaseCamera) -> APIRouter:
             if image.ndim == 3:
                 image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
 
-        # Crop to ROI if specified
-        if body.roi:
+        # Crop to ROI if specified (legacy rectangle mode)
+        if body.roi and not body.mask_polygons:
             ih, iw = image.shape[:2]
             x0 = int(body.roi.x * iw)
             y0 = int(body.roi.y * ih)
@@ -97,13 +104,23 @@ def make_fringe_router(camera: BaseCamera) -> APIRouter:
             if x1 - x0 > 10 and y1 - y0 > 10:
                 image = image[y0:y1, x0:x1]
 
+        # Build polygon mask if provided
+        custom_mask = None
+        if body.mask_polygons:
+            ih, iw = image.shape[:2]
+            custom_mask = rasterize_polygon_mask(
+                [{"vertices": p.vertices, "include": p.include} for p in body.mask_polygons],
+                ih, iw,
+            )
+
         result = analyze_interferogram(
             image,
             wavelength_nm=body.wavelength_nm,
             mask_threshold=body.mask_threshold,
             subtract_terms=body.subtract_terms,
             n_zernike=body.n_zernike,
-            use_full_mask=body.roi is not None,
+            use_full_mask=body.roi is not None and not body.mask_polygons,
+            custom_mask=custom_mask,
         )
         return result
 

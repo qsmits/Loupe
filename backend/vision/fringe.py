@@ -475,6 +475,46 @@ def create_fringe_mask(image: np.ndarray, modulation: np.ndarray,
     return mask
 
 
+def rasterize_polygon_mask(polygons: list[dict], height: int, width: int
+                           ) -> np.ndarray:
+    """Rasterize polygon definitions into a boolean mask.
+
+    Parameters
+    ----------
+    polygons : list of dicts with keys:
+        - "vertices": list of (x, y) tuples in normalized (0-1) coords
+        - "include": bool (True = include region, False = exclude/hole)
+    height, width : image dimensions for rasterization.
+
+    Returns
+    -------
+    Boolean mask (True = valid pixel). If no polygons given, returns all-True.
+    """
+    if not polygons:
+        return np.ones((height, width), dtype=bool)
+
+    mask = np.zeros((height, width), dtype=np.uint8)
+
+    # Process include polygons first, then exclude
+    for poly in polygons:
+        pts = np.array(
+            [(int(x * width), int(y * height)) for x, y in poly["vertices"]],
+            dtype=np.int32,
+        )
+        if poly.get("include", True):
+            cv2.fillPoly(mask, [pts], 1)
+
+    for poly in polygons:
+        pts = np.array(
+            [(int(x * width), int(y * height)) for x, y in poly["vertices"]],
+            dtype=np.int32,
+        )
+        if not poly.get("include", True):
+            cv2.fillPoly(mask, [pts], 0)
+
+    return mask.astype(bool)
+
+
 def extract_phase_dft(image: np.ndarray, mask: np.ndarray | None = None
                       ) -> np.ndarray:
     """Extract wrapped phase via spatial-domain complex demodulation.
@@ -1042,7 +1082,8 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 632.8,
                           mask_threshold: float = 0.15,
                           subtract_terms: list[int] | None = None,
                           n_zernike: int = 36,
-                          use_full_mask: bool = False) -> dict:
+                          use_full_mask: bool = False,
+                          custom_mask: np.ndarray | None = None) -> dict:
     """Full analysis pipeline: single image in, all results out.
 
     Parameters
@@ -1056,6 +1097,9 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 632.8,
         valid.  Use this when the caller already cropped to an ROI — Otsu
         thresholding inside a user-selected region often picks up rim
         artifacts that the user explicitly wanted to exclude.
+    custom_mask : optional boolean mask to use instead of auto-masking.
+        When provided, overrides both use_full_mask and the auto-masking
+        logic.  Intended for polygon-based ROI selection from the UI.
 
     Returns
     -------
@@ -1075,7 +1119,9 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 632.8,
 
     # Step 1: Modulation & mask
     modulation = compute_fringe_modulation(img)
-    if use_full_mask:
+    if custom_mask is not None:
+        mask = custom_mask.astype(bool)
+    elif use_full_mask:
         mask = np.ones(img.shape, dtype=bool)
     else:
         mask = create_fringe_mask(img, modulation, threshold_frac=mask_threshold)
