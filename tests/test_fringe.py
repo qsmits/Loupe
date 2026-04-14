@@ -246,6 +246,33 @@ class TestUnwrap2D:
         unwrapped = unwrap_phase_2d(phase, mask)
         assert unwrapped[5, 25] == 0.0  # masked pixel is zeroed
 
+    def test_quality_guided_prefers_high_quality_regions(self):
+        """Quality-guided unwrapping should propagate from high-quality pixels."""
+        h, w = 80, 80
+        # Linear phase ramp with 3 full wraps
+        true_phase = np.tile(np.linspace(0, 6 * np.pi, w), (h, 1))
+        wrapped = np.angle(np.exp(1j * true_phase))
+        mask = np.ones((h, w), dtype=bool)
+
+        # Quality map: high everywhere except a vertical stripe
+        quality = np.ones((h, w), dtype=np.float64)
+        quality[:, 35:45] = 0.01  # low-quality stripe
+
+        unwrapped = unwrap_phase_2d(wrapped, mask, quality=quality)
+        corr = np.corrcoef(unwrapped[mask], true_phase[mask])[0, 1]
+        assert corr > 0.98
+
+    def test_quality_guided_without_quality_map_still_works(self):
+        """When quality=None, fall back to standard unwrapping."""
+        h, w = 64, 64
+        true_phase = np.tile(np.linspace(0, 4 * np.pi, w), (h, 1))
+        wrapped = np.angle(np.exp(1j * true_phase))
+        mask = np.ones((h, w), dtype=bool)
+
+        unwrapped = unwrap_phase_2d(wrapped, mask, quality=None)
+        corr = np.corrcoef(unwrapped[mask], true_phase[mask])[0, 1]
+        assert corr > 0.98
+
 
 class TestFocusQuality:
     def test_sharp_image_scores_high(self):

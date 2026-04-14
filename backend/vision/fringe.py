@@ -540,8 +540,89 @@ def extract_phase_dft(image: np.ndarray, mask: np.ndarray | None = None
     return wrapped.astype(np.float64)
 
 
-def unwrap_phase_2d(wrapped: np.ndarray, mask: np.ndarray | None = None
-                    ) -> np.ndarray:
+def _quality_guided_unwrap(wrapped: np.ndarray, quality: np.ndarray,
+                           mask: np.ndarray | None = None) -> np.ndarray:
+    """Quality-guided 2D phase unwrapping (Goldstein/Zebker approach).
+
+    Unwraps from highest-quality pixels outward, so errors in weak-fringe
+    regions don't propagate into the solution.
+
+    Parameters
+    ----------
+    wrapped : 2D float64 wrapped phase in [-pi, pi].
+    quality : 2D float64 quality map (higher = more reliable). Typically
+              the fringe modulation map.
+    mask : optional boolean mask (True = valid).
+
+    Returns
+    -------
+    Unwrapped phase, float64. Masked pixels are set to 0.
+    """
+    h, w = wrapped.shape
+    if mask is None:
+        mask = np.ones((h, w), dtype=bool)
+    valid = mask.astype(bool)
+
+    unwrapped = np.zeros((h, w), dtype=np.float64)
+    visited = np.zeros((h, w), dtype=bool)
+
+    if not valid.any():
+        return unwrapped
+
+    # Seed: highest-quality valid pixel
+    q_masked = quality.copy()
+    q_masked[~valid] = -1
+    seed = np.unravel_index(np.argmax(q_masked), q_masked.shape)
+    unwrapped[seed] = wrapped[seed]
+    visited[seed] = True
+
+    # Build edge list: each edge connects two adjacent valid pixels.
+    # Edge quality = min(quality[a], quality[b]).
+    # 4-connected neighbors.
+    edges = []
+    for dy, dx in [(0, 1), (1, 0), (0, -1), (-1, 0)]:
+        for y in range(max(0, -dy), min(h, h - dy)):
+            for x in range(max(0, -dx), min(w, w - dx)):
+                ny, nx = y + dy, x + dx
+                if valid[y, x] and valid[ny, nx]:
+                    eq = min(quality[y, x], quality[ny, nx])
+                    edges.append((eq, y, x, ny, nx))
+
+    # Sort descending by quality (process best edges first)
+    edges.sort(key=lambda e: -e[0])
+
+    # Unwrap: process edges from highest quality to lowest.
+    # For each edge, if exactly one endpoint is visited, unwrap the other.
+    # Multiple passes needed since an edge may have neither endpoint visited
+    # on the first encounter.
+    changed = True
+    while changed:
+        changed = False
+        remaining = []
+        for eq, y1, x1, y2, x2 in edges:
+            v1 = visited[y1, x1]
+            v2 = visited[y2, x2]
+            if v1 and not v2:
+                diff = wrapped[y2, x2] - wrapped[y1, x1]
+                unwrapped[y2, x2] = unwrapped[y1, x1] + diff - 2 * np.pi * round(diff / (2 * np.pi))
+                visited[y2, x2] = True
+                changed = True
+            elif v2 and not v1:
+                diff = wrapped[y1, x1] - wrapped[y2, x2]
+                unwrapped[y1, x1] = unwrapped[y2, x2] + diff - 2 * np.pi * round(diff / (2 * np.pi))
+                visited[y1, x1] = True
+                changed = True
+            elif not v1 and not v2:
+                remaining.append((eq, y1, x1, y2, x2))
+            # both visited: skip (already consistent)
+        edges = remaining
+
+    unwrapped[~valid] = 0.0
+    return unwrapped
+
+
+def unwrap_phase_2d(wrapped: np.ndarray, mask: np.ndarray | None = None,
+                    quality: np.ndarray | None = None) -> np.ndarray:
     """2D spatial phase unwrapping using skimage's algorithm.
 
     Uses scikit-image's unwrap_phase which implements a proper 2D
@@ -549,25 +630,40 @@ def unwrap_phase_2d(wrapped: np.ndarray, mask: np.ndarray | None = None
     (closed-contour isophase lines) that simple row/column unwrapping
     cannot.
 
+    When a quality map is provided, uses a quality-guided Goldstein/Zebker
+    approach that propagates from high-confidence pixels first, preventing
+    error propagation from weak-fringe regions.
+
     Parameters
     ----------
     wrapped : 2D float64 array of wrapped phase in [-pi, pi].
     mask : optional boolean mask (True = valid).
+    quality : optional 2D float64 quality map (higher = more reliable).
+              When provided, uses quality-guided unwrapping instead of
+              skimage's raster-order algorithm.
 
     Returns
     -------
     Unwrapped phase map, float64.
     """
     from scipy.ndimage import median_filter
-    from skimage.restoration import unwrap_phase
 
     phase = wrapped.copy()
-    if mask is not None:
-        valid = mask.astype(bool)
-        if valid.any():
-            phase[~valid] = 0.0
 
-    unwrapped = unwrap_phase(phase).astype(np.float64)
+    if quality is not None:
+        unwrapped = _quality_guided_unwrap(phase, quality, mask)
+    else:
+        from skimage.restoration import unwrap_phase
+
+        if mask is not None:
+            valid = mask.astype(bool)
+            if valid.any():
+                phase[~valid] = 0.0
+
+        unwrapped = unwrap_phase(phase).astype(np.float64)
+
+        if mask is not None:
+            unwrapped[~valid] = 0.0
 
     # Post-unwrapping correction: detect pixels that differ from their local
     # median by ~2π (unwrapping jump errors) and snap them back.  This fixes
@@ -576,6 +672,7 @@ def unwrap_phase_2d(wrapped: np.ndarray, mask: np.ndarray | None = None
     unwrapped -= 2.0 * np.pi * np.round((unwrapped - med) / (2.0 * np.pi))
 
     if mask is not None:
+        valid = mask.astype(bool)
         unwrapped[~valid] = 0.0
 
     return unwrapped
@@ -966,7 +1063,7 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 632.8,
     wrapped = extract_phase_dft(img, mask)
 
     # Step 3: Phase unwrapping
-    unwrapped = unwrap_phase_2d(wrapped, mask)
+    unwrapped = unwrap_phase_2d(wrapped, mask, quality=modulation)
 
     # Step 4: Zernike fitting
     coeffs, rho, theta = fit_zernike(unwrapped, n_terms=n_zernike, mask=mask)
