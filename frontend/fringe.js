@@ -200,6 +200,22 @@ function buildWorkspace() {
             Spherical (Z11)
           </label>
         </div>
+        <div class="fringe-setting-group" style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border)">
+          <button class="detect-btn" id="fringe-btn-invert" style="padding:4px 10px;font-size:11px;width:100%" disabled title="Flip the wavefront sign (swap hills and valleys)">
+            ↕ Invert Wavefront
+          </button>
+        </div>
+        <div class="fringe-setting-group" style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border)">
+          <div style="font-size:12px;font-weight:600;opacity:0.7">Export</div>
+          <div style="display:flex;gap:4px">
+            <button class="detect-btn" id="fringe-btn-export-pdf" style="padding:4px 10px;font-size:11px;flex:1" disabled>
+              PDF Report
+            </button>
+            <button class="detect-btn" id="fringe-btn-export-csv" style="padding:4px 10px;font-size:11px;flex:1" disabled>
+              Zernike CSV
+            </button>
+          </div>
+        </div>
       </div>
 
       <!-- Right column: results -->
@@ -382,6 +398,9 @@ function wireEvents() {
   // Averaging buttons
   $("fringe-btn-avg-add")?.addEventListener("click", addToAverage);
   $("fringe-btn-avg-reset")?.addEventListener("click", resetAverage);
+  $("fringe-btn-invert")?.addEventListener("click", invertWavefront);
+  $("fringe-btn-export-pdf")?.addEventListener("click", exportFringePdf);
+  $("fringe-btn-export-csv")?.addEventListener("click", exportFringeCsv);
 
   // Drag and drop
   const dropZone = $("fringe-drop-zone");
@@ -1210,6 +1229,12 @@ async function analyzeFromCamera() {
     resetStatus();
     const avgBtn = $("fringe-btn-avg-add");
     if (avgBtn) avgBtn.disabled = false;
+    const invBtn = $("fringe-btn-invert");
+    if (invBtn) invBtn.disabled = false;
+    const pdfBtn = $("fringe-btn-export-pdf");
+    if (pdfBtn) pdfBtn.disabled = false;
+    const csvBtn = $("fringe-btn-export-csv");
+    if (csvBtn) csvBtn.disabled = false;
   } catch (e) {
     console.warn("Fringe analysis error:", e);
     setStatus("Error");
@@ -1250,6 +1275,12 @@ async function analyzeFromFile(file) {
     resetStatus();
     const avgBtn = $("fringe-btn-avg-add");
     if (avgBtn) avgBtn.disabled = false;
+    const invBtn2 = $("fringe-btn-invert");
+    if (invBtn2) invBtn2.disabled = false;
+    const pdfBtn2 = $("fringe-btn-export-pdf");
+    if (pdfBtn2) pdfBtn2.disabled = false;
+    const csvBtn2 = $("fringe-btn-export-csv");
+    if (csvBtn2) csvBtn2.disabled = false;
   } catch (e) {
     console.warn("Fringe analysis error:", e);
     setStatus("Error");
@@ -1836,6 +1867,226 @@ function stopPolling() {
     clearInterval(fr.polling);
     fr.polling = null;
   }
+}
+
+// ── Wavefront inversion ─────────────────────────────────────────────────
+
+async function invertWavefront() {
+  if (!fr.lastResult || !fr.lastResult.coefficients) return;
+  // Negate all coefficients
+  const inverted = fr.lastResult.coefficients.map(c => -c);
+  fr.lastResult.coefficients = inverted;
+
+  // If averaging, also negate the accumulated coefficients
+  if (fr.avgCoefficients) {
+    for (let i = 0; i < fr.avgCoefficients.length; i++) {
+      fr.avgCoefficients[i] = -fr.avgCoefficients[i];
+    }
+  }
+
+  // Reanalyze with inverted coefficients
+  try {
+    const r = await apiFetch("/fringe/reanalyze", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        coefficients: inverted,
+        subtract_terms: getSubtractTerms(),
+        wavelength_nm: getWavelength(),
+        surface_height: fr.lastResult.surface_height || 128,
+        surface_width: fr.lastResult.surface_width || 128,
+      }),
+    });
+    if (!r.ok) return;
+    const data = await r.json();
+    // Merge results
+    fr.lastResult.surface_map = data.surface_map;
+    fr.lastResult.zernike_chart = data.zernike_chart;
+    fr.lastResult.profile_x = data.profile_x;
+    fr.lastResult.profile_y = data.profile_y;
+    fr.lastResult.pv_nm = data.pv_nm;
+    fr.lastResult.rms_nm = data.rms_nm;
+    fr.lastResult.pv_waves = data.pv_waves;
+    fr.lastResult.rms_waves = data.rms_waves;
+    fr.lastResult.subtracted_terms = data.subtracted_terms;
+    if (data.strehl !== undefined) fr.lastResult.strehl = data.strehl;
+    if (data.psf) fr.lastResult.psf = data.psf;
+    if (data.mtf) fr.lastResult.mtf = data.mtf;
+    renderResults(fr.lastResult);
+  } catch (e) {
+    console.warn("Invert error:", e);
+  }
+}
+
+// ── Export (CSV + PDF) ──────────────────────────────────────────────────
+
+function exportFringeCsv() {
+  if (!fr.lastResult) return;
+  const coeffs = fr.lastResult.coefficients;
+  const names = fr.lastResult.coefficient_names || {};
+  const wl = fr.lastResult.wavelength_nm || 632.8;
+  const sub = fr.lastResult.subtracted_terms || [];
+
+  let csv = "Index,Name,Coefficient (rad),Surface Error (nm),Subtracted\n";
+  for (let i = 0; i < coeffs.length; i++) {
+    const j = i + 1;
+    const name = names[String(j)] || `Z${j}`;
+    const nm = (coeffs[i] * wl / (4 * Math.PI)).toFixed(2);
+    const subtracted = sub.includes(j) ? "yes" : "no";
+    csv += `${j},"${name}",${coeffs[i].toFixed(6)},${nm},${subtracted}\n`;
+  }
+
+  // Add summary
+  csv += `\nSummary\n`;
+  csv += `PV (nm),${fr.lastResult.pv_nm?.toFixed(1)}\n`;
+  csv += `RMS (nm),${fr.lastResult.rms_nm?.toFixed(1)}\n`;
+  csv += `PV (waves),${fr.lastResult.pv_waves?.toFixed(4)}\n`;
+  csv += `RMS (waves),${fr.lastResult.rms_waves?.toFixed(4)}\n`;
+  csv += `Strehl,${fr.lastResult.strehl?.toFixed(4)}\n`;
+  csv += `Wavelength (nm),${wl}\n`;
+
+  const blob = new Blob([csv], { type: "text/csv" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `fringe_zernike_${new Date().toISOString().slice(0,19).replace(/:/g,"-")}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function exportFringePdf() {
+  if (!fr.lastResult) return;
+  const { jsPDF } = window.jspdf;
+  if (!jsPDF) { alert("PDF library not loaded"); return; }
+
+  const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
+  const pageW = 297;
+  const pageH = 210;
+  const margin = 10;
+  const data = fr.lastResult;
+
+  // Header
+  doc.setFontSize(16);
+  doc.text("Fringe Analysis Report", margin, margin + 7);
+  doc.setFontSize(9);
+  doc.setTextColor(100);
+  const ts = new Date().toLocaleString();
+  doc.text(`Exported: ${ts}   Wavelength: ${data.wavelength_nm} nm`, margin, margin + 13);
+
+  // Standard
+  const stdSel = $("fringe-standard");
+  if (stdSel && stdSel.value) {
+    const stdOpt = stdSel.selectedOptions[0];
+    doc.text(`Reference: ${stdOpt.textContent}  (PV limit: ${stdOpt.dataset.pvNm} nm)`, margin, margin + 18);
+  }
+  doc.setTextColor(0);
+
+  let y = margin + 24;
+
+  // Stats box
+  doc.setFontSize(11);
+  const pvStr = `PV: ${data.pv_nm?.toFixed(1)} nm (${data.pv_waves?.toFixed(3)} \u03bb)`;
+  const rmsStr = `RMS: ${data.rms_nm?.toFixed(1)} nm (${data.rms_waves?.toFixed(3)} \u03bb)`;
+  const strehlStr = `Strehl: ${data.strehl?.toFixed(3)}`;
+  doc.text(`${pvStr}     ${rmsStr}     ${strehlStr}`, margin, y);
+
+  // Standard pass/fail
+  if (stdSel && stdSel.value) {
+    const limit = parseFloat(stdSel.selectedOptions[0].dataset.pvNm);
+    const pass = data.pv_nm <= limit;
+    doc.setTextColor(pass ? 0 : 200, pass ? 150 : 0, 0);
+    doc.text(pass ? "  PASS" : "  FAIL", margin + 180, y);
+    doc.setTextColor(0);
+  }
+  y += 8;
+
+  // Surface map image
+  if (data.surface_map) {
+    try {
+      const imgData = "data:image/png;base64," + data.surface_map;
+      // Fit in left half of page
+      const imgW = 130;
+      const imgH = 100;
+      doc.addImage(imgData, "PNG", margin, y, imgW, imgH);
+
+      // PSF in the right area (smaller)
+      if (data.psf) {
+        const psfData = "data:image/png;base64," + data.psf;
+        doc.setFontSize(8);
+        doc.text("PSF", margin + imgW + 10, y);
+        doc.addImage(psfData, "PNG", margin + imgW + 10, y + 3, 50, 50);
+      }
+
+      y += imgH + 5;
+    } catch (e) {
+      console.warn("PDF image error:", e);
+    }
+  }
+
+  // Zernike chart
+  if (data.zernike_chart && y + 60 < pageH - margin) {
+    try {
+      const chartData = "data:image/png;base64," + data.zernike_chart;
+      const chartW = pageW - margin * 2;
+      const chartH = 55;
+      doc.addImage(chartData, "PNG", margin, y, chartW, chartH);
+      y += chartH + 5;
+    } catch (e) {
+      console.warn("PDF chart error:", e);
+    }
+  }
+
+  // If we need a second page for the Zernike table
+  if (y + 10 > pageH - margin) {
+    doc.addPage();
+    y = margin + 7;
+  }
+
+  // Zernike coefficient table
+  doc.setFontSize(10);
+  doc.text("Zernike Coefficients", margin, y);
+  y += 5;
+  doc.setFontSize(7);
+
+  const coeffs = data.coefficients || [];
+  const names = data.coefficient_names || {};
+  const sub = data.subtracted_terms || [];
+  const wl = data.wavelength_nm || 632.8;
+
+  // Table header
+  doc.setFont(undefined, "bold");
+  doc.text("#", margin, y);
+  doc.text("Term", margin + 8, y);
+  doc.text("Coeff (rad)", margin + 50, y);
+  doc.text("Surface (nm)", margin + 80, y);
+  doc.text("Status", margin + 110, y);
+  doc.setFont(undefined, "normal");
+  y += 4;
+
+  // Only show terms with |coeff| > 0.001 to keep it concise
+  for (let i = 0; i < Math.min(coeffs.length, 36); i++) {
+    if (Math.abs(coeffs[i]) < 0.001) continue;
+    if (y + 4 > pageH - margin) {
+      doc.addPage();
+      y = margin + 7;
+    }
+    const j = i + 1;
+    const name = names[String(j)] || `Z${j}`;
+    const nm = (coeffs[i] * wl / (4 * Math.PI)).toFixed(1);
+    const status = sub.includes(j) ? "(subtracted)" : "";
+    if (sub.includes(j)) doc.setTextColor(150);
+    doc.text(String(j), margin, y);
+    doc.text(name, margin + 8, y);
+    doc.text(coeffs[i].toFixed(4), margin + 50, y);
+    doc.text(nm, margin + 80, y);
+    doc.text(status, margin + 110, y);
+    doc.setTextColor(0);
+    y += 3.5;
+  }
+
+  // Save
+  const filename = `fringe_report_${new Date().toISOString().slice(0,19).replace(/:/g,"-")}.pdf`;
+  doc.save(filename);
 }
 
 // ── Public init ─────────────────────────────────────────────────────────
