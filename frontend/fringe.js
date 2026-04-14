@@ -29,6 +29,7 @@ const fr = {
   avgCount: 0,             // number of captures averaged
   avgSurfaceHeight: 0,
   avgSurfaceWidth: 0,
+  carrierOverride: null,   // {y, x} or null
 };
 
 function $(id) { return document.getElementById(id); }
@@ -250,12 +251,19 @@ function buildWorkspace() {
           </div>
         </div>
 
+        <div class="fringe-carrier-row" id="fringe-carrier-row" hidden style="display:flex;align-items:center;gap:8px;padding:4px 12px;font-size:11px;opacity:0.8;border-bottom:1px solid var(--border);cursor:pointer" title="Click to open Diagnostics tab">
+          <span id="fringe-carrier-dot" style="width:8px;height:8px;border-radius:50%;flex-shrink:0"></span>
+          <span>Carrier: <span id="fringe-carrier-period">--</span>px period @ <span id="fringe-carrier-angle">--</span>&deg;</span>
+          <span style="margin-left:auto;opacity:0.6">Confidence: <span id="fringe-carrier-confidence">--</span></span>
+        </div>
+
         <div class="fringe-tab-bar" id="fringe-tab-bar">
           <button class="fringe-tab active" data-tab="surface">Surface Map</button>
           <button class="fringe-tab" data-tab="3d">3D View</button>
           <button class="fringe-tab" data-tab="zernike">Zernike</button>
           <button class="fringe-tab" data-tab="profiles">Profiles</button>
           <button class="fringe-tab" data-tab="psf">PSF / MTF</button>
+          <button class="fringe-tab" data-tab="diagnostics">Diagnostics</button>
         </div>
 
         <div class="fringe-tab-panel" id="fringe-panel-surface">
@@ -343,6 +351,39 @@ function buildWorkspace() {
             <div style="flex:1;min-width:300px">
               <p style="font-size:11px;opacity:0.6;margin:0 0 6px">Modulation Transfer Function</p>
               <canvas id="fringe-mtf-canvas" width="400" height="250" style="width:100%;max-width:500px"></canvas>
+            </div>
+          </div>
+        </div>
+
+        <div class="fringe-tab-panel" id="fringe-panel-diagnostics" hidden>
+          <div class="fringe-empty-state" id="fringe-diag-empty">Analyze an image first.</div>
+          <div id="fringe-diag-content" hidden style="display:flex;gap:16px;flex-wrap:wrap;align-items:flex-start;padding:8px">
+            <div>
+              <p style="font-size:11px;opacity:0.6;margin:0 0 6px">FFT Magnitude (click to override carrier)</p>
+              <canvas id="fringe-fft-canvas" width="256" height="256" style="cursor:crosshair;image-rendering:pixelated;border:1px solid var(--border)"></canvas>
+              <div style="margin-top:4px">
+                <button class="detect-btn" id="fringe-btn-carrier-reset" style="padding:2px 8px;font-size:10px" hidden>
+                  Reset to Auto
+                </button>
+              </div>
+            </div>
+            <div>
+              <p style="font-size:11px;opacity:0.6;margin:0 0 6px">Modulation / Quality Map</p>
+              <img id="fringe-modulation-img" style="max-width:300px;border:1px solid var(--border)" />
+            </div>
+            <div style="min-width:200px">
+              <p style="font-size:11px;opacity:0.6;margin:0 0 6px">Carrier Statistics</p>
+              <table id="fringe-carrier-table" style="font-size:11px;border-collapse:collapse">
+                <tbody>
+                  <tr><td style="padding:2px 8px;opacity:0.6">Period</td><td id="fringe-diag-period" style="padding:2px 8px">--</td></tr>
+                  <tr><td style="padding:2px 8px;opacity:0.6">Angle</td><td id="fringe-diag-angle" style="padding:2px 8px">--</td></tr>
+                  <tr><td style="padding:2px 8px;opacity:0.6">Peak ratio</td><td id="fringe-diag-ratio" style="padding:2px 8px">--</td></tr>
+                  <tr><td style="padding:2px 8px;opacity:0.6">fx (cpp)</td><td id="fringe-diag-fx" style="padding:2px 8px">--</td></tr>
+                  <tr><td style="padding:2px 8px;opacity:0.6">fy (cpp)</td><td id="fringe-diag-fy" style="padding:2px 8px">--</td></tr>
+                  <tr><td style="padding:2px 8px;opacity:0.6">Valid pixels</td><td id="fringe-diag-valid" style="padding:2px 8px">--</td></tr>
+                  <tr><td style="padding:2px 8px;opacity:0.6">Coverage</td><td id="fringe-diag-coverage" style="padding:2px 8px">--</td></tr>
+                </tbody>
+              </table>
             </div>
           </div>
         </div>
@@ -623,6 +664,8 @@ function wireEvents() {
       }, 150);
     });
   }
+
+  wireCarrierOverride();
 }
 
 // ── Measurement functions ────────────────────────────────────────────────
@@ -1774,6 +1817,127 @@ function renderResults(data) {
     const empty3d = $("fringe-3d-empty");
     if (empty3d) empty3d.textContent = "Click to load 3D view.";
   }
+
+  // Carrier diagnostics
+  updateCarrierDisplay(data);
+}
+
+// ── Carrier diagnostics ─────────────────────────────────────────────────
+
+function updateCarrierDisplay(data) {
+  const carrier = data.carrier;
+  if (!carrier) return;
+
+  const row = $("fringe-carrier-row");
+  row.hidden = false;
+
+  $("fringe-carrier-period").textContent = carrier.fringe_period_px.toFixed(1);
+  $("fringe-carrier-angle").textContent = carrier.fringe_angle_deg.toFixed(1);
+
+  // Confidence color: green >5, amber 2-5, red <2
+  const ratio = carrier.peak_ratio;
+  const dot = $("fringe-carrier-dot");
+  let label;
+  if (ratio > 5) { dot.style.background = "#30d158"; label = "Good"; }
+  else if (ratio > 2) { dot.style.background = "#ff9f0a"; label = "Fair"; }
+  else { dot.style.background = "#ff453a"; label = "Low"; }
+  $("fringe-carrier-confidence").textContent = `${label} (${ratio.toFixed(1)})`;
+
+  // Diagnostics tab content
+  $("fringe-diag-period").textContent = `${carrier.fringe_period_px.toFixed(1)} px`;
+  $("fringe-diag-angle").textContent = `${carrier.fringe_angle_deg.toFixed(1)}\u00B0`;
+  $("fringe-diag-ratio").textContent = ratio.toFixed(2);
+  $("fringe-diag-fx").textContent = carrier.fx_cpp.toFixed(6);
+  $("fringe-diag-fy").textContent = carrier.fy_cpp.toFixed(6);
+  $("fringe-diag-valid").textContent = data.n_valid_pixels?.toLocaleString() ?? "--";
+  const coverage = data.n_total_pixels ? ((data.n_valid_pixels / data.n_total_pixels) * 100).toFixed(1) : "--";
+  $("fringe-diag-coverage").textContent = `${coverage}%`;
+
+  // FFT image
+  if (data.fft_image) {
+    const canvas = $("fringe-fft-canvas");
+    const ctx = canvas.getContext("2d");
+    const img = new Image();
+    img.onload = () => {
+      canvas.width = img.width;
+      canvas.height = img.height;
+      ctx.drawImage(img, 0, 0);
+    };
+    img.src = "data:image/png;base64," + data.fft_image;
+  }
+
+  // Modulation map
+  if (data.modulation_map) {
+    $("fringe-modulation-img").src = "data:image/png;base64," + data.modulation_map;
+  }
+
+  // Show diagnostics content
+  $("fringe-diag-empty").hidden = true;
+  $("fringe-diag-content").hidden = false;
+}
+
+function wireCarrierOverride() {
+  const canvas = $("fringe-fft-canvas");
+  if (!canvas) return;
+
+  canvas.addEventListener("click", async (e) => {
+    if (!fr.lastResult) return;
+
+    const rect = canvas.getBoundingClientRect();
+    const clickX = (e.clientX - rect.left) / rect.width;
+    const clickY = (e.clientY - rect.top) / rect.height;
+
+    // Convert to fftshift pixel coordinates
+    const imgH = fr.lastResult.surface_height;
+    const imgW = fr.lastResult.surface_width;
+    const carrierY = Math.round(clickY * imgH);
+    const carrierX = Math.round(clickX * imgW);
+
+    document.body.style.cursor = "wait";
+    try {
+      const resp = await apiFetch("/fringe/reanalyze-carrier", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          carrier_y: carrierY,
+          carrier_x: carrierX,
+          wavelength_nm: getWavelength(),
+          mask_threshold: getMaskThreshold(),
+          subtract_terms: getSubtractTerms(),
+          n_zernike: 36,
+          mask_polygons: fr.maskPolygons.length > 0
+            ? fr.maskPolygons.map(p => ({ vertices: p.vertices.map(v => [v.x, v.y]), include: p.include }))
+            : undefined,
+        }),
+      });
+      if (!resp.ok) { console.warn("Carrier override failed"); return; }
+      const data = await resp.json();
+      fr.lastResult = data;
+      renderResults(data);
+      updateCarrierDisplay(data);
+      $("fringe-btn-carrier-reset").hidden = false;
+      fr.carrierOverride = { y: carrierY, x: carrierX };
+    } finally {
+      document.body.style.cursor = "";
+    }
+  });
+
+  $("fringe-btn-carrier-reset")?.addEventListener("click", () => {
+    fr.carrierOverride = null;
+    $("fringe-btn-carrier-reset").hidden = true;
+    // Re-analyze with auto carrier
+    $("fringe-btn-analyze")?.click();
+  });
+
+  // Carrier row clicks → switch to diagnostics tab
+  $("fringe-carrier-row")?.addEventListener("click", () => {
+    document.querySelectorAll(".fringe-tab").forEach(t => t.classList.remove("active"));
+    document.querySelectorAll(".fringe-tab-panel").forEach(p => p.hidden = true);
+    const diagTab = document.querySelector('.fringe-tab[data-tab="diagnostics"]');
+    if (diagTab) diagTab.classList.add("active");
+    const panel = $("fringe-panel-diagnostics");
+    if (panel) panel.hidden = false;
+  });
 }
 
 function drawProfile(canvas, profile, title) {
