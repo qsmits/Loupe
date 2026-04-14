@@ -59,6 +59,7 @@ def get_fringe_config():
     cfg = load_config()
     return {
         "fringe_wavelengths": cfg.get("fringe_wavelengths", []),
+        "standards": cfg.get("fringe_standards", []),
     }
 
 

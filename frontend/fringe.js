@@ -68,6 +68,29 @@ async function loadWavelengthPresets() {
       WAVELENGTHS = cfg.fringe_wavelengths;
       rebuildWavelengthSelect();
     }
+    if (cfg.standards && Array.isArray(cfg.standards)) {
+      const sel = $("fringe-standard");
+      if (sel) {
+        const groups = {};
+        for (const s of cfg.standards) {
+          const prefix = s.label.split(" ")[0];
+          if (!groups[prefix]) groups[prefix] = [];
+          groups[prefix].push(s);
+        }
+        for (const [name, items] of Object.entries(groups)) {
+          const optgroup = document.createElement("optgroup");
+          optgroup.label = name;
+          for (const s of items) {
+            const opt = document.createElement("option");
+            opt.value = s.id;
+            opt.textContent = s.label;
+            opt.dataset.pvNm = s.pv_nm;
+            optgroup.appendChild(opt);
+          }
+          sel.appendChild(optgroup);
+        }
+      }
+    }
   } catch (e) { /* use defaults */ }
 }
 
@@ -147,6 +170,11 @@ function buildWorkspace() {
             <input type="range" id="fringe-mask-thresh" min="0" max="100" step="1" value="15" style="width:100px" />
             <span id="fringe-mask-thresh-val" style="font-size:11px;min-width:28px">15%</span>
           </label>
+          <label>Reference standard
+            <select id="fringe-standard">
+              <option value="">None</option>
+            </select>
+          </label>
         </div>
 
         <div class="fringe-setting-group" style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border)">
@@ -212,7 +240,20 @@ function buildWorkspace() {
 
         <div class="fringe-tab-panel" id="fringe-panel-surface">
           <div class="fringe-empty-state" id="fringe-empty">
-            Freeze a frame or drop an interferogram image to analyze.
+            <div style="max-width:420px;text-align:left;line-height:1.6">
+              <div style="font-size:14px;font-weight:600;margin-bottom:8px;text-align:center">Freeze a frame or drop an interferogram to analyze</div>
+              <div style="font-size:12px;opacity:0.7;margin-top:12px">
+                <div style="font-weight:600;margin-bottom:4px">Tips for best results:</div>
+                <ul style="margin:0;padding-left:18px">
+                  <li>Clean both surfaces thoroughly — dust particles create false fringes</li>
+                  <li>Place the flat gently, don't press — pressure causes stress fringes</li>
+                  <li>Slide slightly to "wring" the flat — this minimizes the air gap</li>
+                  <li>Aim for 3–5 fringes across the surface for best accuracy</li>
+                  <li>Closed circular fringes indicate trapped dust or burrs</li>
+                  <li>Use monochromatic light (sodium lamp or HeNe laser)</li>
+                </ul>
+              </div>
+            </div>
           </div>
           <div id="fringe-loading-overlay" hidden style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.6);z-index:10">
             <div style="text-align:center">
@@ -329,6 +370,11 @@ function wireEvents() {
       maskLabel.textContent = maskSlider.value + "%";
     });
   }
+
+  // Reference standard change → re-color PV
+  $("fringe-standard")?.addEventListener("change", () => {
+    if (fr.lastResult) renderResults(fr.lastResult);
+  });
 
   // Analyze button
   $("fringe-btn-analyze")?.addEventListener("click", analyzeFromCamera);
@@ -1348,6 +1394,24 @@ function renderResults(data) {
   $("fringe-rms-nm").textContent = fmtNm(data.rms_nm);
   const strehlEl = $("fringe-strehl");
   if (strehlEl) strehlEl.textContent = Number.isFinite(data.strehl) ? data.strehl.toFixed(3) : "--";
+
+  // Standard pass/fail coloring
+  const stdSel = $("fringe-standard");
+  const pvEl = $("fringe-pv-nm");
+  const pvWavesEl = $("fringe-pv-waves");
+  if (stdSel && pvEl && stdSel.value) {
+    const opt = stdSel.selectedOptions[0];
+    const limit = parseFloat(opt.dataset.pvNm);
+    if (Number.isFinite(limit) && Number.isFinite(data.pv_nm)) {
+      const pass = data.pv_nm <= limit;
+      const color = pass ? "#4caf50" : "#f44336";
+      pvEl.style.color = color;
+      pvWavesEl.style.color = color;
+    }
+  } else if (pvEl) {
+    pvEl.style.color = "";
+    if (pvWavesEl) pvWavesEl.style.color = "";
+  }
 
   // Wavelength and subtracted terms in summary bar
   const wlEl = $("fringe-summary-wl");
