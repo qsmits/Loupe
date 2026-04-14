@@ -3,7 +3,8 @@
 //
 // Extracted from fringe.js (Task 6 of fringe UI restructure).
 
-import { fr, $, getSubtractTerms } from './fringe.js';
+import { fr, $ } from './fringe.js';
+import { getSubtractTerms } from './fringe-results.js';
 import { apiFetch } from './api.js';
 import { analyzeWithProgress, createProgressBar } from './fringe-progress.js';
 
