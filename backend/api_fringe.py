@@ -152,7 +152,7 @@ def make_fringe_router(camera: BaseCamera) -> APIRouter:
         Final event:     {"stage": "done", "progress": 1.0, "result": {...}}
         Error event:     {"stage": "error", "message": str}
         """
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         queue: asyncio.Queue = asyncio.Queue()
 
         # Decode image before starting the stream so we can emit error events

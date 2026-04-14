@@ -10,6 +10,7 @@ from __future__ import annotations
 import base64
 import io
 import math
+from collections.abc import Callable
 
 import cv2
 import matplotlib
@@ -1245,7 +1246,7 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 632.8,
                           use_full_mask: bool = False,
                           custom_mask: np.ndarray | None = None,
                           carrier_override: tuple[int, int] | None = None,
-                          on_progress=None) -> dict:
+                          on_progress: Callable[[str, float, str], None] | None = None) -> dict:
     """Full analysis pipeline: single image in, all results out.
 
     Parameters
@@ -1262,6 +1263,8 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 632.8,
     custom_mask : optional boolean mask to use instead of auto-masking.
         When provided, overrides both use_full_mask and the auto-masking
         logic.  Intended for polygon-based ROI selection from the UI.
+    on_progress : optional callback ``(stage, progress, message)`` called at
+        each pipeline stage; ``progress`` is in [0, 1].
 
     Returns
     -------
