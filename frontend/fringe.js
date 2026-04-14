@@ -184,6 +184,12 @@ function buildWorkspace() {
           <div class="fringe-empty-state" id="fringe-empty">
             Freeze a frame or drop an interferogram image to analyze.
           </div>
+          <div id="fringe-loading-overlay" hidden style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.6);z-index:10">
+            <div style="text-align:center">
+              <div class="fringe-spinner"></div>
+              <div style="margin-top:8px;font-size:13px;opacity:0.8" id="fringe-loading-text">Analyzing...</div>
+            </div>
+          </div>
           <div id="fringe-surface-content" hidden style="display:flex;flex-direction:column;flex:1;min-height:0">
             <div class="fringe-measure-toolbar" id="fringe-measure-toolbar">
               <button class="fringe-measure-btn active" data-mode="" title="Pan / zoom (no measurement)">↔ Pan</button>
@@ -1074,11 +1080,23 @@ function drawEnlargeRoiOverlay(canvas, tempRoi) {
 function setStatus(msg) {
   const btn = $("fringe-btn-analyze");
   if (btn) btn.textContent = msg;
+  const ws = document.querySelector(".fringe-workspace");
+  if (ws) ws.style.cursor = "wait";
+  const overlay = $("fringe-loading-overlay");
+  if (overlay) {
+    overlay.hidden = false;
+    const text = $("fringe-loading-text");
+    if (text) text.textContent = msg;
+  }
 }
 
 function resetStatus() {
   const btn = $("fringe-btn-analyze");
   if (btn) btn.textContent = "Freeze & Analyze";
+  const ws = document.querySelector(".fringe-workspace");
+  if (ws) ws.style.cursor = "";
+  const overlay = $("fringe-loading-overlay");
+  if (overlay) overlay.hidden = true;
 }
 
 // ── Analysis ────────────────────────────────────────────────────────────
