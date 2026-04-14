@@ -520,7 +520,13 @@ async function analyzeFromFile(file) {
 
   try {
     const arrayBuf = await file.arrayBuffer();
-    const b64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuf)));
+    const u8 = new Uint8Array(arrayBuf);
+    let binary = '';
+    const chunk = 8192;
+    for (let i = 0; i < u8.length; i += chunk) {
+      binary += String.fromCharCode.apply(null, u8.subarray(i, i + chunk));
+    }
+    const b64 = btoa(binary);
 
     const payload = {
       wavelength_nm: getWavelength(),
