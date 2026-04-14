@@ -25,8 +25,8 @@ const fr = {
   maskGrid: null,          // Uint8Array from server
   gridRows: 0,
   gridCols: 0,
-  avgCoefficients: null,   // Float64Array of accumulated coefficient sums
-  avgCount: 0,             // number of captures averaged
+  avgCaptures: [],        // [{coefficients: Float64Array, rms_nm: number, accepted: bool, reason: string}]
+  avgRejectThreshold: 3,  // reject if capture RMS > threshold × average RMS
   avgSurfaceHeight: 0,
   avgSurfaceWidth: 0,
   carrierOverride: null,   // {y, x} or null
@@ -129,14 +129,22 @@ function buildWorkspace() {
           Freeze &amp; Analyze
         </button>
 
-        <div id="fringe-avg-controls" style="display:flex;gap:4px;align-items:center;margin-top:4px">
-          <button class="detect-btn" id="fringe-btn-avg-add" style="padding:4px 10px;font-size:11px;flex:1" disabled title="Freeze a frame and add its Zernike coefficients to the running average">
-            + Add to Avg
-          </button>
-          <span id="fringe-avg-count" style="font-size:11px;opacity:0.6;min-width:20px;text-align:center">0</span>
-          <button class="detect-btn" id="fringe-btn-avg-reset" style="padding:4px 10px;font-size:11px;opacity:0.6" disabled>
-            Reset
-          </button>
+        <div id="fringe-avg-controls" style="margin-top:4px">
+          <div style="display:flex;gap:4px;align-items:center">
+            <button class="detect-btn" id="fringe-btn-avg-add" style="padding:4px 10px;font-size:11px;flex:1" disabled title="Freeze a frame and add its Zernike coefficients to the running average">
+              + Add to Avg
+            </button>
+            <span id="fringe-avg-count" style="font-size:11px;opacity:0.6;min-width:20px;text-align:center">0</span>
+            <button class="detect-btn" id="fringe-btn-avg-reset" style="padding:4px 10px;font-size:11px;opacity:0.6" disabled>
+              Reset
+            </button>
+          </div>
+          <div style="display:flex;gap:4px;align-items:center;margin-top:2px">
+            <label style="font-size:10px;opacity:0.5">Reject &gt;</label>
+            <input type="number" id="fringe-avg-reject" min="1.5" max="10" step="0.5" value="3" style="width:40px;font-size:10px;padding:1px 3px" title="Auto-reject captures with RMS exceeding this multiple of the average" />
+            <span style="font-size:10px;opacity:0.5">&times; avg</span>
+          </div>
+          <div id="fringe-avg-log" style="max-height:80px;overflow-y:auto;font-size:10px;margin-top:2px"></div>
         </div>
 
         <div style="display:flex;gap:4px;align-items:center">
@@ -443,6 +451,9 @@ function wireEvents() {
   // Averaging buttons
   $("fringe-btn-avg-add")?.addEventListener("click", addToAverage);
   $("fringe-btn-avg-reset")?.addEventListener("click", resetAverage);
+  $("fringe-avg-reject")?.addEventListener("change", (e) => {
+    fr.avgRejectThreshold = parseFloat(e.target.value) || 3;
+  });
   $("fringe-btn-invert")?.addEventListener("click", invertWavefront);
   $("fringe-btn-export-pdf")?.addEventListener("click", exportFringePdf);
   $("fringe-btn-export-csv")?.addEventListener("click", exportFringeCsv);
@@ -1543,12 +1554,99 @@ async function analyzeFromFile(file) {
   }
 }
 
+// ── Averaging helpers ───────────────────────────────────────────────────
+
+function computeAverage() {
+  const accepted = fr.avgCaptures.filter(c => c.accepted);
+  if (accepted.length === 0) return null;
+  const n = accepted[0].coefficients.length;
+  const avg = new Float64Array(n);
+  for (const cap of accepted) {
+    for (let i = 0; i < n; i++) avg[i] += cap.coefficients[i];
+  }
+  for (let i = 0; i < n; i++) avg[i] /= accepted.length;
+  return Array.from(avg);
+}
+
+function renderAvgLog() {
+  const log = $("fringe-avg-log");
+  if (!log) return;
+  log.textContent = "";  // clear children
+  for (let i = 0; i < fr.avgCaptures.length; i++) {
+    const cap = fr.avgCaptures[i];
+    const el = document.createElement("div");
+    el.style.cssText = "cursor:pointer;padding:1px 0;display:flex;align-items:center;gap:4px";
+    el.title = cap.accepted ? "Click to exclude from average" : "Click to include in average";
+
+    const iconSpan = document.createElement("span");
+    iconSpan.style.color = cap.accepted ? "#30d158" : "#ff453a";
+    iconSpan.textContent = cap.accepted ? "\u2713" : "\u2717";
+
+    const textSpan = document.createElement("span");
+    const reason = cap.reason ? ` (${cap.reason})` : "";
+    textSpan.textContent = `#${i + 1}: ${cap.rms_nm.toFixed(1)}nm${reason}`;
+
+    el.appendChild(iconSpan);
+    el.appendChild(textSpan);
+
+    const idx = i;
+    el.addEventListener("click", () => toggleCapture(idx));
+    log.appendChild(el);
+  }
+  log.scrollTop = log.scrollHeight;
+}
+
+async function toggleCapture(idx) {
+  fr.avgCaptures[idx].accepted = !fr.avgCaptures[idx].accepted;
+  renderAvgLog();
+  await recomputeAverage();
+}
+
+async function recomputeAverage() {
+  const accepted = fr.avgCaptures.filter(c => c.accepted);
+  $("fringe-avg-count").textContent = `${accepted.length}/${fr.avgCaptures.length}`;
+
+  if (accepted.length < 1) return;
+  const avgCoeffs = computeAverage();
+  if (!avgCoeffs || accepted.length < 2) return;
+
+  const resp = await apiFetch("/fringe/reanalyze", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      coefficients: avgCoeffs,
+      subtract_terms: getSubtractTerms(),
+      wavelength_nm: getWavelength(),
+      surface_height: fr.avgSurfaceHeight,
+      surface_width: fr.avgSurfaceWidth,
+    }),
+  });
+  if (!resp.ok) return;
+  const avgData = await resp.json();
+  fr.lastResult.surface_map = avgData.surface_map;
+  fr.lastResult.zernike_chart = avgData.zernike_chart;
+  fr.lastResult.profile_x = avgData.profile_x;
+  fr.lastResult.profile_y = avgData.profile_y;
+  fr.lastResult.psf = avgData.psf;
+  fr.lastResult.mtf = avgData.mtf;
+  fr.lastResult.pv_nm = avgData.pv_nm;
+  fr.lastResult.rms_nm = avgData.rms_nm;
+  fr.lastResult.pv_waves = avgData.pv_waves;
+  fr.lastResult.rms_waves = avgData.rms_waves;
+  fr.lastResult.strehl = avgData.strehl;
+  fr.lastResult.coefficients = avgCoeffs;
+  renderResults(fr.lastResult);
+}
+
 async function addToAverage() {
-  const btn = $("fringe-btn-avg-add");
-  if (btn) btn.disabled = true;
-  setStatus("Averaging...");
+  document.body.style.cursor = "wait";
+  const loadingOverlay = $("fringe-loading-overlay");
+  const loadingText = $("fringe-loading-text");
+  if (loadingOverlay) loadingOverlay.hidden = false;
+  if (loadingText) loadingText.textContent = "Capturing for average...";
+
   try {
-    const r = await apiFetch("/fringe/analyze", {
+    const resp = await apiFetch("/fringe/analyze", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -1556,78 +1654,58 @@ async function addToAverage() {
         mask_threshold: getMaskThreshold(),
         subtract_terms: getSubtractTerms(),
         mask_polygons: fr.maskPolygons.length > 0
-          ? fr.maskPolygons.map(p => ({
-              vertices: p.vertices.map(v => [v.x, v.y]),
-              include: p.include,
-            }))
+          ? fr.maskPolygons.map(p => ({ vertices: p.vertices.map(v => [v.x, v.y]), include: p.include }))
           : undefined,
       }),
     });
-    if (!r.ok) { setStatus("Failed"); setTimeout(resetStatus, 2000); return; }
-    const data = await r.json();
-    fr.lastResult = data;
+    if (!resp.ok) { setStatus("Failed"); setTimeout(resetStatus, 2000); return; }
+    const data = await resp.json();
 
-    // Accumulate coefficients
-    if (!fr.avgCoefficients) {
-      fr.avgCoefficients = new Float64Array(data.coefficients.length);
-      fr.avgCount = 0;
+    if (fr.avgCaptures.length === 0) {
       fr.avgSurfaceHeight = data.surface_height;
       fr.avgSurfaceWidth = data.surface_width;
     }
-    for (let i = 0; i < data.coefficients.length; i++) {
-      fr.avgCoefficients[i] += data.coefficients[i];
-    }
-    fr.avgCount++;
-    $("fringe-avg-count").textContent = fr.avgCount;
-    $("fringe-btn-avg-reset").disabled = false;
 
-    if (fr.avgCount >= 2) {
-      // Reanalyze with averaged coefficients
-      setStatus(`Averaging (${fr.avgCount})...`);
-      const avgCoeffs = Array.from(fr.avgCoefficients).map(c => c / fr.avgCount);
-      const r2 = await apiFetch("/fringe/reanalyze", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          coefficients: avgCoeffs,
-          subtract_terms: getSubtractTerms(),
-          wavelength_nm: getWavelength(),
-          surface_height: fr.avgSurfaceHeight,
-          surface_width: fr.avgSurfaceWidth,
-        }),
-      });
-      if (r2.ok) {
-        const avgData = await r2.json();
-        fr.lastResult.surface_map = avgData.surface_map;
-        fr.lastResult.zernike_chart = avgData.zernike_chart;
-        fr.lastResult.profile_x = avgData.profile_x;
-        fr.lastResult.profile_y = avgData.profile_y;
-        fr.lastResult.pv_nm = avgData.pv_nm;
-        fr.lastResult.rms_nm = avgData.rms_nm;
-        fr.lastResult.pv_waves = avgData.pv_waves;
-        fr.lastResult.rms_waves = avgData.rms_waves;
-        fr.lastResult.subtracted_terms = avgData.subtracted_terms;
-        fr.lastResult.coefficients = avgCoeffs;
-        if (avgData.strehl !== undefined) fr.lastResult.strehl = avgData.strehl;
-        if (avgData.psf) fr.lastResult.psf = avgData.psf;
-        if (avgData.mtf) fr.lastResult.mtf = avgData.mtf;
+    const capture = {
+      coefficients: new Float64Array(data.coefficients),
+      rms_nm: data.rms_nm,
+      accepted: true,
+      reason: "",
+    };
+
+    // Auto-rejection: check against running average (only after 2+ accepted captures)
+    const accepted = fr.avgCaptures.filter(c => c.accepted);
+    if (accepted.length >= 2) {
+      const avgRms = accepted.reduce((s, c) => s + c.rms_nm, 0) / accepted.length;
+      const threshold = fr.avgRejectThreshold;
+      if (capture.rms_nm > threshold * avgRms) {
+        capture.accepted = false;
+        capture.reason = `${(capture.rms_nm / avgRms).toFixed(1)}\u00d7 avg`;
       }
     }
-    renderResults(fr.lastResult);
-    resetStatus();
+
+    fr.avgCaptures.push(capture);
+    renderAvgLog();
+    $("fringe-btn-avg-reset").disabled = false;
+
+    await recomputeAverage();
   } catch (e) {
     console.warn("Average error:", e);
     setStatus("Error");
     setTimeout(resetStatus, 2000);
   } finally {
-    if (btn) btn.disabled = false;
+    if (loadingOverlay) loadingOverlay.hidden = true;
+    document.body.style.cursor = "";
   }
 }
 
 function resetAverage() {
-  fr.avgCoefficients = null;
-  fr.avgCount = 0;
+  fr.avgCaptures = [];
+  fr.avgSurfaceHeight = 0;
+  fr.avgSurfaceWidth = 0;
   $("fringe-avg-count").textContent = "0";
+  const log = $("fringe-avg-log");
+  if (log) log.textContent = "";
   $("fringe-btn-avg-reset").disabled = true;
   if (fr.lastResult) renderResults(fr.lastResult);
 }
@@ -2256,10 +2334,10 @@ async function invertWavefront() {
   const inverted = fr.lastResult.coefficients.map(c => -c);
   fr.lastResult.coefficients = inverted;
 
-  // If averaging, also negate the accumulated coefficients
-  if (fr.avgCoefficients) {
-    for (let i = 0; i < fr.avgCoefficients.length; i++) {
-      fr.avgCoefficients[i] = -fr.avgCoefficients[i];
+  // If averaging, also negate all stored capture coefficients
+  for (const cap of fr.avgCaptures) {
+    for (let i = 0; i < cap.coefficients.length; i++) {
+      cap.coefficients[i] = -cap.coefficients[i];
     }
   }
 
