@@ -25,6 +25,11 @@ export function switchMode(modeId) {
     el.hidden = modeId !== "microscope";
   });
 
+  // Toggle fringe-only top-bar items
+  document.querySelectorAll(".fringe-only").forEach(el => {
+    el.hidden = modeId !== "fringe";
+  });
+
   // Toggle microscope-only bottom elements (tool strip, sidebar)
   const toolStrip = $("tool-strip");
   const sidebar = $("sidebar");

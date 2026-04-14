@@ -2458,3 +2458,6 @@ body.no-camera .camera-section { display: none; }
 @keyframes fringe-spin {
   to { transform: rotate(360deg); }
 }
+
+/* Fringe-only items — hidden by default, shown when fringe mode active */
+.fringe-only[hidden] { display: none !important; }

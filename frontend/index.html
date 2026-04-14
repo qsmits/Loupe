@@ -17,6 +17,44 @@
     </select>
     <div class="top-bar-divider"></div>
 
+    <div class="menu-group fringe-only" hidden>
+      <button class="menu-btn" id="btn-menu-fringe-settings">Settings ▾</button>
+      <div class="dropdown fringe-settings-panel" id="dropdown-fringe-settings" hidden>
+        <div class="detect-section">
+          <div class="detect-section-label">Wavelength</div>
+          <select id="fringe-wavelength" style="width:100%;margin-top:4px;padding:4px"></select>
+          <div id="fringe-custom-wl-label" hidden style="margin-top:4px">
+            <label style="font-size:11px">Custom (nm)
+              <input type="number" id="fringe-custom-wl" min="200" max="2000" step="0.1" value="589.0" style="width:80px;margin-left:4px" />
+            </label>
+          </div>
+        </div>
+        <div class="detect-section">
+          <div class="detect-section-label">Mask Threshold</div>
+          <div class="detect-row">
+            <input type="range" id="fringe-mask-thresh" min="0" max="100" step="1" value="15" style="flex:1" />
+            <span id="fringe-mask-thresh-val" class="detect-val" style="min-width:28px">15%</span>
+          </div>
+        </div>
+        <div class="detect-section">
+          <div class="detect-section-label">Reference Standard</div>
+          <select id="fringe-standard" style="width:100%;margin-top:4px;padding:4px">
+            <option value="">None</option>
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <div class="menu-group fringe-only" hidden>
+      <button class="menu-btn" id="btn-menu-fringe-export">Export ▾</button>
+      <div class="dropdown fringe-export-panel" id="dropdown-fringe-export" hidden>
+        <div class="detect-section" style="display:flex;flex-direction:column;gap:4px">
+          <button class="detect-btn" id="fringe-btn-export-pdf" disabled>PDF Report</button>
+          <button class="detect-btn" id="fringe-btn-export-csv" disabled>Zernike CSV</button>
+        </div>
+      </div>
+    </div>
+
     <div class="menu-group microscope-only">
       <button class="menu-btn" id="btn-menu-detect">Detect ▾</button>
       <div class="dropdown detect-panel" id="dropdown-detect" hidden>
