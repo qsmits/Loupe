@@ -1,19 +1,16 @@
 # Roadmap
 
-> Revised 2026-04-10 — sweeping update covering the Z-stack / heightmap /
-> super-res / stitching / camera-control / security work landed since
-> 2026-04-04, and the shift in product framing from "microscope app" to
-> "optical inspection frontend for DIY-able hardware."
+> Revised 2026-04-14 — added fringe analysis mode (complete), updated
+> competitive scores and execution log.
 
 ## Context
 
-**What Loupe is (2026-04-10):** an open-source optical inspection frontend
+**What Loupe is (2026-04-14):** an open-source optical inspection frontend
 targeting DIY and small-shop hardware. Microscope/machine-vision is the
-anchor mode, but the app is evolving toward multiple instrument modes that
-*replace* each other (autocollimator, deflectometry, white-light
-interferometer) because calibration units, tool availability, and workflows
-diverge between them. Modes change workflow. Tools are specialized within a
-mode.
+anchor mode, with deflectometry and fringe analysis shipped as additional
+instrument modes. More modes are planned (autocollimator, white-light
+interferometer). Modes *replace* each other because calibration units, tool
+availability, and workflows diverge between them.
 
 **Target parts (microscope mode):** Wire EDM parts (sharp edges, mirror
 finish), lathe parts (turned surfaces, concentric tooling marks), gears
@@ -36,10 +33,10 @@ product — user experience trumps shop-floor GD&T compliance. See
 | Calibration & correction | 82% | Lens distortion, tilt homography, frame sync, log-scale camera controls, export/import profiles |
 | Inspection / GD&T | 60% | Corridor inspection, True Position, Punch/Die |
 | SPC & analytics | 48% | Run storage, Cpk, trend charts |
-| Reporting & export | 70% | PDF, CSV, DXF, SPC CSV, TP, inspection results |
+| Reporting & export | 76% | PDF, CSV, DXF, SPC CSV, TP, inspection results, fringe PDF/CSV |
 | Camera & hardware | 74% | Aravis/GigE, OpenCV enumeration, browser camera, 4-quadrant compare, log-scale slider + histogram + client-side auto-exposure |
 | Automation & workflow | 58% | Templates, one-click inspect with auto-align |
-| Surface & profile metrology | 75% | Z-stack depth-from-focus, ISO 25178-2/3/606, 3D viewer, HDR fusion |
+| Surface & profile metrology | 82% | Z-stack depth-from-focus, ISO 25178-2/3/606, 3D viewer, HDR fusion, fringe interferometry (DFT phase extraction, Zernike fitting, Strehl, PSF/MTF, reference standards) |
 | Multi-frame reconstruction | 72% | Image stitching wizard, super-resolution, HDR bracketing |
 | UI / UX / platform | 98% | Web-based, multi-user hosted, cross-platform |
 
@@ -51,6 +48,7 @@ product — user experience trumps shop-floor GD&T compliance. See
 - Z-stack depth-from-focus with ISO 25178 areal roughness on a single-camera DIY rig (no motorized Z needed)
 - Image stitching + super-resolution wizards that reuse the inspection pipeline
 - Shadow-aware edge fitting, edge-based DXF alignment without circles
+- Single-image fringe interferometry with DFT phase extraction, Zernike fitting (66 terms), PSF/MTF, reference standards (ISO/JIS/ASME/DIN), wavefront averaging — comparable to DFTFringe but browser-based with live camera
 
 ---
 
@@ -208,6 +206,26 @@ product — user experience trumps shop-floor GD&T compliance. See
 - Per-router hosted-mode rejection for stitch, super-res, and Z-stack
 - Pre-existing test failures resolved (4 tests fixed)
 
+### Fringe Analysis Mode (2026-04-13–14)
+- Single-image DFT interferometric analysis: carrier detection, spatial demodulation, 2D phase unwrapping, Zernike fitting (up to 66 terms, Noll indexing)
+- Surface map with contour lines, 3D WebGL viewer, horizontal/vertical profiles
+- PV/RMS/Strehl statistics with pass/fail coloring against reference standards
+- Reference standards: ISO 3650, JIS B 7506, ASME B89.1.9, DIN 861 (loaded from config.json)
+- PSF (point spread function) and MTF (modulation transfer function) computation
+- Wavefront averaging in Zernike coefficient space (multi-capture noise reduction)
+- Wavefront inversion toggle (sign ambiguity resolution)
+- Configurable wavelength presets (Sodium, HeNe, Green LED, Mercury, etc.) from config.json
+- Zernike term table with named terms, RMS contributions, dominant highlighting
+- Selectable term subtraction with instant re-analysis (cached coefficients)
+- Plane subtraction for rectangular apertures
+- ROI selection, focus quality score, drag-and-drop image support
+- PDF report export (surface map, PSF, stats, Zernike chart + table)
+- CSV export (coefficients + summary)
+- Loading indicators (cursor + spinner overlay)
+- Help docs covering all features
+- Backend: `backend/vision/fringe.py`, `backend/api_fringe.py`
+- Frontend: `frontend/fringe.js`
+
 ### Camera Controls Overhaul (2026-04-10)
 - Log-scale exposure and gain sliders spanning the camera's reported
   min/max. Each slider step is ~constant perceptual brightness change.
@@ -344,14 +362,14 @@ image-upload mode.
 | White-light interferometer mode | Longer-term — no hardware yet. Third mode after autocollimator + deflectometry. |
 | Cross-mode calibration sharing | Share microscope calibration (px/mm) with fringe mode so surface maps show physical dimensions. Measure part dimensions in microscope, drop optical flat on top, switch to fringe — same calibration applies. |
 | Cross-mode annotation overlay | Show microscope annotations (hole positions, feature dimensions) as an overlay in fringe mode for spatial correlation. |
-| Fringe mode: custom profile lines | Click on surface map to place arbitrary cross-section lines instead of only center H/V profiles. |
+| ~~Fringe mode: custom profile lines~~ | **Done.** Line profile tool already supports arbitrary cross-section lines between any two clicked points. |
 | Fringe mode: phase-shifting capture | Add piezo-based multi-frame phase shifting as an alternative to single-image DFT extraction — higher accuracy, requires hardware. |
 | Fringe mode: DXF-based mask | Use aligned DXF overlay from microscope mode as the fringe analysis aperture mask — precise boundaries for complex part shapes (rings, cutouts, irregular outlines) without manual tracing. |
 | Fringe mode: lens distortion correction | Apply microscope lens cal to fringe images for more accurate Zernike fitting and spatial localization. |
 | Digital level app (Digi-Pas DWL-3500XY ×3, BLE) | **Separate app, not a Loupe mode.** Shares backend plumbing with Loupe. Needs BLE protocol reverse engineering. |
-| Gear inspection | Separate domain. Wait for gear machine. |
+| ~~Gear inspection~~ | **Done.** Tooth detection, angular width measurement, involute/cycloidal profile generation, phase estimation, DXF overlay. Backend: `gear_analysis.py`, `gear_geometry.py`, `gear_phase.py`. Frontend: `gear.js`. Further work deferred until gear machine hardware defines additional requirements. |
 | Nikon SC-102 XY stage integration | Hardware-dependent. Separate project. |
-| Pattern matching / golden template | Interesting for incoming inspection but niche. |
+| ~~Pattern matching / golden template~~ | **Done (via DXF).** Detect features → elevate → export DXF → load onto new part → guided inspection. Accomplishes the golden-template workflow through geometry rather than pixel matching. |
 | Full GD&T (runout, concentricity, profile of surface) | Revisit when a compliance requirement drives it. |
 | QDAS/QIF export | Revisit when an ISO shop asks. |
 | Calibration traceability / uncertainty budgets | ISO 17025 requirement. Not needed yet. |
@@ -438,6 +456,9 @@ These have been discussed and **will not** be built into Loupe:
 ✅ Deflectometry mode (core)         — 2026-04-13: mode switcher, workspace UI, 8-step phase shifting,
                                        gamma pre-correction, smoothing, sphere calibration, iPad centering,
                                        3D viewer, diagnostics. Enclosure + calibration ball pending.
+✅ Fringe analysis mode              — 2026-04-14: DFT phase extraction, Zernike fitting (66 terms),
+                                       Strehl/PSF/MTF, contour lines, wavefront averaging, inversion toggle,
+                                       reference standards (ISO/JIS/ASME/DIN), PDF/CSV export, help docs.
 
 Next:      Autocollimator mode         — when Nikon unit arrives; establishes mode-replacement pattern
 Then:      STEP import (geometry+PMI)  — auto inspection setup from STEP file drop
@@ -447,7 +468,5 @@ Then:      GD&T: profile of line/surf  — formal tolerance zones (after STEP/PM
 Then:      Batch inspection            — multi-part, lower priority for image-mode
 Later:     White-light interferometer  — third mode, no hardware yet
 Later:     Digital level app           — separate app, shares backend plumbing
-Future:    Gear inspection             — when gear machine is running
 Future:    Education / cloud mode      — university adoption
-Active:    Fringe analysis mode        — single-image DFT interferogram analysis, Zernike fitting
 ```
