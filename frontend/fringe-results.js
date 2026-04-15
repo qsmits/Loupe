@@ -829,6 +829,28 @@ async function render3dView() {
   const pos = geo.attributes.position;
   const colors = new Float32Array(pos.count * 3);
 
+  // Build per-vertex mask: true if this vertex has valid height data
+  const vertexValid = new Uint8Array(gridSize * gridSize);
+  for (let r = 0; r < gridSize; r++) {
+    for (let c = 0; c < gridSize; c++) {
+      const gx = (c / (gridSize - 1)) * (fr.gridCols - 1);
+      const gy = (r / (gridSize - 1)) * (fr.gridRows - 1);
+      const gi = Math.round(gy) * fr.gridCols + Math.round(gx);
+      vertexValid[r * gridSize + c] = fr.maskGrid[gi] ? 1 : 0;
+    }
+  }
+
+  // Filter index buffer: keep only triangles where ALL vertices are valid
+  const origIndex = geo.index.array;
+  const kept = [];
+  for (let i = 0; i < origIndex.length; i += 3) {
+    const a = origIndex[i], b = origIndex[i + 1], c = origIndex[i + 2];
+    if (vertexValid[a] && vertexValid[b] && vertexValid[c]) {
+      kept.push(a, b, c);
+    }
+  }
+  geo.setIndex(kept);
+
   const zSlider = $("fringe-3d-z-scale");
   const zLabel = $("fringe-3d-z-val");
   let zScale = zSlider ? parseFloat(zSlider.value) : 10;
@@ -838,7 +860,6 @@ async function render3dView() {
     const zVals = new Float32Array(gridSize * gridSize);
     for (let r = 0; r < gridSize; r++) {
       for (let c = 0; c < gridSize; c++) {
-        // Sample from height grid
         const gx = (c / (gridSize - 1)) * (fr.gridCols - 1);
         const gy = (r / (gridSize - 1)) * (fr.gridRows - 1);
         const gi = Math.round(gy) * fr.gridCols + Math.round(gx);
