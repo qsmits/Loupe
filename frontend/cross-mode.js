@@ -53,6 +53,8 @@ export function stashMicroscopeState() {
     undoStack: undoStack.map(s => s),
     redoStack: redoStack.map(s => s),
     tool: state.tool,
+    nextId: state.nextId,
+    selected: new Set(state.selected),
   };
 }
 
@@ -75,6 +77,8 @@ export function restoreMicroscopeState() {
   redoStack.push(...stashedState.redoStack);
 
   state.tool = stashedState.tool;
+  state.nextId = stashedState.nextId;
+  state.selected = stashedState.selected;
   stashedState = null;
 }
 
@@ -152,6 +156,7 @@ export async function enterMaskEditSession() {
   // 2. Clear microscope state for mask editing
   state.annotations = [];
   state.calibration = null;
+  state.selected = new Set();
   undoStack.length = 0;
   redoStack.length = 0;
 
@@ -159,8 +164,8 @@ export async function enterMaskEditSession() {
   const url = URL.createObjectURL(cm.imageBlob);
   const loadedImg = new Image();
   await new Promise((resolve, reject) => {
-    loadedImg.onload = resolve;
-    loadedImg.onerror = reject;
+    loadedImg.onload = () => { URL.revokeObjectURL(url); resolve(); };
+    loadedImg.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Failed to load preview image')); };
     loadedImg.src = url;
   });
 
@@ -226,33 +231,26 @@ function applyMask() {
   const polygons = extractMaskPolygons();
   const callback = window.crossMode.callback;
 
-  // Clean up
-  hideActionBar();
-  restoreMicroscopeState();
-  clearCrossMode();
+  // Clean up and exit
+  _exitMaskEditSession();
 
-  // Restore mode switcher
-  const switcher = document.getElementById('mode-switcher');
-  if (switcher) { switcher.hidden = false; switcher.value = 'fringe'; }
-
-  // Switch back to fringe
-  switchMode('fringe');
-
-  // Deliver polygons to fringe via callback
+  // Deliver polygons to fringe via callback, then redraw
   callback(polygons);
-
   redraw();
 }
 
-function cancelMask() {
+function _exitMaskEditSession() {
   hideActionBar();
   restoreMicroscopeState();
   clearCrossMode();
 
-  // Restore mode switcher
   const switcher = document.getElementById('mode-switcher');
   if (switcher) { switcher.hidden = false; switcher.value = 'fringe'; }
 
   switchMode('fringe');
+}
+
+function cancelMask() {
+  _exitMaskEditSession();
   redraw();
 }
