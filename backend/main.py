@@ -147,7 +147,7 @@ def create_app(camera: BaseCamera | None = None, no_camera: bool = False) -> Fas
                     "style-src 'self' 'unsafe-inline'; "
                     "img-src 'self' data: blob:; "
                     "media-src 'self' blob:; "
-                    "connect-src 'self' https://esm.sh; "
+                    "connect-src 'self' blob: https://esm.sh; "
                     "frame-ancestors 'none'"
                 )
                 response.headers["Permissions-Policy"] = "camera=self"

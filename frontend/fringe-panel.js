@@ -225,7 +225,8 @@ async function analyzeFromFile(file) {
     const preview = $("fringe-preview");
     if (preview) preview.src = fr.droppedObjectUrl;
 
-    _runAnalysis();
+    if (!state._hosted) _runAnalysis();
+    if (btn) btn.disabled = false;
   } catch (e) {
     console.warn("Fringe file read error:", e);
     if (btn) btn.disabled = false;
