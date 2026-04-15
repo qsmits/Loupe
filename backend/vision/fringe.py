@@ -425,6 +425,36 @@ def _analyze_carrier(image: np.ndarray) -> dict:
     secondary_peak_val = mag_search.max()
     peak_ratio = carrier_peak_val / max(secondary_peak_val, 1e-10)
 
+    # SNR: carrier peak vs noise floor (median of non-DC, non-carrier region)
+    noise_floor = float(np.median(mag_search[mag_search > 0])) if np.any(mag_search > 0) else 1e-10
+    snr_db = float(10 * np.log10(max(carrier_peak_val / max(noise_floor, 1e-10), 1e-10)))
+
+    # DC margin: distance from carrier peak to DC mask boundary
+    dc_margin_px = float(np.sqrt((py - cy) ** 2 + (px - cx) ** 2) - dc_margin)
+    dc_margin_px = max(0.0, dc_margin_px)
+
+    # Alternate peaks: top 3 remaining peaks after masking carrier
+    alternate_peaks = []
+    for _ in range(3):
+        if not np.any(mag_search > 0):
+            break
+        alt_idx = np.unravel_index(np.argmax(mag_search), mag_search.shape)
+        alt_y, alt_x = int(alt_idx[0]), int(alt_idx[1])
+        alt_val = float(mag_search[alt_y, alt_x])
+        if alt_val <= 0:
+            break
+        alt_dist = float(np.sqrt((alt_y - cy) ** 2 + (alt_x - cx) ** 2))
+        alt_ratio = carrier_peak_val / max(alt_val, 1e-10)
+        alternate_peaks.append({
+            "y": alt_y, "x": alt_x,
+            "distance_px": round(alt_dist, 1),
+            "peak_ratio": round(alt_ratio, 2),
+        })
+        # Mask this peak for next iteration
+        ay_lo, ay_hi = max(0, alt_y - 5), min(h, alt_y + 6)
+        ax_lo, ax_hi = max(0, alt_x - 5), min(w, alt_x + 6)
+        mag_search[ay_lo:ay_hi, ax_lo:ax_hi] = 0
+
     return {
         "peak_y": int(py),
         "peak_x": int(px),
@@ -434,6 +464,9 @@ def _analyze_carrier(image: np.ndarray) -> dict:
         "peak_ratio": float(peak_ratio),
         "fx_cpp": float(fx),
         "fy_cpp": float(fy),
+        "snr_db": round(snr_db, 1),
+        "dc_margin_px": round(dc_margin_px, 1),
+        "alternate_peaks": alternate_peaks,
     }
 
 

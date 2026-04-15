@@ -468,6 +468,41 @@ class TestAnalyzeInterferogram:
         assert 0 < result["strehl"] <= 1.0
 
 
+class TestCarrierDiagnostics:
+    def _make_fringe(self, period=20):
+        x = np.arange(256)
+        img = (128 + 80 * np.sin(2 * np.pi * x / period)).astype(np.uint8)
+        return np.tile(img, (256, 1))
+
+    def test_snr_db_present(self):
+        from backend.vision.fringe import _analyze_carrier
+        img = self._make_fringe()
+        result = _analyze_carrier(img)
+        assert "snr_db" in result
+        assert result["snr_db"] > 0
+
+    def test_dc_margin_present(self):
+        from backend.vision.fringe import _analyze_carrier
+        img = self._make_fringe()
+        result = _analyze_carrier(img)
+        assert "dc_margin_px" in result
+        assert result["dc_margin_px"] > 0
+
+    def test_alternate_peaks_present(self):
+        from backend.vision.fringe import _analyze_carrier
+        img = self._make_fringe()
+        result = _analyze_carrier(img)
+        assert "alternate_peaks" in result
+        assert isinstance(result["alternate_peaks"], list)
+        assert len(result["alternate_peaks"]) <= 3
+
+    def test_high_snr_for_clean_fringes(self):
+        from backend.vision.fringe import _analyze_carrier
+        img = self._make_fringe()
+        result = _analyze_carrier(img)
+        assert result["snr_db"] > 10
+
+
 class TestReanalyze:
     def test_reanalyze_changes_stats(self):
         """Re-analyzing with different subtraction should change PV/RMS."""
