@@ -8,6 +8,7 @@ from backend.vision.deflectometry import (
     phase_stats, pseudocolor_png_b64, remove_tilt,
     compute_slope_magnitude, compute_curl_residual,
     diverging_png_b64,
+    compute_quality_summary,
 )
 
 def test_generate_fringe_pattern_x_is_sinusoidal():
@@ -322,3 +323,56 @@ def test_diverging_png_b64_centers_on_zero():
     b64 = diverging_png_b64(data)
     raw = base64.b64decode(b64)
     assert raw[:4] == b'\x89PNG'
+
+
+def test_quality_summary_good_data():
+    """Good data should produce 'good' overall quality."""
+    h, w = 64, 64
+    y, x = np.mgrid[0:h, 0:w].astype(np.float64)
+    dzdx = 0.01 * x
+    dzdy = 0.01 * y
+    mask = np.ones((h, w), dtype=bool)
+    mod_x = np.full((h, w), 50.0)
+    mod_y = np.full((h, w), 45.0)
+    frames_x = [np.full((h, w), 128.0) for _ in range(8)]
+    frames_y = [np.full((h, w), 128.0) for _ in range(8)]
+
+    q = compute_quality_summary(dzdx, dzdy, mask, mod_x, mod_y, frames_x, frames_y)
+    assert q["overall"] == "good"
+    assert q["modulation_coverage"] > 50
+    assert q["clipped_fraction"] < 1
+    assert len(q["warnings"]) == 0
+
+
+def test_quality_summary_clipped_data():
+    """Saturated frames should produce a clipping warning."""
+    h, w = 64, 64
+    dzdx = np.zeros((h, w))
+    dzdy = np.zeros((h, w))
+    mask = np.ones((h, w), dtype=bool)
+    mod_x = np.full((h, w), 50.0)
+    mod_y = np.full((h, w), 50.0)
+    # 30% of pixels at 255 (saturated)
+    frame = np.full((h, w), 128.0)
+    frame[:20, :] = 255.0
+    frames_x = [frame.copy() for _ in range(8)]
+    frames_y = [np.full((h, w), 128.0) for _ in range(8)]
+
+    q = compute_quality_summary(dzdx, dzdy, mask, mod_x, mod_y, frames_x, frames_y)
+    assert q["clipped_fraction"] > 5
+    assert any("clip" in w.lower() for w in q["warnings"])
+
+
+def test_quality_summary_modulation_imbalance():
+    """Large X/Y modulation difference should produce a warning."""
+    h, w = 64, 64
+    dzdx = np.zeros((h, w))
+    dzdy = np.zeros((h, w))
+    mask = np.ones((h, w), dtype=bool)
+    mod_x = np.full((h, w), 50.0)
+    mod_y = np.full((h, w), 20.0)  # 60% lower
+    frames_x = [np.full((h, w), 128.0) for _ in range(8)]
+    frames_y = [np.full((h, w), 128.0) for _ in range(8)]
+
+    q = compute_quality_summary(dzdx, dzdy, mask, mod_x, mod_y, frames_x, frames_y)
+    assert any("imbalance" in w.lower() or "modulation" in w.lower() for w in q["warnings"])

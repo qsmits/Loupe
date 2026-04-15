@@ -211,6 +211,92 @@ def compute_curl_residual(dzdx: np.ndarray, dzdy: np.ndarray,
     return curl
 
 
+def compute_quality_summary(
+    dzdx: np.ndarray, dzdy: np.ndarray, mask: np.ndarray,
+    mod_x: np.ndarray, mod_y: np.ndarray,
+    frames_x: list[np.ndarray], frames_y: list[np.ndarray],
+    curl_fair: float = 0.05, curl_poor: float = 0.2,
+) -> dict:
+    """Compute a quality summary for a deflectometry measurement.
+
+    Returns dict with modulation_coverage, modulation_x_median,
+    modulation_y_median, clipped_fraction, curl_rms, curl_max,
+    mask_valid_frac, overall ('good'/'fair'/'poor'), and warnings list.
+    """
+    valid = mask.astype(bool)
+    n_valid = int(valid.sum())
+    n_total = int(mask.size)
+    mask_valid_frac = n_valid / max(n_total, 1)
+
+    # Modulation stats over valid region
+    mod_x_median = float(np.median(mod_x[valid])) if n_valid > 0 else 0.0
+    mod_y_median = float(np.median(mod_y[valid])) if n_valid > 0 else 0.0
+    modulation_coverage = 100.0 * mask_valid_frac
+
+    # Clipped pixel fraction: any frame pixel at 0 or 255 within mask
+    clipped = np.zeros(mask.shape, dtype=bool)
+    for f in frames_x + frames_y:
+        arr = np.asarray(f)
+        clipped |= (arr <= 0.5) | (arr >= 254.5)
+    clipped_in_mask = clipped & valid
+    clipped_fraction = 100.0 * float(clipped_in_mask.sum()) / max(n_valid, 1)
+
+    # Curl residual
+    curl = compute_curl_residual(dzdx, dzdy)
+    if n_valid > 0:
+        curl_valid = curl[valid]
+        curl_rms = float(np.sqrt(np.mean(curl_valid**2)))
+        curl_max = float(np.max(np.abs(curl_valid)))
+    else:
+        curl_rms = 0.0
+        curl_max = 0.0
+
+    # Warnings
+    warnings = []
+    if modulation_coverage < 50:
+        warnings.append("Less than half the image has usable signal.")
+    mod_max = max(mod_x_median, mod_y_median, 1e-10)
+    mod_diff = abs(mod_x_median - mod_y_median) / mod_max
+    if mod_diff > 0.2:
+        low_axis = "Y" if mod_y_median < mod_x_median else "X"
+        warnings.append(
+            f"{low_axis} modulation is {mod_diff*100:.0f}% lower -- "
+            f"check fringe contrast and display orientation."
+        )
+    if clipped_fraction > 5:
+        warnings.append(
+            f"{clipped_fraction:.0f}% of pixels are clipped -- "
+            f"reduce exposure or display brightness."
+        )
+    if curl_rms > curl_fair:
+        warnings.append(
+            "Integration residual is elevated -- "
+            "check surface map for artifacts."
+        )
+
+    # Overall
+    if (modulation_coverage < 30 or curl_rms > curl_poor
+            or clipped_fraction > 20):
+        overall = "poor"
+    elif (modulation_coverage >= 70 and curl_rms < curl_fair
+            and clipped_fraction < 5 and not warnings):
+        overall = "good"
+    else:
+        overall = "fair"
+
+    return {
+        "modulation_coverage": round(modulation_coverage, 1),
+        "modulation_x_median": round(mod_x_median, 1),
+        "modulation_y_median": round(mod_y_median, 1),
+        "clipped_fraction": round(clipped_fraction, 1),
+        "curl_rms": round(curl_rms, 4),
+        "curl_max": round(curl_max, 4),
+        "mask_valid_frac": round(mask_valid_frac, 3),
+        "overall": overall,
+        "warnings": warnings,
+    }
+
+
 def pseudocolor_png_b64(unwrapped: np.ndarray, mask: np.ndarray | None = None) -> str:
     """Min/max normalize to [0,255] uint8, apply VIRIDIS, PNG-encode, base64.
 
