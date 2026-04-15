@@ -423,6 +423,7 @@ async function pollFocusQuality() {
 let _expandedPolling = null;
 
 export function startPolling() {
+  if (state._hosted) return;  // no camera in hosted mode
   stopPolling();
   pollFocusQuality();
   fr.polling = setInterval(pollFocusQuality, 2000);
