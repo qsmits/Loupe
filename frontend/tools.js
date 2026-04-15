@@ -1052,7 +1052,10 @@ export function finalizeArea() {
   if (state.pendingPoints.length < 3) return false;
   addAnnotation({ type: "area", points: [...state.pendingPoints] });
   state.pendingPoints = [];
-  setTool("select");
+  // During cross-mode mask editing, stay in area tool for continuous drawing
+  if (!(window.crossMode && window.crossMode.source)) {
+    setTool("select");
+  }
   return true;
 }
 

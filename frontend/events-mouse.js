@@ -12,6 +12,7 @@ import { setTool, handleToolClick, handleSelectDown, handleDrag,
          projectConstrained, hitTestDxfEntity, findSnapLine,
          promptArcFitChoice, finalizeArcFit, finalizeArea, finalizeSpline, finalizeFitLine } from './tools.js';
 import { fitCircle } from './math.js';
+import { isCrossModeActive } from './cross-mode.js';
 import { exitDxfAlignMode, openFeatureTolPopover } from './dxf.js';
 import { viewport, screenToImage, clampPan, fitToWindow, zoomOneToOne,
          imageWidth, imageHeight } from './viewport.js';
@@ -896,6 +897,19 @@ export function initMouseHandlers() {
             const row = document.querySelector(`.measurement-item[data-id="${ann.id}"]`);
             if (row) row.querySelector(".measurement-name")?.focus();
           }});
+          // Punch/Die toggle for area annotations during cross-mode mask editing
+          if (isCrossModeActive() && ann.type === 'area') {
+            const currentMode = ann.mode || 'punch';
+            items.push("---");
+            items.push({
+              label: currentMode === 'die' ? 'Set as Punch (include)' : 'Set as Die (exclude)',
+              action: () => {
+                pushUndo();
+                ann.mode = currentMode === 'die' ? 'punch' : 'die';
+                redraw();
+              },
+            });
+          }
         }
       }
       showContextMenu(e.clientX, e.clientY, items);
