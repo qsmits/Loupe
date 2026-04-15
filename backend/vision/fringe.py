@@ -1518,6 +1518,21 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 632.8,
         fringe_period_px=carrier_info.get("fringe_period_px"))
     _progress("unwrap", 0.50, "Unwrapping phase...")
 
+    # Confidence metrics (computed after unwrap, before form removal)
+    confidence = compute_confidence(carrier_info, modulation, unwrap_risk, mask,
+                                    threshold_frac=mask_threshold)
+    confidence_maps = render_confidence_maps(modulation, unwrap_risk, mask)
+
+    # Unwrap statistics
+    valid_mask = mask.astype(bool) if mask is not None else np.ones(unwrapped.shape, dtype=bool)
+    n_corrected = int(np.sum(unwrap_risk[valid_mask] == 1))
+    n_edge_risk = int(np.sum(unwrap_risk[valid_mask] == 2))
+    unwrap_stats = {
+        "n_corrected": n_corrected,
+        "n_edge_risk": n_edge_risk,
+        "n_reliable": n_valid - n_corrected - n_edge_risk,
+    }
+
     # Step 4: Zernike fitting
     coeffs, rho, theta = fit_zernike(unwrapped, n_terms=n_zernike, mask=mask)
     _progress("zernike", 0.70, "Fitting Zernike polynomials...")
@@ -1629,6 +1644,9 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 632.8,
         "carrier": carrier_info,
         "form_model": form_model,
         "plane_fit": plane_coeffs,
+        "confidence": confidence,
+        "confidence_maps": confidence_maps,
+        "unwrap_stats": unwrap_stats,
     }
 
 

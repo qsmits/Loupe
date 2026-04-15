@@ -737,6 +737,41 @@ class TestProgressCallback:
         assert result["pv_nm"] >= 0
 
 
+class TestPipelineConfidence:
+    def _make_fringe_image(self, h=256, w=256, period=20):
+        x = np.arange(w)
+        row = (128 + 80 * np.sin(2 * np.pi * x / period)).astype(np.uint8)
+        return np.tile(row, (h, 1))
+
+    def test_confidence_in_result(self):
+        from backend.vision.fringe import analyze_interferogram
+        img = self._make_fringe_image()
+        result = analyze_interferogram(img)
+        assert "confidence" in result
+        for key in ("carrier", "modulation", "unwrap", "overall"):
+            assert key in result["confidence"]
+            assert 0 <= result["confidence"][key] <= 100
+
+    def test_confidence_maps_in_result(self):
+        import base64
+        from backend.vision.fringe import analyze_interferogram
+        img = self._make_fringe_image()
+        result = analyze_interferogram(img)
+        assert "confidence_maps" in result
+        for key in ("unwrap_risk", "composite"):
+            assert key in result["confidence_maps"]
+            raw = base64.b64decode(result["confidence_maps"][key])
+            assert raw[:4] == b"\x89PNG"
+
+    def test_unwrap_stats_in_result(self):
+        from backend.vision.fringe import analyze_interferogram
+        img = self._make_fringe_image()
+        result = analyze_interferogram(img)
+        assert "unwrap_stats" in result
+        for key in ("n_corrected", "n_edge_risk", "n_reliable"):
+            assert key in result["unwrap_stats"]
+
+
 class TestAnalyzeStream:
     """API-level tests for the SSE /fringe/analyze-stream endpoint."""
 
