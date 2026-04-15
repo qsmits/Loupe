@@ -1528,7 +1528,15 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 632.8,
     # Step 1: Modulation & mask
     modulation = compute_fringe_modulation(img)
     if custom_mask is not None:
-        mask = custom_mask.astype(bool)
+        # Intersect the user-drawn region with modulation filtering so
+        # non-fringe pixels inside the polygon don't drag down coverage.
+        user_region = custom_mask.astype(bool)
+        auto_mask = create_fringe_mask(img, modulation, threshold_frac=mask_threshold)
+        mask = user_region & auto_mask
+        # Fall back to the raw polygon if intersection is too aggressive
+        # (e.g. threshold_frac too high for this image)
+        if mask.sum() < 0.05 * user_region.sum():
+            mask = user_region
     elif use_full_mask:
         mask = np.ones(img.shape, dtype=bool)
     else:
