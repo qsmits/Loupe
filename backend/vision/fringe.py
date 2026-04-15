@@ -1097,19 +1097,7 @@ def render_surface_map(surface: np.ndarray, mask: np.ndarray | None = None
     if mask is not None:
         valid = mask.astype(bool)
         s[~valid] = np.nan
-        # Crop to mask bounding box with 5% padding to avoid huge black borders
         if valid.any():
-            rows = np.any(valid, axis=1)
-            cols = np.any(valid, axis=0)
-            r0, r1 = np.argmax(rows), len(rows) - np.argmax(rows[::-1])
-            c0, c1 = np.argmax(cols), len(cols) - np.argmax(cols[::-1])
-            pad_r = max(2, int(0.05 * (r1 - r0)))
-            pad_c = max(2, int(0.05 * (c1 - c0)))
-            r0 = max(0, r0 - pad_r)
-            r1 = min(s.shape[0], r1 + pad_r)
-            c0 = max(0, c0 - pad_c)
-            c1 = min(s.shape[1], c1 + pad_c)
-            s = s[r0:r1, c0:c1]
             smin = float(np.nanmin(s))
             smax = float(np.nanmax(s))
         else:
@@ -1637,6 +1625,23 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 632.8,
     f_score = focus_quality(image)
 
     _progress("render", 0.85, "Rendering results...")
+    # Crop to mask bounding box before rendering (avoids huge black borders)
+    if mask is not None and mask.any():
+        rows_any = np.any(mask, axis=1)
+        cols_any = np.any(mask, axis=0)
+        r0 = int(np.argmax(rows_any))
+        r1 = int(len(rows_any) - np.argmax(rows_any[::-1]))
+        c0 = int(np.argmax(cols_any))
+        c1 = int(len(cols_any) - np.argmax(cols_any[::-1]))
+        pad_r = max(2, int(0.05 * (r1 - r0)))
+        pad_c = max(2, int(0.05 * (c1 - c0)))
+        r0 = max(0, r0 - pad_r)
+        r1 = min(height_nm.shape[0], r1 + pad_r)
+        c0 = max(0, c0 - pad_c)
+        c1 = min(height_nm.shape[1], c1 + pad_c)
+        height_nm = height_nm[r0:r1, c0:c1]
+        mask = mask[r0:r1, c0:c1]
+
     # Step 9: Renderings
     surface_map_b64 = render_surface_map(height_nm, mask)
     profile_x = render_profile(height_nm, mask, axis="x")
@@ -1711,8 +1716,8 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 632.8,
         "wavelength_nm": wavelength_nm,
         "n_valid_pixels": n_valid,
         "n_total_pixels": n_total,
-        "surface_height": int(img.shape[0]),
-        "surface_width": int(img.shape[1]),
+        "surface_height": int(height_nm.shape[0]),
+        "surface_width": int(height_nm.shape[1]),
         "height_grid": [round(float(v), 2) for v in grid_out.ravel()],
         "mask_grid": [int(v) for v in grid_mask.ravel()],
         "grid_rows": grid_h,
