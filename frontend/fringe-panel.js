@@ -9,6 +9,7 @@ import { apiFetch } from './api.js';
 import { analyzeWithProgress, createProgressBar } from './fringe-progress.js';
 import { initCrossMode } from './cross-mode.js';
 import { switchMode } from './modes.js';
+import { loadFringeLensProfiles, renderFringeLensDropdown, saveFringeLensProfile } from './fringe-lens-profiles.js';
 
 // ── Helpers ────────────────────────────────────────────────────────────
 
@@ -77,6 +78,16 @@ export function buildPanelHtml() {
           </button>
         </div>
         <div id="fringe-mask-status" style="font-size:10px;opacity:0.5;text-align:center" hidden></div>
+
+        <div style="display:flex;gap:4px;align-items:center;margin-top:8px;padding-top:8px;border-top:1px solid var(--border)">
+          <label style="font-size:11px;opacity:0.7;white-space:nowrap">Lens:</label>
+          <select id="fringe-lens-profile" style="flex:1;font-size:11px;padding:2px 4px"></select>
+          <button class="detect-btn" id="fringe-btn-lens-cal" style="padding:4px 10px;font-size:11px">Calibrate</button>
+        </div>
+        <div id="fringe-lens-save-row" hidden style="display:flex;gap:4px;align-items:center;margin-top:4px">
+          <input type="text" id="fringe-lens-save-name" placeholder="Profile name" style="flex:1;font-size:11px;padding:2px 4px" />
+          <button class="detect-btn" id="fringe-btn-lens-save" style="padding:4px 8px;font-size:11px">Save</button>
+        </div>
 
         <div class="fringe-drop-zone" id="fringe-drop-zone" style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border)">
           <span style="opacity:0.5;font-size:12px">or drag &amp; drop an image</span>
@@ -166,6 +177,7 @@ function analyzeFromCamera() {
     subtract_terms: getSubtractTerms(),
     mask_polygons: _buildMaskPayload(),
     form_model: getFormModel(),
+    lens_k1: fr.lensK1,
   };
   console.log("[fringe] analyze payload:", JSON.stringify(payload));
 
@@ -204,6 +216,7 @@ async function analyzeFromFile(file) {
       image_b64: b64,
       mask_polygons: _buildMaskPayload(),
       form_model: getFormModel(),
+      lens_k1: fr.lensK1,
     };
 
     analyzeWithProgress(
@@ -315,6 +328,7 @@ async function addToAverage() {
         subtract_terms: getSubtractTerms(),
         mask_polygons: _buildMaskPayload(),
         form_model: getFormModel(),
+        lens_k1: fr.lensK1,
       }),
     });
     if (!resp.ok) {
@@ -410,6 +424,32 @@ export function stopPolling() {
 export function wirePanelEvents() {
   // Create progress bar after analyze button
   createProgressBar();
+
+  // Initialize lens profile dropdown
+  renderFringeLensDropdown();
+
+  // Lens profile selection
+  $("fringe-lens-profile")?.addEventListener("change", (e) => {
+    const sel = e.target;
+    if (!sel.value) {
+      fr.lensK1 = 0;
+    } else {
+      const opt = sel.selectedOptions[0];
+      fr.lensK1 = parseFloat(opt.dataset.k1) || 0;
+    }
+    if (fr.lastResult) analyzeFromCamera();
+  });
+
+  // Save lens profile
+  $("fringe-btn-lens-save")?.addEventListener("click", () => {
+    const nameInput = $("fringe-lens-save-name");
+    const name = nameInput?.value.trim();
+    if (!name || !fr.lensK1) return;
+    saveFringeLensProfile(name, fr.lensK1);
+    renderFringeLensDropdown();
+    $("fringe-lens-profile").value = name;
+    $("fringe-lens-save-row").hidden = true;
+  });
 
   // Analyze button
   $("fringe-btn-analyze")?.addEventListener("click", analyzeFromCamera);

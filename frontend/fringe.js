@@ -30,6 +30,7 @@ export const fr = {
   avgSurfaceHeight: 0,
   avgSurfaceWidth: 0,
   carrierOverride: null,   // {y, x} or null
+  lensK1: 0,
 };
 
 export function $(id) { return document.getElementById(id); }

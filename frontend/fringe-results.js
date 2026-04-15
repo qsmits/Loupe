@@ -598,6 +598,7 @@ function wireCarrierOverride() {
           mask_polygons: fr.maskPolygons.length > 0
             ? fr.maskPolygons.map(p => ({ vertices: p.vertices.map(v => [v.x, v.y]), include: p.include }))
             : undefined,
+          lens_k1: fr.lensK1,
         }),
       });
       if (!resp.ok) { console.warn("Carrier override failed"); return; }
