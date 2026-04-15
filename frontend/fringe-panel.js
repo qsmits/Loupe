@@ -37,7 +37,7 @@ export function getMaskThreshold() {
 export function buildPanelHtml() {
   return `
         <div class="fringe-preview-container" id="fringe-preview-container" style="position:relative;cursor:pointer" title="Click to expand preview">
-          <img id="fringe-preview" src="/stream" alt="Camera preview" />
+          <img id="fringe-preview" alt="Camera preview" />
           <canvas id="fringe-roi-canvas" style="position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none"></canvas>
         </div>
         <div class="fringe-focus-bar-container">
@@ -241,7 +241,7 @@ export function clearDroppedImage() {
     fr.droppedObjectUrl = null;
   }
   const preview = $("fringe-preview");
-  if (preview) preview.src = "/stream";
+  if (preview) preview.src = state._hosted ? "" : "/stream";
 }
 
 // ── Averaging helpers ──────────────────────────────────────────────────
@@ -425,6 +425,11 @@ let _expandedPolling = null;
 
 export function startPolling() {
   if (state._hosted) return;  // no camera in hosted mode
+  // Ensure preview shows the live stream (src is blank until first poll)
+  const preview = $("fringe-preview");
+  if (preview && !preview.src.includes("/stream") && !fr.droppedImageB64) {
+    preview.src = "/stream";
+  }
   stopPolling();
   pollFocusQuality();
   fr.polling = setInterval(pollFocusQuality, 2000);
@@ -448,7 +453,7 @@ function _openExpandedPreview() {
   overlay.id = "fringe-expanded-preview";
   overlay.className = "fringe-expanded-preview";
   overlay.innerHTML = `
-    <img src="/stream" draggable="false" style="width:100%;height:100%;object-fit:contain;display:block" />
+    <img src="${state._hosted ? '' : '/stream'}" draggable="false" style="width:100%;height:100%;object-fit:contain;display:block" />
     <div class="fringe-expanded-focus">
       <span style="font-size:13px;opacity:0.7">Focus</span>
       <span id="fringe-focus-big-score" style="font-size:48px;font-weight:700;line-height:1">--</span>
