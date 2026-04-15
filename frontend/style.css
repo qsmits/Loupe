@@ -2198,7 +2198,11 @@ body.no-camera .camera-section { display: none; }
 .fringe-drop-zone {
   border: 2px dashed var(--border);
   border-radius: 6px;
-  padding: 12px;
+  padding: 24px 12px;
+  min-height: 60px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   text-align: center;
   cursor: pointer;
   transition: border-color 0.2s, background 0.2s;

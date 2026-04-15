@@ -47,7 +47,7 @@ export function buildPanelHtml() {
           <span id="fringe-focus-score" style="font-size:11px;min-width:30px;text-align:right">--</span>
         </div>
 
-        <button class="detect-btn" id="fringe-btn-analyze" style="padding:4px 10px;font-size:11px;width:100%">
+        <button class="detect-btn" id="fringe-btn-analyze" style="padding:4px 10px;font-size:11px">
           Freeze &amp; Analyze
         </button>
 
@@ -89,7 +89,7 @@ export function buildPanelHtml() {
           <button class="detect-btn" id="fringe-btn-lens-save" style="padding:4px 8px;font-size:11px">Save</button>
         </div>
 
-        <div class="fringe-drop-zone" id="fringe-drop-zone" style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border)">
+        <div class="fringe-drop-zone" id="fringe-drop-zone" style="margin-top:8px">
           <span style="opacity:0.5;font-size:12px">or drag &amp; drop an image</span>
         </div>
   `;
