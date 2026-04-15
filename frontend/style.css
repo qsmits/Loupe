@@ -2242,6 +2242,31 @@ body.no-camera .camera-section { display: none; }
   flex-direction: column;
   min-width: 0;
   min-height: 0;
+  position: relative;
+}
+
+/* Expanded preview overlay */
+.fringe-expanded-preview {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  background: #111;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.fringe-expanded-focus {
+  position: absolute;
+  top: 12px;
+  right: 16px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  background: rgba(0,0,0,0.6);
+  padding: 8px 14px;
+  border-radius: 6px;
 }
 
 /* Summary bar */

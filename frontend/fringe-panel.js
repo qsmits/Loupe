@@ -35,12 +35,12 @@ export function getMaskThreshold() {
 
 export function buildPanelHtml() {
   return `
-        <div class="fringe-preview-container" style="position:relative">
+        <div class="fringe-preview-container" id="fringe-preview-container" style="position:relative;cursor:pointer" title="Click to expand preview">
           <img id="fringe-preview" src="/stream" alt="Camera preview" />
           <canvas id="fringe-roi-canvas" style="position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none"></canvas>
         </div>
         <div class="fringe-focus-bar-container">
-          <label style="font-size:11px;opacity:0.7">Focus quality</label>
+          <label style="font-size:11px;opacity:0.7">Focus</label>
           <div class="fringe-focus-bar">
             <div class="fringe-focus-fill" id="fringe-focus-fill" style="width:0%"></div>
           </div>
@@ -388,23 +388,32 @@ function resetAverage() {
 
 // ── Focus quality polling ──────────────────────────────────────────────
 
+function _updateFocusUI(score) {
+  const color = score < 30 ? "var(--danger)" : score < 60 ? "var(--warning)" : "var(--success)";
+
+  const fill = $("fringe-focus-fill");
+  const label = $("fringe-focus-score");
+  if (fill) { fill.style.width = score + "%"; fill.style.background = color; }
+  if (label) label.textContent = score.toFixed(0);
+
+  // Expanded preview overlay score
+  const bigScore = $("fringe-focus-big-score");
+  if (bigScore) {
+    bigScore.textContent = score.toFixed(0);
+    bigScore.style.color = color;
+  }
+}
+
 async function pollFocusQuality() {
   try {
     const r = await apiFetch("/fringe/focus-quality");
     if (!r.ok) return;
     const data = await r.json();
-    const fill = $("fringe-focus-fill");
-    const label = $("fringe-focus-score");
-    if (fill) fill.style.width = data.score + "%";
-    if (label) label.textContent = data.score.toFixed(0);
-    // Color: red < 30, yellow 30-60, green > 60
-    if (fill) {
-      if (data.score < 30) fill.style.background = "var(--danger)";
-      else if (data.score < 60) fill.style.background = "var(--warning)";
-      else fill.style.background = "var(--success)";
-    }
+    _updateFocusUI(data.score);
   } catch { /* ignore */ }
 }
+
+let _expandedPolling = null;
 
 export function startPolling() {
   stopPolling();
@@ -417,6 +426,52 @@ export function stopPolling() {
     clearInterval(fr.polling);
     fr.polling = null;
   }
+  _closeExpandedPreview();
+}
+
+function _openExpandedPreview() {
+  if ($("fringe-expanded-preview")) return;
+
+  const resultsCol = document.querySelector(".fringe-results-col");
+  if (!resultsCol) return;
+
+  const overlay = document.createElement("div");
+  overlay.id = "fringe-expanded-preview";
+  overlay.className = "fringe-expanded-preview";
+  overlay.innerHTML = `
+    <img src="/stream" draggable="false" style="width:100%;height:100%;object-fit:contain;display:block" />
+    <div class="fringe-expanded-focus">
+      <span style="font-size:13px;opacity:0.7">Focus</span>
+      <span id="fringe-focus-big-score" style="font-size:48px;font-weight:700;line-height:1">--</span>
+    </div>
+    <div style="position:absolute;bottom:12px;left:0;right:0;text-align:center;font-size:11px;opacity:0.4">
+      Click or Esc to close
+    </div>
+  `;
+  overlay.addEventListener("click", _closeExpandedPreview);
+  resultsCol.appendChild(overlay);
+
+  // Accelerate polling to 500ms
+  if (fr.polling) clearInterval(fr.polling);
+  pollFocusQuality();
+  _expandedPolling = setInterval(pollFocusQuality, 500);
+
+  // Escape key listener
+  overlay._escHandler = (e) => { if (e.key === "Escape") _closeExpandedPreview(); };
+  document.addEventListener("keydown", overlay._escHandler);
+}
+
+function _closeExpandedPreview() {
+  const overlay = $("fringe-expanded-preview");
+  if (!overlay) return;
+
+  if (overlay._escHandler) document.removeEventListener("keydown", overlay._escHandler);
+  overlay.remove();
+
+  // Restore normal polling rate
+  if (_expandedPolling) { clearInterval(_expandedPolling); _expandedPolling = null; }
+  if (fr.polling) clearInterval(fr.polling);
+  fr.polling = setInterval(pollFocusQuality, 2000);
 }
 
 // ── Panel event wiring ─────────────────────────────────────────────────
@@ -480,6 +535,13 @@ export function wirePanelEvents() {
       }
     });
   }
+
+  // Preview click to expand
+  $("fringe-preview-container")?.addEventListener("click", (e) => {
+    // Don't expand on scroll-zoom (wheel events)
+    if (e.target.tagName === "CANVAS") return;
+    _openExpandedPreview();
+  });
 
   // Preview scroll-to-zoom
   const previewContainer = $("fringe-preview")?.parentElement;
