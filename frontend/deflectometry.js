@@ -57,6 +57,7 @@ function buildWorkspace() {
           <span class="defl-badge" id="defl-badge-flat">Flat field: \u2014</span>
           <span class="defl-badge" id="defl-badge-ref">Baseline: \u2014</span>
           <span class="defl-badge" id="defl-badge-cal">Calibration: \u2014</span>
+          <span class="defl-badge" id="defl-badge-display-cal">Display: \u2014</span>
         </div>
         <div class="defl-setting-group" style="margin-top:6px;padding-top:8px;border-top:1px solid var(--border)">
           <div style="font-size:12px;font-weight:600;opacity:0.7">Setup</div>
@@ -67,6 +68,9 @@ function buildWorkspace() {
           <div style="display:flex;align-items:center;gap:6px">
             <button class="detect-btn" id="defl-btn-ref">Baseline</button>
             <span class="defl-step-status" id="defl-status-ref" style="font-size:11px;opacity:0.7">Optional</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:6px">
+            <button class="detect-btn" id="defl-btn-display-cal" style="padding:4px 8px;font-size:11px">Calibrate Display</button>
           </div>
         </div>
         <div class="defl-setting-group" style="margin-top:6px;padding-top:8px;border-top:1px solid var(--border)">
@@ -385,6 +389,7 @@ function wireEvents() {
   // Workflow buttons
   $("defl-btn-flat")?.addEventListener("click", flatField);
   $("defl-btn-ref")?.addEventListener("click", captureReference);
+  $("defl-btn-display-cal")?.addEventListener("click", calibrateDisplay);
   $("defl-btn-capture")?.addEventListener("click", captureSequence);
   $("defl-btn-compute")?.addEventListener("click", compute);
   $("defl-btn-calibrate")?.addEventListener("click", calibrateSphere);
@@ -471,6 +476,29 @@ async function flatField() {
     if (statusEl) statusEl.textContent = "Failed: " + (e?.message || e);
   } finally {
     if (btn) btn.disabled = false;
+  }
+}
+
+async function calibrateDisplay() {
+  const btn = $("defl-btn-display-cal");
+  if (btn) { btn.disabled = true; btn.textContent = "Calibrating\u2026"; }
+  try {
+    const r = await apiFetch("/deflectometry/calibrate-display", { method: "POST" });
+    if (!r.ok) {
+      const err = await r.json().catch(() => ({}));
+      console.warn("Display calibration failed:", err.detail || r.status);
+      return;
+    }
+    const data = await r.json();
+    const badge = $("defl-badge-display-cal");
+    if (badge) {
+      badge.textContent = `Display: ${data.max_deviation_from_gamma}% dev`;
+      badge.classList.add("active");
+    }
+  } catch (e) {
+    console.warn("Display calibration error:", e);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = "Calibrate Display"; }
   }
 }
 
@@ -722,6 +750,16 @@ async function refreshStatus() {
     const hasCal = d.cal_factor != null;
     setBadge("defl-badge-cal", hasCal);
     $("defl-badge-cal").textContent = "Calibration: " + (hasCal ? "\u2713" : "\u2014");
+    // Display calibration
+    const dispCalBadge = $("defl-badge-display-cal");
+    if (dispCalBadge) {
+      if (d.has_display_cal) {
+        dispCalBadge.classList.add("active");
+      } else {
+        dispCalBadge.classList.remove("active");
+        dispCalBadge.textContent = "Display: \u2014";
+      }
+    }
     // Render last result if we have one and phase content is not showing
     if (d.last_result && $("defl-phase-content")?.hidden) {
       renderPhaseResult(d.last_result);
