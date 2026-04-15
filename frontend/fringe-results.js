@@ -189,33 +189,51 @@ export function buildResultsHtml() {
 
         <div class="fringe-tab-panel" id="fringe-panel-diagnostics" hidden>
           <div class="fringe-empty-state" id="fringe-diag-empty">Analyze an image first.</div>
-          <div id="fringe-diag-content" hidden style="display:flex;gap:16px;flex-wrap:wrap;align-items:flex-start;padding:8px">
-            <div>
-              <p style="font-size:11px;opacity:0.6;margin:0 0 6px">FFT Magnitude (click to override carrier)</p>
-              <canvas id="fringe-fft-canvas" width="256" height="256" style="cursor:crosshair;image-rendering:pixelated;border:1px solid var(--border)"></canvas>
-              <div style="margin-top:4px">
-                <button class="detect-btn" id="fringe-btn-carrier-reset" style="padding:2px 8px;font-size:10px" hidden>
-                  Reset to Auto
-                </button>
+          <div id="fringe-diag-content" hidden style="padding:8px">
+            <div id="fringe-diag-assessment" style="padding:8px 12px;margin-bottom:8px;border-radius:6px;font-size:12px;display:none"></div>
+            <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:flex-start">
+              <div>
+                <p style="font-size:11px;opacity:0.6;margin:0 0 6px">FFT Magnitude (click to override carrier)</p>
+                <canvas id="fringe-fft-canvas" width="256" height="256" style="cursor:crosshair;image-rendering:pixelated;border:1px solid var(--border)"></canvas>
+                <div style="margin-top:4px">
+                  <button class="detect-btn" id="fringe-btn-carrier-reset" style="padding:2px 8px;font-size:10px" hidden>
+                    Reset to Auto
+                  </button>
+                </div>
               </div>
-            </div>
-            <div>
-              <p style="font-size:11px;opacity:0.6;margin:0 0 6px">Modulation / Quality Map</p>
-              <img id="fringe-modulation-img" style="max-width:300px;border:1px solid var(--border)" />
-            </div>
-            <div style="min-width:200px">
-              <p style="font-size:11px;opacity:0.6;margin:0 0 6px">Carrier Statistics</p>
-              <table id="fringe-carrier-table" style="font-size:11px;border-collapse:collapse">
-                <tbody>
-                  <tr><td style="padding:2px 8px;opacity:0.6">Period</td><td id="fringe-diag-period" style="padding:2px 8px">--</td></tr>
-                  <tr><td style="padding:2px 8px;opacity:0.6">Angle</td><td id="fringe-diag-angle" style="padding:2px 8px">--</td></tr>
-                  <tr><td style="padding:2px 8px;opacity:0.6">Peak ratio</td><td id="fringe-diag-ratio" style="padding:2px 8px">--</td></tr>
-                  <tr><td style="padding:2px 8px;opacity:0.6">fx (cpp)</td><td id="fringe-diag-fx" style="padding:2px 8px">--</td></tr>
-                  <tr><td style="padding:2px 8px;opacity:0.6">fy (cpp)</td><td id="fringe-diag-fy" style="padding:2px 8px">--</td></tr>
-                  <tr><td style="padding:2px 8px;opacity:0.6">Valid pixels</td><td id="fringe-diag-valid" style="padding:2px 8px">--</td></tr>
-                  <tr><td style="padding:2px 8px;opacity:0.6">Coverage</td><td id="fringe-diag-coverage" style="padding:2px 8px">--</td></tr>
-                </tbody>
-              </table>
+              <div>
+                <p style="font-size:11px;opacity:0.6;margin:0 0 6px">Modulation Map</p>
+                <img id="fringe-modulation-img" style="max-width:300px;border:1px solid var(--border)" />
+              </div>
+              <div>
+                <p style="font-size:11px;opacity:0.6;margin:0 0 6px">Unwrap Risk Map</p>
+                <img id="fringe-unwrap-risk-img" style="max-width:300px;border:1px solid var(--border)" />
+              </div>
+              <div style="min-width:200px">
+                <p style="font-size:11px;opacity:0.6;margin:0 0 6px">Carrier Statistics</p>
+                <table id="fringe-carrier-table" style="font-size:11px;border-collapse:collapse">
+                  <tbody>
+                    <tr><td style="padding:2px 8px;opacity:0.6">Period</td><td id="fringe-diag-period" style="padding:2px 8px">--</td></tr>
+                    <tr><td style="padding:2px 8px;opacity:0.6">Angle</td><td id="fringe-diag-angle" style="padding:2px 8px">--</td></tr>
+                    <tr><td style="padding:2px 8px;opacity:0.6">Peak ratio</td><td id="fringe-diag-ratio" style="padding:2px 8px">--</td></tr>
+                    <tr><td style="padding:2px 8px;opacity:0.6">SNR</td><td id="fringe-diag-snr" style="padding:2px 8px">--</td></tr>
+                    <tr><td style="padding:2px 8px;opacity:0.6">DC margin</td><td id="fringe-diag-dc-margin" style="padding:2px 8px">--</td></tr>
+                    <tr><td style="padding:2px 8px;opacity:0.6">Alternates</td><td id="fringe-diag-alternates" style="padding:2px 8px">--</td></tr>
+                    <tr><td style="padding:2px 8px;opacity:0.6">fx (cpp)</td><td id="fringe-diag-fx" style="padding:2px 8px">--</td></tr>
+                    <tr><td style="padding:2px 8px;opacity:0.6">fy (cpp)</td><td id="fringe-diag-fy" style="padding:2px 8px">--</td></tr>
+                    <tr><td style="padding:2px 8px;opacity:0.6">Valid pixels</td><td id="fringe-diag-valid" style="padding:2px 8px">--</td></tr>
+                    <tr><td style="padding:2px 8px;opacity:0.6">Coverage</td><td id="fringe-diag-coverage" style="padding:2px 8px">--</td></tr>
+                  </tbody>
+                </table>
+                <p style="font-size:11px;opacity:0.6;margin:12px 0 6px">Unwrap Statistics</p>
+                <table style="font-size:11px;border-collapse:collapse">
+                  <tbody>
+                    <tr><td style="padding:2px 8px;opacity:0.6">Reliable</td><td id="fringe-diag-reliable" style="padding:2px 8px">--</td></tr>
+                    <tr><td style="padding:2px 8px;opacity:0.6">Corrected</td><td id="fringe-diag-corrected" style="padding:2px 8px">--</td></tr>
+                    <tr><td style="padding:2px 8px;opacity:0.6">Edge risk</td><td id="fringe-diag-edge-risk" style="padding:2px 8px">--</td></tr>
+                  </tbody>
+                </table>
+              </div>
             </div>
           </div>
         </div>
@@ -444,6 +462,23 @@ function updateCarrierDisplay(data) {
   const coverage = data.n_total_pixels ? ((data.n_valid_pixels / data.n_total_pixels) * 100).toFixed(1) : "--";
   $("fringe-diag-coverage").textContent = `${coverage}%`;
 
+  // Enhanced carrier diagnostics
+  if (carrier.snr_db != null) {
+    const snrEl = $("fringe-diag-snr");
+    if (snrEl) snrEl.textContent = carrier.snr_db.toFixed(1) + " dB";
+  }
+  if (carrier.dc_margin_px != null) {
+    const dcEl = $("fringe-diag-dc-margin");
+    if (dcEl) dcEl.textContent = carrier.dc_margin_px.toFixed(0) + " px";
+  }
+  const alts = carrier.alternate_peaks || [];
+  const altEl = $("fringe-diag-alternates");
+  if (altEl) {
+    altEl.textContent = alts.length > 0
+      ? alts.map((a, i) => `#${i + 1}: ${a.peak_ratio.toFixed(1)}x`).join(", ")
+      : "none";
+  }
+
   // FFT image
   if (data.fft_image) {
     const canvas = $("fringe-fft-canvas");
@@ -460,6 +495,57 @@ function updateCarrierDisplay(data) {
   // Modulation map
   if (data.modulation_map) {
     $("fringe-modulation-img").src = "data:image/png;base64," + data.modulation_map;
+  }
+
+  // Unwrap risk map
+  if (data.confidence_maps && data.confidence_maps.unwrap_risk) {
+    const riskImg = $("fringe-unwrap-risk-img");
+    if (riskImg) riskImg.src = "data:image/png;base64," + data.confidence_maps.unwrap_risk;
+  }
+
+  // Unwrap statistics
+  if (data.unwrap_stats) {
+    const us = data.unwrap_stats;
+    const relEl = $("fringe-diag-reliable");
+    if (relEl) relEl.textContent = us.n_reliable.toLocaleString();
+    const corEl = $("fringe-diag-corrected");
+    if (corEl) corEl.textContent = us.n_corrected.toLocaleString();
+    const edgeEl = $("fringe-diag-edge-risk");
+    if (edgeEl) edgeEl.textContent = us.n_edge_risk.toLocaleString();
+  }
+
+  // Overall assessment
+  if (data.confidence) {
+    const assessEl = $("fringe-diag-assessment");
+    if (assessEl) {
+      const c = data.confidence;
+      const stages = [["carrier", c.carrier], ["modulation", c.modulation], ["unwrap", c.unwrap]];
+      const weakest = stages.sort((a, b) => a[1] - b[1])[0];
+      let msg, bg;
+      if (c.overall >= 70) {
+        msg = "Result is reliable.";
+        bg = "rgba(48,209,88,0.15)";
+      } else if (c.overall >= 30) {
+        const advice = {
+          carrier: "Fringe pattern may be weak. Consider adjusting flat angle for better contrast.",
+          modulation: "Modulation is marginal. Check illumination and flat contact.",
+          unwrap: "Some unwrap uncertainty. Check surface map for discontinuities.",
+        };
+        msg = `${weakest[0].charAt(0).toUpperCase() + weakest[0].slice(1)} is marginal \u2014 ${advice[weakest[0]] || "review diagnostics."}`;
+        bg = "rgba(255,159,10,0.15)";
+      } else {
+        const advice = {
+          carrier: "Fringe pattern is weak or ambiguous. Improve fringe contrast or adjust the optical flat angle.",
+          modulation: "Less than half the aperture has usable fringes. Check illumination and flat contact.",
+          unwrap: "Phase unwrapping had difficulty. Check surface map for discontinuities.",
+        };
+        msg = `${weakest[0].charAt(0).toUpperCase() + weakest[0].slice(1)} is poor \u2014 ${advice[weakest[0]] || "review diagnostics."}`;
+        bg = "rgba(255,69,58,0.15)";
+      }
+      assessEl.textContent = msg;
+      assessEl.style.background = bg;
+      assessEl.style.display = "block";
+    }
   }
 
   // Show diagnostics content
