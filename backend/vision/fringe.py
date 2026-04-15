@@ -419,8 +419,15 @@ def _find_carrier(image: np.ndarray) -> tuple[int, int, float]:
     return py_orig, px_orig, dist_orig
 
 
-def _analyze_carrier(image: np.ndarray) -> dict:
+def _analyze_carrier(image: np.ndarray, mask: np.ndarray | None = None) -> dict:
     """Analyze carrier frequency and return diagnostic information.
+
+    Parameters
+    ----------
+    image : 2D float64 image.
+    mask : optional boolean mask (True = valid fringe region). When provided,
+           non-fringe regions are zeroed before the FFT so broadband noise
+           from areas without fringes doesn't dilute the carrier peak.
 
     Returns dict with keys:
     - peak_y, peak_x: carrier peak position in fftshift coords
@@ -444,8 +451,14 @@ def _analyze_carrier(image: np.ndarray) -> dict:
     fringe_period = 1.0 / fringe_freq if fringe_freq > 1e-10 else float("inf")
     fringe_angle = (math.degrees(math.atan2(fy, fx)) + 90.0) % 180.0
 
-    # Peak ratio: carrier peak magnitude vs secondary peak (confidence)
-    img_c = img - img.mean()
+    # Peak ratio: carrier peak magnitude vs secondary peak (confidence).
+    # When a mask is available, zero out non-fringe regions so broadband
+    # noise from background areas doesn't raise the secondary peak level.
+    img_masked = img.copy()
+    if mask is not None:
+        valid = mask.astype(bool)
+        img_masked[~valid] = 0.0
+    img_c = img_masked - img_masked.mean()
     img_windowed = img_c * np.outer(np.hanning(h), np.hanning(w))
     F = np.fft.fftshift(np.fft.fft2(img_windowed))
     magnitude = np.abs(F)
@@ -1505,7 +1518,7 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 632.8,
 
     # Step 2b: Carrier analysis (needed for fringe_period_px before unwrap)
     if carrier_override is not None:
-        carrier_info = _analyze_carrier(img)
+        carrier_info = _analyze_carrier(img, mask)
         carrier_info["peak_y"] = carrier_override[0]
         carrier_info["peak_x"] = carrier_override[1]
         fy = (carrier_override[0] - img.shape[0] // 2) / max(img.shape[0], 1)
@@ -1518,7 +1531,7 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 632.8,
         carrier_info["fx_cpp"] = fx
         carrier_info["fy_cpp"] = fy
     else:
-        carrier_info = _analyze_carrier(img)
+        carrier_info = _analyze_carrier(img, mask)
 
     # Step 3: Phase unwrapping
     unwrapped, unwrap_risk = unwrap_phase_2d(
