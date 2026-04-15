@@ -1626,6 +1626,7 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 632.8,
 
     _progress("render", 0.85, "Rendering results...")
     # Crop to mask bounding box before rendering (avoids huge black borders)
+    crop_h, crop_mask = height_nm, mask
     if mask is not None and mask.any():
         rows_any = np.any(mask, axis=1)
         cols_any = np.any(mask, axis=0)
@@ -1639,19 +1640,19 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 632.8,
         r1 = min(height_nm.shape[0], r1 + pad_r)
         c0 = max(0, c0 - pad_c)
         c1 = min(height_nm.shape[1], c1 + pad_c)
-        height_nm = height_nm[r0:r1, c0:c1]
-        mask = mask[r0:r1, c0:c1]
+        crop_h = height_nm[r0:r1, c0:c1]
+        crop_mask = mask[r0:r1, c0:c1]
 
-    # Step 9: Renderings
-    surface_map_b64 = render_surface_map(height_nm, mask)
-    profile_x = render_profile(height_nm, mask, axis="x")
-    profile_y = render_profile(height_nm, mask, axis="y")
+    # Step 9: Renderings (use cropped data for surface map, grid, profiles)
+    surface_map_b64 = render_surface_map(crop_h, crop_mask)
+    profile_x = render_profile(crop_h, crop_mask, axis="x")
+    profile_y = render_profile(crop_h, crop_mask, axis="y")
 
-    # Diagnostic images: FFT with carrier peak marked, modulation map
+    # Diagnostic images: FFT with carrier peak marked, modulation map (full size)
     fft_b64 = render_fft_image(img, carrier_info["peak_y"], carrier_info["peak_x"])
     mod_map_b64 = render_modulation_map(modulation, mask)
 
-    # Step 10: PSF and MTF
+    # Step 10: PSF and MTF (full size — need full aperture for diffraction calcs)
     surface_waves = height_nm / wavelength_nm
     psf_b64 = render_psf(surface_waves, mask)
     mtf_data = render_mtf(surface_waves, mask)
@@ -1669,24 +1670,25 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 632.8,
     }
 
     # Downsample height grid for client-side measurements (max 256x256)
+    # Uses cropped data so grid coordinates match the surface map image
     max_grid = 256
-    gh, gw = height_nm.shape
+    gh, gw = crop_h.shape
     if gh > max_grid or gw > max_grid:
         scale_factor = min(max_grid / gh, max_grid / gw)
         grid_h = max(1, int(gh * scale_factor))
         grid_w = max(1, int(gw * scale_factor))
-        grid = cv2.resize(height_nm.astype(np.float32), (grid_w, grid_h),
+        grid = cv2.resize(crop_h.astype(np.float32), (grid_w, grid_h),
                           interpolation=cv2.INTER_AREA)
-        if mask is not None:
-            mask_resized = cv2.resize(mask.astype(np.uint8), (grid_w, grid_h),
+        if crop_mask is not None:
+            mask_resized = cv2.resize(crop_mask.astype(np.uint8), (grid_w, grid_h),
                                       interpolation=cv2.INTER_NEAREST)
             grid_mask = (mask_resized > 0)
         else:
             grid_mask = np.ones((grid_h, grid_w), dtype=bool)
     else:
-        grid = height_nm.astype(np.float32)
+        grid = crop_h.astype(np.float32)
         grid_h, grid_w = gh, gw
-        grid_mask = mask if mask is not None else np.ones((grid_h, grid_w), dtype=bool)
+        grid_mask = crop_mask if crop_mask is not None else np.ones((grid_h, grid_w), dtype=bool)
 
     # Set masked pixels to 0 in the grid
     grid_out = grid.copy()
@@ -1716,8 +1718,8 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 632.8,
         "wavelength_nm": wavelength_nm,
         "n_valid_pixels": n_valid,
         "n_total_pixels": n_total,
-        "surface_height": int(height_nm.shape[0]),
-        "surface_width": int(height_nm.shape[1]),
+        "surface_height": int(crop_h.shape[0]),
+        "surface_width": int(crop_h.shape[1]),
         "height_grid": [round(float(v), 2) for v in grid_out.ravel()],
         "mask_grid": [int(v) for v in grid_mask.ravel()],
         "grid_rows": grid_h,
@@ -1728,8 +1730,8 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 632.8,
         "confidence": confidence,
         "confidence_maps": confidence_maps,
         "unwrap_stats": unwrap_stats,
-        # Full-res mask for server-side caching (stripped by API before response)
-        "_mask_full": [int(v) for v in mask.ravel()],
+        # Cropped mask for server-side caching (stripped by API before response)
+        "_mask_full": [int(v) for v in crop_mask.ravel()],
     }
 
 
