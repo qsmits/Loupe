@@ -65,6 +65,18 @@ export function buildResultsHtml() {
           </div>
         </div>
 
+        <div class="fringe-confidence-row" id="fringe-confidence-row" hidden>
+          <span class="fringe-conf-badge" id="fringe-conf-carrier" title="Carrier detection confidence">
+            <span class="fringe-conf-dot"></span> Carrier: <span class="fringe-conf-val">--</span>
+          </span>
+          <span class="fringe-conf-badge" id="fringe-conf-modulation" title="Fringe modulation coverage">
+            <span class="fringe-conf-dot"></span> Modulation: <span class="fringe-conf-val">--</span>
+          </span>
+          <span class="fringe-conf-badge" id="fringe-conf-unwrap" title="Phase unwrap reliability">
+            <span class="fringe-conf-dot"></span> Unwrap: <span class="fringe-conf-val">--</span>
+          </span>
+        </div>
+
         <div class="fringe-carrier-row" id="fringe-carrier-row" hidden style="display:flex;align-items:center;gap:8px;padding:4px 12px;font-size:11px;opacity:0.8;border-bottom:1px solid var(--border);cursor:pointer" title="Click to open Diagnostics tab">
           <span id="fringe-carrier-dot" style="width:8px;height:8px;border-radius:50%;flex-shrink:0"></span>
           <span>Carrier: <span id="fringe-carrier-period">--</span>px period @ <span id="fringe-carrier-angle">--</span>&deg;</span>
@@ -258,6 +270,26 @@ function renderResults(data) {
   // Enable invert button once we have results
   const invertBtn = $("fringe-btn-invert");
   if (invertBtn) invertBtn.disabled = false;
+
+  // Confidence badges
+  if (data.confidence) {
+    const confRow = $("fringe-confidence-row");
+    if (confRow) confRow.hidden = false;
+    const badgeColor = (score) => score >= 70 ? "#30d158" : score >= 30 ? "#ff9f0a" : "#ff453a";
+    const badgeLabel = (score) => score >= 70 ? "Good" : score >= 30 ? "Fair" : "Low";
+    for (const key of ["carrier", "modulation", "unwrap"]) {
+      const badge = $(`fringe-conf-${key}`);
+      if (!badge) continue;
+      const score = data.confidence[key];
+      const dot = badge.querySelector(".fringe-conf-dot");
+      const val = badge.querySelector(".fringe-conf-val");
+      if (dot) dot.style.background = badgeColor(score);
+      if (val) {
+        if (key === "carrier") val.textContent = badgeLabel(score);
+        else val.textContent = Math.round(score) + "%";
+      }
+    }
+  }
 
   // Cache height grid for measurements
   if (data.height_grid) {
@@ -1055,6 +1087,14 @@ export function wireResultsEvents() {
       }, 150);
     });
   });
+
+  // Confidence badge clicks -> open diagnostics tab
+  for (const key of ["carrier", "modulation", "unwrap"]) {
+    $(`fringe-conf-${key}`)?.addEventListener("click", () => {
+      const diagTab = document.querySelector('[data-tab="diagnostics"]');
+      if (diagTab) diagTab.click();
+    });
+  }
 
   // Carrier override + diagnostics tab
   wireCarrierOverride();

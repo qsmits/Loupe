@@ -2489,6 +2489,31 @@ body.no-camera .camera-section { display: none; }
   margin: 0 2px;
 }
 
+/* ─── Fringe confidence badges ─────────────────────────── */
+.fringe-confidence-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 3px 12px;
+  font-size: 11px;
+  opacity: 0.85;
+  border-bottom: 1px solid var(--border);
+}
+.fringe-conf-badge {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+}
+.fringe-conf-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--muted);
+  flex-shrink: 0;
+}
+.fringe-conf-val { font-weight: 500; }
+
 /* ── Fringe progress bar ───────────────────────────────────────────── */
 .fringe-progress {
   margin-top: 4px;
