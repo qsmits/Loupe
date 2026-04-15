@@ -937,3 +937,79 @@ class TestPlaneFormRemoval:
         r_zernike = analyze_interferogram(img, form_model="zernike")
         r_plane = analyze_interferogram(img, form_model="plane")
         assert r_zernike["pv_nm"] != r_plane["pv_nm"] or r_zernike["rms_nm"] != r_plane["rms_nm"]
+
+
+class TestPipelineV2Integration:
+    """Full pipeline integration tests for v2 features."""
+
+    def _make_fringe_image(self, h=256, w=256, period=20):
+        x = np.arange(w)
+        row = (128 + 80 * np.sin(2 * np.pi * x / period)).astype(np.uint8)
+        return np.tile(row, (h, 1))
+
+    def test_full_result_has_all_v2_fields(self):
+        from backend.vision.fringe import analyze_interferogram
+        img = self._make_fringe_image()
+        r = analyze_interferogram(img)
+        # Confidence
+        assert "confidence" in r
+        assert "confidence_maps" in r
+        assert "unwrap_stats" in r
+        # Form model
+        assert "form_model" in r
+        assert r["form_model"] == "zernike"
+        # Enhanced carrier
+        assert "snr_db" in r["carrier"]
+        assert "dc_margin_px" in r["carrier"]
+        assert "alternate_peaks" in r["carrier"]
+
+    def test_plane_model_full_pipeline(self):
+        from backend.vision.fringe import analyze_interferogram
+        img = self._make_fringe_image()
+        r = analyze_interferogram(img, form_model="plane")
+        assert r["form_model"] == "plane"
+        assert r["plane_fit"] is not None
+        assert "a" in r["plane_fit"]
+        assert r["pv_nm"] > 0
+
+    def test_reanalyze_with_plane_model(self):
+        from backend.vision.fringe import analyze_interferogram, reanalyze
+        img = self._make_fringe_image()
+        r1 = analyze_interferogram(img)
+        r2 = reanalyze(
+            coefficients=r1["coefficients"],
+            subtract_terms=[1, 2, 3],
+            wavelength_nm=632.8,
+            surface_shape=(r1["surface_height"], r1["surface_width"]),
+            form_model="plane",
+        )
+        assert r2["form_model"] == "plane"
+        assert "pv_nm" in r2
+
+
+class TestFringeAPIV2:
+    """API-level v2 integration tests: form_model and confidence fields."""
+
+    @pytest.fixture
+    def client(self):
+        from backend.main import create_app
+        from tests.conftest import FakeCamera
+        from fastapi.testclient import TestClient
+
+        camera = FakeCamera()
+        app = create_app(camera)
+        with TestClient(app) as c:
+            yield c
+
+    def test_analyze_accepts_form_model(self, client):
+        r = client.post("/fringe/analyze", json={"form_model": "plane"})
+        assert r.status_code == 200
+        data = r.json()
+        assert data["form_model"] == "plane"
+
+    def test_analyze_returns_confidence(self, client):
+        r = client.post("/fringe/analyze", json={})
+        assert r.status_code == 200
+        data = r.json()
+        assert "confidence" in data
+        assert "confidence_maps" in data
