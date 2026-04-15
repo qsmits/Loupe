@@ -13,6 +13,7 @@ const df = {
   polling: null,
   built: false,
   threeLoaded: false,
+  maskPolygons: [],
 };
 
 function $(id) { return document.getElementById(id); }
@@ -80,6 +81,13 @@ function buildWorkspace() {
         </div>
         <div class="defl-setting-group" style="margin-top:6px;padding-top:8px;border-top:1px solid var(--border)">
           <div style="font-size:12px;font-weight:600;opacity:0.7">Settings</div>
+          <div class="defl-profile-row" style="margin-bottom:8px;display:flex;gap:4px;align-items:center">
+            <select id="defl-profile-select" style="flex:1;font-size:11px">
+              <option value="">— No profile —</option>
+            </select>
+            <button id="defl-btn-save-profile" class="detect-btn" style="font-size:10px;padding:2px 6px">Save</button>
+            <button id="defl-btn-delete-profile" class="detect-btn" style="font-size:10px;padding:2px 6px;opacity:0.6" disabled>Del</button>
+          </div>
           <label>Display device
             <select id="defl-display-device">
               <option value="0.0962">iPad Air 1 (264 ppi)</option>
@@ -98,6 +106,8 @@ function buildWorkspace() {
           <label>Display gamma
             <input type="number" id="defl-gamma" min="1.0" max="3.0" step="0.1" value="2.2" style="width:65px" />
           </label>
+          <label style="font-size:11px;opacity:0.7;margin-top:6px">Geometry Notes</label>
+          <textarea id="defl-geometry-notes" rows="2" style="width:100%;font-size:11px;resize:vertical;background:var(--bg-secondary);color:var(--text-primary);border:1px solid var(--border);border-radius:3px;padding:4px" placeholder="Distance, fixture, lens, mirror..."></textarea>
         </div>
       </div>
 
@@ -209,6 +219,120 @@ function buildWorkspace() {
   wireEvents();
 }
 
+async function loadProfileList() {
+  try {
+    const r = await apiFetch("/deflectometry/profiles");
+    if (!r.ok) return;
+    const profiles = await r.json();
+    const sel = document.getElementById("defl-profile-select");
+    if (!sel) return;
+    const current = sel.value;
+    sel.innerHTML = '<option value="">— No profile —</option>';
+    for (const p of profiles) {
+      const opt = document.createElement("option");
+      opt.value = p.name;
+      opt.textContent = p.name;
+      sel.appendChild(opt);
+    }
+    if (current) sel.value = current;
+    const delBtn = document.getElementById("defl-btn-delete-profile");
+    if (delBtn) {
+      delBtn.disabled = !sel.value;
+      delBtn.style.opacity = sel.value ? "1" : "0.6";
+    }
+  } catch { /* ignore */ }
+}
+
+async function saveProfile() {
+  const name = prompt("Profile name:", document.getElementById("defl-profile-select")?.value || "");
+  if (!name) return;
+  const profile = {
+    name,
+    display: {
+      model: document.getElementById("defl-display-device")?.value || "",
+      pixel_pitch_mm: parseFloat(document.getElementById("defl-pixel-pitch")?.value) || 0.0962,
+    },
+    capture: {
+      freq: getFreq(),
+      averages: parseInt(document.getElementById("defl-averages")?.value) || 3,
+      gamma: getGamma(),
+    },
+    processing: {
+      mask_threshold: getMaskThreshold(),
+      smooth_sigma: getSmoothSigma(),
+    },
+    geometry: {
+      notes: document.getElementById("defl-geometry-notes")?.value || "",
+    },
+    calibration: {
+      cal_factor: null,
+      sphere_diameter_mm: null,
+    },
+  };
+  try {
+    const statusR = await apiFetch("/deflectometry/status");
+    if (statusR.ok) {
+      const st = await statusR.json();
+      if (st.cal_factor) profile.calibration.cal_factor = st.cal_factor;
+    }
+  } catch { /* ignore */ }
+  try {
+    const r = await apiFetch("/deflectometry/profiles", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(profile),
+    });
+    if (r.ok) await loadProfileList();
+    const sel = document.getElementById("defl-profile-select");
+    if (sel) sel.value = name;
+  } catch (e) {
+    console.warn("Failed to save profile:", e);
+  }
+}
+
+async function loadSelectedProfile() {
+  const sel = document.getElementById("defl-profile-select");
+  if (!sel || !sel.value) return;
+  try {
+    const r = await apiFetch("/deflectometry/profiles/load", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: sel.value }),
+    });
+    if (!r.ok) return;
+    const p = await r.json();
+    const freqEl = document.getElementById("defl-freq");
+    if (freqEl) freqEl.value = p.capture?.freq ?? 16;
+    const gammaEl = document.getElementById("defl-gamma");
+    if (gammaEl) gammaEl.value = p.capture?.gamma ?? 2.2;
+    const threshEl = document.getElementById("defl-mask-thresh");
+    if (threshEl) threshEl.value = Math.round((p.processing?.mask_threshold ?? 0.02) * 100);
+    const smoothEl = document.getElementById("defl-smooth");
+    if (smoothEl) smoothEl.value = p.processing?.smooth_sigma ?? 0;
+    const pitchEl = document.getElementById("defl-pixel-pitch");
+    if (pitchEl) pitchEl.value = p.display?.pixel_pitch_mm ?? 0.0962;
+    const deviceEl = document.getElementById("defl-display-device");
+    if (deviceEl) deviceEl.value = p.display?.model || "";
+    const notesEl = document.getElementById("defl-geometry-notes");
+    if (notesEl) notesEl.value = p.geometry?.notes || "";
+    const delBtn = document.getElementById("defl-btn-delete-profile");
+    if (delBtn) { delBtn.disabled = false; delBtn.style.opacity = "1"; }
+  } catch (e) {
+    console.warn("Failed to load profile:", e);
+  }
+}
+
+async function deleteSelectedProfile() {
+  const sel = document.getElementById("defl-profile-select");
+  if (!sel || !sel.value) return;
+  try {
+    await apiFetch(`/deflectometry/profiles/${encodeURIComponent(sel.value)}`, { method: "DELETE" });
+    await loadProfileList();
+  } catch (e) {
+    console.warn("Failed to delete profile:", e);
+  }
+}
+
 function wireEvents() {
   // Tab switching
   document.querySelectorAll(".defl-tab").forEach(tab => {
@@ -252,6 +376,11 @@ function wireEvents() {
       smoothLabel.textContent = smoothSlider.value;
     });
   }
+
+  // Profile buttons
+  document.getElementById("defl-profile-select")?.addEventListener("change", loadSelectedProfile);
+  document.getElementById("defl-btn-save-profile")?.addEventListener("click", saveProfile);
+  document.getElementById("defl-btn-delete-profile")?.addEventListener("click", deleteSelectedProfile);
 
   // Workflow buttons
   $("defl-btn-flat")?.addEventListener("click", flatField);
@@ -816,6 +945,7 @@ export function initDeflectometry() {
   // Build workspace DOM on first init
   buildWorkspace();
   wireTabActivation();
+  loadProfileList();
 
   // Start polling when mode becomes active, stop when hidden
   const observer = new MutationObserver(() => {
