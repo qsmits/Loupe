@@ -360,6 +360,75 @@ def _fit_plane(surface: np.ndarray, mask: np.ndarray | None = None) -> dict:
 # ── Fringe modulation, masking, DFT phase extraction, unwrapping ──────
 
 
+def _dominant_brightness_bbox(image: np.ndarray) -> tuple[int, int, int, int] | None:
+    """Return a dominant illuminated component bbox, if one is unambiguous.
+
+    This is used only for carrier detection. It helps when the useful fringe
+    patch occupies a small part of a larger frame, where aperture/lighting
+    gradients can otherwise dominate the lowest FFT bins. Ordinary full-field
+    fringes produce many similar Otsu components, so they intentionally do not
+    trigger this crop.
+    """
+    img = np.asarray(image, dtype=np.float64)
+    if img.ndim == 3:
+        img = img.mean(axis=-1)
+    h, w = img.shape
+    if h < 32 or w < 32 or img.max() <= 0:
+        return None
+
+    img_u8 = np.clip(img / max(img.max(), 1) * 255, 0, 255).astype(np.uint8)
+    _, bright_mask = cv2.threshold(img_u8, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (15, 15))
+    cleaned = cv2.morphologyEx(bright_mask, cv2.MORPH_OPEN, kernel)
+    n_labels, _, stats, _ = cv2.connectedComponentsWithStats(
+        (cleaned > 0).astype(np.uint8), 8
+    )
+    if n_labels <= 1:
+        return None
+
+    areas = stats[1:, cv2.CC_STAT_AREA].astype(np.int64)
+    order = np.argsort(areas)[::-1]
+    best_label = int(order[0] + 1)
+    best_area = int(areas[order[0]])
+    second_area = int(areas[order[1]]) if len(order) > 1 else 0
+
+    # Ignore tiny bright specks; they are usually dust/glare, not the aperture.
+    if best_area < 0.01 * h * w:
+        return None
+    # Only crop when there is one clear illuminated target. Repeating bright
+    # fringe bands should not be mistaken for a part aperture.
+    if second_area > 0 and best_area / max(second_area, 1) < 5.0:
+        return None
+
+    x = int(stats[best_label, cv2.CC_STAT_LEFT])
+    y = int(stats[best_label, cv2.CC_STAT_TOP])
+    bw = int(stats[best_label, cv2.CC_STAT_WIDTH])
+    bh = int(stats[best_label, cv2.CC_STAT_HEIGHT])
+    if bw < 32 or bh < 32:
+        return None
+    # Reject thin outlines/text/edges; the carrier crop is meant for filled
+    # illuminated regions.
+    if best_area / max(bw * bh, 1) < 0.35:
+        return None
+    # A small component clipped by the image border is commonly a lighting
+    # gradient tail, not a stable analysis aperture.
+    touches_border = x <= 0 or y <= 0 or (x + bw) >= w or (y + bh) >= h
+    if touches_border and (bw * bh) < 0.25 * h * w:
+        return None
+    # If it nearly fills the frame, cropping adds no value and can distort
+    # diagnostics.
+    if (bw * bh) > 0.85 * h * w:
+        return None
+
+    pad_y = max(4, int(0.05 * bh))
+    pad_x = max(4, int(0.05 * bw))
+    y0 = max(0, y - pad_y)
+    y1 = min(h, y + bh + pad_y)
+    x0 = max(0, x - pad_x)
+    x1 = min(w, x + bw + pad_x)
+    return y0, y1, x0, x1
+
+
 def _find_carrier(image: np.ndarray) -> tuple[int, int, float]:
     """Find the carrier frequency peak in an interferogram.
 
@@ -370,6 +439,15 @@ def _find_carrier(image: np.ndarray) -> tuple[int, int, float]:
     img = np.asarray(image, dtype=np.float64)
     if img.ndim == 3:
         img = img.mean(axis=-1)
+    orig_h, orig_w = img.shape
+
+    bbox = _dominant_brightness_bbox(img)
+    crop_h, crop_w = orig_h, orig_w
+    if bbox is not None:
+        y0, y1, x0, x1 = bbox
+        img = img[y0:y1, x0:x1]
+        crop_h, crop_w = img.shape
+
     h, w = img.shape
 
     # Downsample large images for speed (carrier detection doesn't need full res)
@@ -390,12 +468,11 @@ def _find_carrier(image: np.ndarray) -> tuple[int, int, float]:
     magnitude = np.abs(F_shifted)
 
     cy, cx = h // 2, w // 2
-    # Keep margin small: the Hanning window confines DC leakage to a few
-    # pixels, and real interferograms can have as few as 2-3 fringes (carrier
-    # peak very close to DC).  dim//20 was too large — it masked the real
-    # carrier on low-fringe-count images like gage blocks.
-    dc_margin_y = max(3, h // 80)
-    dc_margin_x = max(3, w // 80)
+    # Keep the DC margin fixed in FFT-bin coordinates. Real interferograms can
+    # have as few as 3-5 fringes across the field, so any image-size-scaled
+    # margin can mask the true carrier on high-resolution captures.
+    dc_margin_y = 2
+    dc_margin_x = 2
     mag_search = magnitude.copy()
     mag_search[cy - dc_margin_y:cy + dc_margin_y + 1,
                cx - dc_margin_x:cx + dc_margin_x + 1] = 0
@@ -409,13 +486,39 @@ def _find_carrier(image: np.ndarray) -> tuple[int, int, float]:
 
     peak_idx = np.unravel_index(np.argmax(mag_search), mag_search.shape)
     py, px = peak_idx
+    peak_val = float(mag_search[py, px])
 
     dist = math.sqrt((py - cy) ** 2 + (px - cx) ** 2)
+    if dist <= 6 and peak_val > 0:
+        # Very-low-frequency peaks are often residual aperture/illumination
+        # structure. If a slightly higher-frequency carrier is nearly as strong,
+        # prefer it; if not, keep the low-frequency result so genuine 3-5 fringe
+        # interferograms still work.
+        retry_margin_y = 6
+        retry_margin_x = 6
+        mag_retry = magnitude.copy()
+        mag_retry[cy - retry_margin_y:cy + retry_margin_y + 1,
+                  cx - retry_margin_x:cx + retry_margin_x + 1] = 0
+        mag_retry[cy + 1:, :] = 0
+        mag_retry[cy, cx + 1:] = 0
+        retry_idx = np.unravel_index(np.argmax(mag_retry), mag_retry.shape)
+        rpy, rpx = retry_idx
+        retry_val = float(mag_retry[rpy, rpx])
+        retry_dist = math.sqrt((rpy - cy) ** 2 + (rpx - cx) ** 2)
+        if retry_dist > dist and retry_val >= 0.70 * peak_val:
+            py, px = int(rpy), int(rpx)
+            dist = retry_dist
 
-    # Scale back to original coordinates
-    py_orig = int(py * scale)
-    px_orig = int(px * scale)
-    dist_orig = dist * scale
+    # Map the detected frequency back to the original fftshift coordinate
+    # system. Cycles/pixel are invariant under uniform downsampling, so the
+    # downsample factor is intentionally absent here. Cropping is different: a
+    # frequency measured over a smaller field must be scaled back by the crop
+    # ratio to express it as a full-frame FFT-bin offset.
+    off_y = (py - cy) * (orig_h / max(crop_h, 1))
+    off_x = (px - cx) * (orig_w / max(crop_w, 1))
+    py_orig = int(round(orig_h // 2 + off_y))
+    px_orig = int(round(orig_w // 2 + off_x))
+    dist_orig = math.sqrt(off_y ** 2 + off_x ** 2)
     return py_orig, px_orig, dist_orig
 
 
@@ -453,12 +556,11 @@ def _analyze_carrier(image: np.ndarray, mask: np.ndarray | None = None) -> dict:
     fringe_angle = (math.degrees(math.atan2(fy, fx)) + 90.0) % 180.0
 
     # Peak ratio: carrier peak magnitude vs secondary peak (confidence).
-    # When a mask is available, crop to its bounding box so fringes fill
-    # the analysis region. Without cropping, non-fringe areas dilute the
-    # carrier peak. Hard zeroing or modulation weighting don't work because
-    # they introduce spectral leakage from the window shape itself.
+    # When a mask or one clear bright part/aperture is available, crop to that
+    # region so fringes fill the analysis image. Hard zeroing or modulation
+    # weighting don't work because they introduce spectral leakage from the
+    # window shape itself.
     analysis_img = img
-    crop_offset_y, crop_offset_x = 0, 0
     if mask is not None:
         valid = mask.astype(bool)
         if valid.any():
@@ -477,7 +579,11 @@ def _analyze_carrier(image: np.ndarray, mask: np.ndarray | None = None) -> dict:
             # Only use crop if it's meaningfully smaller than the full image
             if cropped.size < img.size * 0.8:
                 analysis_img = cropped
-                crop_offset_y, crop_offset_x = y0, x0
+    else:
+        bbox = _dominant_brightness_bbox(img)
+        if bbox is not None:
+            y0, y1, x0, x1 = bbox
+            analysis_img = img[y0:y1, x0:x1]
     ah, aw = analysis_img.shape
     img_c = analysis_img - analysis_img.mean()
     img_windowed = img_c * np.outer(np.hanning(ah), np.hanning(aw))
@@ -486,12 +592,28 @@ def _analyze_carrier(image: np.ndarray, mask: np.ndarray | None = None) -> dict:
 
     # Find carrier peak in the (possibly cropped) magnitude spectrum
     acy, acx = ah // 2, aw // 2
-    dc_margin = max(3, min(ah, aw) // 80)
+    dc_margin = 2
     mag_search = magnitude.copy()
     mag_search[acy - dc_margin:acy + dc_margin + 1, acx - dc_margin:acx + dc_margin + 1] = 0
-    # Find the carrier peak in this spectrum
-    a_peak_idx = np.unravel_index(np.argmax(mag_search), mag_search.shape)
-    apy, apx = int(a_peak_idx[0]), int(a_peak_idx[1])
+
+    # Score the same carrier selected by _find_carrier(), expressed in the
+    # diagnostic crop's FFT coordinates. This keeps displayed diagnostics
+    # aligned with the carrier used for modulation and phase extraction.
+    expected_y = int(round(acy + fy * ah))
+    expected_x = int(round(acx + fx * aw))
+    if 0 <= expected_y < ah and 0 <= expected_x < aw:
+        r_local = 5
+        y0 = max(0, expected_y - r_local)
+        y1 = min(ah, expected_y + r_local + 1)
+        x0 = max(0, expected_x - r_local)
+        x1 = min(aw, expected_x + r_local + 1)
+        local = mag_search[y0:y1, x0:x1]
+        local_idx = np.unravel_index(np.argmax(local), local.shape)
+        apy = int(y0 + local_idx[0])
+        apx = int(x0 + local_idx[1])
+    else:
+        a_peak_idx = np.unravel_index(np.argmax(mag_search), mag_search.shape)
+        apy, apx = int(a_peak_idx[0]), int(a_peak_idx[1])
     carrier_peak_val = magnitude[apy, apx]
 
     # Mask carrier and conjugate (±5px neighborhood)
@@ -513,7 +635,7 @@ def _analyze_carrier(image: np.ndarray, mask: np.ndarray | None = None) -> dict:
 
     # DC margin: distance from carrier peak to DC mask boundary (full-image coords)
     cy_full, cx_full = h // 2, w // 2
-    dc_margin_full = max(3, min(h, w) // 80)
+    dc_margin_full = 2
     dc_margin_px = float(np.sqrt((py - cy_full) ** 2 + (px - cx_full) ** 2) - dc_margin_full)
     dc_margin_px = max(0.0, dc_margin_px)
 
@@ -655,7 +777,7 @@ def compute_fringe_modulation(image: np.ndarray) -> np.ndarray:
     h, w = img.shape
 
     # Step 1: find carrier frequency
-    py, px, dist = _find_carrier(img)
+    py, px, _ = _find_carrier(img)
     # Convert peak position to spatial frequency (cycles/pixel)
     # In fftshift coords, center is (h//2, w//2)
     fy = (py - h // 2) / h  # cycles per pixel
@@ -666,8 +788,11 @@ def compute_fringe_modulation(image: np.ndarray) -> np.ndarray:
     demod = img * np.exp(-2j * np.pi * (fy * yy + fx * xx))
 
     # Low-pass filter (envelope extraction)
-    # Window size ~ 2x the fringe period for good locality
-    fringe_period = h / max(dist, 1)
+    # Window size ~2x the true fringe period for good locality. Compute this
+    # from cycles/pixel, not from the FFT distance in pixels; h/dist is only
+    # correct for square images with a purely vertical carrier.
+    fringe_freq = math.sqrt(fy ** 2 + fx ** 2)
+    fringe_period = 1.0 / max(fringe_freq, 1e-10)
     ksize = max(5, int(fringe_period * 2)) | 1  # odd
     ksize = min(ksize, 61)  # cap for efficiency
     envelope = np.abs(uniform_filter(demod.real, size=ksize) +
@@ -840,6 +965,10 @@ def extract_phase_dft(image: np.ndarray, mask: np.ndarray | None = None,
                 1j * cv2.GaussianBlur(demod.imag, (0, 0), lp_sigma))
 
     # Step 5: extract wrapped phase
+    # Note: np.angle() is amplitude-insensitive (phase of z doesn't depend
+    # on |z|), so envelope normalization is unnecessary here. Illumination
+    # gradients affect the input amplitude before demodulation but cannot
+    # be corrected by post-hoc envelope division.
     wrapped = np.angle(demod_lp)
     return wrapped.astype(np.float64)
 
@@ -1001,13 +1130,14 @@ def unwrap_phase_2d(wrapped: np.ndarray, mask: np.ndarray | None = None,
 def focus_quality(image: np.ndarray) -> float:
     """Compute a focus quality score (0-100) for fringe images.
 
-    Uses fringe modulation (local contrast) rather than Laplacian variance,
-    because fringe images are smooth sinusoidal patterns that inherently
-    have low Laplacian variance even in perfect focus.  High modulation
-    means well-resolved, high-contrast fringes.
+    Uses fringe modulation (local contrast) as the primary signal because
+    fringe images are smooth sinusoidal patterns that can have low Laplacian
+    variance even in perfect focus. High modulation means well-resolved,
+    high-contrast fringes.
 
-    The score is based on the median modulation in the central 50% of the
-    image (to avoid edge effects), mapped to 0–100 via a sigmoid.
+    For setup/preview images that do not contain a meaningful fringe carrier,
+    a Laplacian edge-sharpness fallback can lift the score. The returned value
+    is therefore a practical live focus score, not a pure fringe-quality score.
 
     Parameters
     ----------
@@ -1030,7 +1160,16 @@ def focus_quality(image: np.ndarray) -> float:
     # Sigmoid mapping: modulation of ~0.15 → score ~50, ~0.4 → ~95
     k = 15.0
     mid = 0.15
-    score = 100.0 / (1.0 + math.exp(-k * (median_mod - mid)))
+    modulation_score = 100.0 / (1.0 + math.exp(-k * (median_mod - mid)))
+
+    # Fallback for non-fringe focus checks and setup images: a sharp edge can
+    # be well-focused even when the carrier-aware modulation estimate is not
+    # meaningful. Keep fringe modulation as the primary signal, but let a strong
+    # Laplacian focus response lift the score for ordinary preview content.
+    img_u8 = np.clip(img / max(img.max(), 1) * 255, 0, 255).astype(np.uint8)
+    lap_var = float(cv2.Laplacian(img_u8, cv2.CV_64F).var())
+    edge_score = 100.0 * (1.0 - math.exp(-lap_var / 1000.0))
+    score = max(modulation_score, edge_score)
     return round(score, 1)
 
 
@@ -1585,7 +1724,6 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 632.8,
     # Confidence metrics (computed after unwrap, before form removal)
     confidence = compute_confidence(carrier_info, modulation, unwrap_risk, mask,
                                     threshold_frac=mask_threshold)
-    confidence_maps = render_confidence_maps(modulation, unwrap_risk, mask)
 
     # Unwrap statistics
     valid_mask = mask.astype(bool) if mask is not None else np.ones(unwrapped.shape, dtype=bool)
@@ -1597,36 +1735,14 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 632.8,
         "n_reliable": n_valid - n_corrected - n_edge_risk,
     }
 
-    # Step 4: Zernike fitting
-    coeffs, rho, theta = fit_zernike(unwrapped, n_terms=n_zernike, mask=mask)
-    _progress("zernike", 0.70, "Fitting Zernike polynomials...")
-
-    # Step 5: Form removal
-    if form_model == "plane":
-        corrected = _subtract_plane(unwrapped, mask)
-        plane_coeffs = _fit_plane(unwrapped, mask)
-    else:
-        corrected = subtract_zernike(unwrapped, coeffs, subtract_terms, rho, theta, mask)
-        if 2 in subtract_terms or 3 in subtract_terms:
-            corrected = _subtract_plane(corrected, mask)
-        plane_coeffs = None
-
-    # Step 6: Convert to height
-    height_nm = phase_to_height(corrected, wavelength_nm)
-
-    # Step 7: Statistics
-    stats = surface_stats(height_nm, mask)
-    pv_nm = stats["pv"]
-    rms_nm = stats["rms"]
-    pv_waves = pv_nm / wavelength_nm
-    rms_waves = rms_nm / wavelength_nm
-
-    # Step 8: Focus quality
-    f_score = focus_quality(image)
-
-    _progress("render", 0.85, "Rendering results...")
-    # Crop to mask bounding box before rendering (avoids huge black borders)
-    crop_h, crop_mask = height_nm, mask
+    # Work in the cropped aperture domain for fitting, rendering, cached masks,
+    # and reanalysis. Keeping these in one coordinate system prevents Zernike
+    # coefficients fitted on full-frame coordinates from being reconstructed
+    # later on a cropped mask with a different center/radius.
+    work_unwrapped = unwrapped
+    work_mask = mask
+    work_modulation = modulation
+    work_risk = unwrap_risk
     if mask is not None and mask.any():
         rows_any = np.any(mask, axis=1)
         cols_any = np.any(mask, axis=0)
@@ -1637,25 +1753,58 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 632.8,
         pad_r = max(2, int(0.05 * (r1 - r0)))
         pad_c = max(2, int(0.05 * (c1 - c0)))
         r0 = max(0, r0 - pad_r)
-        r1 = min(height_nm.shape[0], r1 + pad_r)
+        r1 = min(unwrapped.shape[0], r1 + pad_r)
         c0 = max(0, c0 - pad_c)
-        c1 = min(height_nm.shape[1], c1 + pad_c)
-        crop_h = height_nm[r0:r1, c0:c1]
-        crop_mask = mask[r0:r1, c0:c1]
+        c1 = min(unwrapped.shape[1], c1 + pad_c)
+        work_unwrapped = unwrapped[r0:r1, c0:c1]
+        work_mask = mask[r0:r1, c0:c1]
+        work_modulation = modulation[r0:r1, c0:c1]
+        work_risk = unwrap_risk[r0:r1, c0:c1]
 
-    # Step 9: Renderings (use cropped data for surface map, grid, profiles)
-    surface_map_b64 = render_surface_map(crop_h, crop_mask)
-    profile_x = render_profile(crop_h, crop_mask, axis="x")
-    profile_y = render_profile(crop_h, crop_mask, axis="y")
+    # Step 4: Zernike fitting
+    coeffs, rho, theta = fit_zernike(work_unwrapped, n_terms=n_zernike, mask=work_mask)
+    _progress("zernike", 0.70, "Fitting Zernike polynomials...")
 
-    # Diagnostic images: FFT with carrier peak marked, modulation map (full size)
+    # Step 5: Form removal
+    if form_model == "plane":
+        corrected = _subtract_plane(work_unwrapped, work_mask)
+        plane_coeffs = _fit_plane(work_unwrapped, work_mask)
+    else:
+        corrected = subtract_zernike(work_unwrapped, coeffs, subtract_terms,
+                                     rho, theta, work_mask)
+        if 2 in subtract_terms or 3 in subtract_terms:
+            corrected = _subtract_plane(corrected, work_mask)
+        plane_coeffs = None
+
+    # Step 6: Convert to height
+    height_nm = phase_to_height(corrected, wavelength_nm)
+
+    # Step 7: Statistics
+    stats = surface_stats(height_nm, work_mask)
+    pv_nm = stats["pv"]
+    rms_nm = stats["rms"]
+    pv_waves = pv_nm / wavelength_nm
+    rms_waves = rms_nm / wavelength_nm
+
+    # Step 8: Focus quality
+    f_score = focus_quality(image)
+
+    _progress("render", 0.85, "Rendering results...")
+    # Step 9: Renderings
+    surface_map_b64 = render_surface_map(height_nm, work_mask)
+    profile_x = render_profile(height_nm, work_mask, axis="x")
+    profile_y = render_profile(height_nm, work_mask, axis="y")
+
+    # Diagnostic images. Modulation/confidence maps use the same cropped domain
+    # as the surface map so overlay toggles do not change image geometry.
     fft_b64 = render_fft_image(img, carrier_info["peak_y"], carrier_info["peak_x"])
-    mod_map_b64 = render_modulation_map(modulation, mask)
+    mod_map_b64 = render_modulation_map(work_modulation, work_mask)
+    confidence_maps = render_confidence_maps(work_modulation, work_risk, work_mask)
 
-    # Step 10: PSF and MTF (full size — need full aperture for diffraction calcs)
+    # Step 10: PSF and MTF
     surface_waves = height_nm / wavelength_nm
-    psf_b64 = render_psf(surface_waves, mask)
-    mtf_data = render_mtf(surface_waves, mask)
+    psf_b64 = render_psf(surface_waves, work_mask)
+    mtf_data = render_mtf(surface_waves, work_mask)
 
     # Step 11: Zernike chart
     zernike_chart_b64 = render_zernike_chart(
@@ -1672,23 +1821,23 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 632.8,
     # Downsample height grid for client-side measurements (max 256x256)
     # Uses cropped data so grid coordinates match the surface map image
     max_grid = 256
-    gh, gw = crop_h.shape
+    gh, gw = height_nm.shape
     if gh > max_grid or gw > max_grid:
         scale_factor = min(max_grid / gh, max_grid / gw)
         grid_h = max(1, int(gh * scale_factor))
         grid_w = max(1, int(gw * scale_factor))
-        grid = cv2.resize(crop_h.astype(np.float32), (grid_w, grid_h),
+        grid = cv2.resize(height_nm.astype(np.float32), (grid_w, grid_h),
                           interpolation=cv2.INTER_AREA)
-        if crop_mask is not None:
-            mask_resized = cv2.resize(crop_mask.astype(np.uint8), (grid_w, grid_h),
+        if work_mask is not None:
+            mask_resized = cv2.resize(work_mask.astype(np.uint8), (grid_w, grid_h),
                                       interpolation=cv2.INTER_NEAREST)
             grid_mask = (mask_resized > 0)
         else:
             grid_mask = np.ones((grid_h, grid_w), dtype=bool)
     else:
-        grid = crop_h.astype(np.float32)
+        grid = height_nm.astype(np.float32)
         grid_h, grid_w = gh, gw
-        grid_mask = crop_mask if crop_mask is not None else np.ones((grid_h, grid_w), dtype=bool)
+        grid_mask = work_mask if work_mask is not None else np.ones((grid_h, grid_w), dtype=bool)
 
     # Set masked pixels to 0 in the grid
     grid_out = grid.copy()
@@ -1718,8 +1867,10 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 632.8,
         "wavelength_nm": wavelength_nm,
         "n_valid_pixels": n_valid,
         "n_total_pixels": n_total,
-        "surface_height": int(crop_h.shape[0]),
-        "surface_width": int(crop_h.shape[1]),
+        "surface_height": int(height_nm.shape[0]),
+        "surface_width": int(height_nm.shape[1]),
+        "image_height": int(img.shape[0]),
+        "image_width": int(img.shape[1]),
         "height_grid": [round(float(v), 2) for v in grid_out.ravel()],
         "mask_grid": [int(v) for v in grid_mask.ravel()],
         "grid_rows": grid_h,
@@ -1731,7 +1882,7 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 632.8,
         "confidence_maps": confidence_maps,
         "unwrap_stats": unwrap_stats,
         # Cropped mask for server-side caching (stripped by API before response)
-        "_mask_full": [int(v) for v in crop_mask.ravel()],
+        "_mask_full": [int(v) for v in work_mask.ravel()],
     }
 
 

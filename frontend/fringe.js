@@ -9,7 +9,7 @@
 
 import { apiFetch } from './api.js';
 import { wireMeasureEvents } from './fringe-measure.js';
-import { buildPanelHtml, wirePanelEvents, startPolling, stopPolling } from './fringe-panel.js';
+import { buildPanelHtml, wirePanelEvents, startPolling, stopPolling, clearDroppedImage } from './fringe-panel.js';
 import { buildResultsHtml, wireResultsEvents } from './fringe-results.js';
 
 export const fr = {
@@ -31,6 +31,8 @@ export const fr = {
   avgSurfaceWidth: 0,
   carrierOverride: null,   // {y, x} or null
   lensK1: 0,
+  droppedImageB64: null,   // base64 string when analyzing a dropped file
+  droppedObjectUrl: null,  // blob URL for preview display
 };
 
 export function $(id) { return document.getElementById(id); }
@@ -148,6 +150,7 @@ export function initFringe() {
     if (!root) return;
     if (root.hidden) {
       stopPolling();
+      if (!window.crossMode) clearDroppedImage();
     } else {
       startPolling();
     }

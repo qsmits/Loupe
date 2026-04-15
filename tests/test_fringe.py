@@ -503,6 +503,46 @@ class TestCarrierDiagnostics:
         result = _analyze_carrier(img)
         assert result["snr_db"] > 10
 
+    def test_downsampled_large_image_preserves_carrier_period(self):
+        from backend.vision.fringe import _analyze_carrier
+        h, w = 512, 2048
+        period = 32
+        x = np.arange(w)
+        row = (128 + 80 * np.cos(2 * np.pi * x / period)).astype(np.uint8)
+        img = np.tile(row, (h, 1))
+
+        result = _analyze_carrier(img)
+
+        assert abs(result["fringe_period_px"] - period) < 1.0
+
+    def test_low_fringe_count_large_image_not_hidden_by_dc_mask(self):
+        from backend.vision.fringe import _analyze_carrier
+        h, w = 512, 2048
+        n_fringes = 4
+        x = np.arange(w)
+        row = (128 + 80 * np.cos(2 * np.pi * n_fringes * x / w)).astype(np.uint8)
+        img = np.tile(row, (h, 1))
+
+        result = _analyze_carrier(img)
+
+        assert abs(result["fringe_period_px"] - (w / n_fringes)) < 2.0
+
+    def test_partial_bright_region_carrier_diagnostics_match_true_period(self):
+        from backend.vision.fringe import _analyze_carrier
+        h, w = 768, 2048
+        y0, y1 = 160, 640
+        x0, x1 = 720, 1120
+        period = 32
+        img = np.full((h, w), 20, dtype=np.float64)
+        xx = np.arange(x1 - x0)
+        patch = 170 + 50 * np.cos(2 * np.pi * xx / period)
+        img[y0:y1, x0:x1] = patch[None, :]
+        img = np.clip(img, 0, 255).astype(np.uint8)
+
+        result = _analyze_carrier(img)
+
+        assert abs(result["fringe_period_px"] - period) < 2.0
+
 
 class TestReanalyze:
     def test_reanalyze_changes_stats(self):

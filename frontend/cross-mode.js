@@ -81,6 +81,10 @@ export function restoreMicroscopeState() {
   state.nextId = stashedState.nextId;
   state.selected = stashedState.selected;
   stashedState = null;
+
+  // Restore the live stream visibility
+  const streamImg = document.getElementById('stream-img');
+  if (streamImg) streamImg.style.visibility = '';
 }
 
 let actionBar = null;
@@ -193,6 +197,11 @@ export async function enterMaskEditSession() {
   state.frozenBackground = loadedImg;
   state.frozenSize = { w, h };
   setImageSize(w, h);
+
+  // Hide the live stream so the frozen background on the canvas is visible.
+  // Use visibility (not hidden) to preserve layout sizing.
+  const streamImg = document.getElementById('stream-img');
+  if (streamImg) streamImg.style.visibility = 'hidden';
 
   // 4. Convert existing mask polygons to area annotations
   if (cm.existingMask && cm.existingMask.length > 0) {

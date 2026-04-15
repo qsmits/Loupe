@@ -168,6 +168,12 @@ function _onAnalysisResult(data) {
 }
 
 function analyzeFromCamera() {
+  clearDroppedImage();
+  _runAnalysis();
+}
+
+/** Shared analysis dispatch — uses dropped image if available, else camera. */
+function _runAnalysis() {
   const btn = $("fringe-btn-analyze");
   if (btn) btn.disabled = true;
 
@@ -179,7 +185,7 @@ function analyzeFromCamera() {
     form_model: getFormModel(),
     lens_k1: fr.lensK1,
   };
-  console.log("[fringe] analyze payload:", JSON.stringify(payload));
+  if (fr.droppedImageB64) payload.image_b64 = fr.droppedImageB64;
 
   analyzeWithProgress(
     payload,
@@ -191,7 +197,7 @@ function analyzeFromCamera() {
       console.warn("Fringe analysis failed:", errMsg);
       if (btn) btn.disabled = false;
     },
-    () => analyzeFromCamera(),  // retry
+    () => _runAnalysis(),  // retry
   );
 }
 
@@ -209,32 +215,31 @@ async function analyzeFromFile(file) {
     }
     const b64 = btoa(binary);
 
-    const payload = {
-      wavelength_nm: getWavelength(),
-      mask_threshold: getMaskThreshold(),
-      subtract_terms: getSubtractTerms(),
-      image_b64: b64,
-      mask_polygons: _buildMaskPayload(),
-      form_model: getFormModel(),
-      lens_k1: fr.lensK1,
-    };
+    // Store dropped image so re-analysis (mask, settings) uses it
+    fr.droppedImageB64 = b64;
+    if (fr.droppedObjectUrl) URL.revokeObjectURL(fr.droppedObjectUrl);
+    fr.droppedObjectUrl = URL.createObjectURL(file);
 
-    analyzeWithProgress(
-      payload,
-      (data) => {
-        _onAnalysisResult(data);
-        if (btn) btn.disabled = false;
-      },
-      (errMsg) => {
-        console.warn("Fringe analysis failed:", errMsg);
-        if (btn) btn.disabled = false;
-      },
-      () => analyzeFromFile(file),  // retry
-    );
+    // Update preview to show the dropped image
+    const preview = $("fringe-preview");
+    if (preview) preview.src = fr.droppedObjectUrl;
+
+    _runAnalysis();
   } catch (e) {
     console.warn("Fringe file read error:", e);
     if (btn) btn.disabled = false;
   }
+}
+
+/** Clear the dropped image state and revert preview to live camera. */
+export function clearDroppedImage() {
+  fr.droppedImageB64 = null;
+  if (fr.droppedObjectUrl) {
+    URL.revokeObjectURL(fr.droppedObjectUrl);
+    fr.droppedObjectUrl = null;
+  }
+  const preview = $("fringe-preview");
+  if (preview) preview.src = "/stream";
 }
 
 // ── Averaging helpers ──────────────────────────────────────────────────
@@ -492,7 +497,7 @@ export function wirePanelEvents() {
       const opt = sel.selectedOptions[0];
       fr.lensK1 = parseFloat(opt.dataset.k1) || 0;
     }
-    if (fr.lastResult) analyzeFromCamera();
+    if (fr.lastResult) _runAnalysis();
   });
 
   // Save lens profile
@@ -563,14 +568,19 @@ export function wirePanelEvents() {
     if (btn) { btn.disabled = true; btn.textContent = "Capturing..."; }
 
     try {
-      // Freeze the current camera frame so the mask edit uses a still image
-      await apiFetch("/freeze", { method: "POST" });
-
-      // Fetch the frame image, undistorted when a lens correction is active
-      const frameUrl = fr.lensK1 ? `/frame?lens_k1=${fr.lensK1}` : "/frame";
-      const resp = await apiFetch(frameUrl);
-      if (!resp.ok) throw new Error("Frame fetch failed");
-      const blob = await resp.blob();
+      let blob;
+      if (fr.droppedObjectUrl) {
+        // Use the dropped image directly
+        const resp = await fetch(fr.droppedObjectUrl);
+        blob = await resp.blob();
+      } else {
+        // Freeze the current camera frame so the mask edit uses a still image
+        await apiFetch("/freeze", { method: "POST" });
+        const frameUrl = fr.lensK1 ? `/frame?lens_k1=${fr.lensK1}` : "/frame";
+        const resp = await apiFetch(frameUrl);
+        if (!resp.ok) throw new Error("Frame fetch failed");
+        blob = await resp.blob();
+      }
 
       // Set up cross-mode state
       initCrossMode({
@@ -589,7 +599,7 @@ export function wirePanelEvents() {
           }
           // Auto-analyze with new mask
           if (polygons.length > 0) {
-            analyzeFromCamera();
+            _runAnalysis();
           }
         },
       });
@@ -618,7 +628,7 @@ export function wirePanelEvents() {
         const sel = $("fringe-lens-profile");
         if (sel) sel.value = "";
         // Re-analyze if results exist
-        if (fr.lastResult) analyzeFromCamera();
+        if (fr.lastResult) _runAnalysis();
       },
     };
 

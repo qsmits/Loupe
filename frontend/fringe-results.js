@@ -579,8 +579,8 @@ function wireCarrierOverride() {
     const clickY = (e.clientY - rect.top) / rect.height;
 
     // Convert to fftshift pixel coordinates
-    const imgH = fr.lastResult.surface_height;
-    const imgW = fr.lastResult.surface_width;
+    const imgH = fr.lastResult.image_height || fr.lastResult.surface_height;
+    const imgW = fr.lastResult.image_width || fr.lastResult.surface_width;
     const carrierY = Math.round(clickY * imgH);
     const carrierX = Math.round(clickX * imgW);
 
@@ -600,6 +600,7 @@ function wireCarrierOverride() {
             ? fr.maskPolygons.map(p => ({ vertices: p.vertices.map(v => [v.x, v.y]), include: p.include }))
             : undefined,
           lens_k1: fr.lensK1,
+          image_b64: fr.droppedImageB64 || undefined,
         }),
       });
       if (!resp.ok) { console.warn("Carrier override failed"); return; }
