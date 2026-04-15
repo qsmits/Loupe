@@ -11,6 +11,7 @@ from backend.vision.fringe import (
     ZERNIKE_NAMES,
     fit_zernike,
     subtract_zernike,
+    undistort_frame,
     zernike_basis,
     zernike_noll_index,
     zernike_polynomial,
@@ -1013,3 +1014,60 @@ class TestFringeAPIV2:
         data = r.json()
         assert "confidence" in data
         assert "confidence_maps" in data
+
+
+class TestUndistortFrame:
+    def test_zero_k1_returns_same(self):
+        img = np.random.randint(0, 255, (64, 64), dtype=np.uint8)
+        result = undistort_frame(img, 0.0)
+        np.testing.assert_array_equal(result, img)
+
+    def test_positive_k1_pincushion(self):
+        """Positive k1 (pincushion correction) moves edge content inward."""
+        sz = 128
+        img = np.zeros((sz, sz), dtype=np.uint8)
+        # Place bright blob near the corner (off both axes)
+        cv2.circle(img, (100, 10), 3, 255, -1)
+        cx, cy = sz / 2, sz / 2
+        # Use large normalized k1 — at 128x128, diag_sq=8192 so k1_raw = k1/8192;
+        # need large normalized value to produce visible shift on tiny images.
+        result = undistort_frame(img, 10.0)
+        orig_ys, orig_xs = np.where(img > 0)
+        res_ys, res_xs = np.where(result > 0)
+        assert len(res_ys) > 0, "Bright pixels should still be visible"
+        orig_dist = np.hypot(orig_xs.mean() - cx, orig_ys.mean() - cy)
+        result_dist = np.hypot(res_xs.mean() - cx, res_ys.mean() - cy)
+        assert result_dist < orig_dist, "Positive k1 should move edge content inward"
+
+    def test_negative_k1_barrel(self):
+        """Negative k1 (barrel correction) moves edge content outward."""
+        sz = 128
+        img = np.zeros((sz, sz), dtype=np.uint8)
+        # Place bright blob between center and edge
+        cv2.circle(img, (80, 30), 3, 255, -1)
+        cx, cy = sz / 2, sz / 2
+        result = undistort_frame(img, -10.0)
+        orig_ys, orig_xs = np.where(img > 0)
+        res_ys, res_xs = np.where(result > 0)
+        assert len(res_ys) > 0, "Bright pixels should still be visible"
+        orig_dist = np.hypot(orig_xs.mean() - cx, orig_ys.mean() - cy)
+        result_dist = np.hypot(res_xs.mean() - cx, res_ys.mean() - cy)
+        assert result_dist > orig_dist, "Negative k1 should move edge content outward"
+
+    def test_roundtrip_shape(self):
+        """Output shape matches input for various sizes."""
+        for shape in [(64, 64), (128, 96), (48, 128), (64, 64, 3)]:
+            img = np.zeros(shape, dtype=np.uint8)
+            result = undistort_frame(img, 0.3)
+            assert result.shape == img.shape, f"Shape mismatch for input {shape}"
+
+    def test_analyze_interferogram_accepts_lens_k1(self):
+        """Smoke test: analyze_interferogram with lens_k1 returns valid result."""
+        # Create a simple fringe pattern
+        y = np.arange(128).reshape(-1, 1)
+        fringe_img = (127 + 127 * np.sin(2 * np.pi * y / 20)).astype(np.uint8)
+        fringe_img = np.tile(fringe_img, (1, 128))
+        result = analyze_interferogram(fringe_img, lens_k1=0.1)
+        assert isinstance(result, dict)
+        assert "pv_nm" in result
+        assert "rms_nm" in result

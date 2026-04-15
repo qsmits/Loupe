@@ -20,6 +20,28 @@ import numpy as np
 from scipy.ndimage import uniform_filter
 
 
+# ── Lens undistortion ─────────────────────────────────────────────────────
+
+def undistort_frame(img: np.ndarray, lens_k1: float) -> np.ndarray:
+    """Apply Brown-Conrady k1 radial undistortion.
+
+    lens_k1 is in normalized form. Denormalized via:
+        k1_raw = lens_k1 / ((w^2 + h^2) / 4)
+    Range typically [-0.8, 0.8] in normalized units.
+    """
+    if lens_k1 == 0.0:
+        return img
+    h, w = img.shape[:2]
+    cx, cy = w / 2, h / 2
+    diag_sq = (w * w + h * h) / 4
+    k1_raw = lens_k1 / diag_sq
+    f = max(w, h)
+    K = np.array([[f, 0, cx], [0, f, cy], [0, 0, 1]], dtype=np.float64)
+    dist = np.array([k1_raw, 0, 0, 0, 0], dtype=np.float64)
+    map1, map2 = cv2.initUndistortRectifyMap(K, dist, None, K, (w, h), cv2.CV_32FC1)
+    return cv2.remap(img, map1, map2, cv2.INTER_LINEAR)
+
+
 # ── Zernike polynomial names (Noll ordering, 1-indexed) ─────────────────
 
 ZERNIKE_NAMES: dict[int, str] = {
@@ -1439,7 +1461,8 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 632.8,
                           custom_mask: np.ndarray | None = None,
                           carrier_override: tuple[int, int] | None = None,
                           on_progress: Callable[[str, float, str], None] | None = None,
-                          form_model: str = "zernike") -> dict:
+                          form_model: str = "zernike",
+                          lens_k1: float = 0.0) -> dict:
     """Full analysis pipeline: single image in, all results out.
 
     Parameters
@@ -1478,6 +1501,9 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 632.8,
     img = np.asarray(image, dtype=np.float64)
     if img.ndim == 3:
         img = img.mean(axis=-1)
+
+    if lens_k1:
+        img = undistort_frame(img, lens_k1)
 
     _progress("carrier", 0.0, "Detecting carrier...")
     # Step 1: Modulation & mask
