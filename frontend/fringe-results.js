@@ -11,14 +11,17 @@ import { drawPeakValleyMarkers } from './fringe-measure.js';
 // ── Subtraction pill state ──────────────────────────────────────────────
 
 const SUBTRACT_PILLS = [
-  { id: "tilt",      terms: [2, 3],  label: "Tilt",      locked: true },
-  { id: "power",     terms: [4],     label: "Power",     locked: false },
-  { id: "astig",     terms: [5, 6],  label: "Astig",     locked: false },
-  { id: "coma",      terms: [7, 8],  label: "Coma",      locked: false },
-  { id: "spherical", terms: [11],    label: "Spherical", locked: false },
+  { id: "tilt",      terms: [2, 3],  label: "Tilt",       locked: false },
+  { id: "power",     terms: [4],     label: "Curvature",  locked: false },
+  { id: "astig",     terms: [5, 6],  label: "Twist",      locked: false },
+  { id: "coma",      terms: [7, 8],  label: "Coma",       locked: false },
+  { id: "spherical", terms: [11],    label: "Spherical",  locked: false },
 ];
 
 const pillState = { tilt: true, power: false, astig: false, coma: false, spherical: false };
+
+let formModel = "zernike";
+export function getFormModel() { return formModel; }
 
 export function getSubtractTerms() {
   const terms = [1]; // piston always
@@ -84,8 +87,14 @@ export function buildResultsHtml() {
         </div>
 
         <div class="fringe-subtract-row" id="fringe-subtract-row">
-          <span class="fringe-sub-label">Subtract:</span>
-          ${pillButtons}
+          <select id="fringe-form-model" style="font-size:11px;padding:2px 4px;margin-right:4px">
+            <option value="zernike">Zernike</option>
+            <option value="plane">Plane</option>
+          </select>
+          <span id="fringe-pill-group">
+            <span class="fringe-sub-label">Subtract:</span>
+            ${pillButtons}
+          </span>
           <div class="fringe-pill-divider"></div>
           <button class="fringe-pill" id="fringe-btn-invert" disabled>\u2195 Invert</button>
         </div>
@@ -280,14 +289,18 @@ function renderResults(data) {
   if (wlEl) wlEl.textContent = getWavelength() + " nm";
   const subEl = $("fringe-summary-sub");
   if (subEl) {
-    const sub = getSubtractTerms();
-    const names = [];
-    if (sub.includes(2)) names.push("Tilt");
-    if (sub.includes(4)) names.push("Power");
-    if (sub.includes(5)) names.push("Astig");
-    if (sub.includes(7)) names.push("Coma");
-    if (sub.includes(11)) names.push("Sph");
-    subEl.textContent = names.length ? names.join(", ") + " subtracted" : "None subtracted";
+    if (formModel === "plane") {
+      subEl.textContent = "Plane removed";
+    } else {
+      const sub = getSubtractTerms();
+      const names = [];
+      if (sub.includes(2)) names.push("Tilt");
+      if (sub.includes(4)) names.push("Curvature");
+      if (sub.includes(5)) names.push("Twist");
+      if (sub.includes(7)) names.push("Coma");
+      if (sub.includes(11)) names.push("Sph");
+      subEl.textContent = names.length ? names.join(", ") + " subtracted" : "None subtracted";
+    }
   }
 
   // Enable invert button once we have results
@@ -926,6 +939,7 @@ async function doReanalyze() {
         wavelength_nm: getWavelength(),
         surface_height: fr.lastResult.surface_height || 128,
         surface_width: fr.lastResult.surface_width || 128,
+        form_model: formModel,
       }),
     });
     if (!r.ok) return;
@@ -963,6 +977,7 @@ async function invertWavefront() {
         wavelength_nm: getWavelength(),
         surface_height: fr.lastResult.surface_height || 128,
         surface_width: fr.lastResult.surface_width || 128,
+        form_model: formModel,
       }),
     });
     if (!r.ok) return;
@@ -1168,6 +1183,14 @@ export function wireResultsEvents() {
   // Reference standard change -> re-color PV
   $("fringe-standard")?.addEventListener("change", () => {
     if (fr.lastResult) renderResults(fr.lastResult);
+  });
+
+  // Form model selector
+  $("fringe-form-model")?.addEventListener("change", (e) => {
+    formModel = e.target.value;
+    const pillGroup = $("fringe-pill-group");
+    if (pillGroup) pillGroup.hidden = formModel === "plane";
+    doReanalyze();
   });
 
   // Invert and export buttons

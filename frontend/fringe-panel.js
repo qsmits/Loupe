@@ -4,7 +4,7 @@
 // Extracted from fringe.js (Task 6 of fringe UI restructure).
 
 import { fr, $ } from './fringe.js';
-import { getSubtractTerms, mergeReanalyzeResult } from './fringe-results.js';
+import { getSubtractTerms, getFormModel, mergeReanalyzeResult } from './fringe-results.js';
 import { apiFetch } from './api.js';
 import { analyzeWithProgress, createProgressBar } from './fringe-progress.js';
 import { initCrossMode } from './cross-mode.js';
@@ -165,6 +165,7 @@ function analyzeFromCamera() {
     mask_threshold: getMaskThreshold(),
     subtract_terms: getSubtractTerms(),
     mask_polygons: _buildMaskPayload(),
+    form_model: getFormModel(),
   };
   console.log("[fringe] analyze payload:", JSON.stringify(payload));
 
@@ -202,6 +203,7 @@ async function analyzeFromFile(file) {
       subtract_terms: getSubtractTerms(),
       image_b64: b64,
       mask_polygons: _buildMaskPayload(),
+      form_model: getFormModel(),
     };
 
     analyzeWithProgress(
@@ -312,6 +314,7 @@ async function addToAverage() {
         mask_threshold: getMaskThreshold(),
         subtract_terms: getSubtractTerms(),
         mask_polygons: _buildMaskPayload(),
+        form_model: getFormModel(),
       }),
     });
     if (!resp.ok) {
