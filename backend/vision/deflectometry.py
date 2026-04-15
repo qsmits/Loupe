@@ -189,9 +189,8 @@ def compute_slope_magnitude(dzdx: np.ndarray, dzdy: np.ndarray,
 
     Returns float64 array. Masked pixels are set to NaN if mask is provided.
     """
-    mag = np.sqrt(dzdx**2 + dzdy**2)
+    mag = np.sqrt(dzdx**2 + dzdy**2).astype(np.float64)
     if mask is not None:
-        mag = mag.astype(np.float64)
         mag[~mask.astype(bool)] = np.nan
     return mag
 
@@ -206,9 +205,8 @@ def compute_curl_residual(dzdx: np.ndarray, dzdy: np.ndarray,
 
     Returns float64 array. Masked pixels are set to NaN if mask is provided.
     """
-    curl = np.gradient(dzdx, axis=0) - np.gradient(dzdy, axis=1)
+    curl = (np.gradient(dzdx, axis=0) - np.gradient(dzdy, axis=1)).astype(np.float64)
     if mask is not None:
-        curl = curl.astype(np.float64)
         curl[~mask.astype(bool)] = np.nan
     return curl
 
