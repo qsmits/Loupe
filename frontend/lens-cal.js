@@ -128,7 +128,7 @@ export async function applyLensCorrection(k1) {
 }
 
 function _openDialog() {
-  if (!state.frozenBackground) {
+  if (!state.frozenBackground && !_externalCallback) {
     showStatus("Freeze an image first");
     return;
   }
@@ -137,7 +137,14 @@ function _openDialog() {
   _pendingP1 = null;
   document.getElementById("lens-cal-dialog").hidden = false;
   _updateUI();
+  if (!state.frozenBackground) {
+    showStatus("Freeze an image when graph paper is positioned");
+  }
   redraw();
+}
+
+export function closeLensCalDialog() {
+  _cancelDialog();
 }
 
 function _cancelDialog() {

@@ -5,7 +5,7 @@ import uuid
 
 import cv2
 import numpy as np
-from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFile, File
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -93,7 +93,7 @@ def make_camera_router(camera: BaseCamera, frame_store: SessionFrameStore, start
         return {"width": w, "height": h}
 
     @router.get("/frame")
-    async def get_frame(session_id: str = Depends(get_session_id_dep), lens_k1: float = 0.0):
+    async def get_frame(session_id: str = Depends(get_session_id_dep), lens_k1: float = Query(default=0.0, ge=-2.0, le=2.0)):
         frame = frame_store.get(session_id)
         if frame is None:
             raise HTTPException(status_code=404, detail="No frame stored")

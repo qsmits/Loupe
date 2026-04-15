@@ -84,7 +84,7 @@ export function buildPanelHtml() {
           <select id="fringe-lens-profile" style="flex:1;font-size:11px;padding:2px 4px"></select>
           <button class="detect-btn" id="fringe-btn-lens-cal" style="padding:4px 10px;font-size:11px">Calibrate</button>
         </div>
-        <div id="fringe-lens-save-row" hidden style="display:flex;gap:4px;align-items:center;margin-top:4px">
+        <div id="fringe-lens-save-row" hidden style="gap:4px;align-items:center;margin-top:4px">
           <input type="text" id="fringe-lens-save-name" placeholder="Profile name" style="flex:1;font-size:11px;padding:2px 4px" />
           <button class="detect-btn" id="fringe-btn-lens-save" style="padding:4px 8px;font-size:11px">Save</button>
         </div>
@@ -551,7 +551,7 @@ export function wirePanelEvents() {
         fr.lensK1 = k1;
         // Show save prompt
         const saveRow = $("fringe-lens-save-row");
-        if (saveRow) saveRow.hidden = false;
+        if (saveRow) { saveRow.hidden = false; saveRow.style.display = 'flex'; }
         // Clear dropdown (no saved profile yet)
         const sel = $("fringe-lens-profile");
         if (sel) sel.value = "";

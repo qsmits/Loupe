@@ -13,7 +13,7 @@ import { setTool } from './tools.js';
 import { redraw, resizeCanvas } from './render.js';
 import { viewport, setImageSize, fitToWindow } from './viewport.js';
 import { switchMode } from './modes.js';
-import { openLensCalDialog } from './lens-cal.js';
+import { openLensCalDialog, closeLensCalDialog } from './lens-cal.js';
 
 let stashedState = null;
 
@@ -284,10 +284,7 @@ async function enterLensCalSession() {
 }
 
 function cancelLensCal() {
-  // Close lens cal dialog if open
-  const dialog = document.getElementById('lens-cal-dialog');
-  if (dialog) dialog.hidden = true;
-
+  closeLensCalDialog();
   _exitMaskEditSession();
   redraw();
 }

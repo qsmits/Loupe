@@ -56,7 +56,7 @@ class AnalyzeBody(BaseModel):
     roi: Optional[RoiRect] = Field(default=None)
     mask_polygons: Optional[list[MaskPolygon]] = Field(default=None)
     form_model: str = Field(default="zernike", pattern="^(zernike|plane)$")
-    lens_k1: float = Field(default=0.0)
+    lens_k1: float = Field(default=0.0, ge=-2.0, le=2.0)
 
 
 class ReanalyzeBody(BaseModel):
@@ -79,7 +79,7 @@ class ReanalyzeCarrierBody(BaseModel):
     subtract_terms: list[int] = Field(default=[1, 2, 3])
     n_zernike: int = Field(default=36, ge=1, le=66)
     mask_polygons: Optional[list[MaskPolygon]] = Field(default=None)
-    lens_k1: float = Field(default=0.0)
+    lens_k1: float = Field(default=0.0, ge=-2.0, le=2.0)
 
 
 def make_fringe_router(camera: BaseCamera) -> APIRouter:

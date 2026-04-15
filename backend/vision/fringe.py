@@ -25,9 +25,9 @@ from scipy.ndimage import uniform_filter
 def undistort_frame(img: np.ndarray, lens_k1: float) -> np.ndarray:
     """Apply Brown-Conrady k1 radial undistortion.
 
-    lens_k1 is in normalized form. Denormalized via:
-        k1_raw = lens_k1 / ((w^2 + h^2) / 4)
-    Range typically [-0.8, 0.8] in normalized units.
+    img : 2D grayscale or 3D color image (any dtype supported by cv2.remap).
+    lens_k1 : normalized k1. Denormalized via k1_raw = lens_k1 / ((w²+h²)/4).
+              Range typically [-0.8, 0.8] in normalized units.
     """
     if lens_k1 == 0.0:
         return img
