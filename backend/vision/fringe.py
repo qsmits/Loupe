@@ -419,18 +419,16 @@ def _find_carrier(image: np.ndarray) -> tuple[int, int, float]:
     return py_orig, px_orig, dist_orig
 
 
-def _analyze_carrier(image: np.ndarray, mask: np.ndarray | None = None,
-                     modulation: np.ndarray | None = None) -> dict:
+def _analyze_carrier(image: np.ndarray, mask: np.ndarray | None = None) -> dict:
     """Analyze carrier frequency and return diagnostic information.
 
     Parameters
     ----------
     image : 2D float64 image.
-    mask : optional boolean mask (True = valid fringe region).
-    modulation : optional 2D float64 modulation map. When provided, used
-                 as a soft apodization window for peak_ratio/SNR computation
-                 so non-fringe regions don't dilute the carrier peak. Unlike
-                 a hard mask, this avoids spectral leakage from sharp edges.
+    mask : optional boolean mask (True = valid fringe region). When provided,
+           the image is cropped to the mask bounding box (+5% padding) before
+           FFT so fringes fill the analysis region, improving peak_ratio for
+           partial-coverage images.
 
     Returns dict with keys:
     - peak_y, peak_x: carrier peak position in fftshift coords
@@ -455,35 +453,55 @@ def _analyze_carrier(image: np.ndarray, mask: np.ndarray | None = None,
     fringe_angle = (math.degrees(math.atan2(fy, fx)) + 90.0) % 180.0
 
     # Peak ratio: carrier peak magnitude vs secondary peak (confidence).
-    # Use modulation as a soft apodization window when available: it
-    # naturally tapers to zero at the fringe boundary, avoiding spectral
-    # leakage from hard mask edges while suppressing non-fringe regions.
-    img_c = img - img.mean()
-    spatial_window = np.outer(np.hanning(h), np.hanning(w))
-    if modulation is not None:
-        mod_max = modulation.max()
-        if mod_max > 1e-10:
-            spatial_window = spatial_window * (modulation / mod_max)
-    img_windowed = img_c * spatial_window
+    # When a mask is available, crop to its bounding box so fringes fill
+    # the analysis region. Without cropping, non-fringe areas dilute the
+    # carrier peak. Hard zeroing or modulation weighting don't work because
+    # they introduce spectral leakage from the window shape itself.
+    analysis_img = img
+    crop_offset_y, crop_offset_x = 0, 0
+    if mask is not None:
+        valid = mask.astype(bool)
+        if valid.any():
+            rows = np.any(valid, axis=1)
+            cols = np.any(valid, axis=0)
+            y0, y1 = np.where(rows)[0][[0, -1]]
+            x0, x1 = np.where(cols)[0][[0, -1]]
+            # Pad by 5% to avoid cutting fringes at the boundary
+            pad_y = max(4, int(0.05 * (y1 - y0)))
+            pad_x = max(4, int(0.05 * (x1 - x0)))
+            y0 = max(0, y0 - pad_y)
+            y1 = min(h - 1, y1 + pad_y)
+            x0 = max(0, x0 - pad_x)
+            x1 = min(w - 1, x1 + pad_x)
+            cropped = img[y0:y1 + 1, x0:x1 + 1]
+            # Only use crop if it's meaningfully smaller than the full image
+            if cropped.size < img.size * 0.8:
+                analysis_img = cropped
+                crop_offset_y, crop_offset_x = y0, x0
+    ah, aw = analysis_img.shape
+    img_c = analysis_img - analysis_img.mean()
+    img_windowed = img_c * np.outer(np.hanning(ah), np.hanning(aw))
     F = np.fft.fftshift(np.fft.fft2(img_windowed))
     magnitude = np.abs(F)
 
-    carrier_peak_val = magnitude[py, px]
-
-    # Mask out DC area and carrier neighborhood to find secondary peak
-    cy, cx = h // 2, w // 2
-    dc_margin = max(3, min(h, w) // 80)
+    # Find carrier peak in the (possibly cropped) magnitude spectrum
+    acy, acx = ah // 2, aw // 2
+    dc_margin = max(3, min(ah, aw) // 80)
     mag_search = magnitude.copy()
-    mag_search[cy - dc_margin:cy + dc_margin + 1, cx - dc_margin:cx + dc_margin + 1] = 0
+    mag_search[acy - dc_margin:acy + dc_margin + 1, acx - dc_margin:acx + dc_margin + 1] = 0
+    # Find the carrier peak in this spectrum
+    a_peak_idx = np.unravel_index(np.argmax(mag_search), mag_search.shape)
+    apy, apx = int(a_peak_idx[0]), int(a_peak_idx[1])
+    carrier_peak_val = magnitude[apy, apx]
+
     # Mask carrier and conjugate (±5px neighborhood)
     r = 5
-    y_lo, y_hi = max(0, py - r), min(h, py + r + 1)
-    x_lo, x_hi = max(0, px - r), min(w, px + r + 1)
+    y_lo, y_hi = max(0, apy - r), min(ah, apy + r + 1)
+    x_lo, x_hi = max(0, apx - r), min(aw, apx + r + 1)
     mag_search[y_lo:y_hi, x_lo:x_hi] = 0
-    # Conjugate
-    conj_y, conj_x = 2 * cy - py, 2 * cx - px
-    cy_lo, cy_hi = max(0, conj_y - r), min(h, conj_y + r + 1)
-    cx_lo, cx_hi = max(0, conj_x - r), min(w, conj_x + r + 1)
+    conj_y, conj_x = 2 * acy - apy, 2 * acx - apx
+    cy_lo, cy_hi = max(0, conj_y - r), min(ah, conj_y + r + 1)
+    cx_lo, cx_hi = max(0, conj_x - r), min(aw, conj_x + r + 1)
     mag_search[cy_lo:cy_hi, cx_lo:cx_hi] = 0
 
     secondary_peak_val = mag_search.max()
@@ -493,8 +511,10 @@ def _analyze_carrier(image: np.ndarray, mask: np.ndarray | None = None,
     noise_floor = float(np.median(mag_search[mag_search > 0])) if np.any(mag_search > 0) else 1e-10
     snr_db = float(10 * np.log10(max(carrier_peak_val / max(noise_floor, 1e-10), 1e-10)))
 
-    # DC margin: distance from carrier peak to DC mask boundary
-    dc_margin_px = float(np.sqrt((py - cy) ** 2 + (px - cx) ** 2) - dc_margin)
+    # DC margin: distance from carrier peak to DC mask boundary (full-image coords)
+    cy_full, cx_full = h // 2, w // 2
+    dc_margin_full = max(3, min(h, w) // 80)
+    dc_margin_px = float(np.sqrt((py - cy_full) ** 2 + (px - cx_full) ** 2) - dc_margin_full)
     dc_margin_px = max(0.0, dc_margin_px)
 
     # Alternate peaks: top 3 remaining peaks after masking carrier
@@ -507,16 +527,15 @@ def _analyze_carrier(image: np.ndarray, mask: np.ndarray | None = None,
         alt_val = float(mag_search[alt_y, alt_x])
         if alt_val <= 0:
             break
-        alt_dist = float(np.sqrt((alt_y - cy) ** 2 + (alt_x - cx) ** 2))
+        alt_dist = float(np.sqrt((alt_y - acy) ** 2 + (alt_x - acx) ** 2))
         alt_ratio = carrier_peak_val / max(alt_val, 1e-10)
         alternate_peaks.append({
             "y": alt_y, "x": alt_x,
             "distance_px": round(alt_dist, 1),
             "peak_ratio": round(alt_ratio, 2),
         })
-        # Mask this peak for next iteration
-        ay_lo, ay_hi = max(0, alt_y - 5), min(h, alt_y + 6)
-        ax_lo, ax_hi = max(0, alt_x - 5), min(w, alt_x + 6)
+        ay_lo, ay_hi = max(0, alt_y - 5), min(ah, alt_y + 6)
+        ax_lo, ax_hi = max(0, alt_x - 5), min(aw, alt_x + 6)
         mag_search[ay_lo:ay_hi, ax_lo:ax_hi] = 0
 
     return {
@@ -1523,7 +1542,7 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 632.8,
 
     # Step 2b: Carrier analysis (needed for fringe_period_px before unwrap)
     if carrier_override is not None:
-        carrier_info = _analyze_carrier(img, mask, modulation)
+        carrier_info = _analyze_carrier(img, mask)
         carrier_info["peak_y"] = carrier_override[0]
         carrier_info["peak_x"] = carrier_override[1]
         fy = (carrier_override[0] - img.shape[0] // 2) / max(img.shape[0], 1)
@@ -1536,7 +1555,7 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 632.8,
         carrier_info["fx_cpp"] = fx
         carrier_info["fy_cpp"] = fy
     else:
-        carrier_info = _analyze_carrier(img, mask, modulation)
+        carrier_info = _analyze_carrier(img, mask)
 
     # Step 3: Phase unwrapping
     unwrapped, unwrap_risk = unwrap_phase_2d(
