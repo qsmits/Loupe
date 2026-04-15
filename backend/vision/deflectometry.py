@@ -270,9 +270,10 @@ def diverging_png_b64(data: np.ndarray, mask: np.ndarray | None = None) -> str:
     # Normalize to [-1, 1], then map to [0, 255]
     norm = np.clip(d / vmax, -1, 1)
     # Blue (negative) → White (zero) → Red (positive)
-    r = np.clip((norm + 1) * 127.5, 0, 255).astype(np.uint8)
+    # Piecewise linear: neg lerps blue→white, pos lerps white→red
+    r = np.where(norm >= 0, 255, np.clip((norm + 1) * 255, 0, 255)).astype(np.uint8)
     g = np.clip((1 - np.abs(norm)) * 255, 0, 255).astype(np.uint8)
-    b = np.clip((1 - norm) * 127.5, 0, 255).astype(np.uint8)
+    b = np.where(norm <= 0, 255, np.clip((1 - norm) * 255, 0, 255)).astype(np.uint8)
     colored = np.stack([b, g, r], axis=-1)  # BGR for cv2
     if mask is not None:
         colored[~valid] = 0
