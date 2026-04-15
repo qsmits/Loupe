@@ -9,6 +9,7 @@ from backend.vision.deflectometry import (
     compute_slope_magnitude, compute_curl_residual,
     diverging_png_b64,
     compute_quality_summary,
+    build_response_lut,
 )
 
 def test_generate_fringe_pattern_x_is_sinusoidal():
@@ -365,7 +366,6 @@ def test_quality_summary_clipped_data():
 
 def test_build_response_lut_identity():
     """Linear response should produce identity LUT."""
-    from backend.vision.deflectometry import build_response_lut
     commanded = np.array([0, 64, 128, 192, 255], dtype=np.float64)
     observed = np.array([0, 64, 128, 192, 255], dtype=np.float64)
     fwd, inv = build_response_lut(commanded, observed)
@@ -376,7 +376,6 @@ def test_build_response_lut_identity():
 
 def test_build_response_lut_gamma():
     """Gamma 2.2 response should produce an inverse that linearizes."""
-    from backend.vision.deflectometry import build_response_lut
     commanded = np.linspace(0, 255, 12)
     observed = 255.0 * (commanded / 255.0) ** 2.2
     fwd, inv = build_response_lut(commanded, observed)
@@ -387,7 +386,6 @@ def test_build_response_lut_gamma():
 
 def test_build_response_lut_monotonic():
     """Output LUTs should be monotonically non-decreasing."""
-    from backend.vision.deflectometry import build_response_lut
     commanded = np.array([0, 50, 100, 150, 200, 255], dtype=np.float64)
     observed = np.array([0, 10, 40, 100, 180, 250], dtype=np.float64)
     fwd, inv = build_response_lut(commanded, observed)

@@ -657,7 +657,8 @@ def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
                 observed.append(float(np.median(roi)))
 
             # Restore display to centering pattern
-            await _push_and_wait(s, {"type": "centering", "pattern_id": 9100}, timeout_s=5.0)
+            if s.ws is not None:
+                await s.ws.send_json({"type": "centering"})
 
         obs_arr = np.array(observed, dtype=np.float64)
         fwd, inv = build_response_lut(commanded.astype(np.float64), obs_arr)
