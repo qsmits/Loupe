@@ -5,8 +5,9 @@
 
 import { $ } from './fringe.js';
 import { apiFetch } from './api.js';
+import { state } from './state.js';
 
-const TIMEOUT_MS = 30_000;
+function getTimeoutMs() { return state._hosted ? 120_000 : 30_000; }
 
 /**
  * Create the progress bar DOM and insert it after the analyze button.
@@ -75,10 +76,10 @@ export async function analyzeWithProgress(body, onResult, onError, onRetry) {
     timeoutId = setTimeout(() => {
       controller.abort();
       fill.className = "fringe-progress-fill timeout";
-      msg.textContent = "Analysis timed out (no response for 30s).";
+      msg.textContent = `Analysis timed out (no response for ${getTimeoutMs() / 1000}s).`;
       if (retryBtn && onRetry) retryBtn.hidden = false;
       onError("Timeout");
-    }, TIMEOUT_MS);
+    }, getTimeoutMs());
   }
 
   try {
