@@ -375,7 +375,13 @@ export async function loadUiConfig() {
         const el = document.getElementById(id);
         if (el) el.style.display = "none";
       });
-    } else if (data.subpixel_method) {
+    }
+    // Start the MJPEG stream only when we know there's a camera
+    const streamImg = document.getElementById("stream-img");
+    if (streamImg && !streamImg.src.includes("/stream") && !data.hosted) {
+      streamImg.src = "/stream";
+    }
+    if (!data.hosted && data.subpixel_method) {
       // Prefer the JS equivalent if a server-side method is configured
       const jsMethod = data.subpixel_method === "gaussian" ? "gaussian-js"
                      : data.subpixel_method === "parabola" ? "parabola-js"

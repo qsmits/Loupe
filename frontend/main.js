@@ -223,7 +223,7 @@ document.getElementById("btn-freeze").addEventListener("click", async () => {
     // Unfreeze — restore live stream
     if (isBrowserCameraActive()) {
       document.getElementById("browser-cam-video").style.opacity = "1";
-    } else {
+    } else if (!state._hosted) {
       img.src = "/stream?" + Date.now();
       img.style.opacity = "1";
     }

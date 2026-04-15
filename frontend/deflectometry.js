@@ -50,7 +50,7 @@ function buildWorkspace() {
     <div class="defl-workspace">
       <!-- Left: preview + settings -->
       <div class="defl-preview-col">
-        <img id="defl-preview" src="/stream" alt="Camera preview" />
+        <img id="defl-preview" alt="Camera preview" />
         <div class="defl-badge-row">
           <span class="defl-badge" id="defl-badge-ipad">iPad: \u2014</span>
           <span class="defl-badge" id="defl-badge-flat">Flat field: \u2014</span>
@@ -603,7 +603,10 @@ async function refreshStatus() {
 }
 
 function startPolling() {
+  if (state._hosted) return;
   stopPolling();
+  const preview = document.getElementById("defl-preview");
+  if (preview && !preview.src.includes("/stream")) preview.src = "/stream";
   // Immediately fire + start session
   apiFetch("/deflectometry/start", {
     method: "POST",
