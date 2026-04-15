@@ -274,7 +274,8 @@ def compute_quality_summary(
             "check surface map for artifacts."
         )
 
-    # Overall
+    # Overall — "good" additionally requires no warnings (conservative:
+    # if any warning fired, the result shouldn't be labeled "good")
     if (modulation_coverage < 30 or curl_rms > curl_poor
             or clipped_fraction > 20):
         overall = "poor"
