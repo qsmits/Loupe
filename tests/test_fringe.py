@@ -215,7 +215,7 @@ class TestDFTPhaseExtraction:
         assert wrapped.shape == (h, w)
         # Unwrap and check correlation with known surface phase.
         # Use interior region (25%-75%) to avoid Hann window edge effects.
-        unwrapped = unwrap_phase_2d(wrapped)
+        unwrapped, _ = unwrap_phase_2d(wrapped)
         lo, hi = w // 4, 3 * w // 4
         center_uw = unwrapped[h // 2, lo:hi]
         center_true = surface_phase[h // 2, lo:hi]
@@ -235,7 +235,7 @@ class TestUnwrap2D:
         h, w = 50, 200
         true_phase = np.linspace(0, 6 * np.pi, w)[None, :].repeat(h, 0)
         wrapped = np.angle(np.exp(1j * true_phase))
-        unwrapped = unwrap_phase_2d(wrapped)
+        unwrapped, _ = unwrap_phase_2d(wrapped)
         # Should be smooth: no jumps > pi between adjacent pixels
         diff_x = np.abs(np.diff(unwrapped, axis=1))
         assert diff_x.max() < np.pi + 0.1
@@ -244,7 +244,7 @@ class TestUnwrap2D:
         phase = np.zeros((50, 50))
         mask = np.ones((50, 50), dtype=bool)
         mask[0:10, :] = False
-        unwrapped = unwrap_phase_2d(phase, mask)
+        unwrapped, _ = unwrap_phase_2d(phase, mask)
         assert unwrapped[5, 25] == 0.0  # masked pixel is zeroed
 
     def test_quality_guided_prefers_high_quality_regions(self):
@@ -259,7 +259,7 @@ class TestUnwrap2D:
         quality = np.ones((h, w), dtype=np.float64)
         quality[:, 35:45] = 0.01  # low-quality stripe
 
-        unwrapped = unwrap_phase_2d(wrapped, mask, quality=quality)
+        unwrapped, _ = unwrap_phase_2d(wrapped, mask, quality=quality)
         corr = np.corrcoef(unwrapped[mask], true_phase[mask])[0, 1]
         assert corr > 0.98
 
@@ -270,9 +270,42 @@ class TestUnwrap2D:
         wrapped = np.angle(np.exp(1j * true_phase))
         mask = np.ones((h, w), dtype=bool)
 
-        unwrapped = unwrap_phase_2d(wrapped, mask, quality=None)
+        unwrapped, _ = unwrap_phase_2d(wrapped, mask, quality=None)
         corr = np.corrcoef(unwrapped[mask], true_phase[mask])[0, 1]
         assert corr > 0.98
+
+
+class TestUnwrapRiskMask:
+    def test_returns_tuple(self):
+        from backend.vision.fringe import unwrap_phase_2d
+        wrapped = np.random.uniform(-np.pi, np.pi, (64, 64))
+        result = unwrap_phase_2d(wrapped)
+        assert isinstance(result, tuple)
+        assert len(result) == 2
+
+    def test_risk_mask_shape(self):
+        from backend.vision.fringe import unwrap_phase_2d
+        wrapped = np.random.uniform(-np.pi, np.pi, (64, 64))
+        _, risk = unwrap_phase_2d(wrapped)
+        assert risk.shape == wrapped.shape
+        assert risk.dtype == np.uint8
+
+    def test_clean_unwrap_has_zero_risk(self):
+        from backend.vision.fringe import unwrap_phase_2d
+        y = np.linspace(0, 4 * np.pi, 64)
+        phase = np.tile(y, (64, 1))
+        wrapped = np.angle(np.exp(1j * phase))
+        _, risk = unwrap_phase_2d(wrapped)
+        assert np.mean(risk == 0) > 0.9
+
+    def test_edge_contamination_zone(self):
+        from backend.vision.fringe import unwrap_phase_2d
+        wrapped = np.random.uniform(-np.pi, np.pi, (64, 64))
+        mask = np.zeros((64, 64), dtype=bool)
+        mask[10:54, 10:54] = True
+        _, risk = unwrap_phase_2d(wrapped, mask=mask, fringe_period_px=5.0)
+        assert np.any(risk == 2)
+        assert risk[30, 30] != 2
 
 
 class TestFocusQuality:

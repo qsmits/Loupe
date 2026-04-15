@@ -751,7 +751,9 @@ def _quality_guided_unwrap(wrapped: np.ndarray, quality: np.ndarray,
 
 
 def unwrap_phase_2d(wrapped: np.ndarray, mask: np.ndarray | None = None,
-                    quality: np.ndarray | None = None) -> np.ndarray:
+                    quality: np.ndarray | None = None,
+                    fringe_period_px: float | None = None,
+                    ) -> tuple[np.ndarray, np.ndarray]:
     """2D spatial phase unwrapping using skimage's algorithm.
 
     Uses scikit-image's unwrap_phase which implements a proper 2D
@@ -770,10 +772,16 @@ def unwrap_phase_2d(wrapped: np.ndarray, mask: np.ndarray | None = None,
     quality : optional 2D float64 quality map (higher = more reliable).
               When provided, uses quality-guided unwrapping instead of
               skimage's raster-order algorithm.
+    fringe_period_px : optional fringe period in pixels. When provided
+              together with a mask, marks pixels near mask edges (within
+              one fringe period) as edge-contamination in the risk mask.
 
     Returns
     -------
-    Unwrapped phase map, float64.
+    tuple of (unwrapped, risk_mask):
+        unwrapped : float64 array — unwrapped phase map.
+        risk_mask : uint8 array — 0 = clean, 1 = 2π-jump corrected,
+                    2 = edge contamination zone.
     """
     from scipy.ndimage import median_filter
 
@@ -794,21 +802,37 @@ def unwrap_phase_2d(wrapped: np.ndarray, mask: np.ndarray | None = None,
                 else:
                     unwrapped = np.asarray(unwrapped_ma, dtype=np.float64)
             else:
-                return np.zeros_like(phase, dtype=np.float64)
+                return (np.zeros_like(phase, dtype=np.float64),
+                        np.zeros(wrapped.shape, dtype=np.uint8))
         else:
             unwrapped = unwrap_phase(phase).astype(np.float64)
+
+    # Risk mask: track which pixels needed correction or are suspect.
+    risk_mask = np.zeros(wrapped.shape, dtype=np.uint8)
 
     # Post-unwrapping correction: detect pixels that differ from their local
     # median by ~2π (unwrapping jump errors) and snap them back.  This fixes
     # the "clouds with hard lines" artifact on noisy interferograms.
     med = median_filter(unwrapped, size=9)
-    unwrapped -= 2.0 * np.pi * np.round((unwrapped - med) / (2.0 * np.pi))
+    jump_diff = unwrapped - med
+    jump_pixels = np.abs(jump_diff) > np.pi
+    unwrapped -= 2.0 * np.pi * np.round(jump_diff / (2.0 * np.pi))
+    risk_mask[jump_pixels] = 1
+
+    # Edge contamination detection: pixels near mask boundary within one
+    # fringe period are suspect because they mix valid/invalid data.
+    if fringe_period_px and fringe_period_px > 1 and mask is not None:
+        kernel_size = max(3, int(fringe_period_px))
+        kernel = np.ones((kernel_size, kernel_size), dtype=np.uint8)
+        eroded = cv2.erode(mask.astype(np.uint8), kernel)
+        edge_zone = mask.astype(bool) & ~eroded.astype(bool)
+        risk_mask[edge_zone & (risk_mask == 0)] = 2
 
     if mask is not None:
         valid = mask.astype(bool)
         unwrapped[~valid] = 0.0
 
-    return unwrapped
+    return unwrapped, risk_mask
 
 
 def focus_quality(image: np.ndarray) -> float:
@@ -1303,7 +1327,8 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 632.8,
     _progress("phase", 0.25, "Extracting phase...")
 
     # Step 3: Phase unwrapping
-    unwrapped = unwrap_phase_2d(wrapped, mask, quality=modulation)
+    unwrapped, unwrap_risk = unwrap_phase_2d(wrapped, mask, quality=modulation)
+    # unwrap_risk available for Task 6 (confidence pipeline)
     _progress("unwrap", 0.50, "Unwrapping phase...")
 
     # Step 4: Zernike fitting
