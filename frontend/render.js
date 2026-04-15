@@ -3,6 +3,7 @@ import { fitCircleAlgebraic, fitLine, polygonArea } from './math.js';
 import { viewport, imageWidth, imageHeight, setImageSize } from './viewport.js';
 import { measurementLabel as _measurementLabel, getLineEndpoints, lineAngleDeg } from './format.js';
 export { getLineEndpoints, lineAngleDeg } from './format.js';
+import { isCrossModeActive } from './cross-mode.js';
 
 // ── Shared primitives (used by sub-modules via import from render.js) ────────
 
@@ -268,6 +269,70 @@ function drawGearAnalysis() {
   ctx.restore();
 }
 
+/** Mask preview overlay for cross-mode mask editing.
+ *  Dims areas that would be excluded by the current mask annotations. */
+function drawMaskPreviewOverlay() {
+  const iw = imageWidth || canvas.width;
+  const ih = imageHeight || canvas.height;
+
+  const punches = [];
+  const dies = [];
+  for (const ann of state.annotations) {
+    if (ann.type !== 'area' || !ann.points || ann.points.length < 3) continue;
+    if (ann.mode === 'die') {
+      dies.push(ann.points);
+    } else {
+      punches.push(ann.points);
+    }
+  }
+
+  if (punches.length === 0 && dies.length === 0) return;
+
+  ctx.save();
+  ctx.globalAlpha = 0.4;
+
+  if (punches.length > 0) {
+    // Darken everything, cut out punch regions, re-darken die regions
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, iw, ih);
+
+    ctx.globalCompositeOperation = 'destination-out';
+    ctx.fillStyle = '#fff';
+    for (const pts of punches) {
+      ctx.beginPath();
+      ctx.moveTo(pts[0].x, pts[0].y);
+      for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+      ctx.closePath();
+      ctx.fill();
+    }
+
+    if (dies.length > 0) {
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.fillStyle = '#000';
+      for (const pts of dies) {
+        ctx.beginPath();
+        ctx.moveTo(pts[0].x, pts[0].y);
+        for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+        ctx.closePath();
+        ctx.fill();
+      }
+    }
+  } else {
+    // No punch regions, only die: darken just the die regions
+    ctx.fillStyle = '#000';
+    for (const pts of dies) {
+      ctx.beginPath();
+      ctx.moveTo(pts[0].x, pts[0].y);
+      for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+      ctx.closePath();
+      ctx.fill();
+    }
+  }
+
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.restore();
+}
+
 export function redraw() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
@@ -288,6 +353,10 @@ export function redraw() {
   }
   drawGrid();
   drawAnnotations(redraw, _dxfFns);
+  // Cross-mode mask preview overlay: dim excluded areas during mask editing
+  if (isCrossModeActive()) {
+    drawMaskPreviewOverlay();
+  }
   drawPendingPoints();
   // Snap indicator (annotation snap — blue circle)
   if (state.snapTarget && state.tool !== "select") {
