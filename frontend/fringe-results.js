@@ -962,7 +962,6 @@ async function doReanalyze() {
         wavelength_nm: getWavelength(),
         surface_height: fr.lastResult.surface_height || 128,
         surface_width: fr.lastResult.surface_width || 128,
-        mask: fr.maskGrid ? Array.from(fr.maskGrid) : null,
         form_model: formModel,
       }),
     });
@@ -1001,7 +1000,6 @@ async function invertWavefront() {
         wavelength_nm: getWavelength(),
         surface_height: fr.lastResult.surface_height || 128,
         surface_width: fr.lastResult.surface_width || 128,
-        mask: fr.maskGrid ? Array.from(fr.maskGrid) : null,
         form_model: formModel,
       }),
     });

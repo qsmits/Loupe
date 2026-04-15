@@ -147,6 +147,9 @@ def make_fringe_router(camera: BaseCamera) -> APIRouter:
             form_model=body.form_model,
             lens_k1=body.lens_k1,
         )
+        # Cache full-res mask for reanalyze/invert (mask_grid is downsampled)
+        if "_mask_full" in result:
+            _fringe_cache["last_mask"] = result.pop("_mask_full")
         return result
 
     @router.post("/fringe/analyze-stream", dependencies=[Depends(_reject_hosted)])
@@ -227,6 +230,9 @@ def make_fringe_router(camera: BaseCamera) -> APIRouter:
                         lens_k1=body.lens_k1,
                     ),
                 )
+                # Cache full-res mask before sending result to client
+                if "_mask_full" in result:
+                    _fringe_cache["last_mask"] = result.pop("_mask_full")
                 await queue.put({"stage": "done", "progress": 1.0, "result": result})
             except Exception as exc:
                 await queue.put({"stage": "error", "message": str(exc)})
@@ -247,12 +253,15 @@ def make_fringe_router(camera: BaseCamera) -> APIRouter:
     @router.post("/fringe/reanalyze", dependencies=[Depends(_reject_hosted)])
     async def fringe_reanalyze(body: ReanalyzeBody):
         """Re-analyze with different Zernike subtraction (no FFT, fast)."""
+        mask = body.mask
+        if mask is None:
+            mask = _fringe_cache.get("last_mask")
         result = reanalyze(
             coefficients=body.coefficients,
             subtract_terms=body.subtract_terms,
             wavelength_nm=body.wavelength_nm,
             surface_shape=(body.surface_height, body.surface_width),
-            mask_serialized=body.mask,
+            mask_serialized=mask,
             n_zernike=body.n_zernike,
             form_model=body.form_model,
         )
@@ -302,6 +311,8 @@ def make_fringe_router(camera: BaseCamera) -> APIRouter:
             carrier_override=(body.carrier_y, body.carrier_x),
             lens_k1=body.lens_k1,
         )
+        if "_mask_full" in result:
+            _fringe_cache["last_mask"] = result.pop("_mask_full")
         return result
 
     return router

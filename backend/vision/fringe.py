@@ -1097,7 +1097,19 @@ def render_surface_map(surface: np.ndarray, mask: np.ndarray | None = None
     if mask is not None:
         valid = mask.astype(bool)
         s[~valid] = np.nan
+        # Crop to mask bounding box with 5% padding to avoid huge black borders
         if valid.any():
+            rows = np.any(valid, axis=1)
+            cols = np.any(valid, axis=0)
+            r0, r1 = np.argmax(rows), len(rows) - np.argmax(rows[::-1])
+            c0, c1 = np.argmax(cols), len(cols) - np.argmax(cols[::-1])
+            pad_r = max(2, int(0.05 * (r1 - r0)))
+            pad_c = max(2, int(0.05 * (c1 - c0)))
+            r0 = max(0, r0 - pad_r)
+            r1 = min(s.shape[0], r1 + pad_r)
+            c0 = max(0, c0 - pad_c)
+            c1 = min(s.shape[1], c1 + pad_c)
+            s = s[r0:r1, c0:c1]
             smin = float(np.nanmin(s))
             smax = float(np.nanmax(s))
         else:
@@ -1711,6 +1723,8 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 632.8,
         "confidence": confidence,
         "confidence_maps": confidence_maps,
         "unwrap_stats": unwrap_stats,
+        # Full-res mask for server-side caching (stripped by API before response)
+        "_mask_full": [int(v) for v in mask.ravel()],
     }
 
 
