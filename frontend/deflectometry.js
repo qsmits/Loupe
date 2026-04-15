@@ -109,6 +109,7 @@ function buildWorkspace() {
           <button class="detect-btn" id="defl-btn-compute" style="padding:6px 16px;font-size:13px;font-weight:600">Compute</button>
           <span class="defl-step-status" id="defl-status-compute" style="font-size:11px;opacity:0.7">\u2014</span>
           <button class="detect-btn" id="defl-btn-reset" style="font-size:11px;padding:2px 8px">Reset</button>
+          <button class="detect-btn" id="defl-btn-export" style="font-size:11px;padding:2px 8px">Export Run</button>
           <span style="margin-left:auto;display:flex;align-items:center;gap:8px;font-size:12px">
             Mask <input type="range" id="defl-mask-thresh" min="0" max="20" step="1" value="2" style="width:80px" />
             <span id="defl-mask-thresh-val" style="min-width:22px;font-size:11px">2%</span>
@@ -260,6 +261,7 @@ function wireEvents() {
   $("defl-btn-calibrate")?.addEventListener("click", calibrateSphere);
   $("defl-btn-auto-smooth")?.addEventListener("click", autoSmooth);
   $("defl-btn-reset")?.addEventListener("click", resetSession);
+  $("defl-btn-export")?.addEventListener("click", exportRun);
 }
 
 function getFreq() {
@@ -486,6 +488,31 @@ async function resetSession() {
   const empty3d = $("defl-3d-empty");
   if (content3d) content3d.hidden = true;
   if (empty3d) empty3d.hidden = false;
+}
+
+async function exportRun() {
+  try {
+    const r = await apiFetch("/deflectometry/export-run", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    if (!r.ok) {
+      console.warn("Export failed:", await r.text());
+      return;
+    }
+    const data = await r.json();
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+    a.download = `deflectometry-run-${ts}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  } catch (e) {
+    console.warn("Export error:", e);
+  }
 }
 
 function renderPhaseResult(result) {

@@ -127,6 +127,10 @@ class DiagnosticsBody(BaseModel):
     smooth_sigma: float = Field(default=0.0, ge=0.0, le=10.0)
 
 
+class ExportRunBody(BaseModel):
+    pass
+
+
 def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
     router = APIRouter()
     # Single-active-session container; using a dict so nested functions can
@@ -680,6 +684,46 @@ def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
             "unwrapped_raw_x_png_b64": pseudocolor_png_b64(unw_x_raw),
             "unwrapped_raw_y_png_b64": pseudocolor_png_b64(unw_y_raw),
             "frames_saved_to": os.path.abspath(out_dir),
+        }
+
+    @router.post("/deflectometry/export-run", dependencies=[Depends(_reject_hosted)])
+    async def deflectometry_export_run(body: ExportRunBody = ExportRunBody()):  # noqa: B008
+        """Return a structured JSON record of the current measurement run."""
+        import datetime
+        s = _current()
+        if s is None or s.last_result is None:
+            raise HTTPException(400, detail="Run compute first")
+
+        result = s.last_result
+
+        return {
+            "version": 1,
+            "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            "acquisition": {
+                "n_frames": len(s.frames),
+                "n_phase_steps": 8,
+                "frequency_cycles": s.freq,
+                "gamma": 2.2,
+                "smooth_sigma": 0.0,
+                "mask_threshold": 0.02,
+                "has_flat_field": s.flat_white is not None,
+                "has_reference": s.ref_phase_x is not None,
+            },
+            "calibration": {
+                "cal_factor": s.cal_factor,
+            },
+            "quality": result.get("quality"),
+            "stats": {
+                "phase_x": result.get("stats_x"),
+                "phase_y": result.get("stats_y"),
+                "slope_magnitude": result.get("stats_slope_mag"),
+                "curl": result.get("stats_curl"),
+            },
+            "modulation": {
+                "x_median": result.get("quality", {}).get("modulation_x_median"),
+                "y_median": result.get("quality", {}).get("modulation_y_median"),
+            },
+            "mask_valid_frac": result.get("mask_valid_frac"),
         }
 
     @router.websocket("/deflectometry/ws")

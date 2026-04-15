@@ -158,6 +158,24 @@ def _inject_synthetic_frames(client, width: int = 64, height: int = 64, freq: in
     s.frames = frames
 
 
+def test_export_run_returns_structured_json(client):
+    """Export-run should return a complete run record."""
+    client.post("/deflectometry/reset", json={})
+    client.post("/deflectometry/start", json={})
+    _inject_synthetic_frames(client)
+    client.post("/deflectometry/compute", json={"mask_threshold": 0.02})
+    r = client.post("/deflectometry/export-run", json={})
+    assert r.status_code == 200
+    data = r.json()
+    assert data["version"] == 1
+    assert "timestamp" in data
+    assert "acquisition" in data
+    assert data["acquisition"]["n_phase_steps"] == 8
+    assert "quality" in data
+    assert "stats" in data
+    assert "modulation" in data
+
+
 def test_compute_returns_slope_and_quality(client):
     """After frame injection, /compute should return slope_mag, curl, and quality."""
     client.post("/deflectometry/reset", json={})
