@@ -1071,3 +1071,42 @@ class TestUndistortFrame:
         assert isinstance(result, dict)
         assert "pv_nm" in result
         assert "rms_nm" in result
+
+
+class TestLensK1Integration:
+    def test_analyze_with_lens_k1(self):
+        """analyze_interferogram produces valid output with lens_k1."""
+        h, w = 128, 128
+        x = np.arange(w)
+        img = np.tile((128 + 100 * np.sin(2 * np.pi * x / 20)).astype(np.uint8), (h, 1))
+        result = analyze_interferogram(img, lens_k1=0.3)
+        assert "pv_nm" in result
+        assert "rms_nm" in result
+        assert result["pv_nm"] > 0
+
+    def test_analyze_lens_k1_zero_matches_no_k1(self):
+        """lens_k1=0.0 should produce identical results to omitting it."""
+        h, w = 64, 64
+        x = np.arange(w)
+        img = np.tile((128 + 100 * np.sin(2 * np.pi * x / 16)).astype(np.uint8), (h, 1))
+        r1 = analyze_interferogram(img, lens_k1=0.0)
+        r2 = analyze_interferogram(img)
+        assert r1["pv_nm"] == r2["pv_nm"]
+        assert r1["rms_nm"] == r2["rms_nm"]
+
+    def test_api_analyze_accepts_lens_k1(self, client):
+        r = client.post("/fringe/analyze", json={"lens_k1": 0.3})
+        assert r.status_code == 200
+        data = r.json()
+        assert "pv_nm" in data
+
+    @pytest.fixture
+    def client(self):
+        from backend.main import create_app
+        from tests.conftest import FakeCamera
+        from fastapi.testclient import TestClient
+
+        camera = FakeCamera()
+        app = create_app(camera)
+        with TestClient(app) as c:
+            yield c
