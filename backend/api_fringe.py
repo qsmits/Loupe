@@ -56,6 +56,7 @@ class AnalyzeBody(BaseModel):
     roi: Optional[RoiRect] = Field(default=None)
     mask_polygons: Optional[list[MaskPolygon]] = Field(default=None)
     form_model: str = Field(default="zernike", pattern="^(zernike|plane)$")
+    lens_k1: float = Field(default=0.0)
 
 
 class ReanalyzeBody(BaseModel):
@@ -78,6 +79,7 @@ class ReanalyzeCarrierBody(BaseModel):
     subtract_terms: list[int] = Field(default=[1, 2, 3])
     n_zernike: int = Field(default=36, ge=1, le=66)
     mask_polygons: Optional[list[MaskPolygon]] = Field(default=None)
+    lens_k1: float = Field(default=0.0)
 
 
 def make_fringe_router(camera: BaseCamera) -> APIRouter:
@@ -143,6 +145,7 @@ def make_fringe_router(camera: BaseCamera) -> APIRouter:
             use_full_mask=body.roi is not None and not body.mask_polygons,
             custom_mask=custom_mask,
             form_model=body.form_model,
+            lens_k1=body.lens_k1,
         )
         return result
 
@@ -221,6 +224,7 @@ def make_fringe_router(camera: BaseCamera) -> APIRouter:
                         custom_mask=custom_mask,
                         on_progress=_on_progress,
                         form_model=body.form_model,
+                        lens_k1=body.lens_k1,
                     ),
                 )
                 await queue.put({"stage": "done", "progress": 1.0, "result": result})
@@ -296,6 +300,7 @@ def make_fringe_router(camera: BaseCamera) -> APIRouter:
             n_zernike=body.n_zernike,
             custom_mask=custom_mask,
             carrier_override=(body.carrier_y, body.carrier_x),
+            lens_k1=body.lens_k1,
         )
         return result
 

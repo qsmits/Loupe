@@ -93,10 +93,13 @@ def make_camera_router(camera: BaseCamera, frame_store: SessionFrameStore, start
         return {"width": w, "height": h}
 
     @router.get("/frame")
-    async def get_frame(session_id: str = Depends(get_session_id_dep)):
+    async def get_frame(session_id: str = Depends(get_session_id_dep), lens_k1: float = 0.0):
         frame = frame_store.get(session_id)
         if frame is None:
             raise HTTPException(status_code=404, detail="No frame stored")
+        if lens_k1:
+            from backend.vision.fringe import undistort_frame
+            frame = undistort_frame(frame, lens_k1)
         ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 95])
         if not ok:
             raise HTTPException(status_code=500, detail="Failed to encode frame")
