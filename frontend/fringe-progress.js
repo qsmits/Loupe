@@ -4,6 +4,7 @@
 // labels, handles 30s inactivity timeout and error/retry states.
 
 import { $ } from './fringe.js';
+import { apiFetch } from './api.js';
 
 const TIMEOUT_MS = 30_000;
 
@@ -83,7 +84,7 @@ export async function analyzeWithProgress(body, onResult, onError, onRetry) {
   try {
     resetTimeout();
 
-    const response = await fetch("/fringe/analyze-stream", {
+    const response = await apiFetch("/fringe/analyze-stream", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),

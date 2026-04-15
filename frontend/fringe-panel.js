@@ -571,10 +571,12 @@ export function wirePanelEvents() {
 
     try {
       let blob;
-      if (fr.droppedObjectUrl) {
-        // Use the dropped image directly
-        const resp = await fetch(fr.droppedObjectUrl);
-        blob = await resp.blob();
+      if (fr.droppedImageB64) {
+        // Convert stored base64 to blob (avoids CSP blob: fetch issues)
+        const bin = atob(fr.droppedImageB64);
+        const u8 = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+        blob = new Blob([u8], { type: "image/png" });
       } else {
         // Freeze the current camera frame so the mask edit uses a still image
         await apiFetch("/freeze", { method: "POST" });
