@@ -1326,9 +1326,27 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 632.8,
     wrapped = extract_phase_dft(img, mask, carrier_override=carrier_override)
     _progress("phase", 0.25, "Extracting phase...")
 
+    # Step 2b: Carrier analysis (needed for fringe_period_px before unwrap)
+    if carrier_override is not None:
+        carrier_info = _analyze_carrier(img)
+        carrier_info["peak_y"] = carrier_override[0]
+        carrier_info["peak_x"] = carrier_override[1]
+        fy = (carrier_override[0] - img.shape[0] // 2) / max(img.shape[0], 1)
+        fx = (carrier_override[1] - img.shape[1] // 2) / max(img.shape[1], 1)
+        fringe_freq = math.sqrt(fx**2 + fy**2)
+        carrier_info["fringe_period_px"] = 1.0 / fringe_freq if fringe_freq > 1e-10 else float("inf")
+        carrier_info["fringe_angle_deg"] = (math.degrees(math.atan2(fy, fx)) + 90.0) % 180.0
+        carrier_info["distance_px"] = math.sqrt((carrier_override[0] - img.shape[0] // 2)**2 +
+                                                 (carrier_override[1] - img.shape[1] // 2)**2)
+        carrier_info["fx_cpp"] = fx
+        carrier_info["fy_cpp"] = fy
+    else:
+        carrier_info = _analyze_carrier(img)
+
     # Step 3: Phase unwrapping
-    unwrapped, unwrap_risk = unwrap_phase_2d(wrapped, mask, quality=modulation)
-    # unwrap_risk available for Task 6 (confidence pipeline)
+    unwrapped, unwrap_risk = unwrap_phase_2d(
+        wrapped, mask, quality=modulation,
+        fringe_period_px=carrier_info.get("fringe_period_px"))
     _progress("unwrap", 0.50, "Unwrapping phase...")
 
     # Step 4: Zernike fitting
@@ -1363,24 +1381,6 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 632.8,
     surface_map_b64 = render_surface_map(height_nm, mask)
     profile_x = render_profile(height_nm, mask, axis="x")
     profile_y = render_profile(height_nm, mask, axis="y")
-
-    # Carrier diagnostics
-    if carrier_override is not None:
-        carrier_info = _analyze_carrier(img)
-        # Override the peak location in the diagnostics
-        carrier_info["peak_y"] = carrier_override[0]
-        carrier_info["peak_x"] = carrier_override[1]
-        fy = (carrier_override[0] - img.shape[0] // 2) / max(img.shape[0], 1)
-        fx = (carrier_override[1] - img.shape[1] // 2) / max(img.shape[1], 1)
-        fringe_freq = math.sqrt(fx**2 + fy**2)
-        carrier_info["fringe_period_px"] = 1.0 / fringe_freq if fringe_freq > 1e-10 else float("inf")
-        carrier_info["fringe_angle_deg"] = (math.degrees(math.atan2(fy, fx)) + 90.0) % 180.0
-        carrier_info["distance_px"] = math.sqrt((carrier_override[0] - img.shape[0] // 2)**2 +
-                                                 (carrier_override[1] - img.shape[1] // 2)**2)
-        carrier_info["fx_cpp"] = fx
-        carrier_info["fy_cpp"] = fy
-    else:
-        carrier_info = _analyze_carrier(img)
 
     # Diagnostic images: FFT with carrier peak marked, modulation map
     fft_b64 = render_fft_image(img, carrier_info["peak_y"], carrier_info["peak_x"])
