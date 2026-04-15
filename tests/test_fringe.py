@@ -865,3 +865,40 @@ class TestConfidenceMaps:
         for key in ("unwrap_risk", "composite"):
             raw = base64.b64decode(result[key])
             assert raw[:4] == b"\x89PNG"
+
+
+class TestPlaneFormRemoval:
+    def _make_fringe_image(self, h=256, w=256, period=20):
+        x = np.arange(w)
+        row = (128 + 80 * np.sin(2 * np.pi * x / period)).astype(np.uint8)
+        return np.tile(row, (h, 1))
+
+    def test_plane_model_returns_result(self):
+        from backend.vision.fringe import analyze_interferogram
+        img = self._make_fringe_image()
+        result = analyze_interferogram(img, form_model="plane")
+        assert "pv_nm" in result
+        assert "form_model" in result
+        assert result["form_model"] == "plane"
+
+    def test_plane_model_has_plane_fit(self):
+        from backend.vision.fringe import analyze_interferogram
+        img = self._make_fringe_image()
+        result = analyze_interferogram(img, form_model="plane")
+        assert "plane_fit" in result
+        assert "a" in result["plane_fit"]
+        assert "b" in result["plane_fit"]
+        assert "c" in result["plane_fit"]
+
+    def test_zernike_model_is_default(self):
+        from backend.vision.fringe import analyze_interferogram
+        img = self._make_fringe_image()
+        result = analyze_interferogram(img)
+        assert result["form_model"] == "zernike"
+
+    def test_plane_model_different_from_zernike(self):
+        from backend.vision.fringe import analyze_interferogram
+        img = self._make_fringe_image()
+        r_zernike = analyze_interferogram(img, form_model="zernike")
+        r_plane = analyze_interferogram(img, form_model="plane")
+        assert r_zernike["pv_nm"] != r_plane["pv_nm"] or r_zernike["rms_nm"] != r_plane["rms_nm"]

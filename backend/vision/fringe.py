@@ -311,6 +311,30 @@ def _subtract_plane(surface: np.ndarray, mask: np.ndarray | None = None
     return result
 
 
+def _fit_plane(surface: np.ndarray, mask: np.ndarray | None = None) -> dict:
+    """Fit a least-squares plane and return coefficients for diagnostics."""
+    h, w = surface.shape
+    yy, xx = np.mgrid[0:h, 0:w]
+    if mask is not None:
+        valid = mask.astype(bool)
+        xs, ys, zs = xx[valid], yy[valid], surface[valid]
+    else:
+        xs, ys, zs = xx.ravel(), yy.ravel(), surface.ravel()
+
+    if len(zs) < 3:
+        return {"a": 0, "b": 0, "c": 0, "tilt_x_nm": 0, "tilt_y_nm": 0}
+
+    A = np.column_stack([xs, ys, np.ones(len(xs))])
+    coeffs, _, _, _ = np.linalg.lstsq(A, zs, rcond=None)
+    return {
+        "a": float(coeffs[0]),
+        "b": float(coeffs[1]),
+        "c": float(coeffs[2]),
+        "tilt_x_nm": float(coeffs[0] * w),
+        "tilt_y_nm": float(coeffs[1] * h),
+    }
+
+
 # ── Fringe modulation, masking, DFT phase extraction, unwrapping ──────
 
 
@@ -1414,7 +1438,8 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 632.8,
                           use_full_mask: bool = False,
                           custom_mask: np.ndarray | None = None,
                           carrier_override: tuple[int, int] | None = None,
-                          on_progress: Callable[[str, float, str], None] | None = None) -> dict:
+                          on_progress: Callable[[str, float, str], None] | None = None,
+                          form_model: str = "zernike") -> dict:
     """Full analysis pipeline: single image in, all results out.
 
     Parameters
@@ -1497,15 +1522,15 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 632.8,
     coeffs, rho, theta = fit_zernike(unwrapped, n_terms=n_zernike, mask=mask)
     _progress("zernike", 0.70, "Fitting Zernike polynomials...")
 
-    # Step 5: Subtract selected terms
-    corrected = subtract_zernike(unwrapped, coeffs, subtract_terms, rho, theta, mask)
-
-    # Step 5b: If tilt terms were subtracted, also remove any residual
-    # linear tilt via direct plane fit.  Zernike tilt (Z2/Z3) is defined on
-    # a circular domain; on rectangular apertures the fit can leave residual
-    # slope that dominates the color scale and obscures real topography.
-    if 2 in subtract_terms or 3 in subtract_terms:
-        corrected = _subtract_plane(corrected, mask)
+    # Step 5: Form removal
+    if form_model == "plane":
+        corrected = _subtract_plane(unwrapped, mask)
+        plane_coeffs = _fit_plane(unwrapped, mask)
+    else:
+        corrected = subtract_zernike(unwrapped, coeffs, subtract_terms, rho, theta, mask)
+        if 2 in subtract_terms or 3 in subtract_terms:
+            corrected = _subtract_plane(corrected, mask)
+        plane_coeffs = None
 
     # Step 6: Convert to height
     height_nm = phase_to_height(corrected, wavelength_nm)
@@ -1602,13 +1627,16 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 632.8,
         "grid_rows": grid_h,
         "grid_cols": grid_w,
         "carrier": carrier_info,
+        "form_model": form_model,
+        "plane_fit": plane_coeffs,
     }
 
 
 def reanalyze(coefficients: list[float], subtract_terms: list[int],
               wavelength_nm: float, surface_shape: tuple[int, int],
               mask_serialized: list[int] | None = None,
-              n_zernike: int = 36) -> dict:
+              n_zernike: int = 36,
+              form_model: str = "zernike") -> dict:
     """Re-analyze with different Zernike subtraction without redoing FFT.
 
     This is the fast path: reconstruct the surface from Zernike coefficients,
@@ -1649,13 +1677,16 @@ def reanalyze(coefficients: list[float], subtract_terms: list[int],
         Zj = zernike_polynomial(j, rho, theta)
         full_surface += coeffs[j - 1] * Zj
 
-    # Subtract selected terms
-    corrected = subtract_zernike(full_surface, coeffs, subtract_terms,
-                                 rho, theta, mask)
-
-    # Residual plane subtraction (same as analyze_interferogram)
-    if 2 in subtract_terms or 3 in subtract_terms:
-        corrected = _subtract_plane(corrected, mask)
+    # Form removal
+    if form_model == "plane":
+        corrected = _subtract_plane(full_surface, mask)
+        plane_coeffs = _fit_plane(full_surface, mask)
+    else:
+        corrected = subtract_zernike(full_surface, coeffs, subtract_terms,
+                                     rho, theta, mask)
+        if 2 in subtract_terms or 3 in subtract_terms:
+            corrected = _subtract_plane(corrected, mask)
+        plane_coeffs = None
 
     # Convert to height
     height_nm = phase_to_height(corrected, wavelength_nm)
@@ -1690,4 +1721,6 @@ def reanalyze(coefficients: list[float], subtract_terms: list[int],
         "rms_waves": rms_waves,
         "strehl": float(np.exp(-(2.0 * np.pi * rms_waves) ** 2)),
         "subtracted_terms": subtract_terms,
+        "form_model": form_model,
+        "plane_fit": plane_coeffs,
     }
