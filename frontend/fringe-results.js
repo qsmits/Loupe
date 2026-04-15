@@ -6,7 +6,7 @@
 import { fr, $ } from './fringe.js';
 import { apiFetch } from './api.js';
 import { getWavelength, getMaskThreshold } from './fringe-panel.js';
-import { drawPeakValleyMarkers } from './fringe-measure.js';
+import { drawPeakValleyMarkers, resetSurfaceZoom } from './fringe-measure.js';
 
 // ── Subtraction pill state ──────────────────────────────────────────────
 
@@ -341,6 +341,7 @@ function renderResults(data) {
   if (surfaceContent && data.surface_map) {
     surfaceContent.hidden = false;
     if (empty) empty.hidden = true;
+    resetSurfaceZoom();
     const surfImg = $("fringe-surface-img");
     surfImg.onload = () => drawPeakValleyMarkers();
     surfImg.src = "data:image/png;base64," + data.surface_map;

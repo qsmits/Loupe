@@ -347,6 +347,10 @@ export function computeAreaStats(p1, p2) {
   setMeasureReadout(`Area PV: ${fmtNm(pv)}  RMS: ${fmtNm(rms)}  (${values.length} px)`);
 }
 
+export function resetSurfaceZoom() {
+  if (fr.resetSurfaceZoom) fr.resetSurfaceZoom();
+}
+
 // ── Event wiring ───────────────────────────────────────────────────────
 
 export function wireMeasureEvents() {
@@ -358,11 +362,16 @@ export function wireMeasureEvents() {
       const wrapper = $("fringe-surface-wrapper");
       if (wrapper) wrapper.style.transform = `translate(${smPanX}px,${smPanY}px) scale(${smZoom})`;
     };
+    // Expose reset so new results can clear zoom/pan state
+    fr.resetSurfaceZoom = () => {
+      smZoom = 1; smPanX = 0; smPanY = 0;
+      applySm();
+    };
     viewport.addEventListener("wheel", (e) => {
       e.preventDefault();
       const prev = smZoom;
-      smZoom = Math.max(1, Math.min(10, smZoom + (e.deltaY < 0 ? 0.3 : -0.3)));
-      if (smZoom === 1) { smPanX = 0; smPanY = 0; }
+      smZoom = Math.max(0.2, Math.min(10, smZoom + (e.deltaY < 0 ? 0.3 : -0.3)));
+      if (smZoom <= 1) { smPanX = 0; smPanY = 0; }
       else {
         // Zoom toward cursor: keep the point under the mouse fixed
         const rect = viewport.getBoundingClientRect();
