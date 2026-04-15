@@ -248,6 +248,40 @@ def pseudocolor_png_b64(unwrapped: np.ndarray, mask: np.ndarray | None = None) -
     return base64.b64encode(buf.tobytes()).decode("ascii")
 
 
+def diverging_png_b64(data: np.ndarray, mask: np.ndarray | None = None) -> str:
+    """Render a diverging colormap (blue-white-red) centered on zero.
+
+    Useful for curl residual and other signed quantities where zero is
+    the expected value. Symmetric range: ±max(|data|).
+
+    Returns a base64 PNG string (no 'data:' prefix).
+    """
+    d = np.asarray(data, dtype=np.float64)
+    if mask is not None:
+        valid = mask.astype(bool)
+        if valid.any():
+            vmax = float(np.nanmax(np.abs(d[valid])))
+        else:
+            vmax = 1.0
+    else:
+        vmax = float(np.nanmax(np.abs(d)))
+    if vmax < 1e-15:
+        vmax = 1.0
+    # Normalize to [-1, 1], then map to [0, 255]
+    norm = np.clip(d / vmax, -1, 1)
+    # Blue (negative) → White (zero) → Red (positive)
+    r = np.clip((norm + 1) * 127.5, 0, 255).astype(np.uint8)
+    g = np.clip((1 - np.abs(norm)) * 255, 0, 255).astype(np.uint8)
+    b = np.clip((1 - norm) * 127.5, 0, 255).astype(np.uint8)
+    colored = np.stack([b, g, r], axis=-1)  # BGR for cv2
+    if mask is not None:
+        colored[~valid] = 0
+    ok, buf = cv2.imencode(".png", colored)
+    if not ok:
+        raise RuntimeError("cv2.imencode failed for PNG output")
+    return base64.b64encode(buf.tobytes()).decode("ascii")
+
+
 def fit_sphere_calibration(
     height: np.ndarray,
     mask: np.ndarray | None,

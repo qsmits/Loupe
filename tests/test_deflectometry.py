@@ -7,6 +7,7 @@ from backend.vision.deflectometry import (
     generate_fringe_pattern, compute_wrapped_phase, unwrap_phase,
     phase_stats, pseudocolor_png_b64, remove_tilt,
     compute_slope_magnitude, compute_curl_residual,
+    diverging_png_b64,
 )
 
 def test_generate_fringe_pattern_x_is_sinusoidal():
@@ -303,3 +304,21 @@ def test_curl_nonzero_for_nonintegrable_field():
     curl = compute_curl_residual(dzdx, dzdy)
     interior = curl[2:-2, 2:-2]
     np.testing.assert_allclose(interior, 2.0, atol=0.1)
+
+
+def test_diverging_png_b64_produces_valid_png():
+    """Diverging colormap should produce a valid base64 PNG."""
+    data = np.random.randn(32, 32).astype(np.float64)
+    b64 = diverging_png_b64(data)
+    assert isinstance(b64, str)
+    assert len(b64) > 100
+    raw = base64.b64decode(b64)
+    assert raw[:4] == b'\x89PNG'
+
+
+def test_diverging_png_b64_centers_on_zero():
+    """Zero values should map to white/neutral."""
+    data = np.zeros((32, 32), dtype=np.float64)
+    b64 = diverging_png_b64(data)
+    raw = base64.b64decode(b64)
+    assert raw[:4] == b'\x89PNG'
