@@ -11,7 +11,7 @@
 import { state, undoStack, redoStack } from './state.js';
 import { setTool } from './tools.js';
 import { redraw, resizeCanvas } from './render.js';
-import { viewport, setImageSize } from './viewport.js';
+import { viewport, setImageSize, fitToWindow } from './viewport.js';
 import { switchMode } from './modes.js';
 
 let stashedState = null;
@@ -161,13 +161,24 @@ export async function enterMaskEditSession() {
   redoStack.length = 0;
 
   // 3. Load the fringe preview image as frozen background
-  const url = URL.createObjectURL(cm.imageBlob);
-  const loadedImg = new Image();
-  await new Promise((resolve, reject) => {
-    loadedImg.onload = () => { URL.revokeObjectURL(url); resolve(); };
-    loadedImg.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Failed to load preview image')); };
-    loadedImg.src = url;
-  });
+  let loadedImg;
+  try {
+    const url = URL.createObjectURL(cm.imageBlob);
+    loadedImg = new Image();
+    await new Promise((resolve, reject) => {
+      loadedImg.onload = () => { URL.revokeObjectURL(url); resolve(); };
+      loadedImg.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Failed to load preview image')); };
+      loadedImg.src = url;
+    });
+  } catch (e) {
+    console.warn('[cross-mode] Image load failed:', e);
+    restoreMicroscopeState();
+    clearCrossMode();
+    const switcher = document.getElementById('mode-switcher');
+    if (switcher) { switcher.hidden = false; switcher.value = 'fringe'; }
+    switchMode('fringe');
+    return;
+  }
 
   const w = loadedImg.naturalWidth;
   const h = loadedImg.naturalHeight;
@@ -175,9 +186,6 @@ export async function enterMaskEditSession() {
   state.frozenBackground = loadedImg;
   state.frozenSize = { w, h };
   setImageSize(w, h);
-  viewport.zoom = 1;
-  viewport.panX = 0;
-  viewport.panY = 0;
 
   // 4. Convert existing mask polygons to area annotations
   if (cm.existingMask && cm.existingMask.length > 0) {
@@ -197,8 +205,9 @@ export async function enterMaskEditSession() {
     () => cancelMask(),
   );
 
-  // 8. Update canvas
+  // 8. Update canvas — fit image to viewport
   resizeCanvas();
+  fitToWindow();
   redraw();
 }
 

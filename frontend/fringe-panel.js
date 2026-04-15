@@ -114,7 +114,7 @@ export function drawMaskOverlay() {
     ctx.stroke();
   }
 
-  // Update mask status label
+  // Update mask status label and clear button state
   const status = $("fringe-mask-status");
   if (status) {
     if (fr.maskPolygons.length > 0) {
@@ -123,6 +123,11 @@ export function drawMaskOverlay() {
     } else {
       status.hidden = true;
     }
+  }
+  const clearBtn = $("fringe-btn-mask-clear");
+  if (clearBtn) {
+    clearBtn.disabled = fr.maskPolygons.length === 0;
+    clearBtn.style.opacity = fr.maskPolygons.length === 0 ? "0.6" : "1";
   }
 }
 
