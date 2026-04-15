@@ -183,6 +183,36 @@ def phase_stats(unwrapped: np.ndarray, mask: np.ndarray | None = None) -> dict:
     return {"pv": pv, "rms": rms, "mean": mean}
 
 
+def compute_slope_magnitude(dzdx: np.ndarray, dzdy: np.ndarray,
+                            mask: np.ndarray | None = None) -> np.ndarray:
+    """Slope magnitude sqrt(dzdx^2 + dzdy^2).
+
+    Returns float64 array. Masked pixels are set to NaN if mask is provided.
+    """
+    mag = np.sqrt(dzdx**2 + dzdy**2)
+    if mask is not None:
+        mag = mag.astype(np.float64)
+        mag[~mask.astype(bool)] = np.nan
+    return mag
+
+
+def compute_curl_residual(dzdx: np.ndarray, dzdy: np.ndarray,
+                          mask: np.ndarray | None = None) -> np.ndarray:
+    """Curl of the slope field: d(dzdx)/dy - d(dzdy)/dx.
+
+    For a physically valid surface, curl should be near zero everywhere.
+    Large curl indicates unwrap errors, noise, or non-physical artifacts.
+    Uses np.gradient for finite differences.
+
+    Returns float64 array. Masked pixels are set to NaN if mask is provided.
+    """
+    curl = np.gradient(dzdx, axis=0) - np.gradient(dzdy, axis=1)
+    if mask is not None:
+        curl = curl.astype(np.float64)
+        curl[~mask.astype(bool)] = np.nan
+    return curl
+
+
 def pseudocolor_png_b64(unwrapped: np.ndarray, mask: np.ndarray | None = None) -> str:
     """Min/max normalize to [0,255] uint8, apply VIRIDIS, PNG-encode, base64.
 

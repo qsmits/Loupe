@@ -6,6 +6,7 @@ from backend.vision.deflectometry import (
     frankot_chellappa,
     generate_fringe_pattern, compute_wrapped_phase, unwrap_phase,
     phase_stats, pseudocolor_png_b64, remove_tilt,
+    compute_slope_magnitude, compute_curl_residual,
 )
 
 def test_generate_fringe_pattern_x_is_sinusoidal():
@@ -258,3 +259,47 @@ def test_frankot_chellappa_recovers_paraboloid():
     # Check correlation
     corr = np.corrcoef(z.ravel(), z_true.ravel())[0, 1]
     assert abs(corr) > 0.99, f"correlation {corr} too low"
+
+
+def test_slope_magnitude_basic():
+    """Slope magnitude of orthogonal unit slopes is sqrt(2)."""
+    dzdx = np.ones((32, 32), dtype=np.float64)
+    dzdy = np.ones((32, 32), dtype=np.float64)
+    mag = compute_slope_magnitude(dzdx, dzdy)
+    assert mag.shape == (32, 32)
+    np.testing.assert_allclose(mag, np.sqrt(2), atol=1e-10)
+
+
+def test_slope_magnitude_with_mask():
+    """Masked pixels should be NaN."""
+    dzdx = np.ones((32, 32), dtype=np.float64)
+    dzdy = np.ones((32, 32), dtype=np.float64)
+    mask = np.zeros((32, 32), dtype=bool)
+    mask[10:20, 10:20] = True
+    mag = compute_slope_magnitude(dzdx, dzdy, mask=mask)
+    assert np.all(np.isfinite(mag[10:20, 10:20]))
+    assert np.all(np.isnan(mag[0, 0]))
+
+
+def test_curl_zero_for_integrable_field():
+    """A gradient field (exact derivatives of a surface) should have near-zero curl."""
+    # Surface: z = x^2 + y^2, dzdx = 2x, dzdy = 2y
+    y, x = np.mgrid[0:64, 0:64].astype(np.float64)
+    dzdx = 2 * x
+    dzdy = 2 * y
+    curl = compute_curl_residual(dzdx, dzdy)
+    assert curl.shape == (64, 64)
+    # Interior should be near zero (edges have finite-difference artifacts)
+    interior = curl[5:-5, 5:-5]
+    assert np.abs(interior).max() < 0.1
+
+
+def test_curl_nonzero_for_nonintegrable_field():
+    """A non-integrable field (dzdx/dy != dzdy/dx) should have nonzero curl."""
+    y, x = np.mgrid[0:64, 0:64].astype(np.float64)
+    # dzdx = y, dzdy = -x → curl = d(y)/dy - d(-x)/dx = 1 - (-1) = 2
+    dzdx = y
+    dzdy = -x
+    curl = compute_curl_residual(dzdx, dzdy)
+    interior = curl[2:-2, 2:-2]
+    np.testing.assert_allclose(interior, 2.0, atol=0.1)
