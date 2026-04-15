@@ -112,3 +112,82 @@ def test_deflectometry_status_includes_flat_field(client: TestClient):
 # second app with HOSTED=1 for this purpose. Router-level
 # Depends(_reject_hosted) is shared with those routers and is
 # exercised by backend/main.py's env-var path in manual QA.
+
+
+def _get_deflectometry_state(client):
+    """Return the `state` dict from the deflectometry router closure.
+
+    The deflectometry router stores session state in a dict inside the closure
+    of `make_deflectometry_router`. We reach it by inspecting the closure of
+    one of the named route endpoints on the app.
+    """
+    app = client.app
+    for route in app.routes:
+        if getattr(route, "name", "") == "deflectometry_start":
+            for cell in route.endpoint.__closure__ or []:
+                try:
+                    val = cell.cell_contents
+                except ValueError:
+                    continue
+                if isinstance(val, dict) and "session" in val:
+                    return val
+    raise RuntimeError("Could not locate deflectometry state in router closure")
+
+
+def _inject_synthetic_frames(client, width: int = 64, height: int = 64, freq: int = 4):
+    """Inject 16 synthetic sinusoidal fringe frames into the active session.
+
+    Requires that /deflectometry/start has already been called so that
+    state["session"] is not None.
+    """
+    import math
+    import numpy as np
+    from backend.vision.deflectometry import generate_fringe_pattern
+
+    state = _get_deflectometry_state(client)
+    s = state["session"]
+    assert s is not None, "No active deflectometry session to inject frames into"
+
+    phases = [k * math.pi / 4.0 for k in range(8)]
+    frames = []
+    for orientation in ("x", "y"):
+        for phase in phases:
+            frame = generate_fringe_pattern(width, height, phase, freq, orientation)
+            # Wrap in a 3-channel array to match real camera output
+            frames.append(np.stack([frame, frame, frame], axis=-1))
+    s.frames = frames
+
+
+def test_compute_returns_slope_and_quality(client):
+    """After frame injection, /compute should return slope_mag, curl, and quality."""
+    client.post("/deflectometry/reset", json={})
+    client.post("/deflectometry/start", json={})
+    _inject_synthetic_frames(client)
+
+    r = client.post("/deflectometry/compute", json={"mask_threshold": 0.02})
+    assert r.status_code == 200, r.text
+    data = r.json()
+
+    # New fields must be present
+    assert "slope_mag_png_b64" in data
+    assert "curl_png_b64" in data
+    assert "stats_slope_mag" in data
+    assert "stats_curl" in data
+    assert "quality" in data
+
+    # Existing fields must still be present
+    assert "phase_x_png_b64" in data
+    assert "phase_y_png_b64" in data
+    assert "stats_x" in data
+    assert "stats_y" in data
+
+    q = data["quality"]
+    assert q["overall"] in ("good", "fair", "poor")
+    assert "modulation_coverage" in q
+    assert "curl_rms" in q
+    assert "warnings" in q
+    assert isinstance(q["warnings"], list)
+
+    # PNG blobs should be non-empty base64 strings
+    assert len(data["slope_mag_png_b64"]) > 0
+    assert len(data["curl_png_b64"]) > 0

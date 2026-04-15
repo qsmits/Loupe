@@ -42,8 +42,12 @@ from .vision.deflectometry import (
     frankot_chellappa,
     phase_stats,
     pseudocolor_png_b64,
+    diverging_png_b64,
     remove_tilt,
     unwrap_phase,
+    compute_slope_magnitude,
+    compute_curl_residual,
+    compute_quality_summary,
 )
 
 
@@ -406,14 +410,28 @@ def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
         mask = create_modulation_mask(mod_x, mod_y, threshold_frac=body.mask_threshold)
         mask_valid_frac = float(mask.sum()) / float(mask.size) if mask.size > 0 else 0.0
 
+        # Slope magnitude and curl residual
+        slope_mag = compute_slope_magnitude(unw_x, unw_y, mask=mask)
+        curl = compute_curl_residual(unw_x, unw_y, mask=mask)
+
+        # Quality summary
+        quality = compute_quality_summary(
+            unw_x, unw_y, mask, mod_x, mod_y, frames_x, frames_y,
+        )
+
         result = {
             "phase_x_png_b64": pseudocolor_png_b64(unw_x, mask=mask),
             "phase_y_png_b64": pseudocolor_png_b64(unw_y, mask=mask),
+            "slope_mag_png_b64": pseudocolor_png_b64(slope_mag, mask=mask),
+            "curl_png_b64": diverging_png_b64(curl, mask=mask),
             "stats_x": phase_stats(unw_x, mask=mask),
             "stats_y": phase_stats(unw_y, mask=mask),
+            "stats_slope_mag": phase_stats(slope_mag, mask=mask),
+            "stats_curl": phase_stats(curl, mask=mask),
             "has_reference": has_reference,
             "mask_valid_frac": mask_valid_frac,
             "cal_factor": s.cal_factor,
+            "quality": quality,
         }
         s.last_result = result
         # Store unwrapped phases and mask for heightmap endpoint
