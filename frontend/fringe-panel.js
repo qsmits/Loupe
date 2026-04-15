@@ -302,6 +302,7 @@ async function recomputeAverage() {
       wavelength_nm: getWavelength(),
       surface_height: fr.avgSurfaceHeight,
       surface_width: fr.avgSurfaceWidth,
+      mask: fr.maskGrid ? Array.from(fr.maskGrid) : null,
     }),
   });
   if (!resp.ok) return;
