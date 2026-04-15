@@ -13,6 +13,7 @@ import { setTool } from './tools.js';
 import { redraw, resizeCanvas } from './render.js';
 import { viewport, setImageSize, fitToWindow } from './viewport.js';
 import { switchMode } from './modes.js';
+import { openLensCalDialog } from './lens-cal.js';
 
 let stashedState = null;
 
@@ -87,7 +88,7 @@ let actionBar = null;
 /**
  * Create and show the floating action bar for mask editing.
  */
-function showActionBar(onApply, onCancel) {
+function showActionBar(onApply, onCancel, opts = {}) {
   if (actionBar) actionBar.remove();
 
   actionBar = document.createElement('div');
@@ -95,20 +96,22 @@ function showActionBar(onApply, onCancel) {
 
   const label = document.createElement('span');
   label.className = 'cross-mode-label';
-  label.textContent = 'Defining fringe mask';
+  label.textContent = opts.label || 'Defining fringe mask';
 
-  const applyBtn = document.createElement('button');
-  applyBtn.className = 'detect-btn cross-mode-apply';
-  applyBtn.textContent = 'Apply Mask';
-  applyBtn.addEventListener('click', onApply);
+  actionBar.appendChild(label);
+
+  if (!opts.hideApply && onApply) {
+    const applyBtn = document.createElement('button');
+    applyBtn.className = 'detect-btn cross-mode-apply';
+    applyBtn.textContent = opts.applyLabel || 'Apply Mask';
+    applyBtn.addEventListener('click', onApply);
+    actionBar.appendChild(applyBtn);
+  }
 
   const cancelBtn = document.createElement('button');
   cancelBtn.className = 'cross-mode-cancel';
   cancelBtn.textContent = 'Cancel';
   cancelBtn.addEventListener('click', onCancel);
-
-  actionBar.appendChild(label);
-  actionBar.appendChild(applyBtn);
   actionBar.appendChild(cancelBtn);
 
   document.body.appendChild(actionBar);
@@ -147,6 +150,10 @@ function loadExistingMask(existingMask, imgWidth, imgHeight) {
  */
 export async function enterMaskEditSession() {
   if (!window.crossMode) return;
+
+  if (window.crossMode.source === 'fringe-lens-cal') {
+    return enterLensCalSession();
+  }
 
   const cm = window.crossMode;
 
@@ -245,6 +252,43 @@ function applyMask() {
 
   // Deliver polygons to fringe via callback, then redraw
   callback(polygons);
+  redraw();
+}
+
+async function enterLensCalSession() {
+  const cm = window.crossMode;
+
+  // 1. Stash microscope state
+  stashMicroscopeState();
+
+  // 2. Hide mode switcher
+  const switcher = document.getElementById('mode-switcher');
+  if (switcher) switcher.hidden = true;
+
+  // 3. Show action bar (no Apply button — lens cal dialog has its own)
+  showActionBar(
+    null,
+    () => cancelLensCal(),
+    { label: 'Calibrating fringe lens', hideApply: true }
+  );
+
+  // 4. Open the lens cal dialog with a callback that captures k1
+  openLensCalDialog({
+    onConfirm: (k1) => {
+      const callback = cm.callback;
+      _exitMaskEditSession();
+      if (callback) callback(k1);
+      redraw();
+    }
+  });
+}
+
+function cancelLensCal() {
+  // Close lens cal dialog if open
+  const dialog = document.getElementById('lens-cal-dialog');
+  if (dialog) dialog.hidden = true;
+
+  _exitMaskEditSession();
   redraw();
 }
 

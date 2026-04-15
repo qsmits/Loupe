@@ -539,6 +539,28 @@ export function wirePanelEvents() {
     }
   });
 
+  // Lens calibration — cross-mode workflow
+  $("fringe-btn-lens-cal")?.addEventListener("click", () => {
+    window.crossMode = {
+      source: 'fringe-lens-cal',
+      callback: (k1) => {
+        fr.lensK1 = k1;
+        // Show save prompt
+        const saveRow = $("fringe-lens-save-row");
+        if (saveRow) saveRow.hidden = false;
+        // Clear dropdown (no saved profile yet)
+        const sel = $("fringe-lens-profile");
+        if (sel) sel.value = "";
+        // Re-analyze if results exist
+        if (fr.lastResult) analyzeFromCamera();
+      },
+    };
+
+    switchMode("microscope");
+    const sel = $("mode-switcher");
+    if (sel) sel.value = "microscope";
+  });
+
   // Clear mask
   $("fringe-btn-mask-clear")?.addEventListener("click", () => {
     fr.maskPolygons = [];

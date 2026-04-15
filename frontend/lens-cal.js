@@ -23,6 +23,7 @@ let _active    = false;
 let _pendingP1 = null;
 let _mousePos  = null;
 let _samples   = [];    // [{p1: {x,y}, p2: {x,y}}, …]
+let _externalCallback = null;
 
 // ── Public interface ──────────────────────────────────────────────────────────
 export function isLensCalMode() { return _active; }
@@ -108,7 +109,10 @@ export function drawLensCalOverlay() {
 }
 
 // ── Dialog logic ──────────────────────────────────────────────────────────────
-export function openLensCalDialog() { _openDialog(); }
+export function openLensCalDialog(opts) {
+  _externalCallback = opts?.onConfirm || null;
+  _openDialog();
+}
 
 /** Apply k1 directly to the current frozen frame (used by cal-profiles). */
 export async function applyLensCorrection(k1) {
@@ -137,6 +141,7 @@ function _openDialog() {
 }
 
 function _cancelDialog() {
+  _externalCallback = null;
   _active    = false;
   _pendingP1 = null;
   document.getElementById("lens-cal-dialog").hidden = true;
@@ -147,6 +152,19 @@ async function _confirmCal() {
   if (_samples.length < 3) return;
 
   const k1 = _fitK1(_samples);
+
+  // External callback mode — return k1 without applying remap
+  if (_externalCallback) {
+    const cb = _externalCallback;
+    _externalCallback = null;
+    _active = false;
+    _samples = [];
+    _pendingP1 = null;
+    document.getElementById("lens-cal-dialog").hidden = true;
+    cb(k1);
+    return;
+  }
+
   state.lensK1 = k1;
 
   // Disable confirm while remap runs (can be slow on large images)
