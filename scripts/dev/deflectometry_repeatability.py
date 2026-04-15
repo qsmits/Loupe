@@ -78,7 +78,7 @@ def main():
 
         # Capture
         api("post", "/deflectometry/capture-sequence", json_body={"freq": args.freq})
-        print("  Captured 8 frames")
+        print("  Captured 16 frames (8 per orientation)")
 
         # Get diagnostics (saves raw frames too)
         diag = api("post", "/deflectometry/diagnostics")
@@ -99,7 +99,7 @@ def main():
         # Compute locally from saved frames for consistency
         frames = []
         for orient in ("x", "y"):
-            for phase_idx in range(4):
+            for phase_idx in range(8):
                 fpath = os.path.join(run_dir, f"frame_{orient}_{phase_idx}.png")
                 img = cv2.imread(fpath)
                 if img is None:
@@ -107,8 +107,8 @@ def main():
                     sys.exit(1)
                 frames.append(img.astype(np.float64).mean(axis=-1))
 
-        frames_x = frames[:4]
-        frames_y = frames[4:]
+        frames_x = frames[:8]
+        frames_y = frames[8:]
 
         mod_x = compute_modulation(frames_x)
         mod_y = compute_modulation(frames_y)
