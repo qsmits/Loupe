@@ -31,6 +31,7 @@ import { initDeflectometry } from './deflectometry.js';
 import { initGear } from './gear.js';
 import { initFringe } from './fringe.js';
 import { initModes, getActiveMode } from './modes.js';
+import { enterMaskEditSession, isCrossModeActive } from './cross-mode.js';
 
 // ─── Dropdown helpers ─────��──────────────────────────────────────────────────
 function closeAllDropdowns() {
@@ -71,6 +72,13 @@ function toggleDropdown(btnId, dropId) {
 initMouseHandlers();
 initKeyboard(closeAllDropdowns);
 initModes();
+
+// Cross-mode mask editing: enter mask-edit session when microscope activates with crossMode
+document.addEventListener('mode-switched', (e) => {
+  if (e.detail.mode === 'microscope' && isCrossModeActive()) {
+    setTimeout(() => enterMaskEditSession(), 0);
+  }
+});
 
 // ── Dropdown menu wiring ───────────────────────────��─────────────────────────
 document.getElementById("btn-menu-detect").addEventListener("click", e => {

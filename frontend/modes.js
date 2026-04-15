@@ -35,6 +35,8 @@ export function switchMode(modeId) {
   const sidebar = $("sidebar");
   if (toolStrip) toolStrip.hidden = modeId !== "microscope";
   if (sidebar) sidebar.hidden = modeId !== "microscope";
+
+  document.dispatchEvent(new CustomEvent('mode-switched', { detail: { mode: modeId } }));
 }
 
 export function getActiveMode() {
