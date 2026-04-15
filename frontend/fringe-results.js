@@ -117,6 +117,11 @@ export function buildResultsHtml() {
             </div>
           </div>
           <div id="fringe-surface-content" hidden style="display:flex;flex-direction:column;flex:1;min-height:0">
+            <div class="fringe-overlay-toggles" id="fringe-overlay-toggles" hidden>
+              <button class="fringe-overlay-btn active" data-overlay="surface">Surface</button>
+              <button class="fringe-overlay-btn" data-overlay="confidence">Confidence</button>
+              <button class="fringe-overlay-btn" data-overlay="modulation">Modulation</button>
+            </div>
             <div class="fringe-measure-toolbar" id="fringe-measure-toolbar">
               <button class="fringe-measure-btn active" data-mode="" title="Pan / zoom (no measurement)">\u2194 Pan</button>
               <button class="fringe-measure-btn" data-mode="cursor" title="Hover to see height at cursor">\u22b9 Cursor</button>
@@ -308,6 +313,18 @@ function renderResults(data) {
     const surfImg = $("fringe-surface-img");
     surfImg.onload = () => drawPeakValleyMarkers();
     surfImg.src = "data:image/png;base64," + data.surface_map;
+  }
+
+  // Cache confidence map sources for overlay toggles
+  if (data.confidence_maps && data.surface_map) {
+    const surfImg = $("fringe-surface-img");
+    if (surfImg) {
+      surfImg.dataset.surfaceSrc = "data:image/png;base64," + data.surface_map;
+      surfImg.dataset.confidenceSrc = "data:image/png;base64," + data.confidence_maps.composite;
+      surfImg.dataset.modulationSrc = "data:image/png;base64," + (data.modulation_map || "");
+    }
+    const toggles = $("fringe-overlay-toggles");
+    if (toggles) toggles.hidden = false;
   }
 
   // Zernike chart
@@ -1085,6 +1102,18 @@ export function wireResultsEvents() {
       _reanalyzeDebounce = setTimeout(() => {
         if (fr.lastResult) doReanalyze();
       }, 150);
+    });
+  });
+
+  // Overlay toggle buttons
+  document.querySelectorAll(".fringe-overlay-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      document.querySelectorAll(".fringe-overlay-btn").forEach(b => b.classList.remove("active"));
+      btn.classList.add("active");
+      const surfImg = $("fringe-surface-img");
+      if (!surfImg) return;
+      const srcKey = btn.dataset.overlay + "Src";
+      if (surfImg.dataset[srcKey]) surfImg.src = surfImg.dataset[srcKey];
     });
   });
 

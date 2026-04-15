@@ -2514,6 +2514,28 @@ body.no-camera .camera-section { display: none; }
 }
 .fringe-conf-val { font-weight: 500; }
 
+/* ─── Fringe overlay toggles ──────────────────────────── */
+.fringe-overlay-toggles {
+  display: flex;
+  gap: 2px;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border);
+}
+.fringe-overlay-btn {
+  padding: 2px 8px;
+  font-size: 10px;
+  border-radius: 4px;
+  opacity: 0.6;
+}
+.fringe-overlay-btn.active {
+  background: var(--accent);
+  opacity: 1;
+}
+.fringe-overlay-btn:hover:not(.active) {
+  background: var(--surface-2);
+  opacity: 0.8;
+}
+
 /* ── Fringe progress bar ───────────────────────────────────────────── */
 .fringe-progress {
   margin-top: 4px;
