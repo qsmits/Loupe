@@ -8,6 +8,7 @@
 // Lives inside #mode-fringe, managed by modes.js.
 
 import { apiFetch } from './api.js';
+import { state } from './state.js';
 import { wireMeasureEvents } from './fringe-measure.js';
 import { buildPanelHtml, wirePanelEvents, startPolling, stopPolling, clearDroppedImage } from './fringe-panel.js';
 import { buildResultsHtml, wireResultsEvents } from './fringe-results.js';
@@ -150,7 +151,7 @@ export function initFringe() {
     if (!root) return;
     if (root.hidden) {
       stopPolling();
-      if (!window.crossMode) clearDroppedImage();
+      if (!window.crossMode && !state._hosted) clearDroppedImage();
     } else {
       startPolling();
     }

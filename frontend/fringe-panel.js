@@ -412,6 +412,7 @@ function _updateFocusUI(score) {
 }
 
 async function pollFocusQuality() {
+  if (state._hosted) { stopPolling(); return; }
   try {
     const r = await apiFetch("/fringe/focus-quality");
     if (!r.ok) return;
