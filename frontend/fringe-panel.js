@@ -4,6 +4,7 @@
 // Extracted from fringe.js (Task 6 of fringe UI restructure).
 
 import { fr, $ } from './fringe.js';
+import { state } from './state.js';
 import { getSubtractTerms, getFormModel, mergeReanalyzeResult } from './fringe-results.js';
 import { apiFetch } from './api.js';
 import { analyzeWithProgress, createProgressBar } from './fringe-progress.js';
@@ -497,7 +498,7 @@ export function wirePanelEvents() {
       const opt = sel.selectedOptions[0];
       fr.lensK1 = parseFloat(opt.dataset.k1) || 0;
     }
-    if (fr.lastResult) _runAnalysis();
+    if (fr.lastResult && !state._hosted) _runAnalysis();
   });
 
   // Save lens profile
@@ -597,8 +598,8 @@ export function wirePanelEvents() {
             clearBtn.disabled = polygons.length === 0;
             clearBtn.style.opacity = polygons.length === 0 ? "0.6" : "1";
           }
-          // Auto-analyze with new mask
-          if (polygons.length > 0) {
+          // Auto-analyze with new mask (skip in hosted mode to avoid CPU spikes)
+          if (polygons.length > 0 && !state._hosted) {
             _runAnalysis();
           }
         },
@@ -627,8 +628,8 @@ export function wirePanelEvents() {
         // Clear dropdown (no saved profile yet)
         const sel = $("fringe-lens-profile");
         if (sel) sel.value = "";
-        // Re-analyze if results exist
-        if (fr.lastResult) _runAnalysis();
+        // Re-analyze if results exist (skip in hosted mode)
+        if (fr.lastResult && !state._hosted) _runAnalysis();
       },
     };
 

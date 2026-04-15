@@ -13,11 +13,14 @@ import math
 from collections.abc import Callable
 
 import cv2
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np
-from scipy.ndimage import uniform_filter
+
+def _get_plt():
+    """Lazy-import matplotlib.pyplot with Agg backend (thread-safe, no GUI)."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    return plt
 
 
 # ── Lens undistortion ─────────────────────────────────────────────────────
@@ -793,6 +796,7 @@ def compute_fringe_modulation(image: np.ndarray) -> np.ndarray:
     # correct for square images with a purely vertical carrier.
     fringe_freq = math.sqrt(fy ** 2 + fx ** 2)
     fringe_period = 1.0 / max(fringe_freq, 1e-10)
+    from scipy.ndimage import uniform_filter
     ksize = max(5, int(fringe_period * 2)) | 1  # odd
     ksize = min(ksize, 61)  # cap for efficiency
     envelope = np.abs(uniform_filter(demod.real, size=ksize) +
@@ -1267,7 +1271,7 @@ def render_surface_map(surface: np.ndarray, mask: np.ndarray | None = None
     canvas.draw()
     buf = io.BytesIO()
     fig.savefig(buf, format='png', facecolor='black', dpi=dpi, pad_inches=0)
-    plt.close(fig)
+    _get_plt().close(fig)
     buf.seek(0)
     return base64.b64encode(buf.read()).decode('ascii')
 
@@ -1331,7 +1335,8 @@ def render_zernike_chart(coefficients: list[float],
         else:
             colors.append("#4a9eff")  # blue for active
 
-    fig, ax = plt.subplots(figsize=(10, 3.5), dpi=100)
+    _plt = _get_plt()
+    fig, ax = _plt.subplots(figsize=(10, 3.5), dpi=100)
     fig.patch.set_facecolor("#1c1c1e")
     ax.set_facecolor("#1c1c1e")
 
@@ -1354,11 +1359,11 @@ def render_zernike_chart(coefficients: list[float],
     else:
         ax.set_xticks(indices[::3])
 
-    plt.tight_layout()
+    _plt.tight_layout()
 
     buf = io.BytesIO()
     fig.savefig(buf, format="png", facecolor=fig.get_facecolor(), edgecolor="none")
-    plt.close(fig)
+    _plt.close(fig)
     buf.seek(0)
     return base64.b64encode(buf.read()).decode("ascii")
 
@@ -1544,7 +1549,7 @@ def render_psf(surface_waves: np.ndarray, mask: np.ndarray | None = None) -> str
 
     # Render with inferno colormap
     gray = (psf_crop * 255).astype(np.uint8)
-    cmap = plt.cm.inferno
+    cmap = _get_plt().cm.inferno
     lut = (cmap(np.linspace(0, 1, 256))[:, :3] * 255).astype(np.uint8)
     colored = lut[gray]
     colored_bgr = colored[:, :, ::-1].copy()

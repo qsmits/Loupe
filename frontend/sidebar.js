@@ -358,6 +358,7 @@ export async function loadUiConfig() {
     const themeSelect = document.getElementById("theme-select");
     if (themeSelect) themeSelect.value = data.theme || "macos-dark";
     if (data.hosted) {
+      state._hosted = true;
       // In hosted mode use client-side JS snapping — no server round-trip.
       state.settings.subpixelMethod = "parabola-js";
       const sel = document.getElementById("subpixel-method-select");

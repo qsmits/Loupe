@@ -67,6 +67,7 @@ export const state = {
   surfaceMode: "edm",          // "edm" | "lathe" | "print"
   _topLevelTool: null,      // non-persistent: "distance"|"angle"|"circle"|"flatness"|"area"|"intersect" when a measure tool is active
   _noCamera: false,         // was let _noCamera (line 36)
+  _hosted: false,           // set from /config/ui at startup
   _dirty: false,
   _savedManually: true,
   _hideAllAnnotations: false,  // global visibility toggle — overrides ann.hidden when true
