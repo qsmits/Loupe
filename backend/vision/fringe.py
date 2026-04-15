@@ -539,16 +539,20 @@ def compute_confidence(carrier_info: dict, modulation: np.ndarray,
     dict with keys ``carrier``, ``modulation``, ``unwrap``, ``overall``
     (all floats rounded to one decimal, in [0, 100]).
     """
-    # Carrier confidence: normalize peak_ratio to 0–100
+    # Carrier confidence: normalize peak_ratio to 0–100.
+    # Thresholds are lenient because high-contrast fringes produce strong
+    # harmonics (2f, 3f) that lower the ratio even on excellent data.
+    # A peak_ratio of 2–3 is perfectly usable; the bandpass filter around
+    # the carrier already rejects harmonic content.
     pr = carrier_info.get("peak_ratio", 0)
-    if pr >= 10:
+    if pr >= 5:
         carrier_score = 100.0
-    elif pr >= 5:
-        carrier_score = 70 + (pr - 5) * 6  # 70–100 linear over 5–10
-    elif pr >= 2:
-        carrier_score = 30 + (pr - 2) * (40 / 3)  # 30–70 linear over 2–5
+    elif pr >= 3:
+        carrier_score = 70 + (pr - 3) * 15  # 70–100 linear over 3–5
+    elif pr >= 1.5:
+        carrier_score = 30 + (pr - 1.5) * (40 / 1.5)  # 30–70 linear over 1.5–3
     else:
-        carrier_score = max(0, pr * 15)  # 0–30 linear over 0–2
+        carrier_score = max(0, pr * 20)  # 0–30 linear over 0–1.5
 
     # Modulation coverage: % of mask pixels with modulation above threshold
     valid = mask.astype(bool)
@@ -947,10 +951,15 @@ def unwrap_phase_2d(wrapped: np.ndarray, mask: np.ndarray | None = None,
 
 
 def focus_quality(image: np.ndarray) -> float:
-    """Compute a focus quality score (0-100) based on image sharpness.
+    """Compute a focus quality score (0-100) for fringe images.
 
-    Uses the variance of the Laplacian as a sharpness metric, mapped
-    to [0, 100] via a sigmoid.
+    Uses fringe modulation (local contrast) rather than Laplacian variance,
+    because fringe images are smooth sinusoidal patterns that inherently
+    have low Laplacian variance even in perfect focus.  High modulation
+    means well-resolved, high-contrast fringes.
+
+    The score is based on the median modulation in the central 50% of the
+    image (to avoid edge effects), mapped to 0–100 via a sigmoid.
 
     Parameters
     ----------
@@ -958,18 +967,22 @@ def focus_quality(image: np.ndarray) -> float:
 
     Returns
     -------
-    Score from 0 (completely blurred) to 100 (very sharp).
+    Score from 0 (no visible fringes) to 100 (excellent fringe contrast).
     """
-    img = np.asarray(image, dtype=np.uint8)
+    img = np.asarray(image, dtype=np.float64)
     if img.ndim == 3:
-        img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    laplacian = cv2.Laplacian(img, cv2.CV_64F)
-    variance = float(laplacian.var())
-    # Sigmoid mapping: score = 100 / (1 + exp(-k*(var - mid)))
-    # Tuned so that var~100 -> score~50, var~500 -> score~95
-    k = 0.02
-    mid = 150.0
-    score = 100.0 / (1.0 + math.exp(-k * (variance - mid)))
+        img = img.mean(axis=-1)
+    mod = compute_fringe_modulation(img)
+    # Use the central 50% to avoid edge artifacts
+    h, w = mod.shape
+    y0, y1 = h // 4, 3 * h // 4
+    x0, x1 = w // 4, 3 * w // 4
+    central = mod[y0:y1, x0:x1]
+    median_mod = float(np.median(central))
+    # Sigmoid mapping: modulation of ~0.15 → score ~50, ~0.4 → ~95
+    k = 15.0
+    mid = 0.15
+    score = 100.0 / (1.0 + math.exp(-k * (median_mod - mid)))
     return round(score, 1)
 
 

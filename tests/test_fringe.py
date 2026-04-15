@@ -854,7 +854,7 @@ class TestConfidenceMetrics:
 
     def test_low_carrier_confidence(self):
         from backend.vision.fringe import compute_confidence
-        carrier = {"peak_ratio": 1.5}
+        carrier = {"peak_ratio": 1.0}
         modulation = np.full((64, 64), 0.8)
         risk_mask = np.zeros((64, 64), dtype=np.uint8)
         mask = np.ones((64, 64), dtype=bool)
