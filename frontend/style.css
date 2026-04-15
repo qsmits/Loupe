@@ -2176,34 +2176,6 @@ body.no-camera .camera-section { display: none; }
   display: block;
   transition: transform 0.15s ease;
 }
-.fringe-enlarge-overlay {
-  position: fixed;
-  top: 0; left: 0; right: 0; bottom: 0;
-  background: rgba(0,0,0,0.85);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 9000;
-}
-.fringe-enlarge-overlay img {
-  max-width: 90vw;
-  max-height: 90vh;
-  border: 1px solid var(--border);
-}
-.fringe-enlarge-close {
-  position: absolute;
-  top: 20px;
-  right: 20px;
-  font-size: 24px;
-  color: #fff;
-  background: rgba(0,0,0,0.5);
-  border-radius: 50%;
-  width: 36px;
-  height: 36px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
 .fringe-focus-bar-container {
   display: flex;
   align-items: center;
@@ -2568,4 +2540,44 @@ body.no-camera .camera-section { display: none; }
   border: none;
   font: inherit;
   padding: 0;
+}
+
+/* ─── Cross-mode mask editing action bar ───────────────── */
+#cross-mode-action-bar {
+  position: fixed;
+  top: 40px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 900;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+  font-size: 12px;
+}
+
+.cross-mode-label {
+  opacity: 0.7;
+  white-space: nowrap;
+}
+
+.cross-mode-apply {
+  padding: 4px 12px;
+  font-size: 11px;
+}
+
+.cross-mode-cancel {
+  padding: 4px 10px;
+  font-size: 11px;
+  opacity: 0.6;
+  border-radius: 4px;
+}
+
+.cross-mode-cancel:hover {
+  background: var(--surface-2);
+  opacity: 1;
 }
