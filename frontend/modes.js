@@ -12,6 +12,8 @@ function $(id) { return document.getElementById(id); }
 /** Switch to a mode by id. Hides current, shows target, toggles top-bar items. */
 export function switchMode(modeId) {
   if (!MODES.includes(modeId)) return;
+  // Block user-initiated mode switching during cross-mode mask editing
+  if (document.getElementById('cross-mode-action-bar')) return;
   activeMode = modeId;
 
   // Toggle mode containers

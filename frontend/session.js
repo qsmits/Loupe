@@ -1,4 +1,5 @@
 import { apiFetch } from './api.js';
+import { isCrossModeActive } from './cross-mode.js';
 import { state, TRANSIENT_TYPES, DETECTION_TYPES } from './state.js';
 import { redraw, canvas, img, showStatus } from './render.js';
 import { renderSidebar, renderInspectionTable } from './sidebar.js';
@@ -540,6 +541,7 @@ export function loadSession(raw) {
 const AUTOSAVE_KEY = "microscope-autosave";
 
 export function autoSave() {
+  if (isCrossModeActive()) return;
   if (!state._dirty) return;
   const session = {
     version: 2,
