@@ -363,6 +363,38 @@ def test_quality_summary_clipped_data():
     assert any("clip" in w.lower() for w in q["warnings"])
 
 
+def test_build_response_lut_identity():
+    """Linear response should produce identity LUT."""
+    from backend.vision.deflectometry import build_response_lut
+    commanded = np.array([0, 64, 128, 192, 255], dtype=np.float64)
+    observed = np.array([0, 64, 128, 192, 255], dtype=np.float64)
+    fwd, inv = build_response_lut(commanded, observed)
+    assert fwd.shape == (256,)
+    assert inv.shape == (256,)
+    assert np.allclose(fwd, np.arange(256), atol=1)
+    assert np.allclose(inv, np.arange(256), atol=1)
+
+def test_build_response_lut_gamma():
+    """Gamma 2.2 response should produce an inverse that linearizes."""
+    from backend.vision.deflectometry import build_response_lut
+    commanded = np.linspace(0, 255, 12)
+    observed = 255.0 * (commanded / 255.0) ** 2.2
+    fwd, inv = build_response_lut(commanded, observed)
+    linear_input = np.array([0, 64, 128, 192, 255], dtype=np.float64)
+    corrected = np.array([inv[int(v)] for v in linear_input])
+    recovered = np.array([fwd[int(c)] for c in corrected])
+    assert np.allclose(recovered, linear_input, atol=3)
+
+def test_build_response_lut_monotonic():
+    """Output LUTs should be monotonically non-decreasing."""
+    from backend.vision.deflectometry import build_response_lut
+    commanded = np.array([0, 50, 100, 150, 200, 255], dtype=np.float64)
+    observed = np.array([0, 10, 40, 100, 180, 250], dtype=np.float64)
+    fwd, inv = build_response_lut(commanded, observed)
+    assert np.all(np.diff(fwd) >= 0)
+    assert np.all(np.diff(inv) >= 0)
+
+
 def test_quality_summary_modulation_imbalance():
     """Large X/Y modulation difference should produce a warning."""
     h, w = 64, 64

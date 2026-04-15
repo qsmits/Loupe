@@ -299,3 +299,26 @@ def test_compute_returns_slope_and_quality(client):
     # PNG blobs should be non-empty base64 strings
     assert len(data["slope_mag_png_b64"]) > 0
     assert len(data["curl_png_b64"]) > 0
+
+
+def test_calibrate_display_requires_session(client):
+    client.post("/deflectometry/reset", json={})
+    r = client.post("/deflectometry/calibrate-display")
+    assert r.status_code == 400
+
+
+def test_calibrate_display_requires_ipad(client):
+    client.post("/deflectometry/reset", json={})
+    client.post("/deflectometry/start", json={})
+    r = client.post("/deflectometry/calibrate-display")
+    assert r.status_code == 400
+    assert "iPad" in r.json()["detail"]
+
+
+def test_status_includes_has_display_cal(client):
+    client.post("/deflectometry/reset", json={})
+    client.post("/deflectometry/start", json={})
+    r = client.get("/deflectometry/status")
+    assert r.status_code == 200
+    assert "has_display_cal" in r.json()
+    assert r.json()["has_display_cal"] is False

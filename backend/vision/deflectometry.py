@@ -17,6 +17,7 @@ import numpy as np
 def generate_fringe_pattern(
     width: int, height: int, phase: float, freq: int, orientation: str,
     gamma: float = 1.0,
+    inverse_lut: np.ndarray | None = None,
 ) -> np.ndarray:
     """Return an (H, W) uint8 sinusoidal fringe image.
 
@@ -40,7 +41,10 @@ def generate_fringe_pattern(
     else:
         raise ValueError(f"orientation must be 'x' or 'y', got {orientation!r}")
 
-    if gamma != 1.0:
+    if inverse_lut is not None:
+        idx = np.clip(np.round(wave).astype(int), 0, 255)
+        wave = inverse_lut[idx].astype(np.float64)
+    elif gamma != 1.0:
         inv_gamma = 1.0 / gamma
         wave_normalized = np.clip(wave / 255.0, 0.0, 1.0)
         wave = 255.0 * np.power(wave_normalized, inv_gamma)
@@ -512,6 +516,53 @@ def find_optimal_smooth_sigma(
 
     # If none achieved target, return the largest candidate
     return candidates[-1]
+
+
+def build_response_lut(commanded: np.ndarray, observed: np.ndarray,
+                       n: int = 256) -> tuple[np.ndarray, np.ndarray]:
+    """Build forward and inverse display response lookup tables.
+
+    Parameters
+    ----------
+    commanded : 1D array of display values sent (0-255 scale).
+    observed  : 1D array of camera intensities measured for each commanded value.
+    n         : LUT size (default 256).
+
+    Returns
+    -------
+    (forward_lut, inverse_lut) — both uint8 arrays of length *n*.
+    forward_lut[cmd] = expected observed value for commanded value *cmd*.
+    inverse_lut[desired] = commanded value needed to produce observed *desired*.
+    """
+    commanded = np.asarray(commanded, dtype=np.float64)
+    observed = np.asarray(observed, dtype=np.float64)
+
+    # Normalize both to 0-255 range
+    if observed.max() > 0:
+        observed = observed / observed.max() * 255.0
+
+    # Sort by commanded value
+    order = np.argsort(commanded)
+    commanded = commanded[order]
+    observed = observed[order]
+
+    # Ensure monotonicity
+    for i in range(1, len(observed)):
+        if observed[i] < observed[i - 1]:
+            observed[i] = observed[i - 1]
+
+    # Interpolate forward LUT: commanded -> observed
+    x_out = np.linspace(0, 255, n)
+    forward = np.interp(x_out, commanded, observed)
+    forward_lut = np.clip(np.round(forward), 0, 255).astype(np.uint8)
+
+    # Interpolate inverse LUT: desired observed -> required commanded
+    obs_unique, idx = np.unique(forward_lut, return_index=True)
+    cmd_unique = x_out[idx]
+    inverse = np.interp(x_out, obs_unique.astype(np.float64), cmd_unique)
+    inverse_lut = np.clip(np.round(inverse), 0, 255).astype(np.uint8)
+
+    return forward_lut, inverse_lut
 
 
 def frankot_chellappa(dzdx: np.ndarray, dzdy: np.ndarray, mask: np.ndarray | None = None) -> np.ndarray:

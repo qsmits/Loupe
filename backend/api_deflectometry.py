@@ -37,6 +37,7 @@ from .vision.deflectometry import (
     compute_modulation,
     compute_wrapped_phase,
     create_modulation_mask,
+    build_response_lut,
     find_optimal_smooth_sigma,
     fit_sphere_calibration,
     frankot_chellappa,
@@ -71,6 +72,7 @@ class _Session:
         self.ref_phase_y: Optional[np.ndarray] = None
         self.cal_factor: Optional[float] = None  # phase-rad → mm
         self.freq: int = 16  # fringe frequency used during last capture
+        self.inverse_lut = None  # 256-entry uint8 array from display calibration
         # Serializes capture-sequence so two concurrent runs can't interleave
         self.lock: asyncio.Lock = asyncio.Lock()
 
@@ -199,6 +201,7 @@ def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
                 "captured_count": 0,
                 "has_result": False,
                 "has_flat_field": False,
+                "has_display_cal": False,
                 "last_result": None,
             }
         return {
@@ -207,6 +210,7 @@ def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
             "captured_count": len(s.frames),
             "has_result": s.last_result is not None,
             "has_flat_field": s.flat_white is not None and s.flat_black is not None,
+            "has_display_cal": s.inverse_lut is not None,
             "has_reference": s.ref_phase_x is not None,
             "cal_factor": s.cal_factor,
             "last_result": s.last_result,
@@ -627,6 +631,58 @@ def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
 
         sigma = find_optimal_smooth_sigma(frame, fringe_freq=s.freq or 16)
         return {"sigma": sigma}
+
+    @router.post("/deflectometry/calibrate-display", dependencies=[Depends(_reject_hosted)])
+    async def calibrate_display():
+        s = _current()
+        if s is None:
+            raise HTTPException(400, detail="No active deflectometry session")
+        if s.ws is None:
+            raise HTTPException(400, detail="iPad not connected")
+
+        n_steps = 12
+        commanded = np.linspace(0, 255, n_steps).astype(int)
+        observed = []
+
+        async with s.lock:
+            for i, val in enumerate(commanded):
+                msg = {"type": "solid", "value": int(val), "pattern_id": 9000 + i}
+                await _push_and_wait(s, msg, timeout_s=5.0)
+                frame = camera.get_frame()
+                if frame is None:
+                    raise HTTPException(500, detail=f"Frame capture failed at step {i}")
+                gray = frame if frame.ndim == 2 else frame.mean(axis=2)
+                h, w = gray.shape
+                roi = gray[h // 4 : 3 * h // 4, w // 4 : 3 * w // 4]
+                observed.append(float(np.median(roi)))
+
+            # Restore display to centering pattern
+            await _push_and_wait(s, {"type": "centering", "pattern_id": 9100}, timeout_s=5.0)
+
+        obs_arr = np.array(observed, dtype=np.float64)
+        fwd, inv = build_response_lut(commanded.astype(np.float64), obs_arr)
+        s.inverse_lut = inv
+
+        return {
+            "status": "ok",
+            "n_steps": n_steps,
+            "commanded": commanded.tolist(),
+            "observed": [round(v, 1) for v in observed],
+            "max_deviation_from_gamma": _max_gamma_deviation(commanded, obs_arr),
+        }
+
+    def _max_gamma_deviation(commanded, observed):
+        """Max % deviation between measured response and gamma 2.2 assumption."""
+        cmd_norm = commanded.astype(np.float64) / 255.0
+        expected_gamma = 255.0 * cmd_norm ** 2.2
+        if observed.max() > 0:
+            obs_norm = observed / observed.max() * 255.0
+        else:
+            obs_norm = observed
+        diff = np.abs(obs_norm - expected_gamma)
+        if len(diff) > 2:
+            diff = diff[1:-1]
+        return round(float(diff.max() / 255.0 * 100), 1)
 
     @router.post("/deflectometry/diagnostics", dependencies=[Depends(_reject_hosted)])
     async def deflectometry_diagnostics(body: DiagnosticsBody = DiagnosticsBody()):  # noqa: B008
