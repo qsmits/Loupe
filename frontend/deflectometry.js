@@ -118,7 +118,7 @@ function buildWorkspace() {
           </span>
         </div>
         <div class="defl-tab-bar">
-          <button class="defl-tab active" data-tab="phase">Phase Maps</button>
+          <button class="defl-tab active" data-tab="phase">Slope & Phase</button>
           <button class="defl-tab" data-tab="3d">3D Surface</button>
           <button class="defl-tab" data-tab="diag">Diagnostics</button>
         </div>
@@ -126,18 +126,30 @@ function buildWorkspace() {
         <div class="defl-tab-panel" id="defl-panel-phase">
           <div class="defl-empty-state" id="defl-phase-empty">Capture a part and compute to see results.</div>
           <div id="defl-phase-content" hidden>
+            <div id="defl-quality-banner" class="defl-quality-banner" hidden></div>
             <div class="defl-phase-grid">
               <div>
-                <div style="font-size:12px;opacity:0.85;margin-bottom:4px">Phase X (vertical fringes)</div>
+                <div style="font-size:12px;opacity:0.85;margin-bottom:4px">Slope X (phase)</div>
                 <img id="defl-phase-x-img" />
                 <pre id="defl-phase-x-stats">\u2014</pre>
               </div>
               <div>
-                <div style="font-size:12px;opacity:0.85;margin-bottom:4px">Phase Y (horizontal fringes)</div>
+                <div style="font-size:12px;opacity:0.85;margin-bottom:4px">Slope Y (phase)</div>
                 <img id="defl-phase-y-img" />
                 <pre id="defl-phase-y-stats">\u2014</pre>
               </div>
+              <div>
+                <div style="font-size:12px;opacity:0.85;margin-bottom:4px">Slope Magnitude</div>
+                <img id="defl-slope-mag-img" />
+                <pre id="defl-slope-mag-stats">\u2014</pre>
+              </div>
+              <div>
+                <div style="font-size:12px;opacity:0.85;margin-bottom:4px">Curl Residual</div>
+                <img id="defl-curl-img" />
+                <pre id="defl-curl-stats">\u2014</pre>
+              </div>
             </div>
+            <div id="defl-unit-note" style="font-size:10px;opacity:0.5;text-align:center;margin-top:4px"></div>
           </div>
         </div>
 
@@ -482,15 +494,57 @@ function renderPhaseResult(result) {
   const empty = $("defl-phase-empty");
   if (content) content.hidden = false;
   if (empty) empty.hidden = true;
+
+  // Phase / slope images
   if (result.phase_x_png_b64) {
     $("defl-phase-x-img").src = "data:image/png;base64," + result.phase_x_png_b64;
   }
   if (result.phase_y_png_b64) {
     $("defl-phase-y-img").src = "data:image/png;base64," + result.phase_y_png_b64;
   }
+  if (result.slope_mag_png_b64) {
+    $("defl-slope-mag-img").src = "data:image/png;base64," + result.slope_mag_png_b64;
+  }
+  if (result.curl_png_b64) {
+    $("defl-curl-img").src = "data:image/png;base64," + result.curl_png_b64;
+  }
+
+  // Stats
   const cal = result.cal_factor || null;
   $("defl-phase-x-stats").textContent = formatStats(result.stats_x, cal);
   $("defl-phase-y-stats").textContent = formatStats(result.stats_y, cal);
+  $("defl-slope-mag-stats").textContent = formatStats(result.stats_slope_mag, cal);
+  $("defl-curl-stats").textContent = formatStats(result.stats_curl, null);  // curl is always in rad
+
+  // Unit note
+  const unitNote = $("defl-unit-note");
+  if (unitNote) {
+    if (cal) {
+      unitNote.textContent = "Calibrated: heights in \u00b5m";
+    } else {
+      unitNote.textContent = "Uncalibrated: values in phase-radians. Sphere calibration needed for physical units.";
+    }
+  }
+
+  // Quality banner
+  renderQualityBanner(result.quality);
+}
+
+function renderQualityBanner(quality) {
+  const banner = $("defl-quality-banner");
+  if (!banner || !quality) { if (banner) banner.hidden = true; return; }
+  banner.hidden = false;
+
+  const colors = { good: "rgba(48,209,88,0.15)", fair: "rgba(255,159,10,0.15)", poor: "rgba(255,69,58,0.15)" };
+  const labels = { good: "Result is reliable.", fair: "Result is usable but check warnings.", poor: "Result may be unreliable." };
+
+  let msg = labels[quality.overall] || "";
+  if (quality.warnings && quality.warnings.length > 0) {
+    msg += " " + quality.warnings[0];
+  }
+  banner.textContent = msg;
+  banner.style.background = colors[quality.overall] || colors.fair;
+  banner.title = quality.warnings ? quality.warnings.join("\n") : "";
 }
 
 async function refreshStatus() {

@@ -2094,6 +2094,12 @@ body.no-camera .camera-section { display: none; }
   font-variant-numeric: tabular-nums;
   white-space: pre;
 }
+.defl-quality-banner {
+  padding: 6px 10px;
+  border-radius: 4px;
+  font-size: 12px;
+  margin-bottom: 8px;
+}
 .defl-empty-state {
   display: flex;
   align-items: center;
