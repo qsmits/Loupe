@@ -516,7 +516,10 @@ export function wirePanelEvents() {
   });
 
   // Analyze button
-  $("fringe-btn-analyze")?.addEventListener("click", analyzeFromCamera);
+  $("fringe-btn-analyze")?.addEventListener("click", () => {
+    if (fr.droppedImageB64) _runAnalysis();
+    else analyzeFromCamera();
+  });
 
   // Averaging buttons
   $("fringe-btn-avg-add")?.addEventListener("click", addToAverage);
