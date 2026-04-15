@@ -437,6 +437,69 @@ def _analyze_carrier(image: np.ndarray) -> dict:
     }
 
 
+def compute_confidence(carrier_info: dict, modulation: np.ndarray,
+                       risk_mask: np.ndarray, mask: np.ndarray,
+                       threshold_frac: float = 0.15) -> dict:
+    """Compute per-stage confidence scores (0–100) from pipeline data.
+
+    Parameters
+    ----------
+    carrier_info : dict
+        Output of ``_analyze_carrier()``, must contain ``"peak_ratio"``.
+    modulation : 2-D float ndarray
+        Fringe modulation map (values in [0, 1]).
+    risk_mask : 2-D uint8 ndarray
+        Unwrap risk/correction mask (0 = reliable, non-zero = corrected).
+    mask : 2-D bool ndarray
+        Valid-pixel mask (True where pixel should be included).
+    threshold_frac : float
+        Fraction of median modulation used as the coverage threshold.
+
+    Returns
+    -------
+    dict with keys ``carrier``, ``modulation``, ``unwrap``, ``overall``
+    (all floats rounded to one decimal, in [0, 100]).
+    """
+    # Carrier confidence: normalize peak_ratio to 0–100
+    pr = carrier_info.get("peak_ratio", 0)
+    if pr >= 10:
+        carrier_score = 100.0
+    elif pr >= 5:
+        carrier_score = 70 + (pr - 5) * 6  # 70–100 linear over 5–10
+    elif pr >= 2:
+        carrier_score = 30 + (pr - 2) * (40 / 3)  # 30–70 linear over 2–5
+    else:
+        carrier_score = max(0, pr * 15)  # 0–30 linear over 0–2
+
+    # Modulation coverage: % of mask pixels with modulation above threshold
+    valid = mask.astype(bool)
+    n_valid = int(np.sum(valid))
+    if n_valid > 0:
+        median_mod = float(np.median(modulation[valid]))
+        thresh = threshold_frac * max(median_mod, 0.1)
+        n_good_mod = int(np.sum(modulation[valid] > thresh))
+        mod_coverage = 100.0 * n_good_mod / n_valid
+    else:
+        mod_coverage = 0.0
+
+    # Unwrap confidence: % of valid pixels that are reliable (risk == 0)
+    if n_valid > 0:
+        n_reliable = int(np.sum((risk_mask[valid] == 0)))
+        unwrap_score = 100.0 * n_reliable / n_valid
+    else:
+        unwrap_score = 0.0
+
+    # Overall: weakest link
+    overall = min(carrier_score, mod_coverage, unwrap_score)
+
+    return {
+        "carrier": round(carrier_score, 1),
+        "modulation": round(mod_coverage, 1),
+        "unwrap": round(unwrap_score, 1),
+        "overall": round(overall, 1),
+    }
+
+
 def compute_fringe_modulation(image: np.ndarray) -> np.ndarray:
     """Compute a carrier-aware modulation map for auto-masking.
 

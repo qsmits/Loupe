@@ -766,3 +766,45 @@ class TestAnalyzeStream:
         error_events = [e for e in events if e["stage"] == "error"]
         assert len(error_events) > 0, "No error event received"
         assert "message" in error_events[0]
+
+
+class TestConfidenceMetrics:
+    def test_high_confidence(self):
+        from backend.vision.fringe import compute_confidence
+        carrier = {"peak_ratio": 15.0}
+        modulation = np.full((64, 64), 0.8)
+        risk_mask = np.zeros((64, 64), dtype=np.uint8)
+        mask = np.ones((64, 64), dtype=bool)
+        result = compute_confidence(carrier, modulation, risk_mask, mask, threshold_frac=0.15)
+        assert result["carrier"] > 70
+        assert result["modulation"] > 70
+        assert result["unwrap"] > 95
+        assert result["overall"] > 70
+
+    def test_low_carrier_confidence(self):
+        from backend.vision.fringe import compute_confidence
+        carrier = {"peak_ratio": 1.5}
+        modulation = np.full((64, 64), 0.8)
+        risk_mask = np.zeros((64, 64), dtype=np.uint8)
+        mask = np.ones((64, 64), dtype=bool)
+        result = compute_confidence(carrier, modulation, risk_mask, mask, threshold_frac=0.15)
+        assert result["carrier"] < 30
+        assert result["overall"] < 30
+
+    def test_low_modulation_coverage(self):
+        from backend.vision.fringe import compute_confidence
+        carrier = {"peak_ratio": 15.0}
+        modulation = np.full((64, 64), 0.01)
+        risk_mask = np.zeros((64, 64), dtype=np.uint8)
+        mask = np.ones((64, 64), dtype=bool)
+        result = compute_confidence(carrier, modulation, risk_mask, mask, threshold_frac=0.15)
+        assert result["modulation"] < 30
+
+    def test_many_unwrap_corrections(self):
+        from backend.vision.fringe import compute_confidence
+        carrier = {"peak_ratio": 15.0}
+        modulation = np.full((64, 64), 0.8)
+        risk_mask = np.ones((64, 64), dtype=np.uint8)  # all corrected
+        mask = np.ones((64, 64), dtype=bool)
+        result = compute_confidence(carrier, modulation, risk_mask, mask, threshold_frac=0.15)
+        assert result["unwrap"] < 10
