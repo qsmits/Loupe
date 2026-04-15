@@ -19,9 +19,6 @@ export const fr = {
   lastResult: null,
   lastMask: null,
   maskPolygons: [],        // [{vertices: [{x,y},...], include: bool}, ...]
-  maskDrawing: false,      // currently drawing a polygon?
-  maskCurrentVertices: [], // vertices being placed for current polygon
-  maskIsHole: false,       // current polygon is a hole?
   measureMode: null,       // null | "cursor" | "point2point" | "lineProfile" | "area"
   measurePoints: [],       // array of {nx, ny} normalized coords for active measurement
   heightGrid: null,        // Float32Array from server
