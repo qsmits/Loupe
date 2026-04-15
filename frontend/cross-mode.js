@@ -203,6 +203,10 @@ export async function enterMaskEditSession() {
   const streamImg = document.getElementById('stream-img');
   if (streamImg) streamImg.style.visibility = 'hidden';
 
+  // Hide the drop overlay during mask editing
+  const dropOverlay = document.getElementById('drop-overlay');
+  if (dropOverlay) dropOverlay.classList.remove('visible');
+
   // 4. Convert existing mask polygons to area annotations
   if (cm.existingMask && cm.existingMask.length > 0) {
     loadExistingMask(cm.existingMask, w, h);
