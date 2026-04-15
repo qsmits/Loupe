@@ -501,9 +501,13 @@ export function wirePanelEvents() {
     if (btn) { btn.disabled = true; btn.textContent = "Capturing..."; }
 
     try {
-      // Capture the current camera preview frame
-      const resp = await apiFetch("/snapshot");
-      if (!resp.ok) throw new Error("Snapshot failed");
+      // Freeze the current camera frame so the mask edit uses a still image
+      await apiFetch("/freeze", { method: "POST" });
+
+      // Fetch the frame image, undistorted when a lens correction is active
+      const frameUrl = fr.lensK1 ? `/frame?lens_k1=${fr.lensK1}` : "/frame";
+      const resp = await apiFetch(frameUrl);
+      if (!resp.ok) throw new Error("Frame fetch failed");
       const blob = await resp.blob();
 
       // Set up cross-mode state
