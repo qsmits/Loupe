@@ -796,8 +796,8 @@ def _quality_guided_unwrap(wrapped: np.ndarray, quality: np.ndarray,
                            mask: np.ndarray | None = None) -> np.ndarray:
     """Quality-guided 2D phase unwrapping (Goldstein/Zebker approach).
 
-    Unwraps from highest-quality pixels outward, so errors in weak-fringe
-    regions don't propagate into the solution.
+    Unwraps from highest-quality pixels outward using a max-heap, so errors
+    in weak-fringe regions don't propagate into the solution.
 
     Parameters
     ----------
@@ -810,6 +810,8 @@ def _quality_guided_unwrap(wrapped: np.ndarray, quality: np.ndarray,
     -------
     Unwrapped phase, float64. Masked pixels are set to 0.
     """
+    import heapq
+
     h, w = wrapped.shape
     if mask is None:
         mask = np.ones((h, w), dtype=bool)
@@ -828,65 +830,32 @@ def _quality_guided_unwrap(wrapped: np.ndarray, quality: np.ndarray,
     unwrapped[seed] = wrapped[seed]
     visited[seed] = True
 
-    # Build edge list vectorially (undirected — each edge appears once).
-    # Edge quality = min(quality[a], quality[b]).
-    # 4-connected neighbors: horizontal and vertical separately.
+    # Heap-based flood fill from seed outward, prioritized by edge quality.
+    # Each heap entry: (-quality, neighbor_y, neighbor_x, source_y, source_x)
+    # Negative quality because heapq is a min-heap.
+    heap: list[tuple[float, int, int, int, int]] = []
+    TWO_PI = 2.0 * np.pi
+    sy, sx = int(seed[0]), int(seed[1])
+    for dy, dx in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+        ny, nx = sy + dy, sx + dx
+        if 0 <= ny < h and 0 <= nx < w and valid[ny, nx]:
+            eq = min(quality[sy, sx], quality[ny, nx])
+            heapq.heappush(heap, (-eq, ny, nx, sy, sx))
 
-    # Horizontal edges: pixel (y, x) <-> (y, x+1)
-    hy, hx = np.where(valid[:, :-1] & valid[:, 1:])
-    h_quality = np.minimum(quality[hy, hx], quality[hy, hx + 1])
-
-    # Vertical edges: pixel (y, x) <-> (y+1, x)
-    vy, vx = np.where(valid[:-1, :] & valid[1:, :])
-    v_quality = np.minimum(quality[vy, vx], quality[vy + 1, vx])
-
-    # Combine into flat arrays
-    edge_y1 = np.concatenate([hy, vy])
-    edge_x1 = np.concatenate([hx, vx])
-    edge_y2 = np.concatenate([hy, vy + 1])
-    edge_x2 = np.concatenate([hx + 1, vx])
-    edge_qual = np.concatenate([h_quality, v_quality])
-
-    # Sort descending by quality (process best edges first)
-    order = np.argsort(-edge_qual)
-    edge_y1 = edge_y1[order]
-    edge_x1 = edge_x1[order]
-    edge_y2 = edge_y2[order]
-    edge_x2 = edge_x2[order]
-    edge_qual = edge_qual[order]
-
-    # Unwrap: process edges from highest quality to lowest.
-    # For each edge, if exactly one endpoint is visited, unwrap the other.
-    # Multiple passes needed since an edge may have neither endpoint visited
-    # on the first encounter.
-    changed = True
-    while changed:
-        changed = False
-        keep = np.ones(len(edge_y1), dtype=bool)
-        for i in range(len(edge_y1)):
-            y1, x1, y2, x2 = edge_y1[i], edge_x1[i], edge_y2[i], edge_x2[i]
-            v1 = visited[y1, x1]
-            v2 = visited[y2, x2]
-            if v1 and not v2:
-                diff = wrapped[y2, x2] - wrapped[y1, x1]
-                unwrapped[y2, x2] = unwrapped[y1, x1] + diff - 2 * np.pi * round(diff / (2 * np.pi))
-                visited[y2, x2] = True
-                keep[i] = False
-                changed = True
-            elif v2 and not v1:
-                diff = wrapped[y1, x1] - wrapped[y2, x2]
-                unwrapped[y1, x1] = unwrapped[y2, x2] + diff - 2 * np.pi * round(diff / (2 * np.pi))
-                visited[y1, x1] = True
-                keep[i] = False
-                changed = True
-            elif v1 and v2:
-                # both visited: skip (already consistent)
-                keep[i] = False
-        edge_y1 = edge_y1[keep]
-        edge_x1 = edge_x1[keep]
-        edge_y2 = edge_y2[keep]
-        edge_x2 = edge_x2[keep]
-        edge_qual = edge_qual[keep]
+    while heap:
+        neg_q, ny, nx, fy, fx = heapq.heappop(heap)
+        if visited[ny, nx]:
+            continue
+        # Unwrap relative to the already-visited source pixel
+        diff = wrapped[ny, nx] - wrapped[fy, fx]
+        unwrapped[ny, nx] = unwrapped[fy, fx] + diff - TWO_PI * round(diff / TWO_PI)
+        visited[ny, nx] = True
+        # Push unvisited valid neighbors
+        for dy, dx in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+            my, mx = ny + dy, nx + dx
+            if 0 <= my < h and 0 <= mx < w and valid[my, mx] and not visited[my, mx]:
+                eq = min(quality[ny, nx], quality[my, mx])
+                heapq.heappush(heap, (-eq, my, mx, ny, nx))
 
     unwrapped[~valid] = 0.0
     return unwrapped

@@ -10,7 +10,7 @@
 
 import { state, undoStack, redoStack } from './state.js';
 import { setTool } from './tools.js';
-import { redraw, resizeCanvas } from './render.js';
+import { redraw, resizeCanvas, canvas } from './render.js';
 import { viewport, setImageSize, fitToWindow } from './viewport.js';
 import { switchMode } from './modes.js';
 import { openLensCalDialog, closeLensCalDialog } from './lens-cal.js';
@@ -214,7 +214,8 @@ export async function enterMaskEditSession() {
 
   // 8. Update canvas — fit image to viewport
   resizeCanvas();
-  fitToWindow();
+  const rect = canvas.getBoundingClientRect();
+  fitToWindow(rect.width, rect.height);
   redraw();
 }
 
