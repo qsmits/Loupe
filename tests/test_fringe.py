@@ -808,3 +808,25 @@ class TestConfidenceMetrics:
         mask = np.ones((64, 64), dtype=bool)
         result = compute_confidence(carrier, modulation, risk_mask, mask, threshold_frac=0.15)
         assert result["unwrap"] < 10
+
+
+class TestConfidenceMaps:
+    def test_returns_dict_with_expected_keys(self):
+        from backend.vision.fringe import render_confidence_maps
+        modulation = np.random.uniform(0, 1, (64, 64)).astype(np.float32)
+        risk_mask = np.zeros((64, 64), dtype=np.uint8)
+        mask = np.ones((64, 64), dtype=bool)
+        result = render_confidence_maps(modulation, risk_mask, mask)
+        assert "unwrap_risk" in result
+        assert "composite" in result
+
+    def test_outputs_are_valid_base64_png(self):
+        import base64
+        from backend.vision.fringe import render_confidence_maps
+        modulation = np.random.uniform(0, 1, (64, 64)).astype(np.float32)
+        risk_mask = np.zeros((64, 64), dtype=np.uint8)
+        mask = np.ones((64, 64), dtype=bool)
+        result = render_confidence_maps(modulation, risk_mask, mask)
+        for key in ("unwrap_risk", "composite"):
+            raw = base64.b64decode(result[key])
+            assert raw[:4] == b"\x89PNG"

@@ -1206,6 +1206,54 @@ def render_modulation_map(modulation: np.ndarray,
     return base64.b64encode(buf.tobytes()).decode("ascii")
 
 
+def render_confidence_maps(modulation: np.ndarray, risk_mask: np.ndarray,
+                           mask: np.ndarray) -> dict:
+    """Render confidence maps as base64 PNGs.
+    Returns dict with 'unwrap_risk' and 'composite' keys (base64 PNG strings).
+    """
+    h, w = modulation.shape
+
+    # Unwrap risk map: red=corrected, orange=edge contamination
+    risk_rgb = np.zeros((h, w, 3), dtype=np.uint8)
+    risk_rgb[risk_mask == 1] = [0, 0, 255]   # Red (BGR)
+    risk_rgb[risk_mask == 2] = [0, 128, 255]  # Orange (BGR)
+    if mask is not None:
+        risk_rgb[~mask.astype(bool)] = [40, 40, 40]
+
+    # Confidence composite: green=good, yellow=fair, red=poor
+    valid = mask.astype(bool) if mask is not None else np.ones((h, w), dtype=bool)
+    median_mod = float(np.median(modulation[valid])) if valid.any() else 0.01
+    mod_norm = np.clip(modulation / max(median_mod, 0.01), 0, 1)
+    risk_factor = np.ones((h, w), dtype=np.float32)
+    risk_factor[risk_mask == 1] = 0.0
+    risk_factor[risk_mask == 2] = 0.3
+    quality = mod_norm * risk_factor
+
+    composite_rgb = np.zeros((h, w, 3), dtype=np.uint8)
+    composite_rgb[:, :, 1] = np.clip(quality * 255, 0, 255).astype(np.uint8)  # Green channel
+    composite_rgb[:, :, 2] = np.clip((1.0 - quality) * 255, 0, 255).astype(np.uint8)  # Red channel
+    composite_rgb[:, :, 0] = 30  # Slight blue
+    if mask is not None:
+        composite_rgb[~valid] = [40, 40, 40]
+
+    # Resize if large
+    max_dim = 512
+    def _resize(img):
+        if max(img.shape[:2]) > max_dim:
+            scale = max_dim / max(img.shape[:2])
+            new_h, new_w = max(1, int(img.shape[0] * scale)), max(1, int(img.shape[1] * scale))
+            return cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_AREA)
+        return img
+
+    _, risk_buf = cv2.imencode(".png", _resize(risk_rgb))
+    _, comp_buf = cv2.imencode(".png", _resize(composite_rgb))
+
+    return {
+        "unwrap_risk": base64.b64encode(risk_buf.tobytes()).decode("ascii"),
+        "composite": base64.b64encode(comp_buf.tobytes()).decode("ascii"),
+    }
+
+
 def render_psf(surface_waves: np.ndarray, mask: np.ndarray | None = None) -> str:
     """Compute and render the PSF from a wavefront error map.
 
