@@ -591,16 +591,25 @@ def compute_confidence(carrier_info: dict, modulation: np.ndarray,
     else:
         carrier_score = max(0, pr * 20)  # 0–30 linear over 0–1.5
 
-    # Modulation coverage: % of mask pixels with modulation above threshold
+    # Modulation score: enough high-modulation pixels for reliable fitting?
+    # We need sufficient absolute pixel count, not a high fraction of the
+    # mask — partial-coverage images can give excellent results from a small
+    # region.  Score based on the number of good-modulation pixels, with
+    # 5000 pixels as "fully confident" (plenty for 37-term Zernike fit).
     valid = mask.astype(bool)
     n_valid = int(np.sum(valid))
     if n_valid > 0:
         median_mod = float(np.median(modulation[valid]))
         thresh = threshold_frac * max(median_mod, 0.1)
         n_good_mod = int(np.sum(modulation[valid] > thresh))
-        mod_coverage = 100.0 * n_good_mod / n_valid
+        mod_coverage_pct = 100.0 * n_good_mod / n_valid
+        # Score: 100 at ≥5000 good pixels, linear ramp below
+        min_pixels = 5000
+        mod_score = min(100.0, 100.0 * n_good_mod / min_pixels)
     else:
-        mod_coverage = 0.0
+        mod_coverage_pct = 0.0
+        n_good_mod = 0
+        mod_score = 0.0
 
     # Unwrap confidence: % of valid pixels that are reliable (risk == 0)
     if n_valid > 0:
@@ -610,11 +619,13 @@ def compute_confidence(carrier_info: dict, modulation: np.ndarray,
         unwrap_score = 0.0
 
     # Overall: weakest link
-    overall = min(carrier_score, mod_coverage, unwrap_score)
+    overall = min(carrier_score, mod_score, unwrap_score)
 
     return {
         "carrier": round(carrier_score, 1),
-        "modulation": round(mod_coverage, 1),
+        "modulation": round(mod_score, 1),
+        "modulation_coverage_pct": round(mod_coverage_pct, 1),
+        "modulation_good_pixels": n_good_mod,
         "unwrap": round(unwrap_score, 1),
         "overall": round(overall, 1),
     }

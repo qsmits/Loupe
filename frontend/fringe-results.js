@@ -549,7 +549,7 @@ function updateCarrierDisplay(data) {
       } else {
         const advice = {
           carrier: "Fringe pattern is weak or ambiguous. Improve fringe contrast or adjust the optical flat angle.",
-          modulation: "Less than half the aperture has usable fringes. Check illumination and flat contact.",
+          modulation: "Too few pixels with usable fringes. Check illumination and flat contact.",
           unwrap: "Phase unwrapping had difficulty. Check surface map for discontinuities.",
         };
         msg = `${weakest[0].charAt(0).toUpperCase() + weakest[0].slice(1)} is poor \u2014 ${advice[weakest[0]] || "review diagnostics."}`;
