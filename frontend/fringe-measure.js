@@ -104,10 +104,18 @@ export function drawCursorCrosshair(nx, ny) {
   svg.setAttribute("viewBox", `0 0 ${w} ${h}`);
   const x = nx * w;
   const y = ny * h;
+  const height = getHeightAt(nx, ny);
+  const label = height !== null ? fmtNm(height) : "—";
+  // Position label to avoid clipping at edges
+  const labelX = x + 12;
+  const labelY = y - 12;
   svg.innerHTML = `
     <line x1="${x}" y1="0" x2="${x}" y2="${h}" stroke="#fff" stroke-width="0.5" opacity="0.5"/>
     <line x1="0" y1="${y}" x2="${w}" y2="${y}" stroke="#fff" stroke-width="0.5" opacity="0.5"/>
     <circle cx="${x}" cy="${y}" r="4" fill="none" stroke="#0a84ff" stroke-width="1.5"/>
+    <rect x="${labelX - 2}" y="${labelY - 13}" width="${label.length * 7 + 8}" height="17"
+          rx="3" fill="rgba(0,0,0,0.8)"/>
+    <text x="${labelX + 2}" y="${labelY}" fill="#0a84ff" font-size="11" font-weight="600">${label}</text>
   `;
 }
 
