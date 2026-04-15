@@ -6,7 +6,18 @@ capture-requires-iPad + compute-requires-frames tests plus the unit
 tests in tests/test_deflectometry.py.
 """
 
+import pytest
 from fastapi.testclient import TestClient
+
+
+@pytest.fixture(autouse=True)
+def _clear_deflectometry_profiles():
+    """Wipe deflectometry profiles from config.json before each test so
+    profile tests don't bleed into each other via the on-disk config."""
+    from backend.config import save_config
+    save_config({"deflectometry_profiles": [], "deflectometry_active_profile": None})
+    yield
+    # No teardown needed — next test's setup will clear again.
 
 
 def test_deflectometry_start_returns_session(client: TestClient):
@@ -174,6 +185,85 @@ def test_export_run_returns_structured_json(client):
     assert "quality" in data
     assert "stats" in data
     assert "modulation" in data
+
+
+def test_profiles_list_empty(client):
+    r = client.get("/deflectometry/profiles")
+    assert r.status_code == 200
+    assert r.json() == []
+
+def test_profiles_save_and_list(client):
+    profile = {
+        "name": "test-profile",
+        "display": {"model": "iPad Air", "pixel_pitch_mm": 0.0962},
+        "capture": {"freq": 16, "averages": 3, "gamma": 2.2},
+        "processing": {"mask_threshold": 0.02, "smooth_sigma": 0.0},
+        "geometry": {"notes": "test setup"},
+        "calibration": {"cal_factor": None, "sphere_diameter_mm": None},
+    }
+    r = client.post("/deflectometry/profiles", json=profile)
+    assert r.status_code == 200
+    assert r.json()["name"] == "test-profile"
+    r = client.get("/deflectometry/profiles")
+    assert r.status_code == 200
+    names = [p["name"] for p in r.json()]
+    assert "test-profile" in names
+
+def test_profiles_overwrite(client):
+    profile = {
+        "name": "overwrite-me",
+        "display": {"model": "iPad", "pixel_pitch_mm": 0.1},
+        "capture": {"freq": 8, "averages": 1, "gamma": 2.0},
+        "processing": {"mask_threshold": 0.05, "smooth_sigma": 1.0},
+        "geometry": {"notes": "v1"},
+        "calibration": {"cal_factor": None, "sphere_diameter_mm": None},
+    }
+    client.post("/deflectometry/profiles", json=profile)
+    profile["geometry"]["notes"] = "v2"
+    client.post("/deflectometry/profiles", json=profile)
+    r = client.get("/deflectometry/profiles")
+    matches = [p for p in r.json() if p["name"] == "overwrite-me"]
+    assert len(matches) == 1
+    assert matches[0]["geometry"]["notes"] == "v2"
+
+def test_profiles_delete(client):
+    profile = {
+        "name": "delete-me",
+        "display": {"model": "iPad", "pixel_pitch_mm": 0.1},
+        "capture": {"freq": 16, "averages": 3, "gamma": 2.2},
+        "processing": {"mask_threshold": 0.02, "smooth_sigma": 0.0},
+        "geometry": {"notes": ""},
+        "calibration": {"cal_factor": None, "sphere_diameter_mm": None},
+    }
+    client.post("/deflectometry/profiles", json=profile)
+    r = client.delete("/deflectometry/profiles/delete-me")
+    assert r.status_code == 200
+    r = client.get("/deflectometry/profiles")
+    names = [p["name"] for p in r.json()]
+    assert "delete-me" not in names
+
+def test_profiles_delete_nonexistent(client):
+    r = client.delete("/deflectometry/profiles/no-such-profile")
+    assert r.status_code == 404
+
+def test_profiles_load_into_session(client):
+    client.post("/deflectometry/start", json={})
+    profile = {
+        "name": "load-test",
+        "display": {"model": "iPad", "pixel_pitch_mm": 0.0962},
+        "capture": {"freq": 32, "averages": 5, "gamma": 1.8},
+        "processing": {"mask_threshold": 0.05, "smooth_sigma": 2.0},
+        "geometry": {"notes": "bench"},
+        "calibration": {"cal_factor": 0.00123, "sphere_diameter_mm": 25.0},
+    }
+    client.post("/deflectometry/profiles", json=profile)
+    r = client.post("/deflectometry/profiles/load", json={"name": "load-test"})
+    assert r.status_code == 200
+    data = r.json()
+    assert data["name"] == "load-test"
+    assert data["calibration"]["cal_factor"] == 0.00123
+    status = client.get("/deflectometry/status").json()
+    assert status["cal_factor"] == 0.00123
 
 
 def test_compute_returns_slope_and_quality(client):

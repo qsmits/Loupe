@@ -39,6 +39,8 @@ _DEFAULTS = {
         {"id": "din861-1",   "label": "DIN 861 Grade 1",                 "pv_nm": 150},
         {"id": "din861-2",   "label": "DIN 861 Grade 2",                 "pv_nm": 250},
     ],
+    "deflectometry_profiles": [],
+    "deflectometry_active_profile": None,
 }
 
 

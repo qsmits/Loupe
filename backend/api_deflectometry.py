@@ -131,6 +131,38 @@ class ExportRunBody(BaseModel):
     pass
 
 
+class ProfileDisplay(BaseModel):
+    model: str = ""
+    pixel_pitch_mm: float = 0.0962
+
+class ProfileCapture(BaseModel):
+    freq: int = 16
+    averages: int = 3
+    gamma: float = 2.2
+
+class ProfileProcessing(BaseModel):
+    mask_threshold: float = 0.02
+    smooth_sigma: float = 0.0
+
+class ProfileGeometry(BaseModel):
+    notes: str = ""
+
+class ProfileCalibration(BaseModel):
+    cal_factor: float | None = None
+    sphere_diameter_mm: float | None = None
+
+class DeflectometryProfile(BaseModel):
+    name: str
+    display: ProfileDisplay = ProfileDisplay()
+    capture: ProfileCapture = ProfileCapture()
+    processing: ProfileProcessing = ProfileProcessing()
+    geometry: ProfileGeometry = ProfileGeometry()
+    calibration: ProfileCalibration = ProfileCalibration()
+
+class LoadProfileBody(BaseModel):
+    name: str
+
+
 def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
     router = APIRouter()
     # Single-active-session container; using a dict so nested functions can
@@ -725,6 +757,52 @@ def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
             },
             "mask_valid_frac": result.get("mask_valid_frac"),
         }
+
+    @router.get("/deflectometry/profiles")
+    def list_profiles():
+        from .config import load_config
+        cfg = load_config()
+        return cfg.get("deflectometry_profiles", [])
+
+    @router.post("/deflectometry/profiles")
+    def save_profile(profile: DeflectometryProfile):
+        from .config import load_config, save_config
+        cfg = load_config()
+        profiles = cfg.get("deflectometry_profiles", [])
+        profiles = [p for p in profiles if p.get("name") != profile.name]
+        profiles.append(profile.model_dump())
+        save_config({"deflectometry_profiles": profiles,
+                      "deflectometry_active_profile": profile.name})
+        return profile.model_dump()
+
+    @router.delete("/deflectometry/profiles/{name}")
+    def delete_profile(name: str):
+        from .config import load_config, save_config
+        cfg = load_config()
+        profiles = cfg.get("deflectometry_profiles", [])
+        new_profiles = [p for p in profiles if p.get("name") != name]
+        if len(new_profiles) == len(profiles):
+            raise HTTPException(404, f"Profile '{name}' not found")
+        active = cfg.get("deflectometry_active_profile")
+        updates = {"deflectometry_profiles": new_profiles}
+        if active == name:
+            updates["deflectometry_active_profile"] = None
+        save_config(updates)
+        return {"status": "deleted"}
+
+    @router.post("/deflectometry/profiles/load")
+    def load_profile(body: LoadProfileBody):
+        from .config import load_config, save_config
+        cfg = load_config()
+        profiles = cfg.get("deflectometry_profiles", [])
+        match = next((p for p in profiles if p.get("name") == body.name), None)
+        if not match:
+            raise HTTPException(404, f"Profile '{body.name}' not found")
+        s = state.get("session")
+        if s and match.get("calibration", {}).get("cal_factor") is not None:
+            s.cal_factor = match["calibration"]["cal_factor"]
+        save_config({"deflectometry_active_profile": body.name})
+        return match
 
     @router.websocket("/deflectometry/ws")
     async def deflectometry_ws(websocket: WebSocket):
