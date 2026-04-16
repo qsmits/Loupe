@@ -33,6 +33,7 @@ from fastapi import (
 from pydantic import BaseModel, Field
 
 from .cameras.base import BaseCamera
+from .vision.mask_utils import rasterize_polygon_mask
 from .vision.deflectometry import (
     compute_modulation,
     compute_wrapped_phase,
@@ -73,7 +74,7 @@ class _Session:
         self.ref_phase_y: Optional[np.ndarray] = None
         self.cal_factor: Optional[float] = None  # phase-rad → mm
         self.freq: int = 16  # fringe frequency used during last capture
-        self.inverse_lut = None  # 256-entry uint8 array from display calibration
+        self.inverse_lut: Optional[np.ndarray] = None  # 256-entry uint8 LUT
         # Serializes capture-sequence so two concurrent runs can't interleave
         self.lock: asyncio.Lock = asyncio.Lock()
 
@@ -838,13 +839,13 @@ def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
             "mask_valid_frac": result.get("mask_valid_frac"),
         }
 
-    @router.get("/deflectometry/profiles")
+    @router.get("/deflectometry/profiles", dependencies=[Depends(_reject_hosted)])
     def list_profiles():
         from .config import load_config
         cfg = load_config()
         return cfg.get("deflectometry_profiles", [])
 
-    @router.post("/deflectometry/profiles")
+    @router.post("/deflectometry/profiles", dependencies=[Depends(_reject_hosted)])
     def save_profile(profile: DeflectometryProfile):
         from .config import load_config, save_config
         cfg = load_config()
@@ -855,7 +856,7 @@ def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
                       "deflectometry_active_profile": profile.name})
         return profile.model_dump()
 
-    @router.delete("/deflectometry/profiles/{name}")
+    @router.delete("/deflectometry/profiles/{name}", dependencies=[Depends(_reject_hosted)])
     def delete_profile(name: str):
         from .config import load_config, save_config
         cfg = load_config()
@@ -870,7 +871,7 @@ def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
         save_config(updates)
         return {"status": "deleted"}
 
-    @router.post("/deflectometry/profiles/load")
+    @router.post("/deflectometry/profiles/load", dependencies=[Depends(_reject_hosted)])
     def load_profile(body: LoadProfileBody):
         from .config import load_config, save_config
         cfg = load_config()

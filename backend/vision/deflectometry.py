@@ -537,6 +537,17 @@ def build_response_lut(commanded: np.ndarray, observed: np.ndarray,
     commanded = np.asarray(commanded, dtype=np.float64)
     observed = np.asarray(observed, dtype=np.float64)
 
+    if len(commanded) != len(observed):
+        raise ValueError(
+            f"commanded and observed must have the same length, "
+            f"got {len(commanded)} and {len(observed)}"
+        )
+    if np.all(observed == 0):
+        raise ValueError(
+            "All observed values are zero — check camera exposure "
+            "and that the display is visible"
+        )
+
     # Normalize both to 0-255 range
     if observed.max() > 0:
         observed = observed / observed.max() * 255.0
