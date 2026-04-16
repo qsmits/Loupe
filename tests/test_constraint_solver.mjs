@@ -538,7 +538,9 @@ test('projectAngle with obtuse angle (135°)', () => {
 
   const fDir = getLineDirection(follower);
   const dot = driverDir.dx * fDir.dx + driverDir.dy * fDir.dy;
-  assertApprox(dot, Math.cos(135 * Math.PI / 180), 1e-6, '135° angle');
+  // Lines are undirected: 135° and 45° are equivalent (|dot| should match)
+  const expectedCos = Math.cos(135 * Math.PI / 180);
+  assertApprox(Math.abs(dot), Math.abs(expectedCos), 1e-6, '135° angle (undirected)');
 });
 
 test('tangent-line-circle works when circle is driver (line moves)', () => {

@@ -137,6 +137,88 @@ function _drawHandle(angleRad) {
 }
 
 /**
+ * Draw a crosshair reticle — edge-to-edge dashed lines in screen-space.
+ */
+function _drawCrosshairReticle(cxCanvas, cyCanvas, angleRad, dpr, color, opacity, lineWidth) {
+  ctx.save();
+  ctx.globalAlpha = opacity;
+  ctx.strokeStyle = color;
+  ctx.lineWidth = lineWidth * dpr;
+  ctx.setLineDash([4 * dpr, 4 * dpr]);
+
+  if (angleRad === 0) {
+    ctx.beginPath();
+    ctx.moveTo(cxCanvas, 0);
+    ctx.lineTo(cxCanvas, canvas.height);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(0, cyCanvas);
+    ctx.lineTo(canvas.width, cyCanvas);
+    ctx.stroke();
+  } else {
+    const len = Math.max(canvas.width, canvas.height);
+    const cosA = Math.cos(angleRad);
+    const sinA = Math.sin(angleRad);
+    ctx.beginPath();
+    ctx.moveTo(cxCanvas - cosA * len, cyCanvas - sinA * len);
+    ctx.lineTo(cxCanvas + cosA * len, cyCanvas + sinA * len);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(cxCanvas + sinA * len, cyCanvas - cosA * len);
+    ctx.lineTo(cxCanvas - sinA * len, cyCanvas + cosA * len);
+    ctx.stroke();
+  }
+
+  ctx.setLineDash([]);
+  ctx.restore();
+}
+
+/**
+ * Draw a single reticle element in mm-space (called inside the scaled transform).
+ */
+function _drawElement(el, reticle, scale, dpr) {
+  const { color, opacity, lineWidth } = _resolveStyle(reticle, el.style);
+
+  ctx.save();
+  ctx.globalAlpha = opacity;
+  ctx.strokeStyle = color;
+  ctx.fillStyle   = color;
+  ctx.lineWidth   = lineWidth / (scale * dpr);
+
+  switch (el.type) {
+    case "line":
+      ctx.beginPath();
+      ctx.moveTo(el.x1, el.y1);
+      ctx.lineTo(el.x2, el.y2);
+      ctx.stroke();
+      break;
+    case "circle":
+      ctx.beginPath();
+      ctx.arc(el.cx, el.cy, el.r, 0, Math.PI * 2);
+      ctx.stroke();
+      break;
+    case "arc": {
+      const startRad = (el.startDeg * Math.PI) / 180;
+      const endRad   = (el.endDeg   * Math.PI) / 180;
+      ctx.beginPath();
+      ctx.arc(el.cx, el.cy, el.r, startRad, endRad);
+      ctx.stroke();
+      break;
+    }
+    case "text": {
+      const fontSizeMm = el.sizeMm || 1.5;
+      ctx.font         = `${fontSizeMm}px sans-serif`;
+      ctx.textAlign    = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(el.value ?? "", el.x, el.y);
+      break;
+    }
+  }
+
+  ctx.restore();
+}
+
+/**
  * Draw the active reticle onto the canvas in HUD (screen) space.
  * Called from redraw() after ctx.restore() ends the viewport transform.
  */
@@ -146,75 +228,35 @@ export function drawReticle() {
 
   const { scale, uncalibrated, dpr } = _computeScale();
   const angleRad = (state.reticleRotationDeg * Math.PI) / 180;
-  const canvasW  = canvas.width;
-  const canvasH  = canvas.height;
+  const cxCanvas = canvas.width / 2;
+  const cyCanvas = canvas.height / 2;
 
-  ctx.save();
+  const { color, opacity, lineWidth } = _resolveStyle(reticle, null);
 
-  // Move to viewport center, apply rotation, then scale mm → pixels
-  ctx.translate(canvasW / 2, canvasH / 2);
-  ctx.rotate(angleRad);
-  ctx.scale(scale, scale);
-
-  // Draw each element
-  for (const el of reticle.elements) {
-    const { color, opacity, lineWidth } = _resolveStyle(reticle, el.style);
-
+  if (reticle.crosshair) {
+    // Special case: crosshair extends edge-to-edge with dashed lines
+    _drawCrosshairReticle(cxCanvas, cyCanvas, angleRad, dpr, color, opacity, lineWidth);
+  } else {
+    // Normal reticle: mm-space elements
     ctx.save();
-    ctx.globalAlpha = opacity;
-    ctx.strokeStyle = color;
-    ctx.fillStyle   = color;
-    // lineWidth is in screen pixels — compensate for the active scale transform
-    ctx.lineWidth   = lineWidth / (scale * dpr);
+    ctx.translate(cxCanvas, cyCanvas);
+    ctx.rotate(angleRad);
+    ctx.scale(scale, scale);
 
-    switch (el.type) {
-      case "line": {
-        ctx.beginPath();
-        ctx.moveTo(el.x1, el.y1);
-        ctx.lineTo(el.x2, el.y2);
-        ctx.stroke();
-        break;
-      }
-      case "circle": {
-        ctx.beginPath();
-        ctx.arc(el.cx, el.cy, el.r, 0, Math.PI * 2);
-        ctx.stroke();
-        break;
-      }
-      case "arc": {
-        const startRad = (el.startDeg * Math.PI) / 180;
-        const endRad   = (el.endDeg   * Math.PI) / 180;
-        ctx.beginPath();
-        ctx.arc(el.cx, el.cy, el.r, startRad, endRad);
-        ctx.stroke();
-        break;
-      }
-      case "text": {
-        // sizeMm is the desired font height in mm. After ctx.scale(scale, scale),
-        // 1 ctx unit = (1/scale) canvas-px, so a font of `sizeMm` px in the
-        // scaled coordinate system maps to sizeMm mm on screen. That is exactly
-        // what we want: font size in these "mm units" equals sizeMm directly.
-        const fontSizeMm = el.sizeMm || 1.5;
-        ctx.font         = `${fontSizeMm}px sans-serif`;
-        ctx.textAlign    = "center";
-        ctx.textBaseline = "middle";
-        ctx.fillText(el.value ?? "", el.x, el.y);
-        break;
-      }
-      default:
-        break;
+    for (const el of reticle.elements) {
+      _drawElement(el, reticle, scale, dpr);
     }
 
     ctx.restore();
   }
 
-  ctx.restore();  // undo translate/rotate/scale
+  // Draw rotation handle (only for non-crosshair reticles, or when rotated)
+  if (!reticle.crosshair || state.reticleRotationDeg !== 0) {
+    _drawHandle(angleRad);
+  }
 
-  // Draw the rotation handle in screen space (no mm scaling)
-  _drawHandle(angleRad);
-
-  // Uncalibrated warning badge
-  if (uncalibrated) {
+  // Uncalibrated badge (skip for crosshair — it's scale-independent)
+  if (!reticle.crosshair && uncalibrated) {
     _drawUncalibratedBadge();
   }
 }

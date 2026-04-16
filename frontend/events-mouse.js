@@ -27,6 +27,8 @@ import { openCommentEditor } from './comment-editor.js';
 import { hitTestAnnotation } from './hit-test.js';
 import { handleGearPickClick } from './gear.js';
 import { validConstraintsForPair, addConstraint, CONSTRAINT_LABELS, CONSTRAINT_ICONS, constraintsForAnnotation, removeConstraint, toggleConstraint } from './constraints.js';
+import { hitTestReticleHandle } from './render-reticle.js';
+import { setReticleRotation } from './reticle.js';
 
 // ── Sub-pixel snap preview (debounced) ────────────────────────────────────────
 let _subpixelDebounce = null;
@@ -213,6 +215,32 @@ async function onMouseDown(e) {
     showStatus(state.frozen ? "Frozen" : "Live");
     return;
   }
+  // Reticle rotation handle drag — start
+  if (state.activeReticle && e.button === 0) {
+    const dpr = canvas.width / canvas.getBoundingClientRect().width;
+    const rect = canvas.getBoundingClientRect();
+    const screenPt = { x: (e.clientX - rect.left) * dpr, y: (e.clientY - rect.top) * dpr };
+    if (hitTestReticleHandle(screenPt)) {
+      const cx = canvas.width / 2;
+      const cy = canvas.height / 2;
+      state._reticleDrag = {
+        startAngleRad: Math.atan2(screenPt.y - cy, screenPt.x - cx),
+        startRotationDeg: state.reticleRotationDeg || 0,
+      };
+      canvas.style.cursor = "grabbing";
+      return;
+    }
+  }
+  // Constraint badge drag — start
+  if (state.tool === "select" && !e.shiftKey) {
+    const hitBadge = hitTestConstraintBadge(pt);
+    if (hitBadge) {
+      state._badgeDrag = { constraintId: hitBadge.id, startX: pt.x, startY: pt.y,
+                           origX: hitBadge.contactPoint.x, origY: hitBadge.contactPoint.y };
+      canvas.style.cursor = "grabbing";
+      return;
+    }
+  }
   // Hit-test deviation labels — open per-feature tolerance popover if clicked
   // Hit boxes are in image space (recorded inside viewport transform)
   if (state.showDeviations && _deviationHitBoxes.length) {
@@ -329,6 +357,16 @@ function onMouseUp() {
   if (state._panStart) {
     state._panStart = null;
     canvas.style.cursor = state.tool === "pan" ? "grab" : "";
+    return;
+  }
+  if (state._reticleDrag) {
+    state._reticleDrag = null;
+    canvas.style.cursor = "";
+    return;
+  }
+  if (state._badgeDrag) {
+    state._badgeDrag = null;
+    canvas.style.cursor = "";
     return;
   }
   if (state._labelDrag) {
@@ -454,12 +492,21 @@ export function initMouseHandlers() {
       }
       return;
     }
+    // Reticle handle hover
+    if (state.activeReticle && !state._reticleDrag) {
+      const dpr = canvas.width / canvas.getBoundingClientRect().width;
+      const rect = canvas.getBoundingClientRect();
+      const screenPt = { x: (e.clientX - rect.left) * dpr, y: (e.clientY - rect.top) * dpr };
+      if (hitTestReticleHandle(screenPt)) {
+        canvas.style.cursor = "grab";
+      }
+    }
     // Constraint badge hover
     const hovBadge = hitTestConstraintBadge(pt);
     if (hovBadge) {
       if (state._hoveredConstraintId !== hovBadge.id) {
         state._hoveredConstraintId = hovBadge.id;
-        canvas.style.cursor = "pointer";
+        canvas.style.cursor = "grab";
         redraw();
       }
     } else if (state._hoveredConstraintId) {
@@ -496,6 +543,31 @@ export function initMouseHandlers() {
           if (disp) disp.textContent = ann.angle.toFixed(1) + "°";
           redraw();
         }
+      }
+      return;
+    }
+    if (state._reticleDrag) {
+      const dpr = canvas.width / canvas.getBoundingClientRect().width;
+      const rect = canvas.getBoundingClientRect();
+      const sx = (e.clientX - rect.left) * dpr;
+      const sy = (e.clientY - rect.top) * dpr;
+      const cx = canvas.width / 2;
+      const cy = canvas.height / 2;
+      const nowRad = Math.atan2(sy - cy, sx - cx);
+      let deltaDeg = (nowRad - state._reticleDrag.startAngleRad) * 180 / Math.PI;
+      let next = state._reticleDrag.startRotationDeg + deltaDeg;
+      if (e.shiftKey) next = Math.round(next * 2) / 2; // snap to 0.5°
+      setReticleRotation(next);
+      return;
+    }
+    if (state._badgeDrag) {
+      const c = state.constraints.find(c => c.id === state._badgeDrag.constraintId);
+      if (c) {
+        c.contactPoint = {
+          x: state._badgeDrag.origX + (pt.x - state._badgeDrag.startX),
+          y: state._badgeDrag.origY + (pt.y - state._badgeDrag.startY),
+        };
+        redraw();
       }
       return;
     }

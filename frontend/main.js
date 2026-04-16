@@ -28,6 +28,8 @@ import { initZstack } from './zstack.js';
 import { initStitch } from './stitch.js';
 import { initSuperRes } from './superres.js';
 import { initDeflectometry } from './deflectometry.js';
+import { loadReticle, unloadReticle, saveCustomReticle } from './reticle.js';
+import { initReticlePanel } from './sidebar.js';
 import { initGear } from './gear.js';
 import { initFringe } from './fringe.js';
 import { initModes, getActiveMode } from './modes.js';
@@ -538,11 +540,20 @@ document.getElementById("btn-measurements-as-dxf")?.addEventListener("click", ()
   measurementsAsDxf();
 });
 
-// ── Crosshair toggle ──────────────────────────────────────────────────────────
-document.getElementById("btn-crosshair").addEventListener("click", () => {
-  state.crosshair = !state.crosshair;
-  document.getElementById("btn-crosshair").classList.toggle("active", state.crosshair);
-  redraw();
+// ── Crosshair toggle (now routes through reticle system) ─────────────────────
+document.getElementById("btn-crosshair").addEventListener("click", async () => {
+  if (state.activeReticle && state.activeReticle.crosshair) {
+    unloadReticle();
+    state.crosshair = false;
+    document.getElementById("btn-crosshair").classList.remove("active");
+  } else {
+    await loadReticle('crosshair', 'crosshair');
+    state.crosshair = true;
+    state.reticleColorOverride = state.settings.crosshairColor;
+    state.reticleOpacityOverride = state.settings.crosshairOpacity;
+    document.getElementById("btn-crosshair").classList.add("active");
+    redraw();
+  }
 });
 
 // ── Grid toggle ────────────────────────────────────────���──────────────────────
@@ -765,6 +776,9 @@ document.querySelectorAll(".swatch").forEach(swatch => {
     document.querySelectorAll(".swatch").forEach(s => s.classList.remove("active"));
     swatch.classList.add("active");
     state.settings.crosshairColor = swatch.dataset.color;
+    if (state.activeReticle && state.activeReticle.crosshair) {
+      state.reticleColorOverride = swatch.dataset.color;
+    }
     redraw();
   });
 });
@@ -774,6 +788,9 @@ document.getElementById("crosshair-opacity").addEventListener("input", e => {
   const pct = parseInt(e.target.value);
   document.getElementById("crosshair-opacity-value").textContent = `${pct}%`;
   state.settings.crosshairOpacity = pct / 100;
+  if (state.activeReticle && state.activeReticle.crosshair) {
+    state.reticleOpacityOverride = pct / 100;
+  }
   redraw();
 });
 
@@ -1212,6 +1229,32 @@ document.getElementById("btn-save-template")?.addEventListener("click", () => {
   showStatus("Template saved: " + name);
 });
 
+// ── Save as Reticle ──────────────────────────────────────────────────────────
+document.getElementById("btn-save-reticle")?.addEventListener("click", async () => {
+  closeAllDropdowns();
+  if (!state.calibration || !state.calibration.pixelsPerMm) {
+    showStatus("Calibration required to save a reticle");
+    return;
+  }
+  const measurable = state.annotations.filter(a =>
+    !a.type.startsWith('detected-') && a.type !== 'dxf-overlay' &&
+    a.type !== 'edges-overlay' && a.type !== 'preprocessed-overlay' &&
+    a.type !== 'origin' && a.type !== 'comment'
+  );
+  if (measurable.length === 0) {
+    showStatus("No annotations to convert to a reticle");
+    return;
+  }
+  const name = prompt("Reticle name:");
+  if (!name) return;
+  try {
+    await saveCustomReticle(name);
+    showStatus(`Reticle "${name}" saved`);
+  } catch (err) {
+    showStatus(`Error: ${err.message}`);
+  }
+});
+
 document.getElementById("btn-load-template")?.addEventListener("click", () => {
   closeAllDropdowns();
   document.getElementById("template-input").click();
@@ -1331,6 +1374,7 @@ initSuperRes();
 initDeflectometry();
 initGear();
 initFringe();
+initReticlePanel();
 document.getElementById("btn-arc-fit-arc")?.addEventListener("click", () => finalizeArcFit(false));
 document.getElementById("btn-arc-fit-circle")?.addEventListener("click", () => finalizeArcFit(true));
 

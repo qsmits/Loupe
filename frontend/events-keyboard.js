@@ -10,6 +10,7 @@ import { viewport, fitToWindow, zoomOneToOne, clampPan, imageWidth, imageHeight 
 import { hideContextMenu } from './events-context-menu.js';
 import { _finalizePickInspection } from './events-inspection.js';
 import { getActiveMode } from './modes.js';
+import { nudgeReticleRotation, setReticleRotation } from './reticle.js';
 
 export function undo() {
   if (!undoStack.length) return;
@@ -142,6 +143,14 @@ export function initKeyboard(closeAllDropdowns) {
     if (ctrlOrMeta && (e.key === "y" || (e.key === "z" && e.shiftKey))) { e.preventDefault(); redo(); return; }
     if (e.key === "u" && state.selected.size > 0) {
       elevateSelected();
+      return;
+    }
+    // Reticle rotation: arrow keys when reticle is active
+    if (state.activeReticle && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
+      e.preventDefault();
+      const step = e.shiftKey ? 1.0 : 0.1;
+      const dir = e.key === "ArrowLeft" ? -1 : 1;
+      nudgeReticleRotation(dir * step);
       return;
     }
     if (e.key === "0" && state.frozen) {

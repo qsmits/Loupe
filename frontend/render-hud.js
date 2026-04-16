@@ -288,19 +288,4 @@ export function hitTestConstraintBadge(pt) {
   return null;
 }
 
-export function drawCrosshair() {
-  if (!state.crosshair) return;
-  const { crosshairOpacity } = state.settings;
-  const rawColor = state.settings.crosshairColor;
-  const safeColor = /^#[0-9a-fA-F]{6}$/.test(rawColor) ? rawColor : "#ffffff";
-  const r = parseInt(safeColor.slice(1, 3), 16);
-  const g = parseInt(safeColor.slice(3, 5), 16);
-  const b = parseInt(safeColor.slice(5, 7), 16);
-  const cx = canvas.width / 2, cy = canvas.height / 2;
-  ctx.strokeStyle = `rgba(${r},${g},${b},${crosshairOpacity})`;
-  ctx.lineWidth = 1;
-  ctx.setLineDash([4, 4]);
-  ctx.beginPath(); ctx.moveTo(cx, 0); ctx.lineTo(cx, canvas.height); ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(0, cy); ctx.lineTo(canvas.width, cy); ctx.stroke();
-  ctx.setLineDash([]);
-}
+// drawCrosshair() removed — crosshair is now a reticle preset (see render-reticle.js)

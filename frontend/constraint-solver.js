@@ -35,6 +35,7 @@ export function isCircleType(ann) { return CIRCLE_TYPES.has(ann.type); }
  *   - 'pt' for pt-circle-dist
  */
 export function getAnchorPoint(ann, anchor) {
+  if (ann.type === 'point') return { x: ann.x, y: ann.y };
   if (anchor === 'a') return ann.a;
   if (anchor === 'b') return ann.b;
   if (anchor === 'center') return { x: ann.cx, y: ann.cy };
@@ -49,7 +50,8 @@ export function getAnchorPoint(ann, anchor) {
  * Sets the {x, y} for a named anchor on an annotation (mutates in place).
  */
 export function setAnchorPoint(ann, anchor, x, y) {
-  if (anchor === 'a') { ann.a.x = x; ann.a.y = y; }
+  if (ann.type === 'point') { ann.x = x; ann.y = y; }
+  else if (anchor === 'a') { ann.a.x = x; ann.a.y = y; }
   else if (anchor === 'b') { ann.b.x = x; ann.b.y = y; }
   else if (anchor === 'center') { ann.cx = x; ann.cy = y; }
   else if (anchor === 'p1') { ann.p1.x = x; ann.p1.y = y; }
@@ -248,7 +250,12 @@ function _rotateLine(follower, targetDx, targetDy, contact) {
   const curAngle = Math.atan2(curDir.dy, curDir.dx);
   // Target angle
   const targetAngle = Math.atan2(targetDy, targetDx);
-  const delta = targetAngle - curAngle;
+  let delta = targetAngle - curAngle;
+  // Normalize to [-π, π]
+  delta = Math.atan2(Math.sin(delta), Math.cos(delta));
+  // Lines are undirected (a→b ≡ b→a), so pick the smaller rotation
+  if (delta > Math.PI / 2) delta -= Math.PI;
+  if (delta < -Math.PI / 2) delta += Math.PI;
 
   const cosA = Math.cos(delta);
   const sinA = Math.sin(delta);
@@ -467,21 +474,45 @@ function _applyConstraint(constraint, driver, driverRef, follower, followerRef) 
     }
 
     case 'point-on-line': {
-      if (!isLineType(driver)) return;
-      const followerPt = getAnchorPoint(follower, followerRef.anchor);
-      if (!followerPt) return;
-      const driverDir = getLineDirection(driver);
-      projectPointOnLine(followerPt, driver.a, driverDir);
-      setAnchorPoint(follower, followerRef.anchor, followerPt.x, followerPt.y);
+      if (isLineType(driver)) {
+        // Line is driver → project point onto line
+        const followerPt = getAnchorPoint(follower, followerRef.anchor);
+        if (!followerPt) return;
+        const driverDir = getLineDirection(driver);
+        projectPointOnLine(followerPt, driver.a, driverDir);
+        setAnchorPoint(follower, followerRef.anchor, followerPt.x, followerPt.y);
+      } else if (isLineType(follower)) {
+        // Point is driver → translate line so it passes through point
+        const driverPt = getAnchorPoint(driver, driverRef.anchor);
+        if (!driverPt) return;
+        const dir = getLineDirection(follower);
+        const nx = -dir.dy, ny = dir.dx;
+        const signedDist = (driverPt.x - follower.a.x) * nx + (driverPt.y - follower.a.y) * ny;
+        follower.a.x += signedDist * nx; follower.a.y += signedDist * ny;
+        follower.b.x += signedDist * nx; follower.b.y += signedDist * ny;
+      }
       break;
     }
 
     case 'point-on-circle': {
-      if (!isCircleType(driver)) return;
-      const followerPt = getAnchorPoint(follower, followerRef.anchor);
-      if (!followerPt) return;
-      projectPointOnCircle(followerPt, driver);
-      setAnchorPoint(follower, followerRef.anchor, followerPt.x, followerPt.y);
+      if (isCircleType(driver)) {
+        // Circle is driver → project point onto circumference
+        const followerPt = getAnchorPoint(follower, followerRef.anchor);
+        if (!followerPt) return;
+        projectPointOnCircle(followerPt, driver);
+        setAnchorPoint(follower, followerRef.anchor, followerPt.x, followerPt.y);
+      } else if (isCircleType(follower)) {
+        // Point is driver → translate circle so circumference passes through point
+        const driverPt = getAnchorPoint(driver, driverRef.anchor);
+        if (!driverPt) return;
+        const dx = driverPt.x - follower.cx;
+        const dy = driverPt.y - follower.cy;
+        const dist = Math.hypot(dx, dy);
+        if (dist < 1e-10) return;
+        const shift = dist - follower.r;
+        follower.cx += (dx / dist) * shift;
+        follower.cy += (dy / dist) * shift;
+      }
       break;
     }
 
@@ -531,13 +562,23 @@ function _applyConstraint(constraint, driver, driverRef, follower, followerRef) 
     }
 
     case 'midpoint': {
-      // Expects 3 refs: [midpointAnn, lineAEndAnn, lineBEndAnn]
-      // For now handle with 2 refs where follower point goes to midpoint of driver endpoints
-      if (!isLineType(driver)) return;
-      const followerPt = getAnchorPoint(follower, followerRef.anchor);
-      if (!followerPt) return;
-      projectMidpoint(followerPt, driver.a, driver.b);
-      setAnchorPoint(follower, followerRef.anchor, followerPt.x, followerPt.y);
+      if (isLineType(driver)) {
+        // Line is driver → move point to midpoint of line
+        const followerPt = getAnchorPoint(follower, followerRef.anchor);
+        if (!followerPt) return;
+        projectMidpoint(followerPt, driver.a, driver.b);
+        setAnchorPoint(follower, followerRef.anchor, followerPt.x, followerPt.y);
+      } else if (isLineType(follower)) {
+        // Point is driver → translate line so its midpoint coincides with point
+        const driverPt = getAnchorPoint(driver, driverRef.anchor);
+        if (!driverPt) return;
+        const mx = (follower.a.x + follower.b.x) / 2;
+        const my = (follower.a.y + follower.b.y) / 2;
+        const dx = driverPt.x - mx;
+        const dy = driverPt.y - my;
+        follower.a.x += dx; follower.a.y += dy;
+        follower.b.x += dx; follower.b.y += dy;
+      }
       break;
     }
 

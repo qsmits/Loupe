@@ -5,6 +5,7 @@ import { constraintsForAnnotation, CONSTRAINT_ICONS, CONSTRAINT_LABELS } from '.
 import { measurementLabel } from './format.js';
 import { imageWidth, imageHeight, setImageSize, fitToWindow } from './viewport.js';
 import { renderGearResultsPanel } from './gear.js';
+import { loadReticleList, getReticleCategories, loadReticle, unloadReticle, setReticleRotation } from './reticle.js';
 
 const _mctx = () => ({
   calibration: state.calibration,
@@ -362,6 +363,7 @@ export function renderSidebar() {
 
   updateTemplateDisplay();
   renderGearResultsPanel();
+  updateReticlePanel();
 }
 
 // ── Template display ───────────────────────────────────────────────────────────
@@ -1241,4 +1243,67 @@ export function renderInspectionTable() {
     }
     showStatus(msg);
   }
+}
+
+// ── Reticle panel ─────────────────────────────────────────────────────────────
+
+export function updateReticlePanel() {
+  const panel = document.getElementById('reticle-panel');
+  const controls = document.getElementById('reticle-controls');
+  const angleEl = document.getElementById('reticle-angle');
+  if (!panel) return;
+
+  panel.hidden = false;
+
+  if (angleEl) {
+    angleEl.textContent = `${(state.reticleRotationDeg || 0).toFixed(1)}°`;
+  }
+  if (controls) {
+    controls.hidden = !state.activeReticle || !!state.activeReticle.crosshair;
+  }
+}
+
+export async function initReticlePanel() {
+  const select = document.getElementById('reticle-select');
+  if (!select) return;
+
+  const categories = await loadReticleList();
+
+  select.innerHTML = '<option value="">None</option>';
+  for (const [cat, items] of Object.entries(categories)) {
+    if (cat === 'crosshair') continue;
+    const group = document.createElement('optgroup');
+    group.label = cat.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+    for (const item of items) {
+      const opt = document.createElement('option');
+      opt.value = `${cat}/${item.file}`;
+      opt.textContent = item.name;
+      group.appendChild(opt);
+    }
+    select.appendChild(group);
+  }
+
+  select.addEventListener('change', async () => {
+    const val = select.value;
+    if (!val) {
+      unloadReticle();
+      return;
+    }
+    const [cat, file] = val.split('/');
+    await loadReticle(cat, file);
+  });
+
+  document.getElementById('reticle-reset-rotation')?.addEventListener('click', () => {
+    setReticleRotation(0);
+  });
+
+  document.getElementById('reticle-color')?.addEventListener('input', e => {
+    state.reticleColorOverride = e.target.value;
+    redraw();
+  });
+
+  document.getElementById('reticle-opacity')?.addEventListener('input', e => {
+    state.reticleOpacityOverride = parseFloat(e.target.value);
+    redraw();
+  });
 }

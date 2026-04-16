@@ -1,0 +1,11 @@
+{
+  "name": "Crosshair",
+  "description": "Simple center crosshair (dashed lines)",
+  "units": "mm",
+  "crosshair": true,
+  "elements": [
+    { "type": "line", "x1": -1000, "y1": 0, "x2": 1000, "y2": 0 },
+    { "type": "line", "x1": 0, "y1": -1000, "x2": 0, "y2": 1000 }
+  ],
+  "style": { "color": "#ffffff", "lineWidth": 1, "opacity": 0.4 }
+}

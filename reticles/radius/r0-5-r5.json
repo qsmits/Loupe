@@ -1,0 +1,154 @@
+{
+  "name": "R0.5 \u2013 R5",
+  "description": "Radius chart: R0.5, R1, R1.5, R2, R2.5, R3, R4, R5",
+  "units": "mm",
+  "elements": [
+    {
+      "type": "line",
+      "x1": -5.5,
+      "y1": 0,
+      "x2": 0.5,
+      "y2": 0,
+      "style": {
+        "color": "#ff0000",
+        "lineWidth": 1
+      }
+    },
+    {
+      "type": "line",
+      "x1": 0,
+      "y1": -0.5,
+      "x2": 0,
+      "y2": 5.5,
+      "style": {
+        "color": "#ff0000",
+        "lineWidth": 1
+      }
+    },
+    {
+      "type": "arc",
+      "cx": 0,
+      "cy": 0,
+      "r": 0.5,
+      "startDeg": 90,
+      "endDeg": 180
+    },
+    {
+      "type": "text",
+      "x": -0.76,
+      "y": 0.66,
+      "value": "R0.5",
+      "sizeMm": 0.25
+    },
+    {
+      "type": "arc",
+      "cx": 0,
+      "cy": 0,
+      "r": 1,
+      "startDeg": 90,
+      "endDeg": 180
+    },
+    {
+      "type": "text",
+      "x": -1.11,
+      "y": 1.01,
+      "value": "R1",
+      "sizeMm": 0.25
+    },
+    {
+      "type": "arc",
+      "cx": 0,
+      "cy": 0,
+      "r": 1.5,
+      "startDeg": 90,
+      "endDeg": 180
+    },
+    {
+      "type": "text",
+      "x": -1.46,
+      "y": 1.36,
+      "value": "R1.5",
+      "sizeMm": 0.25
+    },
+    {
+      "type": "arc",
+      "cx": 0,
+      "cy": 0,
+      "r": 2,
+      "startDeg": 90,
+      "endDeg": 180
+    },
+    {
+      "type": "text",
+      "x": -1.82,
+      "y": 1.72,
+      "value": "R2",
+      "sizeMm": 0.25
+    },
+    {
+      "type": "arc",
+      "cx": 0,
+      "cy": 0,
+      "r": 2.5,
+      "startDeg": 90,
+      "endDeg": 180
+    },
+    {
+      "type": "text",
+      "x": -2.17,
+      "y": 2.07,
+      "value": "R2.5",
+      "sizeMm": 0.25
+    },
+    {
+      "type": "arc",
+      "cx": 0,
+      "cy": 0,
+      "r": 3,
+      "startDeg": 90,
+      "endDeg": 180
+    },
+    {
+      "type": "text",
+      "x": -2.53,
+      "y": 2.43,
+      "value": "R3",
+      "sizeMm": 0.25
+    },
+    {
+      "type": "arc",
+      "cx": 0,
+      "cy": 0,
+      "r": 4,
+      "startDeg": 90,
+      "endDeg": 180
+    },
+    {
+      "type": "text",
+      "x": -3.24,
+      "y": 3.14,
+      "value": "R4",
+      "sizeMm": 0.25
+    },
+    {
+      "type": "arc",
+      "cx": 0,
+      "cy": 0,
+      "r": 5,
+      "startDeg": 90,
+      "endDeg": 180
+    },
+    {
+      "type": "text",
+      "x": -3.95,
+      "y": 3.85,
+      "value": "R5",
+      "sizeMm": 0.25
+    }
+  ],
+  "style": {
+    "color": "#00ff00",
+    "lineWidth": 1,
+    "opacity": 0.7
+  }
+}

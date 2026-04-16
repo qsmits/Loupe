@@ -2,6 +2,7 @@
 import { state, pushUndo } from './state.js';
 import { redraw } from './render.js';
 import { renderSidebar } from './sidebar.js';
+import { solveConstraints } from './constraint-solver.js';
 
 // ── Helpers: classify annotations ────────────────────────────────────────────
 const LINE_TYPES = new Set(['distance', 'perp-dist', 'para-dist', 'parallelism', 'slot-dist', 'fit-line']);
@@ -89,10 +90,10 @@ function computeContactPoint(ann0, anchor0, ann1, anchor1) {
 }
 
 function _getPoint(ann, anchor) {
+  if (ann.type === POINT_TYPE) return { x: ann.x, y: ann.y };
   if (anchor === 'a' && ann.a) return ann.a;
   if (anchor === 'b' && ann.b) return ann.b;
   if (anchor === 'center') return { x: ann.cx, y: ann.cy };
-  if (ann.type === POINT_TYPE) return { x: ann.x, y: ann.y };
   return null;
 }
 
@@ -146,6 +147,10 @@ export function addConstraint(type, ann0Id, ann1Id, options = {}) {
     constraint.angleDeg = options.angleDeg ?? 0;
   }
   state.constraints.push(constraint);
+  // Enforce immediately — ann1 is the follower (adjusts to satisfy constraint)
+  solveConstraints(state.annotations, state.constraints, ann0Id);
+  // Update contact point after solver moved things
+  constraint.contactPoint = computeContactPoint(ann0, anchor0, ann1, anchor1);
   renderSidebar();
   redraw();
   return constraint;
