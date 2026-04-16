@@ -1,6 +1,7 @@
 import { apiFetch } from './api.js';
 import { state, DETECTION_TYPES, camBounds } from './state.js';
 import { redraw, resizeCanvas, showStatus, getStatus, canvas, listEl } from './render.js';
+import { constraintsForAnnotation, CONSTRAINT_ICONS, CONSTRAINT_LABELS } from './constraints.js';
 import { measurementLabel } from './format.js';
 import { imageWidth, imageHeight, setImageSize, fitToWindow } from './viewport.js';
 import { renderGearResultsPanel } from './gear.js';
@@ -89,6 +90,40 @@ function _createMeasurementRow(ann, number) {
   delBtn.dataset.id = ann.id;
   delBtn.textContent = "✕";
   row.append(numSpan, nameInput, valSpan, visBtn, delBtn);
+  // Constraint chips
+  const annConstraints = constraintsForAnnotation(ann.id);
+  if (annConstraints.length > 0) {
+    const chipContainer = document.createElement("span");
+    chipContainer.className = "constraint-chips";
+    for (const c of annConstraints) {
+      const chip = document.createElement("span");
+      chip.className = "constraint-chip";
+      if (c.status === 'conflict') chip.classList.add('conflict');
+      if (!c.enabled) chip.classList.add('disabled');
+      const icon = CONSTRAINT_ICONS[c.type] || '?';
+      const otherRef = c.refs.find(r => r.annId !== ann.id) || c.refs[1];
+      const otherAnn = state.annotations.find(a => a.id === otherRef.annId);
+      const otherName = otherAnn ? (otherAnn.name || '#' + otherAnn.id) : '?';
+      chip.textContent = `${icon}→${otherName}`;
+      chip.title = `${CONSTRAINT_LABELS[c.type] || c.type} → ${otherName}`;
+      chip.addEventListener("click", (e) => {
+        e.stopPropagation();
+        state.selected = new Set([ann.id, otherRef.annId]);
+        renderSidebar();
+        redraw();
+      });
+      chip.addEventListener("mouseenter", () => {
+        state._hoveredConstraintId = c.id;
+        redraw();
+      });
+      chip.addEventListener("mouseleave", () => {
+        state._hoveredConstraintId = null;
+        redraw();
+      });
+      chipContainer.appendChild(chip);
+    }
+    row.appendChild(chipContainer);
+  }
   nameInput.value = ann.name || "";
   nameInput.addEventListener("input", e => { ann.name = e.target.value; });
   nameInput.addEventListener("click", e => { e.stopPropagation(); });
@@ -193,6 +228,12 @@ export function renderSidebar() {
       i++;
       const row = _createMeasurementRow(ann, number);
       row.classList.add("meas-group-member");
+      if (ann.purpose === 'drawing' || ann.purpose === 'helper') {
+        const suffix = document.createElement("span");
+        suffix.className = "purpose-suffix";
+        suffix.textContent = ` (${ann.purpose})`;
+        row.appendChild(suffix);
+      }
       listEl.appendChild(row);
     }
     // Group end divider

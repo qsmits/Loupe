@@ -2683,3 +2683,37 @@ body.no-camera .camera-section { display: none; }
   z-index: 10001;
   box-shadow: 0 4px 12px rgba(0,0,0,0.5);
 }
+
+/* Constraint chips in sidebar */
+.constraint-chips {
+  display: inline-flex;
+  gap: 3px;
+  margin-left: 4px;
+  flex-shrink: 0;
+}
+.constraint-chip {
+  font-size: 10px;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: rgba(255,255,255,0.1);
+  color: #9ca3af;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.constraint-chip:hover {
+  background: rgba(251, 191, 36, 0.3);
+  color: #fbbf24;
+}
+.constraint-chip.conflict {
+  background: rgba(239, 68, 68, 0.3);
+  color: #fca5a5;
+}
+.constraint-chip.disabled {
+  opacity: 0.5;
+  text-decoration: line-through;
+}
+.purpose-suffix {
+  color: #6b7280;
+  font-size: 11px;
+  margin-left: 4px;
+}
