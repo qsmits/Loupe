@@ -88,8 +88,8 @@ export function setTool(name) {
 }
 
 const _MEASURE_TOOLS = new Set([
-  "distance","angle","circle","arc-fit","arc-measure","center-dist",
-  "para-dist","perp-dist","area","area-shape","pt-circle-dist","intersect","slot-dist","spline","fit-line","point",
+  "distance","angle","circle","arc-fit","arc-measure",
+  "area","area-shape","spline","fit-line","point",
 ]);
 
 // ── Top-level measure-tool groups (6-entry consolidated menu) ────────────────
@@ -100,11 +100,6 @@ export const MEASURE_TOP_LEVEL = {
     label: "Distance",
     subModes: [
       { id: "direct",       label: "Direct",        tool: "distance" },
-      { id: "parallel",     label: "Parallel",      tool: "para-dist" },
-      { id: "perpendicular",label: "Perpendicular", tool: "perp-dist" },
-      { id: "slot",         label: "Slot",          tool: "slot-dist" },
-      { id: "pt-circle",    label: "Pt-Circle",     tool: "pt-circle-dist" },
-      { id: "center-center",label: "Center-Center", tool: "center-dist" },
     ],
   },
   angle: {
@@ -134,12 +129,6 @@ export const MEASURE_TOP_LEVEL = {
       { id: "shape",   label: "From shape", tool: "area-shape" },
     ],
   },
-  intersect: {
-    label: "Intersect",
-    subModes: [
-      { id: "intersect", label: "Intersect", tool: "intersect" },
-    ],
-  },
   misc: {
     label: "Misc",
     subModes: [
@@ -159,11 +148,6 @@ export const MEASURE_TOP_LEVEL = {
 // For tools shared across groups we pick the canonical parent.
 const _TOOL_TO_TOP_LEVEL = {
   "distance":       "distance",
-  "para-dist":      "distance",
-  "perp-dist":      "distance",
-  "slot-dist":      "distance",
-  "pt-circle-dist": "distance",
-  "center-dist":    "distance",
   "angle":          "angle",
   "circle":         "circle",
   "arc-fit":        "circle",
@@ -172,7 +156,6 @@ const _TOOL_TO_TOP_LEVEL = {
   "area":           "area",
   "area-shape":     "area",
   "spline":         "misc",
-  "intersect":      "intersect",
   "point":          "point",
 };
 
@@ -182,10 +165,8 @@ export function topLevelOfTool(tool) {
 
 const _TOOL_LABELS = {
   "distance":"Distance","angle":"Angle","circle":"Circle / Arc","arc-fit":"Circle / Arc",
-  "arc-measure":"Circle / Arc","center-dist":"Distance","para-dist":"Distance",
-  "perp-dist":"Distance","area":"Area","pt-circle-dist":"Distance",
-  "intersect":"Intersect","slot-dist":"Distance","spline":"Misc",
-  "fit-line":"Misc",
+  "arc-measure":"Circle / Arc","area":"Area",
+  "spline":"Misc","fit-line":"Misc",
   "calibrate":"Calibrate",
   "point":"Point",
 };
@@ -549,142 +530,6 @@ export async function handleToolClick(rawPt, e = {}) {
     return;
   }
 
-  if (tool === "perp-dist") {
-    if (!state.pendingRefLine) {
-      // Step 1: pick reference line
-      const refAnn = findSnapLine(pt);
-      if (!refAnn) return; // no line nearby — ignore click
-      state.pendingRefLine = refAnn;
-      showStatus("Perp — click start point");
-      redraw();
-      return;
-    }
-    if (state.pendingPoints.length === 0) {
-      // Step 2: place start point
-      state.pendingPoints = [pt];
-      showStatus("Perp — click end point");
-      redraw();
-      return;
-    }
-    // Step 3: place end point (constrained perpendicular)
-    const a = state.pendingPoints[0];
-    const b = projectConstrained(pt, a, state.pendingRefLine, true);
-    addAnnotation({ type: "perp-dist", a, b });
-    setTool("select");
-    return;
-  }
-
-  if (tool === "para-dist") {
-    if (!state.pendingRefLine) {
-      // Step 1: pick reference line
-      const refAnn = findSnapLine(pt);
-      if (!refAnn) return; // no line nearby — ignore
-      state.pendingRefLine = refAnn;
-      showStatus("Para — click a line to measure parallelism, or a free point to draw a parallel line");
-      redraw();
-      return;
-    }
-    // Step 2: check if click is on a different line (Mode A — parallelism measurement)
-    const clickedLine = findSnapLine(pt);
-    if (clickedLine && clickedLine.id !== state.pendingRefLine.id) {
-      const epRef = getLineEndpoints(state.pendingRefLine);
-      const epOther = getLineEndpoints(clickedLine);
-      let diff = Math.abs(lineAngleDeg(state.pendingRefLine) - lineAngleDeg(clickedLine)) % 180;
-      if (diff > 90) diff = 180 - diff;
-      const a = { x: (epRef.a.x + epRef.b.x) / 2, y: (epRef.a.y + epRef.b.y) / 2 };
-      const b = { x: (epOther.a.x + epOther.b.x) / 2, y: (epOther.a.y + epOther.b.y) / 2 };
-      addAnnotation({ type: "parallelism", a, b, angleDeg: diff });
-      setTool("select");
-      return;
-    }
-    // Mode B — parallel constraint: free point clicked
-    if (state.pendingPoints.length === 0) {
-      state.pendingPoints = [pt];
-      showStatus("Para — click end point");
-      redraw();
-      return;
-    }
-    // Mode B step 2: constrained endpoint
-    const a = state.pendingPoints[0];
-    const b = projectConstrained(pt, a, state.pendingRefLine, false);
-    addAnnotation({ type: "para-dist", a, b });
-    setTool("select");
-    return;
-  }
-
-  if (tool === "center-dist") {
-    const circle = snapToCircle(pt);
-    if (!circle) return; // no circle nearby — ignore click
-    if (state.pendingCenterCircle === null) {
-      // First pick: highlight this circle
-      state.pendingCenterCircle = circle;
-      showStatus("Click a second circle");
-      redraw();
-    } else {
-      // Second pick: create the annotation
-      const a = (() => {
-        if (state.pendingCenterCircle.type === "circle") {
-          return { x: state.pendingCenterCircle.cx, y: state.pendingCenterCircle.cy };
-        }
-        const sx = canvas.width / state.pendingCenterCircle.frameWidth;
-        const sy = canvas.height / state.pendingCenterCircle.frameHeight;
-        return { x: state.pendingCenterCircle.x * sx, y: state.pendingCenterCircle.y * sy };
-      })();
-      const b = (() => {
-        if (circle.type === "circle") {
-          return { x: circle.cx, y: circle.cy };
-        }
-        const sx = canvas.width / circle.frameWidth;
-        const sy = canvas.height / circle.frameHeight;
-        return { x: circle.x * sx, y: circle.y * sy };
-      })();
-      const circleA = state.pendingCenterCircle;
-      state.pendingCenterCircle = null;
-      addAnnotation({
-        type: "center-dist", a, b,
-        circleAId: circleA.id ?? null,
-        circleBId: circle.id ?? null,
-      });
-      setTool("select");
-    }
-    return;
-  }
-  if (tool === "pt-circle-dist") {
-    if (!state.pendingCircleRef) {
-      const circle = snapToCircle(pt);
-      if (!circle) {
-        showStatus("Click a circle first");
-        return;
-      }
-      state.pendingCircleRef = { circleId: circle.id };
-      showStatus("Now click a point to measure from");
-      redraw();
-      return;
-    }
-    const { circleId } = state.pendingCircleRef;
-    state.pendingCircleRef = null;
-    addAnnotation({ type: "pt-circle-dist", circleId, px: pt.x, py: pt.y });
-    setTool("select");
-    return;
-  }
-  if (tool === "intersect") {
-    const snapped = findSnapLine(pt);
-    if (!state.pendingRefLine) {
-      if (!snapped) return;
-      state.pendingRefLine = snapped;
-      showStatus("Now click a second line");
-      redraw();
-      return;
-    }
-    if (!snapped) return;
-    if (snapped.id === state.pendingRefLine.id) return;
-    const lineAId = state.pendingRefLine.id;
-    const lineBId = snapped.id;
-    state.pendingRefLine = null;
-    addAnnotation({ type: "intersect", lineAId, lineBId });
-    setTool("select");
-    return;
-  }
   if (tool === "point") {
     addAnnotation({
       type: "point",
@@ -698,24 +543,6 @@ export async function handleToolClick(rawPt, e = {}) {
   if (tool === "comment") {
     // Open inline editor at click location; on commit, create annotation.
     openCommentEditor(pt, null);
-    return;
-  }
-  if (tool === "slot-dist") {
-    const snapped = findSnapLine(pt);
-    if (!state.pendingRefLine) {
-      if (!snapped) return;
-      state.pendingRefLine = snapped;
-      showStatus("Now click a second line");
-      redraw();
-      return;
-    }
-    if (!snapped) return;
-    if (snapped.id === state.pendingRefLine.id) return;
-    const lineAId = state.pendingRefLine.id;
-    const lineBId = snapped.id;
-    state.pendingRefLine = null;
-    addAnnotation({ type: "slot-dist", lineAId, lineBId });
-    setTool("select");
     return;
   }
 }

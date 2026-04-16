@@ -227,7 +227,6 @@ export function initKeyboard(closeAllDropdowns) {
                        o: "circle",     // Circle/Arc group (default: 3-point)
                        l: "fit-line",   // Flatness group
                        r: "area",       // Area group (default: Polygon)
-                       i: "intersect",  // Intersect
                        t: "comment",    // Note / comment annotation
                        p: "point",      // Reference point annotation
                      };
