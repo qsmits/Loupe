@@ -59,6 +59,7 @@ function buildWorkspace() {
           <span class="defl-badge" id="defl-badge-cal">Calibration: \u2014</span>
           <span class="defl-badge" id="defl-badge-display-cal">Display: \u2014</span>
         </div>
+        <div id="defl-display-check-result" style="font-size:11px;margin-top:4px" hidden></div>
         <div class="defl-setting-group" style="margin-top:6px;padding-top:8px;border-top:1px solid var(--border)">
           <div style="font-size:12px;font-weight:600;opacity:0.7">Setup</div>
           <div style="display:flex;align-items:center;gap:6px">
@@ -71,6 +72,9 @@ function buildWorkspace() {
           </div>
           <div style="display:flex;align-items:center;gap:6px">
             <button class="detect-btn" id="defl-btn-display-cal" style="padding:4px 8px;font-size:11px">Calibrate Display</button>
+          </div>
+          <div style="display:flex;align-items:center;gap:6px">
+            <button class="detect-btn" id="defl-btn-check-display" style="padding:4px 8px;font-size:11px">Check Display</button>
           </div>
         </div>
         <div class="defl-setting-group" style="margin-top:6px;padding-top:8px;border-top:1px solid var(--border)">
@@ -390,6 +394,7 @@ function wireEvents() {
   $("defl-btn-flat")?.addEventListener("click", flatField);
   $("defl-btn-ref")?.addEventListener("click", captureReference);
   $("defl-btn-display-cal")?.addEventListener("click", calibrateDisplay);
+  $("defl-btn-check-display")?.addEventListener("click", checkDisplay);
   $("defl-btn-capture")?.addEventListener("click", captureSequence);
   $("defl-btn-compute")?.addEventListener("click", compute);
   $("defl-btn-calibrate")?.addEventListener("click", calibrateSphere);
@@ -499,6 +504,42 @@ async function calibrateDisplay() {
     console.warn("Display calibration error:", e);
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = "Calibrate Display"; }
+  }
+}
+
+async function checkDisplay() {
+  const btn = $("defl-btn-check-display");
+  if (btn) { btn.disabled = true; btn.textContent = "Checking\u2026"; }
+  const resultEl = $("defl-display-check-result");
+  try {
+    const r = await apiFetch("/deflectometry/check-display", { method: "POST" });
+    if (!r.ok) {
+      const err = await r.json().catch(() => ({}));
+      console.warn("Display check failed:", err.detail || r.status);
+      if (resultEl) {
+        resultEl.hidden = false;
+        resultEl.style.color = "var(--danger)";
+        resultEl.textContent = err.detail || "Check failed";
+      }
+      return;
+    }
+    const data = await r.json();
+    if (resultEl) {
+      resultEl.hidden = false;
+      const colors = { good: "var(--success)", fair: "var(--warning)", poor: "var(--danger)" };
+      const icons = { good: "\u2713", fair: "\u26a0", poor: "\u2717" };
+      resultEl.style.color = colors[data.status] || "var(--text-secondary)";
+      if (data.status === "good") {
+        resultEl.textContent = `${icons.good} Display OK \u2014 ${data.corners_found}/4 corners, ${(data.coverage_fraction * 100).toFixed(0)}% coverage`;
+      } else {
+        const warning = data.warnings.length > 0 ? data.warnings[0] : `${data.corners_found}/4 corners found`;
+        resultEl.textContent = `${icons[data.status]} ${warning}`;
+      }
+    }
+  } catch (e) {
+    console.warn("Display check error:", e);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = "Check Display"; }
   }
 }
 
