@@ -183,11 +183,13 @@ export async function enterMaskEditSession() {
     });
   } catch (e) {
     console.warn('[cross-mode] Image load failed:', e);
+    const errorSource = cm.source || 'fringe';
     restoreMicroscopeState();
     clearCrossMode();
+    const errorTarget = errorSource === 'deflectometry' ? 'deflectometry' : 'fringe';
     const switcher = document.getElementById('mode-switcher');
-    if (switcher) { switcher.hidden = false; switcher.value = 'fringe'; }
-    switchMode('fringe');
+    if (switcher) { switcher.hidden = false; switcher.value = errorTarget; }
+    switchMode(errorTarget);
     return;
   }
 
@@ -220,9 +222,11 @@ export async function enterMaskEditSession() {
   if (switcher) switcher.hidden = true;
 
   // 7. Show action bar
+  const maskLabel = cm.source === 'deflectometry' ? 'Defining deflectometry mask' : 'Defining fringe mask';
   showActionBar(
     () => applyMask(),
     () => cancelMask(),
+    { label: maskLabel },
   );
 
   // 8. Update canvas — fit image to viewport
@@ -304,14 +308,16 @@ function cancelLensCal() {
 }
 
 function _exitMaskEditSession() {
+  const source = window.crossMode?.source || 'fringe';
   hideActionBar();
   restoreMicroscopeState();
   clearCrossMode();
 
+  const targetMode = source === 'deflectometry' ? 'deflectometry' : 'fringe';
   const switcher = document.getElementById('mode-switcher');
-  if (switcher) { switcher.hidden = false; switcher.value = 'fringe'; }
+  if (switcher) { switcher.hidden = false; switcher.value = targetMode; }
 
-  switchMode('fringe');
+  switchMode(targetMode);
 }
 
 function cancelMask() {

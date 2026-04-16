@@ -8,6 +8,8 @@
 
 import { apiFetch } from './api.js';
 import { state } from './state.js';
+import { initCrossMode } from './cross-mode.js';
+import { switchMode } from './modes.js';
 
 const df = {
   polling: null,
@@ -51,7 +53,10 @@ function buildWorkspace() {
     <div class="defl-workspace">
       <!-- Left: preview + settings -->
       <div class="defl-preview-col">
-        <img id="defl-preview" alt="Camera preview" />
+        <div style="position:relative">
+          <img id="defl-preview" alt="Camera preview" />
+          <canvas id="defl-mask-canvas" style="position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none"></canvas>
+        </div>
         <div class="defl-badge-row">
           <span class="defl-badge" id="defl-badge-ipad">iPad: \u2014</span>
           <span class="defl-badge" id="defl-badge-flat">Flat field: \u2014</span>
@@ -75,6 +80,10 @@ function buildWorkspace() {
           </div>
           <div style="display:flex;align-items:center;gap:6px">
             <button class="detect-btn" id="defl-btn-check-display" style="padding:4px 8px;font-size:11px">Check Display</button>
+          </div>
+          <div style="display:flex;gap:4px;margin-top:6px">
+            <button class="detect-btn" id="defl-btn-edit-mask" style="padding:4px 8px;font-size:11px">Edit Mask</button>
+            <button class="detect-btn" id="defl-btn-clear-mask" style="padding:4px 8px;font-size:11px;opacity:0.6" disabled>Clear Mask</button>
           </div>
         </div>
         <div class="defl-setting-group" style="margin-top:6px;padding-top:8px;border-top:1px solid var(--border)">
@@ -341,6 +350,86 @@ async function deleteSelectedProfile() {
   }
 }
 
+function drawDeflMaskOverlay() {
+  const canvas = document.getElementById("defl-mask-canvas");
+  const preview = document.getElementById("defl-preview");
+  if (!canvas || !preview) return;
+  const w = preview.naturalWidth || preview.width || canvas.width;
+  const h = preview.naturalHeight || preview.height || canvas.height;
+  canvas.width = canvas.clientWidth;
+  canvas.height = canvas.clientHeight;
+  const ctx = canvas.getContext("2d");
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  if (!df.maskPolygons || df.maskPolygons.length === 0) return;
+
+  const sx = canvas.width / w;
+  const sy = canvas.height / h;
+  const scale = Math.min(sx, sy);
+  const ox = (canvas.width - w * scale) / 2;
+  const oy = (canvas.height - h * scale) / 2;
+
+  for (const poly of df.maskPolygons) {
+    const color = poly.include ? "#0a84ff" : "#ff453a";
+    const fill = poly.include ? "rgba(10,132,255,0.15)" : "rgba(255,69,58,0.15)";
+    ctx.beginPath();
+    const v0 = poly.vertices[0];
+    ctx.moveTo(ox + v0.x * w * scale, oy + v0.y * h * scale);
+    for (let i = 1; i < poly.vertices.length; i++) {
+      const v = poly.vertices[i];
+      ctx.lineTo(ox + v.x * w * scale, oy + v.y * h * scale);
+    }
+    ctx.closePath();
+    ctx.fillStyle = fill;
+    ctx.fill();
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+  }
+}
+
+async function editMask() {
+  const btn = document.getElementById("defl-btn-edit-mask");
+  if (btn) { btn.disabled = true; btn.textContent = "Capturing..."; }
+  try {
+    await apiFetch("/freeze", { method: "POST" });
+    const resp = await apiFetch("/frame");
+    if (!resp.ok) throw new Error("Frame fetch failed");
+    const blob = await resp.blob();
+
+    initCrossMode({
+      imageBlob: blob,
+      existingMask: df.maskPolygons.length > 0
+        ? JSON.parse(JSON.stringify(df.maskPolygons))
+        : [],
+      callback: (polygons) => {
+        df.maskPolygons = polygons;
+        drawDeflMaskOverlay();
+        const clearBtn = document.getElementById("defl-btn-clear-mask");
+        if (clearBtn) {
+          clearBtn.disabled = polygons.length === 0;
+          clearBtn.style.opacity = polygons.length === 0 ? "0.6" : "1";
+        }
+      },
+    });
+    window.crossMode.source = 'deflectometry';
+
+    switchMode("microscope");
+    const sel = document.getElementById("mode-switcher");
+    if (sel) sel.value = "microscope";
+  } catch (e) {
+    console.warn("[deflectometry] Edit Mask failed:", e);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = "Edit Mask"; }
+  }
+}
+
+function clearMask() {
+  df.maskPolygons = [];
+  drawDeflMaskOverlay();
+  const clearBtn = document.getElementById("defl-btn-clear-mask");
+  if (clearBtn) { clearBtn.disabled = true; clearBtn.style.opacity = "0.6"; }
+}
+
 function wireEvents() {
   // Tab switching
   document.querySelectorAll(".defl-tab").forEach(tab => {
@@ -395,6 +484,8 @@ function wireEvents() {
   $("defl-btn-ref")?.addEventListener("click", captureReference);
   $("defl-btn-display-cal")?.addEventListener("click", calibrateDisplay);
   $("defl-btn-check-display")?.addEventListener("click", checkDisplay);
+  $("defl-btn-edit-mask")?.addEventListener("click", editMask);
+  $("defl-btn-clear-mask")?.addEventListener("click", clearMask);
   $("defl-btn-capture")?.addEventListener("click", captureSequence);
   $("defl-btn-compute")?.addEventListener("click", compute);
   $("defl-btn-calibrate")?.addEventListener("click", calibrateSphere);
@@ -598,10 +689,17 @@ async function compute() {
   const statusEl = $("defl-status-compute");
   if (statusEl) statusEl.textContent = "Computing\u2026";
   try {
+    const payload = { mask_threshold: getMaskThreshold(), smooth_sigma: getSmoothSigma() };
+    if (df.maskPolygons.length > 0) {
+      payload.mask_polygons = df.maskPolygons.map(p => ({
+        vertices: p.vertices.map(v => [v.x, v.y]),
+        include: p.include,
+      }));
+    }
     const r = await apiFetch("/deflectometry/compute", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ mask_threshold: getMaskThreshold(), smooth_sigma: getSmoothSigma() }),
+      body: JSON.stringify(payload),
     });
     if (!r.ok) {
       const msg = await r.text();
@@ -837,10 +935,17 @@ async function load3dSurface() {
   const content = $("defl-3d-content");
   if (empty) empty.textContent = "Loading 3D surface\u2026";
   try {
+    const payload = { mask_threshold: getMaskThreshold(), smooth_sigma: getSmoothSigma() };
+    if (df.maskPolygons.length > 0) {
+      payload.mask_polygons = df.maskPolygons.map(p => ({
+        vertices: p.vertices.map(v => [v.x, v.y]),
+        include: p.include,
+      }));
+    }
     const r = await apiFetch("/deflectometry/heightmap", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ mask_threshold: getMaskThreshold(), smooth_sigma: getSmoothSigma() }),
+      body: JSON.stringify(payload),
     });
     if (!r.ok) {
       if (empty) empty.textContent = "Failed to load heightmap.";
@@ -965,10 +1070,17 @@ async function runDiagnostics() {
   const content = $("defl-diag-content");
   if (empty) empty.textContent = "Running diagnostics\u2026";
   try {
+    const payload = { smooth_sigma: getSmoothSigma() };
+    if (df.maskPolygons.length > 0) {
+      payload.mask_polygons = df.maskPolygons.map(p => ({
+        vertices: p.vertices.map(v => [v.x, v.y]),
+        include: p.include,
+      }));
+    }
     const r = await apiFetch("/deflectometry/diagnostics", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ smooth_sigma: getSmoothSigma() }),
+      body: JSON.stringify(payload),
     });
     if (!r.ok) {
       const msg = await r.text();
