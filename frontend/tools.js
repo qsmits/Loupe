@@ -88,7 +88,7 @@ export function setTool(name) {
 
 const _MEASURE_TOOLS = new Set([
   "distance","angle","circle","arc-fit","arc-measure","center-dist",
-  "para-dist","perp-dist","area","area-shape","pt-circle-dist","intersect","slot-dist","spline","fit-line",
+  "para-dist","perp-dist","area","area-shape","pt-circle-dist","intersect","slot-dist","spline","fit-line","point",
 ]);
 
 // ── Top-level measure-tool groups (6-entry consolidated menu) ────────────────
@@ -146,6 +146,12 @@ export const MEASURE_TOP_LEVEL = {
       { id: "spline",   label: "Spline",   tool: "spline" },
     ],
   },
+  point: {
+    label: "Point",
+    subModes: [
+      { id: "point", label: "Point", tool: "point" },
+    ],
+  },
 };
 
 // Reverse lookup: underlying tool string → top-level key.
@@ -166,6 +172,7 @@ const _TOOL_TO_TOP_LEVEL = {
   "area-shape":     "area",
   "spline":         "misc",
   "intersect":      "intersect",
+  "point":          "point",
 };
 
 export function topLevelOfTool(tool) {
@@ -179,6 +186,7 @@ const _TOOL_LABELS = {
   "intersect":"Intersect","slot-dist":"Distance","spline":"Misc",
   "fit-line":"Misc",
   "calibrate":"Calibrate",
+  "point":"Point",
 };
 
 function _updateStripGroups(name) {
@@ -249,6 +257,8 @@ export function snapPoint(rawPt, bypass = false) {
       targets.push({ x: ann.x, y: ann.y });
     } else if (ann.type === "area") {
       (ann.points || []).forEach(p => targets.push(p));
+    } else if (ann.type === "point") {
+      targets.push({ x: ann.x, y: ann.y });
     }
   });
   for (const t of targets) {
@@ -674,6 +684,16 @@ export async function handleToolClick(rawPt, e = {}) {
     setTool("select");
     return;
   }
+  if (tool === "point") {
+    addAnnotation({
+      type: "point",
+      x: pt.x,
+      y: pt.y,
+      purpose: "drawing",
+    });
+    showStatus("Reference point placed");
+    return;
+  }
   if (tool === "comment") {
     // Open inline editor at click location; on commit, create annotation.
     openCommentEditor(pt, null);
@@ -804,6 +824,7 @@ export function getHandles(ann) {
     (ann.points || []).forEach((p, i) => { handles[`v${i}`] = p; });
     return handles;
   }
+  if (ann.type === "point") return { pin: { x: ann.x, y: ann.y } };
   if (ann.type === "comment") return { pin: { x: ann.x, y: ann.y } };
   if (ann.type === "pt-circle-dist") return { pt: { x: ann.px, y: ann.py } };
   if (ann.type === "intersect") return {};
@@ -989,6 +1010,9 @@ export function handleDrag(pt) {
   }
   else if (ann.type === "pt-circle-dist") {
     ann.px += dx; ann.py += dy;
+  }
+  else if (ann.type === "point") {
+    ann.x += dx; ann.y += dy;
   }
   else if (ann.type === "comment") {
     // Body drag (and pin handle drag) translate the pin; labelOffset is
@@ -1228,6 +1252,8 @@ function _nudgeAnn(ann, dx, dy) {
     ann.cx += dx; ann.cy += dy;
   } else if (ann.type === 'pt-circle-dist') {
     ann.px += dx; ann.py += dy;
+  } else if (ann.type === 'point') {
+    ann.x += dx; ann.y += dy;
   } else if (ann.type === 'comment') {
     ann.x += dx; ann.y += dy;
   }

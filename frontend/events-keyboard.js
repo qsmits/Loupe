@@ -229,6 +229,7 @@ export function initKeyboard(closeAllDropdowns) {
                        r: "area",       // Area group (default: Polygon)
                        i: "intersect",  // Intersect
                        t: "comment",    // Note / comment annotation
+                       p: "point",      // Reference point annotation
                      };
     const toolName = toolKeys[e.key.toLowerCase()];
     if (toolName) {

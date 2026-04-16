@@ -133,6 +133,7 @@ export const TOOL_STATUS = {
   "spline":         "Area · Spline — place anchor points (double-click or Enter to finish)",
   "fit-line":       "Flatness — place points on a line (double-click or Enter to confirm)",
   "comment":        "Click — place a note on the canvas",
+  "point":          "Point — click to place a reference point",
 };
 
 // ── TRANSIENT_TYPES (moved from line 3062) ───────────────────────────────────

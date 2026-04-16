@@ -570,6 +570,24 @@ export function drawComment(ann, sel) {
  * @param {Function} redrawFn - Reference to the top-level redraw() for flash animation callbacks.
  * @param {Object} dxfFns - DXF draw functions: { drawDxfOverlay, drawDeviations, drawGuidedResults, drawEdgesOverlay, drawPreprocessedOverlay }
  */
+function drawPoint(ann, sel) {
+  const color = _annColor(ann, sel, "#f472b6");
+  const arm = pw(6);
+  ctx.save();
+  ctx.strokeStyle = color;
+  ctx.lineWidth = pw(1.5);
+  ctx.beginPath();
+  ctx.moveTo(ann.x - arm, ann.y);
+  ctx.lineTo(ann.x + arm, ann.y);
+  ctx.moveTo(ann.x, ann.y - arm);
+  ctx.lineTo(ann.x, ann.y + arm);
+  ctx.stroke();
+  if (sel) {
+    drawHandle({ x: ann.x, y: ann.y }, "#60a5fa");
+  }
+  ctx.restore();
+}
+
 export function drawAnnotations(redrawFn, dxfFns) {
   _labelHitBoxes.length = 0;
   const flashActive = Date.now() < state._flashExpiry;
@@ -645,6 +663,7 @@ export function drawAnnotations(redrawFn, dxfFns) {
     else if (ann.type === "spline")         drawSpline(ann, sel);
     else if (ann.type === "fit-line")       drawFitLine(ann, sel);
     else if (ann.type === "comment")        drawComment(ann, sel);
+    else if (ann.type === "point")          drawPoint(ann, sel);
 
     if (sel && flashActive) {
       let fx, fy;

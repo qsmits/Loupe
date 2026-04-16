@@ -200,6 +200,9 @@ export function hitTestAnnotation(ann, pt) {
     }
     return false;
   }
+  if (ann.type === "point") {
+    return Math.hypot(pt.x - ann.x, pt.y - ann.y) < 8 / z;
+  }
   if (ann.type === "comment") {
     // Pin hit
     if (Math.hypot(pt.x - ann.x, pt.y - ann.y) < 10 / z) return true;
