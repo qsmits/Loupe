@@ -1,7 +1,7 @@
 /**
  * constraint-solver.js — Pure geometry constraint solver (zero DOM dependencies)
  *
- * Implements 9 projection functions + iterative Gauss-Seidel solver.
+ * Implements 10 projection functions + iterative Gauss-Seidel solver.
  * Annotation structure mirrors the main app's annotation objects:
  *   - Line-type:   { type, a:{x,y}, b:{x,y} }
  *   - Circle-type: { type, cx, cy, r }
@@ -13,21 +13,16 @@ const CONVERGENCE_THRESHOLD = 1e-4;
 
 // ── Type guards ───────────────────────────────────────────────────────────────
 
-/**
- * Returns true if annotation is a line-like type (has a/b endpoints).
- */
-export function isLineType(ann) {
-  return new Set([
-    'distance', 'perp-dist', 'para-dist', 'parallelism', 'slot-dist', 'fit-line',
-  ]).has(ann.type);
-}
+const LINE_TYPES = new Set([
+  'distance', 'perp-dist', 'para-dist', 'parallelism', 'slot-dist', 'fit-line',
+]);
+const CIRCLE_TYPES = new Set(['circle', 'arc-fit', 'arc-measure']);
 
-/**
- * Returns true if annotation is a circle-like type (has cx/cy/r).
- */
-export function isCircleType(ann) {
-  return new Set(['circle', 'arc-fit', 'arc-measure']).has(ann.type);
-}
+/** Returns true if annotation is a line-like type (has a/b endpoints). */
+export function isLineType(ann) { return LINE_TYPES.has(ann.type); }
+
+/** Returns true if annotation is a circle-like type (has cx/cy/r). */
+export function isCircleType(ann) { return CIRCLE_TYPES.has(ann.type); }
 
 // ── Anchor access ─────────────────────────────────────────────────────────────
 
@@ -72,7 +67,7 @@ export function setAnchorPoint(ann, anchor, x, y) {
 export function lineDir(a, b) {
   const dx = b.x - a.x;
   const dy = b.y - a.y;
-  const len = Math.hypot(dx, dy);
+  const len = Math.hypot(dx, dy) || 1e-12;
   return { dx: dx / len, dy: dy / len, len };
 }
 
@@ -309,11 +304,54 @@ function _constraintError(constraint, annMap) {
       const d1 = getLineDirection(ann1);
       const dot = d0.dx * d1.dx + d0.dy * d1.dy;
       const angleDeg = constraint.angleDeg || 0;
-      const expectedDot = Math.abs(Math.cos(angleDeg * Math.PI / 180));
-      return Math.abs(Math.abs(dot) - expectedDot);
+      const expectedCos = Math.cos(angleDeg * Math.PI / 180);
+      // Lines are undirected (a→b vs b→a both valid), so check both orientations
+      return Math.min(Math.abs(dot - expectedCos), Math.abs(dot + expectedCos));
+    }
+    case 'point-on-line': {
+      if (!isLineType(ann0) && !isLineType(ann1)) return Infinity;
+      const line = isLineType(ann0) ? ann0 : ann1;
+      const ptRef = isLineType(ann0) ? ref1 : ref0;
+      const ptAnn = isLineType(ann0) ? ann1 : ann0;
+      const pt = getAnchorPoint(ptAnn, ptRef.anchor);
+      if (!pt) return Infinity;
+      const dir = getLineDirection(line);
+      // Cross-track distance = |(pt - line.a) × dir|
+      const dx = pt.x - line.a.x;
+      const dy = pt.y - line.a.y;
+      return Math.abs(dx * dir.dy - dy * dir.dx);
+    }
+    case 'point-on-circle': {
+      const circle = isCircleType(ann0) ? ann0 : (isCircleType(ann1) ? ann1 : null);
+      const ptRef = isCircleType(ann0) ? ref1 : ref0;
+      const ptAnn = isCircleType(ann0) ? ann1 : ann0;
+      if (!circle) return Infinity;
+      const pt = getAnchorPoint(ptAnn, ptRef.anchor);
+      if (!pt) return Infinity;
+      return Math.abs(Math.hypot(pt.x - circle.cx, pt.y - circle.cy) - circle.r);
+    }
+    case 'tangent-line-circle': {
+      const line = isLineType(ann0) ? ann0 : (isLineType(ann1) ? ann1 : null);
+      const circle = isCircleType(ann0) ? ann0 : (isCircleType(ann1) ? ann1 : null);
+      if (!line || !circle) return Infinity;
+      const dir = getLineDirection(line);
+      const nx = -dir.dy, ny = dir.dx;
+      const signedDist = (circle.cx - line.a.x) * nx + (circle.cy - line.a.y) * ny;
+      return Math.abs(Math.abs(signedDist) - circle.r);
+    }
+    case 'midpoint': {
+      const line = isLineType(ann0) ? ann0 : (isLineType(ann1) ? ann1 : null);
+      const ptRef = isLineType(ann0) ? ref1 : ref0;
+      const ptAnn = isLineType(ann0) ? ann1 : ann0;
+      if (!line) return Infinity;
+      const pt = getAnchorPoint(ptAnn, ptRef.anchor);
+      if (!pt) return Infinity;
+      const mx = (line.a.x + line.b.x) / 2;
+      const my = (line.a.y + line.b.y) / 2;
+      return Math.hypot(pt.x - mx, pt.y - my);
     }
     default:
-      return 0; // unknown → assume satisfied
+      return Infinity; // unknown → treat as unsatisfied
   }
 }
 
@@ -448,10 +486,35 @@ function _applyConstraint(constraint, driver, driverRef, follower, followerRef) 
     }
 
     case 'tangent-line-circle': {
-      // driver is a line; follower is a circle
-      if (!isLineType(driver) || !isCircleType(follower)) return;
-      const driverDir = getLineDirection(driver);
-      projectTangentLineCircle(follower, driver.a, driverDir);
+      if (isLineType(driver) && isCircleType(follower)) {
+        // Move circle to be tangent to line
+        const driverDir = getLineDirection(driver);
+        projectTangentLineCircle(follower, driver.a, driverDir);
+      } else if (isCircleType(driver) && isLineType(follower)) {
+        // Move line to be tangent to circle: translate line along its normal
+        const dir = getLineDirection(follower);
+        const nx = -dir.dy, ny = dir.dx;
+        // Project circle center onto line to get foot point, then compute
+        // perpendicular distance from circle center to infinite line
+        const t = (driver.cx - follower.a.x) * dir.dx + (driver.cy - follower.a.y) * dir.dy;
+        const footX = follower.a.x + t * dir.dx;
+        const footY = follower.a.y + t * dir.dy;
+        const perpDx = driver.cx - footX;
+        const perpDy = driver.cy - footY;
+        const perpDist = Math.hypot(perpDx, perpDy);
+        // signedDist = (center - foot) · normal. Moving line by +delta along
+        // normal decreases signedDist by delta. We want |signedDist| = r.
+        const side = perpDx * nx + perpDy * ny;
+        const sign = side >= 0 ? 1 : -1;
+        const targetSignedDist = sign * driver.r;
+        // currentSignedDist = sign * perpDist (perpDist is always positive)
+        const currentSignedDist = sign * perpDist;
+        // delta: translate line so new signedDist = targetSignedDist
+        // newSignedDist = currentSignedDist - delta → delta = current - target
+        const delta = currentSignedDist - targetSignedDist;
+        follower.a.x += delta * nx; follower.a.y += delta * ny;
+        follower.b.x += delta * nx; follower.b.y += delta * ny;
+      }
       break;
     }
 

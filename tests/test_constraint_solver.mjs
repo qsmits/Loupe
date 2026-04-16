@@ -63,8 +63,9 @@ test('lineDir returns unit vector and length', () => {
 
 test('lineDir handles zero-length (degenerate)', () => {
   const r = lineDir({ x: 1, y: 1 }, { x: 1, y: 1 });
-  assert.equal(r.len, 0);
-  // dx/dy are NaN or 0 — just shouldn't throw
+  // len uses || 1e-12 guard so dx/dy are finite (0), not NaN
+  assert.ok(isFinite(r.dx), 'dx should be finite');
+  assert.ok(isFinite(r.dy), 'dy should be finite');
 });
 
 // ── rotateAroundPoint ─────────────────────────────────────────────────────────
@@ -505,4 +506,58 @@ test('length is preserved after perpendicular projection', () => {
 
   const newLen = getLineDirection(ann2).len;
   assertApprox(newLen, origLen, 1e-6, 'length preserved after perp projection');
+});
+
+test('contradictory constraints (perpendicular + parallel) produce conflict', () => {
+  const ann1 = makeLine(1, 0, 0, 10, 0);
+  const ann2 = makeLine(2, 0, 5, 10, 5);
+
+  const constraints = [
+    makeConstraint(1, 'perpendicular', [
+      { annId: 1, anchor: 'a' }, { annId: 2, anchor: 'a' },
+    ]),
+    makeConstraint(2, 'parallel', [
+      { annId: 1, anchor: 'a' }, { annId: 2, anchor: 'a' },
+    ]),
+  ];
+
+  solveConstraints([ann1, ann2], constraints, null);
+
+  // At least one must be in conflict — they can't both be satisfied
+  const statuses = constraints.map(c => c.status);
+  assert.ok(statuses.includes('conflict'),
+    `at least one constraint should conflict, got: ${statuses}`);
+});
+
+test('projectAngle with obtuse angle (135°)', () => {
+  const driver = makeLine(1, 0, 0, 10, 0);   // horizontal
+  const follower = makeLine(2, 0, 0, 10, 0);  // starts horizontal
+  const driverDir = getLineDirection(driver);
+
+  projectAngle(follower, driverDir, follower.a, 135);
+
+  const fDir = getLineDirection(follower);
+  const dot = driverDir.dx * fDir.dx + driverDir.dy * fDir.dy;
+  assertApprox(dot, Math.cos(135 * Math.PI / 180), 1e-6, '135° angle');
+});
+
+test('tangent-line-circle works when circle is driver (line moves)', () => {
+  const circle = makeCircle(1, 0, 8, 3);      // center at (0,8), r=3
+  const line = makeLine(2, -10, 0, 10, 0);     // horizontal at y=0
+
+  const constraints = [
+    makeConstraint(1, 'tangent-line-circle', [
+      { annId: 1, anchor: 'center' }, { annId: 2, anchor: 'a' },
+    ]),
+  ];
+
+  // Circle is driver (being dragged)
+  solveConstraints([circle, line], constraints, 1);
+
+  // Line should move so distance from circle center to line = r
+  const dir = getLineDirection(line);
+  const nx = -dir.dy, ny = dir.dx;
+  const signedDist = (circle.cx - line.a.x) * nx + (circle.cy - line.a.y) * ny;
+  assertApprox(Math.abs(signedDist), circle.r, 1e-4, 'line tangent to circle');
+  assert.equal(constraints[0].status, 'ok');
 });
