@@ -9,6 +9,7 @@ import { renderSidebar } from './sidebar.js';
 import { viewport, screenToImage, imageWidth, imageHeight } from './viewport.js';
 import { hitTestAnnotation, hitTestDxfEntity } from './hit-test.js';
 import { openCommentEditor } from './comment-editor.js';
+import { solveConstraints } from './constraint-solver.js';
 
 // Re-export for backward compatibility (other modules import these from tools.js)
 export { hitTestAnnotation, hitTestDxfEntity } from './hit-test.js';
@@ -1020,6 +1021,11 @@ export function handleDrag(pt) {
     ann.x += dx; ann.y += dy;
   }
 
+  // Run constraint solver after any handle mutation
+  if (state.constraints.length > 0) {
+    solveConstraints(state.annotations, state.constraints, ann.id);
+  }
+
   renderSidebar();
   redraw();
 }
@@ -1222,6 +1228,11 @@ export function nudgeSelected(dx, dy) {
   for (const id of state.selected) {
     const ann = state.annotations.find(a => a.id === id);
     if (ann) _nudgeAnn(ann, dx, dy);
+  }
+  // Re-solve constraints after nudge
+  if (state.constraints.length > 0) {
+    const driverId = state.selected.size === 1 ? [...state.selected][0] : null;
+    solveConstraints(state.annotations, state.constraints, driverId);
   }
   return true;
 }
