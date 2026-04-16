@@ -1,6 +1,6 @@
 // ── Canvas mouse events ──────────────────────────────────────────────────────
 import { apiFetch } from './api.js';
-import { state, _deviationHitBoxes, _labelHitBoxes, pushUndo } from './state.js';
+import { state, _deviationHitBoxes, _labelHitBoxes, pushUndo, TRANSIENT_TYPES } from './state.js';
 import { canvas, ctx, img, showStatus, redraw, resizeCanvas,
          drawLine, drawOrigin, drawAreaPreview, drawSplinePreview, dxfToCanvas } from './render.js';
 import { renderSidebar, renderInspectionTable } from './sidebar.js';
@@ -870,6 +870,22 @@ export function initMouseHandlers() {
           renderSidebar();
         }});
       }
+      // Purpose for multi-select
+      items.push("---");
+      for (const p of ['measurement', 'drawing', 'helper']) {
+        items.push({
+          label: `Set all → ${p.charAt(0).toUpperCase() + p.slice(1)}`,
+          action: () => {
+            pushUndo();
+            for (const id of state.selected) {
+              const a = state.annotations.find(x => x.id === id);
+              if (a && !TRANSIENT_TYPES.has(a.type)) a.purpose = p;
+            }
+            renderSidebar();
+            redraw();
+          },
+        });
+      }
       items.push({ label: `Delete (${state.selected.size})`, action: deleteSelected });
       if (state.selected.size === 1) {
         const ann = state.annotations.find(a => a.id === [...state.selected][0]);
@@ -897,6 +913,21 @@ export function initMouseHandlers() {
             const row = document.querySelector(`.measurement-item[data-id="${ann.id}"]`);
             if (row) row.querySelector(".measurement-name")?.focus();
           }});
+          // Purpose submenu
+          items.push("---");
+          const purposes = ['measurement', 'drawing', 'helper'];
+          for (const p of purposes) {
+            const check = ann.purpose === p || (!ann.purpose && p === 'measurement') ? '✓ ' : '  ';
+            items.push({
+              label: `${check}${p.charAt(0).toUpperCase() + p.slice(1)}`,
+              action: () => {
+                pushUndo();
+                ann.purpose = p;
+                renderSidebar();
+                redraw();
+              },
+            });
+          }
           // Punch/Die toggle for area annotations during cross-mode mask editing
           if (isCrossModeActive() && ann.type === 'area') {
             const currentMode = ann.mode || 'punch';

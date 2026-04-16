@@ -131,7 +131,9 @@ export function renderSidebar() {
       if (!groupMap.has(groupName)) groupMap.set(groupName, []);
       groupMap.get(groupName).push(ann);
     } else {
-      ungrouped.push(ann);
+      // Only show measurement-purpose annotations in the main sidebar
+      const isMeasurement = !ann.purpose || ann.purpose === 'measurement';
+      if (isMeasurement) ungrouped.push(ann);
     }
   }
 

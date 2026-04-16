@@ -11,6 +11,24 @@ import {
   drawMeasurementLabel, _annColor, measurementLabel,
 } from './render.js';
 
+function applyPurposeStyle(ann) {
+  if (ann.purpose === 'helper') {
+    ctx.globalAlpha = 0.4;
+    ctx.setLineDash([pw(5), pw(4)]);
+    return { color: '#9ca3af', showLabel: false };
+  }
+  if (ann.purpose === 'drawing') {
+    ctx.globalAlpha = 0.6;
+    return { color: null, showLabel: false };
+  }
+  return { color: null, showLabel: true };
+}
+
+function resetPurposeStyle() {
+  ctx.globalAlpha = 1.0;
+  ctx.setLineDash([]);
+}
+
 export function drawDistance(ann, sel) {
   drawLine(ann.a, ann.b, _annColor(ann, sel, "#facc15"), sel ? 2 : 1.5);
   if (sel) {
@@ -599,6 +617,8 @@ export function drawAnnotations(redrawFn, dxfFns) {
     // flag hides everything in one click without clobbering per-annotation state.
     if (ann.hidden || state._hideAllAnnotations) return;
     const sel = state.selected.has(ann.id);
+    ctx.save();
+    const _ps = applyPurposeStyle(ann);
     const pendingHighlight = state.pendingCenterCircle && ann.id === state.pendingCenterCircle.id;
     if (ann.type === "distance")        drawDistance(ann, sel);
     else if (ann.type === "center-dist") drawDistance(ann, sel);
@@ -665,6 +685,8 @@ export function drawAnnotations(redrawFn, dxfFns) {
     else if (ann.type === "comment")        drawComment(ann, sel);
     else if (ann.type === "point")          drawPoint(ann, sel);
 
+    resetPurposeStyle();
+    ctx.restore();
     if (sel && flashActive) {
       let fx, fy;
       if (ann.a && ann.b) { fx = (ann.a.x + ann.b.x) / 2; fy = (ann.a.y + ann.b.y) / 2; }

@@ -94,6 +94,7 @@ export function drawLabel(text, x, y) {
 
 /** Draw a measurement label with optional drag offset and leader line. Records hitbox. */
 export function drawMeasurementLabel(ann, text, defaultX, defaultY, refX, refY) {
+  if (ann.purpose && ann.purpose !== 'measurement') return; // suppress label for drawing/helper
   const offset = ann.labelOffset || { dx: 0, dy: 0 };
   const lx = defaultX + offset.dx;
   const ly = defaultY + offset.dy;

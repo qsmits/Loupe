@@ -20,7 +20,7 @@ function _cleanupAnnotation(ann) {
 
 export function addAnnotation(data) {
   pushUndo();
-  const ann = { ...data, id: state.nextId++, name: data.name ?? "" };
+  const ann = { ...data, id: state.nextId++, name: data.name ?? "", purpose: data.purpose ?? "measurement" };
   state.annotations.push(ann);
   state.selected = new Set([ann.id]);
   renderSidebar();
