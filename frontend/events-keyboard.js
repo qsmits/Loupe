@@ -18,6 +18,7 @@ export function undo() {
   state.annotations = snap.annotations;
   state.calibration = snap.calibration;
   state.origin = snap.origin;
+  state.constraints = snap.constraints ?? [];
   state.selected = new Set(
     [...state.selected].filter(id => state.annotations.some(a => a.id === id))
   );
@@ -33,6 +34,7 @@ export function redo() {
   state.annotations = snap.annotations;
   state.calibration = snap.calibration;
   state.origin = snap.origin;
+  state.constraints = snap.constraints ?? [];
   state.selected = new Set(
     [...state.selected].filter(id => state.annotations.some(a => a.id === id))
   );

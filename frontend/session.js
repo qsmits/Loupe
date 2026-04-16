@@ -409,9 +409,10 @@ export function exportInspectionPdf() {
 // ── Session save ────────────────────────────────────────────────────────────
 export function saveSession() {
   const session = {
-    version: 2,
+    version: 3,
     savedAt: new Date().toISOString(),
     nextId: state.nextId,
+    nextConstraintId: state.nextConstraintId,
     calibration: state.calibration ? { ...state.calibration } : null,
     origin: state.origin ? { ...state.origin } : null,
     featureTolerances: { ...state.featureTolerances },
@@ -421,6 +422,7 @@ export function saveSession() {
     dxfFilename: state.dxfFilename ?? null,
     inspectionResults: state.inspectionResults.slice(),
     inspectionFrame: state.inspectionFrame ?? null,
+    constraints: state.constraints.map(c => ({ ...c, contactPoint: c.contactPoint ? { ...c.contactPoint } : { x: 0, y: 0 } })),
     annotations: state.annotations
       .filter(a => !TRANSIENT_TYPES.has(a.type))
       .map(a => ({ ...a })),
@@ -452,7 +454,7 @@ export function loadSession(raw) {
   if (!data.version) {
     showStatus("Loaded legacy session (no version field)");
     // fall through and attempt to treat as v1
-  } else if (data.version <= 2) {
+  } else if (data.version <= 3) {
     // proceed
   } else {
     showStatus(`Cannot load: session format version ${data.version} is newer than this app supports`);
@@ -487,6 +489,9 @@ export function loadSession(raw) {
 
   // Restore state
   state.annotations = data.annotations.slice();
+  for (const ann of state.annotations) {
+    if (!ann.purpose) ann.purpose = "measurement";
+  }
   if (dxfAnn) state.annotations.push(dxfAnn);
 
   state.calibration = data.calibration ?? null;
@@ -503,6 +508,10 @@ export function loadSession(raw) {
   state.measurementGroups = (data.measurementGroups && typeof data.measurementGroups === "object")
     ? { ...data.measurementGroups }
     : {};
+  state.constraints = Array.isArray(data.constraints) ? data.constraints.slice() : [];
+  state.nextConstraintId = data.nextConstraintId ?? (
+    state.constraints.reduce((m, c) => Math.max(m, c.id ?? 0), 0) + 1
+  );
 
   // Sync origin annotation's angle from state.origin (state.origin is authoritative)
   if (state.origin) {
@@ -529,7 +538,7 @@ export function loadSession(raw) {
   if (coordEl) coordEl.textContent = "";
 
   // Show status only when no legacy warning was already set
-  if (data.version <= 2) showStatus("Session loaded");
+  if (data.version <= 3) showStatus("Session loaded");
 
   renderSidebar();
   renderInspectionTable();
@@ -544,9 +553,10 @@ export function autoSave() {
   if (isCrossModeActive()) return;
   if (!state._dirty) return;
   const session = {
-    version: 2,
+    version: 3,
     savedAt: new Date().toISOString(),
     nextId: state.nextId,
+    nextConstraintId: state.nextConstraintId,
     calibration: state.calibration ? { ...state.calibration } : null,
     origin: state.origin ? { ...state.origin } : null,
     featureTolerances: { ...state.featureTolerances },
@@ -556,6 +566,7 @@ export function autoSave() {
     dxfFilename: state.dxfFilename ?? null,
     inspectionResults: state.inspectionResults.slice(),
     inspectionFrame: null,  // excluded — too large for localStorage
+    constraints: state.constraints.map(c => ({ ...c, contactPoint: c.contactPoint ? { ...c.contactPoint } : { x: 0, y: 0 } })),
     annotations: state.annotations
       .filter(a => !TRANSIENT_TYPES.has(a.type))
       .map(a => ({ ...a })),

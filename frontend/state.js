@@ -38,6 +38,8 @@ export const state = {
   dxfFilename: null,       // set from DXF filename on load; cleared on DXF clear
   featureNames: {},              // { [handle_or_parent]: "user name" }
   measurementGroups: {},         // { [annotationId]: "group name" }
+  constraints: [],              // geometric constraints between annotations
+  nextConstraintId: 1,          // auto-increment ID for constraints
   inspectionHoverHandle: null,   // handle being hovered in table or canvas
   inspectionPickTarget: null,   // DXF entity being manually measured (point-pick mode)
   inspectionPickPoints: [],     // [{x, y}, ...] placed by user
@@ -98,6 +100,7 @@ export function takeSnapshot() {
     annotations: state.annotations,
     calibration: state.calibration,
     origin: state.origin,
+    constraints: state.constraints,
   });
 }
 
