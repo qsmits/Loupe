@@ -422,7 +422,7 @@ export function saveSession() {
     dxfFilename: state.dxfFilename ?? null,
     inspectionResults: state.inspectionResults.slice(),
     inspectionFrame: state.inspectionFrame ?? null,
-    constraints: state.constraints.map(c => ({ ...c, contactPoint: c.contactPoint ? { ...c.contactPoint } : { x: 0, y: 0 } })),
+    constraints: state.constraints.map(c => ({ ...c, contactPoint: c.contactPoint ? { ...c.contactPoint } : null })),
     annotations: state.annotations
       .filter(a => !TRANSIENT_TYPES.has(a.type))
       .map(a => ({ ...a })),
@@ -508,7 +508,9 @@ export function loadSession(raw) {
   state.measurementGroups = (data.measurementGroups && typeof data.measurementGroups === "object")
     ? { ...data.measurementGroups }
     : {};
-  state.constraints = Array.isArray(data.constraints) ? data.constraints.slice() : [];
+  state.constraints = Array.isArray(data.constraints)
+    ? data.constraints.map(c => ({ ...c, contactPoint: c.contactPoint ? { ...c.contactPoint } : null }))
+    : [];
   state.nextConstraintId = data.nextConstraintId ?? (
     state.constraints.reduce((m, c) => Math.max(m, c.id ?? 0), 0) + 1
   );
@@ -566,7 +568,7 @@ export function autoSave() {
     dxfFilename: state.dxfFilename ?? null,
     inspectionResults: state.inspectionResults.slice(),
     inspectionFrame: null,  // excluded — too large for localStorage
-    constraints: state.constraints.map(c => ({ ...c, contactPoint: c.contactPoint ? { ...c.contactPoint } : { x: 0, y: 0 } })),
+    constraints: state.constraints.map(c => ({ ...c, contactPoint: c.contactPoint ? { ...c.contactPoint } : null })),
     annotations: state.annotations
       .filter(a => !TRANSIENT_TYPES.has(a.type))
       .map(a => ({ ...a })),
