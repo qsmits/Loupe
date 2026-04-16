@@ -1,4 +1,5 @@
 import { state, pushUndo, DETECTION_TYPES } from './state.js';
+import { cascadeDeleteConstraints } from './constraints.js';
 import { canvas, showStatus, redraw } from './render.js';
 import { renderSidebar, updateCameraInfo, updateCalibrationButton, renderInspectionTable } from './sidebar.js';
 import { imageWidth, imageHeight } from './viewport.js';
@@ -31,6 +32,7 @@ export function deleteAnnotation(id) {
   if (!ann) return;
   _cleanupAnnotation(ann);
   state.annotations = state.annotations.filter(a => a.id !== id);
+  cascadeDeleteConstraints(id);
   state.selected.delete(id);
   if (state.pendingCenterCircle && state.pendingCenterCircle.id === id) state.pendingCenterCircle = null;
   renderSidebar();
@@ -43,6 +45,7 @@ export function deleteSelected() {
   for (const id of [...state.selected]) {
     const ann = state.annotations.find(a => a.id === id);
     if (ann) _cleanupAnnotation(ann);
+    cascadeDeleteConstraints(id);
     state.annotations = state.annotations.filter(a => a.id !== id);
   }
   state.selected = new Set();
