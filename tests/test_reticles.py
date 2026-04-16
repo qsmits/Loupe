@@ -71,8 +71,8 @@ def test_list_reticles_category_entries(client_with_reticles):
     r = client_with_reticles.get("/reticles")
     cats = r.json()["categories"]
     names = {e["file"] for e in cats["thread-metric"]}
-    assert "m3.json" in names
-    assert "m6.json" in names
+    assert "m3" in names
+    assert "m6" in names
 
 
 def test_list_reticles_entry_has_required_fields(client_with_reticles):
@@ -130,8 +130,8 @@ def test_save_custom_reticle(client_with_reticles, reticles_dir):
     assert r.status_code == 200
     data = r.json()
     assert "file" in data
-    # Verify it was actually written to disk
-    saved = reticles_dir / "custom" / data["file"]
+    # file field is the slug (stem, no extension); .json is appended on disk
+    saved = reticles_dir / "custom" / f"{data['file']}.json"
     assert saved.exists()
     content = json.loads(saved.read_text())
     assert content["name"] == "My Custom Grid"
@@ -145,10 +145,9 @@ def test_save_custom_reticle_slug_filename(client_with_reticles, reticles_dir):
     }
     r = client_with_reticles.post("/reticles/custom", json=body)
     assert r.status_code == 200
-    filename = r.json()["file"]
-    # Filename should be a slug: lowercase, hyphens, .json suffix
-    assert filename.endswith(".json")
-    slug = filename[:-5]
+    slug = r.json()["file"]
+    # file field is the slug (stem, no extension): lowercase, hyphens only
+    assert not slug.endswith(".json")
     assert slug == slug.lower()
     assert " " not in slug
     assert "!" not in slug
@@ -186,3 +185,21 @@ def test_save_custom_reticle_shows_in_list(client_with_reticles):
     assert "custom" in cats
     files = {e["file"] for e in cats["custom"]}
     assert any("new-reticle" in f for f in files)
+
+
+def test_save_custom_reticle_body_traversal_safe_slug(client_with_reticles, reticles_dir):
+    """POST with a path-traversal name should produce a safe slug, not escape reticles/custom/."""
+    body = {
+        "name": "../../etc/evil",
+        "elements": [{"type": "dot"}],
+    }
+    r = client_with_reticles.post("/reticles/custom", json=body)
+    assert r.status_code == 200
+    slug = r.json()["file"]
+    # The slug must not contain path separators or dots that could escape the directory
+    assert ".." not in slug
+    assert "/" not in slug
+    assert "\\" not in slug
+    # The file must land inside reticles/custom/, not outside
+    saved = reticles_dir / "custom" / f"{slug}.json"
+    assert saved.exists()

@@ -5,11 +5,11 @@ import re
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field
 
 RETICLES_DIR = Path(__file__).parent.parent / "reticles"
 
-router = APIRouter(prefix="/reticles")
+router = APIRouter(prefix="/reticles", tags=["reticles"])
 
 
 # ---------------------------------------------------------------------------
@@ -48,14 +48,14 @@ def _safe_path(category: str, name: str) -> Path:
 
 def _entry_for(path: Path) -> dict:
     """Return the catalogue entry dict for a reticle file."""
-    entry: dict = {"file": path.name, "name": path.stem, "description": ""}
+    entry: dict = {"file": path.stem, "name": path.stem, "description": ""}
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
         if isinstance(data.get("name"), str):
             entry["name"] = data["name"]
         if isinstance(data.get("description"), str):
             entry["description"] = data["description"]
-    except Exception:
+    except (json.JSONDecodeError, OSError, UnicodeDecodeError, ValueError):
         pass
     return entry
 
@@ -67,13 +67,6 @@ def _entry_for(path: Path) -> dict:
 class SaveReticleBody(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     elements: list[dict] = Field(min_length=1)
-
-    @field_validator("elements")
-    @classmethod
-    def elements_not_empty(cls, v):
-        if not v:
-            raise ValueError("elements must be a non-empty list")
-        return v
 
 
 # ---------------------------------------------------------------------------
@@ -87,10 +80,10 @@ def list_reticles():
     if not RETICLES_DIR.exists():
         return {"categories": categories}
     for subdir in sorted(RETICLES_DIR.iterdir()):
-        if not subdir.is_dir():
+        if not subdir.is_dir() or subdir.is_symlink():
             continue
         entries = sorted(
-            (_entry_for(f) for f in subdir.glob("*.json")),
+            (_entry_for(f) for f in subdir.glob("*.json") if not f.is_symlink()),
             key=lambda e: e["file"],
         )
         if entries:
@@ -102,11 +95,11 @@ def list_reticles():
 def get_reticle(category: str, name: str):
     """Return the full JSON content of a specific reticle file."""
     path = _safe_path(category, name)
-    if not path.exists():
+    if not path.exists() or path.is_symlink():
         raise HTTPException(status_code=404, detail="Reticle not found")
     try:
         return json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
+    except (json.JSONDecodeError, OSError):
         raise HTTPException(status_code=500, detail="Failed to read reticle file")
 
 
@@ -117,12 +110,11 @@ def save_custom_reticle(body: SaveReticleBody):
     custom_dir.mkdir(parents=True, exist_ok=True)
 
     slug = _slugify(body.name)
-    filename = f"{slug}.json"
-    dest = custom_dir / filename
+    dest = custom_dir / f"{slug}.json"
 
     payload = {
         "name": body.name,
         "elements": body.elements,
     }
     dest.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
-    return {"file": filename, "category": "custom"}
+    return {"file": slug, "category": "custom"}
