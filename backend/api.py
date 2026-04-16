@@ -10,6 +10,7 @@ from .api_deflectometry import make_deflectometry_router
 from .api_fringe import make_fringe_router
 from .api_detection import make_detection_router
 from .api_inspection import make_inspection_router, router as inspection_router
+from .api_reticles import router as reticles_router
 from .api_runs import make_runs_router
 from .api_stitch import make_stitch_router
 from .api_superres import make_superres_router
@@ -97,4 +98,5 @@ def make_router(camera: BaseCamera, frame_store: SessionFrameStore, startup_warn
     composed.include_router(make_fringe_router(camera))
     if run_store:
         composed.include_router(make_runs_router(run_store))
+    composed.include_router(reticles_router)
     return composed
