@@ -26,6 +26,7 @@ import { refinePointJS } from './subpixel-js.js';
 import { openCommentEditor } from './comment-editor.js';
 import { hitTestAnnotation } from './hit-test.js';
 import { handleGearPickClick } from './gear.js';
+import { validConstraintsForPair, addConstraint, CONSTRAINT_LABELS, CONSTRAINT_ICONS, constraintsForAnnotation, removeConstraint, toggleConstraint } from './constraints.js';
 
 // ── Sub-pixel snap preview (debounced) ────────────────────────────────────────
 let _subpixelDebounce = null;
@@ -860,6 +861,33 @@ export function initMouseHandlers() {
           renderSidebar();
         }});
       }
+      // Constrain submenu (exactly 2 selected)
+      if (state.selected.size === 2) {
+        const [id0, id1] = [...state.selected];
+        const a0 = state.annotations.find(a => a.id === id0);
+        const a1 = state.annotations.find(a => a.id === id1);
+        if (a0 && a1) {
+          const validTypes = validConstraintsForPair(a0, a1);
+          if (validTypes.length > 0) {
+            const children = validTypes.map(type => ({
+              label: CONSTRAINT_LABELS[type] || type,
+              action: () => {
+                if (type === 'angle') {
+                  const input = prompt('Angle in degrees:', '90');
+                  if (input === null) return;
+                  const angleDeg = parseFloat(input);
+                  if (isNaN(angleDeg)) return;
+                  addConstraint(type, id0, id1, { angleDeg });
+                } else {
+                  addConstraint(type, id0, id1);
+                }
+              },
+            }));
+            items.push("---");
+            items.push({ label: "Constrain", children });
+          }
+        }
+      }
       // Check if selected items are in a group — offer ungroup
       const groupedSelected = [...state.selected].filter(id => state.measurementGroups[id]);
       if (groupedSelected.length > 0) {
@@ -927,6 +955,34 @@ export function initMouseHandlers() {
                 redraw();
               },
             });
+          }
+          // Existing constraints on this annotation
+          const annConstraints = constraintsForAnnotation(ann.id);
+          if (annConstraints.length > 0) {
+            const constraintItems = [];
+            for (const c of annConstraints) {
+              const otherRef = c.refs.find(r => r.annId !== ann.id) || c.refs[1];
+              const otherAnn = state.annotations.find(a => a.id === otherRef.annId);
+              const otherName = otherAnn ? (otherAnn.name || otherAnn.type + ' #' + otherAnn.id) : '?';
+              const icon = CONSTRAINT_ICONS[c.type] || c.type;
+              const statusTag = c.status === 'conflict' ? ' ⚠' : '';
+              const enabledTag = c.enabled ? '' : ' (off)';
+              constraintItems.push({
+                label: `${icon} → ${otherName}${statusTag}${enabledTag}`,
+                action: () => {},
+              });
+              constraintItems.push({
+                label: c.enabled ? '  Disable' : '  Enable',
+                action: () => toggleConstraint(c.id),
+              });
+              constraintItems.push({
+                label: '  Remove',
+                action: () => removeConstraint(c.id),
+              });
+              constraintItems.push("---");
+            }
+            if (constraintItems[constraintItems.length - 1] === "---") constraintItems.pop();
+            items.push({ label: "Constraints", children: constraintItems });
           }
           // Punch/Die toggle for area annotations during cross-mode mask editing
           if (isCrossModeActive() && ann.type === 'area') {

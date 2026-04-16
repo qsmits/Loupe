@@ -2663,3 +2663,23 @@ body.no-camera .camera-section { display: none; }
   background: var(--surface-2);
   opacity: 1;
 }
+
+/* Constraint submenu */
+.ctx-submenu-wrapper {
+  position: relative;
+}
+.ctx-submenu-trigger {
+  width: 100%;
+}
+.ctx-submenu {
+  position: absolute;
+  left: 100%;
+  top: 0;
+  background: #1e1e1e;
+  border: 1px solid #444;
+  border-radius: 6px;
+  padding: 4px 0;
+  min-width: 160px;
+  z-index: 10001;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+}
