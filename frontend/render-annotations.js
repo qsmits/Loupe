@@ -687,6 +687,25 @@ export function drawAnnotations(redrawFn, dxfFns) {
 
     resetPurposeStyle();
     ctx.restore();
+
+    // Highlight annotations when their constraint badge is hovered
+    if (state._hoveredConstraintId) {
+      const hc = state.constraints.find(c => c.id === state._hoveredConstraintId);
+      if (hc && hc.refs.some(r => r.annId === ann.id)) {
+        ctx.save();
+        ctx.strokeStyle = "rgba(251, 191, 36, 0.6)";
+        ctx.lineWidth = pw(4);
+        if (ann.a && ann.b) {
+          ctx.beginPath(); ctx.moveTo(ann.a.x, ann.a.y); ctx.lineTo(ann.b.x, ann.b.y); ctx.stroke();
+        } else if (ann.cx != null) {
+          ctx.beginPath(); ctx.arc(ann.cx, ann.cy, ann.r, 0, Math.PI * 2); ctx.stroke();
+        } else if (ann.type === 'point') {
+          ctx.beginPath(); ctx.arc(ann.x, ann.y, pw(8), 0, Math.PI * 2); ctx.stroke();
+        }
+        ctx.restore();
+      }
+    }
+
     if (sel && flashActive) {
       let fx, fy;
       if (ann.a && ann.b) { fx = (ann.a.x + ann.b.x) / 2; fy = (ann.a.y + ann.b.y) / 2; }

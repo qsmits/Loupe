@@ -5,6 +5,7 @@
 import { state } from './state.js';
 import { viewport, imageWidth, imageHeight } from './viewport.js';
 import { ctx, canvas, pw, drawHandle } from './render.js';
+import { CONSTRAINT_ICONS } from './constraints.js';
 
 // Tools that trigger the loupe (any tool that places measurement points)
 const _LOUPE_TOOLS = new Set([
@@ -225,6 +226,66 @@ export function drawLoupe(forceShow = false) {
     lc.arc(LOUPE_R, LOUPE_R, 2, 0, Math.PI * 2);
     lc.fill();
   }
+}
+
+export function drawConstraintBadges() {
+  for (const c of state.constraints) {
+    if (!c.contactPoint) continue;
+    const { x, y } = c.contactPoint;
+    const icon = CONSTRAINT_ICONS[c.type] || '?';
+    const pillW = pw(20);
+    const pillH = pw(14);
+    const fontSize = pw(11);
+
+    ctx.save();
+
+    // Pill background
+    ctx.fillStyle = c.status === 'conflict'
+      ? 'rgba(239, 68, 68, 0.85)'
+      : !c.enabled
+        ? 'rgba(234, 179, 8, 0.7)'
+        : 'rgba(30, 30, 30, 0.8)';
+
+    const rx = x - pillW / 2, ry = y - pillH / 2;
+    ctx.beginPath();
+    ctx.roundRect(rx, ry, pillW, pillH, pw(4));
+    ctx.fill();
+
+    // Dashed outline for disabled
+    if (!c.enabled) {
+      ctx.strokeStyle = 'rgba(234, 179, 8, 0.9)';
+      ctx.lineWidth = pw(1);
+      ctx.setLineDash([pw(3), pw(2)]);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
+    // Icon text
+    ctx.fillStyle = c.status === 'conflict' ? '#fca5a5' : !c.enabled ? '#fde68a' : '#fff';
+    ctx.font = `${fontSize}px monospace`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(icon, x, y);
+
+    // Angle value for angle constraints
+    if (c.type === 'angle' && c.angleDeg != null) {
+      ctx.font = `${pw(9)}px monospace`;
+      ctx.fillText(`${c.angleDeg}°`, x, y + pillH * 0.7);
+    }
+
+    ctx.restore();
+  }
+}
+
+export function hitTestConstraintBadge(pt) {
+  const r = pw(12);
+  for (const c of state.constraints) {
+    if (!c.contactPoint) continue;
+    if (Math.hypot(pt.x - c.contactPoint.x, pt.y - c.contactPoint.y) < r) {
+      return c;
+    }
+  }
+  return null;
 }
 
 export function drawCrosshair() {

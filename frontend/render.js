@@ -131,7 +131,7 @@ export function drawMeasurementLabel(ann, text, defaultX, defaultY, refX, refY) 
 import { drawAnnotations } from './render-annotations.js';
 import { drawDxfOverlay, dxfToCanvas, drawGuidedResults, drawDeviations,
          drawEdgesOverlay, drawPreprocessedOverlay, deviationColor } from './render-dxf.js';
-import { drawGrid, drawMinimap, drawPendingPoints, drawCrosshair, drawLoupe } from './render-hud.js';
+import { drawGrid, drawMinimap, drawPendingPoints, drawCrosshair, drawLoupe, drawConstraintBadges } from './render-hud.js';
 import { drawLensCalOverlay } from './lens-cal.js';
 import { drawTiltCalOverlay } from './tilt-cal.js';
 
@@ -139,7 +139,7 @@ import { drawTiltCalOverlay } from './tilt-cal.js';
 export { drawAnnotations } from './render-annotations.js';
 export { drawDxfOverlay, dxfToCanvas, drawGuidedResults, drawDeviations,
          drawEdgesOverlay, drawPreprocessedOverlay, deviationColor } from './render-dxf.js';
-export { drawGrid, drawMinimap, drawPendingPoints, drawCrosshair, drawLoupe } from './render-hud.js';
+export { drawGrid, drawMinimap, drawPendingPoints, drawCrosshair, drawLoupe, drawConstraintBadges } from './render-hud.js';
 
 // Re-export annotation draw functions that other modules import from render.js
 export { drawDistance, drawAngle, drawCircle, drawArcMeasure,
@@ -354,6 +354,7 @@ export function redraw() {
   }
   drawGrid();
   drawAnnotations(redraw, _dxfFns);
+  drawConstraintBadges();
   // Cross-mode mask preview overlay: dim excluded areas during mask editing
   if (isCrossModeActive()) {
     drawMaskPreviewOverlay();

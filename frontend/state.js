@@ -78,6 +78,7 @@ export const state = {
   gearPickBuffer: null,    // { tipCircle?, rootCircle? }
   gearPickHover: null,     // annotation id of circle currently under cursor in gear pick mode
   gearAnalysis: null,      // null | { pcd_radius_px, teeth, material_is_dark, cx, cy }
+  _hoveredConstraintId: null,
 };
 
 // Active camera's exposure and gain bounds — refreshed from /camera/info

@@ -19,7 +19,7 @@ import { viewport, screenToImage, clampPan, fitToWindow, zoomOneToOne,
 import { showContextMenu, hideContextMenu } from './events-context-menu.js';
 import { _hitTestGuidedResult, _findConnectedEntities, _annotationPrimaryPoint,
          _nearestSegmentDist, _updatePickFit, _finalizePickInspection } from './events-inspection.js';
-import { drawLoupe } from './render-hud.js';
+import { drawLoupe, hitTestConstraintBadge } from './render-hud.js';
 import { isLensCalMode, lensCalClick, lensCalMouseMove } from './lens-cal.js';
 import { isTiltCalMode, tiltCalClick, tiltCalMouseMove } from './tilt-cal.js';
 import { refinePointJS } from './subpixel-js.js';
@@ -454,6 +454,18 @@ export function initMouseHandlers() {
       }
       return;
     }
+    // Constraint badge hover
+    const hovBadge = hitTestConstraintBadge(pt);
+    if (hovBadge) {
+      if (state._hoveredConstraintId !== hovBadge.id) {
+        state._hoveredConstraintId = hovBadge.id;
+        canvas.style.cursor = "pointer";
+        redraw();
+      }
+    } else if (state._hoveredConstraintId) {
+      state._hoveredConstraintId = null;
+      redraw();
+    }
     if (state.dxfDragMode && state.dxfDragOrigin) {
       const ann = state.annotations.find(a => a.type === "dxf-overlay");
       if (ann) {
@@ -829,6 +841,19 @@ export function initMouseHandlers() {
         showContextMenu(e.clientX, e.clientY, items);
         return;
       }
+    }
+
+    // Right-click on a constraint badge
+    const hitBadge = hitTestConstraintBadge(pt);
+    if (hitBadge) {
+      const items = [
+        { label: hitBadge.enabled ? 'Disable constraint' : 'Enable constraint',
+          action: () => toggleConstraint(hitBadge.id) },
+        { label: 'Remove constraint',
+          action: () => removeConstraint(hitBadge.id) },
+      ];
+      showContextMenu(e.clientX, e.clientY, items);
+      return;
     }
 
     if (state.selected.size > 0) {
