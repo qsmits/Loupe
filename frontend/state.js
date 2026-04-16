@@ -79,6 +79,11 @@ export const state = {
   gearPickHover: null,     // annotation id of circle currently under cursor in gear pick mode
   gearAnalysis: null,      // null | { pcd_radius_px, teeth, material_is_dark, cx, cy }
   _hoveredConstraintId: null,
+  // Reticle overlay
+  activeReticle: null,           // loaded reticle JSON object, or null
+  reticleRotationDeg: 0,         // current rotation in degrees
+  reticleColorOverride: null,    // user color override, or null (use reticle default)
+  reticleOpacityOverride: null,  // user opacity override, or null (use reticle default)
 };
 
 // Active camera's exposure and gain bounds — refreshed from /camera/info
