@@ -336,3 +336,27 @@ def test_check_display_requires_ipad(client):
     r = client.post("/deflectometry/check-display")
     assert r.status_code == 400
     assert "iPad" in r.json()["detail"]
+
+
+def test_compute_with_mask_polygons(client):
+    """Compute with a user mask polygon should succeed and use the mask."""
+    client.post("/deflectometry/start", json={})
+    _inject_synthetic_frames(client)
+    mask_polygons = [{"vertices": [[0, 0], [1, 0], [1, 1], [0, 1]], "include": True}]
+    r = client.post("/deflectometry/compute", json={
+        "mask_threshold": 0.02,
+        "smooth_sigma": 0.0,
+        "mask_polygons": mask_polygons,
+    })
+    assert r.status_code == 200
+    data = r.json()
+    assert "phase_x_png_b64" in data
+
+    # With a small polygon — stats should differ
+    small_mask = [{"vertices": [[0.4, 0.4], [0.6, 0.4], [0.6, 0.6], [0.4, 0.6]], "include": True}]
+    r2 = client.post("/deflectometry/compute", json={
+        "mask_threshold": 0.02,
+        "smooth_sigma": 0.0,
+        "mask_polygons": small_mask,
+    })
+    assert r2.status_code == 200

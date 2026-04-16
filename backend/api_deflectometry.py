@@ -100,9 +100,15 @@ class ResetBody(BaseModel):
     pass
 
 
+class MaskPolygon(BaseModel):
+    vertices: list[tuple[float, float]]
+    include: bool = True
+
+
 class ComputeBody(BaseModel):
     mask_threshold: float = Field(default=0.02, ge=0.0, le=0.5)
     smooth_sigma: float = Field(default=0.0, ge=0.0, le=10.0)
+    mask_polygons: list[MaskPolygon] | None = None
 
 
 class CaptureBody(BaseModel):
@@ -120,6 +126,7 @@ class CaptureReferenceBody(BaseModel):
 class HeightmapBody(BaseModel):
     mask_threshold: float = Field(default=0.02, ge=0.0, le=0.5)
     smooth_sigma: float = Field(default=0.0, ge=0.0, le=10.0)
+    mask_polygons: list[MaskPolygon] | None = None
 
 
 class CalibrateSphereBody(BaseModel):
@@ -129,6 +136,7 @@ class CalibrateSphereBody(BaseModel):
 
 class DiagnosticsBody(BaseModel):
     smooth_sigma: float = Field(default=0.0, ge=0.0, le=10.0)
+    mask_polygons: list[MaskPolygon] | None = None
 
 
 class ExportRunBody(BaseModel):
@@ -450,6 +458,16 @@ def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
         mod_x = compute_modulation(frames_x)
         mod_y = compute_modulation(frames_y)
         mask = create_modulation_mask(mod_x, mod_y, threshold_frac=body.mask_threshold)
+
+        # Intersect with user-drawn mask if provided
+        if body.mask_polygons:
+            ih, iw = mask.shape
+            user_mask = rasterize_polygon_mask(
+                [{"vertices": p.vertices, "include": p.include} for p in body.mask_polygons],
+                ih, iw,
+            )
+            mask = mask & user_mask
+
         mask_valid_frac = float(mask.sum()) / float(mask.size) if mask.size > 0 else 0.0
 
         # Slope magnitude and curl residual
@@ -514,6 +532,15 @@ def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
             mask = create_modulation_mask(mod_x, mod_y, threshold_frac=body.mask_threshold)
         else:
             mask = s._last_mask
+
+        # Intersect with user-drawn mask if provided
+        if body.mask_polygons:
+            ih, iw = mask.shape
+            user_mask = rasterize_polygon_mask(
+                [{"vertices": p.vertices, "include": p.include} for p in body.mask_polygons],
+                ih, iw,
+            )
+            mask = mask & user_mask
 
         height = frankot_chellappa(unw_x, unw_y, mask=mask)
 
