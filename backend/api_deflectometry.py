@@ -49,6 +49,7 @@ from .vision.deflectometry import (
     compute_slope_magnitude,
     compute_curl_residual,
     compute_quality_summary,
+    analyze_display_check,
 )
 
 
@@ -684,6 +685,28 @@ def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
         if len(diff) > 2:
             diff = diff[1:-1]
         return round(float(diff.max() / 255.0 * 100), 1)
+
+    @router.post("/deflectometry/check-display", dependencies=[Depends(_reject_hosted)])
+    async def check_display():
+        s = _current()
+        if s is None:
+            raise HTTPException(400, detail="No active deflectometry session")
+        if s.ws is None:
+            raise HTTPException(400, detail="iPad not connected")
+
+        async with s.lock:
+            msg = {"type": "sanity", "pattern_id": 8000}
+            await _push_and_wait(s, msg, timeout_s=5.0)
+            frame = camera.get_frame()
+            if frame is None:
+                raise HTTPException(500, detail="Frame capture failed")
+            # Restore centering pattern
+            if s.ws is not None:
+                await s.ws.send_json({"type": "centering"})
+
+        gray = frame if frame.ndim == 2 else frame.mean(axis=2).astype(np.uint8)
+        result = analyze_display_check(gray)
+        return result
 
     @router.post("/deflectometry/diagnostics", dependencies=[Depends(_reject_hosted)])
     async def deflectometry_diagnostics(body: DiagnosticsBody = DiagnosticsBody()):  # noqa: B008

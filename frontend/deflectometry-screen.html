@@ -193,6 +193,22 @@
     drawSessionLabel();
   }
 
+  function renderSanity() {
+    const W = canvas.width, H = canvas.height;
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, W, H);
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(2, 2, W - 4, H - 4);
+    const sz = 20;
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(2, 2, sz, sz);
+    ctx.fillRect(W - sz - 2, 2, sz, sz);
+    ctx.fillRect(2, H - sz - 2, sz, sz);
+    ctx.fillRect(W - sz - 2, H - sz - 2, sz, sz);
+    drawSessionLabel();
+  }
+
   function handleCommand(cmd) {
     if (!cmd || typeof cmd !== 'object') return;
     if (cmd.type === 'pattern') {
@@ -203,6 +219,8 @@
       renderSolid(128);
     } else if (cmd.type === 'centering') {
       renderCentering();
+    } else if (cmd.type === 'sanity') {
+      renderSanity();
     } else {
       return;
     }
@@ -230,6 +248,7 @@
       else if (lastCommand.type === 'solid') renderSolid(lastCommand.value);
       else if (lastCommand.type === 'clear') renderSolid(128);
       else if (lastCommand.type === 'centering') renderCentering();
+      else if (lastCommand.type === 'sanity') renderSanity();
     } else {
       renderSolid(128);
     }

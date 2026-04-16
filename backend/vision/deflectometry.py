@@ -565,6 +565,119 @@ def build_response_lut(commanded: np.ndarray, observed: np.ndarray,
     return forward_lut, inverse_lut
 
 
+def analyze_display_check(frame: np.ndarray) -> dict:
+    """Analyze a captured sanity-check pattern to verify display setup.
+
+    Detects 4 bright corner markers on a dark background.
+    Returns coverage, rotation, crop, and status assessment.
+    """
+    if frame.ndim == 3:
+        gray = frame.mean(axis=2).astype(np.uint8)
+    else:
+        gray = frame
+
+    h, w = gray.shape
+
+    # Threshold to find bright regions
+    thresh_val = max(50, int(gray.max() * 0.5))
+    _, binary = cv2.threshold(gray, thresh_val, 255, cv2.THRESH_BINARY)
+
+    # Find contours
+    contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    # Filter by area
+    min_area = 10
+    max_area = max(2000, h * w * 0.01)
+    blobs = []
+    for c in contours:
+        area = cv2.contourArea(c)
+        if min_area <= area <= max_area:
+            M = cv2.moments(c)
+            if M["m00"] > 0:
+                cx = M["m10"] / M["m00"]
+                cy = M["m01"] / M["m00"]
+                blobs.append((cx, cy, area))
+
+    # Assign blobs to quadrants
+    mid_x, mid_y = w / 2, h / 2
+    quadrants = {"tl": None, "tr": None, "bl": None, "br": None}
+    for cx, cy, area in blobs:
+        if cx < mid_x and cy < mid_y:
+            if quadrants["tl"] is None or area > quadrants["tl"][2]:
+                quadrants["tl"] = (cx, cy, area)
+        elif cx >= mid_x and cy < mid_y:
+            if quadrants["tr"] is None or area > quadrants["tr"][2]:
+                quadrants["tr"] = (cx, cy, area)
+        elif cx < mid_x and cy >= mid_y:
+            if quadrants["bl"] is None or area > quadrants["bl"][2]:
+                quadrants["bl"] = (cx, cy, area)
+        else:
+            if quadrants["br"] is None or area > quadrants["br"][2]:
+                quadrants["br"] = (cx, cy, area)
+
+    found = {k: v for k, v in quadrants.items() if v is not None}
+    corners_found = len(found)
+
+    warnings = []
+    rotation_deg = 0.0
+    coverage_fraction = 0.0
+    bounding_rect = {"x": 0, "y": 0, "w": 0, "h": 0}
+    crop = {"left": 0, "right": 0, "top": 0, "bottom": 0}
+
+    if corners_found >= 2:
+        xs = [v[0] for v in found.values()]
+        ys = [v[1] for v in found.values()]
+        x_min, x_max = min(xs), max(xs)
+        y_min, y_max = min(ys), max(ys)
+        bw = x_max - x_min
+        bh = y_max - y_min
+        bounding_rect = {
+            "x": int(x_min), "y": int(y_min),
+            "w": int(bw), "h": int(bh),
+        }
+        coverage_fraction = round((bw * bh) / (w * h), 3) if w * h > 0 else 0
+
+        if "tl" in found and "tr" in found:
+            dx = found["tr"][0] - found["tl"][0]
+            dy = found["tr"][1] - found["tl"][1]
+            rotation_deg = round(float(np.degrees(np.arctan2(dy, dx))), 2)
+        elif "bl" in found and "br" in found:
+            dx = found["br"][0] - found["bl"][0]
+            dy = found["br"][1] - found["bl"][1]
+            rotation_deg = round(float(np.degrees(np.arctan2(dy, dx))), 2)
+
+    if corners_found < 4:
+        missing = [k for k in ("tl", "tr", "bl", "br") if k not in found]
+        side_names = {"tl": "top-left", "tr": "top-right", "bl": "bottom-left", "br": "bottom-right"}
+        missing_str = ", ".join(side_names[k] for k in missing)
+        warnings.append(f"Display edge not visible ({missing_str}) — check that browser is fullscreen")
+
+    if abs(rotation_deg) > 2:
+        warnings.append(f"Display appears rotated {rotation_deg:.1f}° — check mirror/iPad alignment")
+
+    if corners_found >= 2 and coverage_fraction < 0.3:
+        warnings.append(f"Mirror covers {coverage_fraction*100:.0f}% of display — consider repositioning")
+
+    if corners_found == 4 and abs(rotation_deg) < 1 and not warnings:
+        status = "good"
+    elif corners_found >= 3 and abs(rotation_deg) < 3:
+        status = "fair"
+    else:
+        status = "poor"
+
+    return {
+        "corners_found": corners_found,
+        "corners_expected": 4,
+        "all_visible": corners_found == 4,
+        "rotation_deg": rotation_deg,
+        "coverage_fraction": coverage_fraction,
+        "bounding_rect": bounding_rect,
+        "crop": crop,
+        "status": status,
+        "warnings": warnings,
+    }
+
+
 def frankot_chellappa(dzdx: np.ndarray, dzdy: np.ndarray, mask: np.ndarray | None = None) -> np.ndarray:
     """Integrate two slope fields into a height map via Frankot-Chellappa (1988).
 

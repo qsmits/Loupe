@@ -1,6 +1,7 @@
 import base64
 import numpy as np
 from backend.vision.deflectometry import (
+    analyze_display_check,
     create_modulation_mask,
     fit_sphere_calibration,
     frankot_chellappa,
@@ -406,3 +407,36 @@ def test_quality_summary_modulation_imbalance():
 
     q = compute_quality_summary(dzdx, dzdy, mask, mod_x, mod_y, frames_x, frames_y)
     assert any("imbalance" in w.lower() or "modulation" in w.lower() for w in q["warnings"])
+
+
+def test_display_check_all_corners_found():
+    """Synthetic image with 4 bright corners should report all found."""
+    img = np.zeros((480, 640), dtype=np.uint8)
+    img[10:30, 10:30] = 255
+    img[10:30, 610:630] = 255
+    img[450:470, 10:30] = 255
+    img[450:470, 610:630] = 255
+    result = analyze_display_check(img)
+    assert result["corners_found"] == 4
+    assert result["all_visible"] is True
+    assert result["status"] == "good"
+    assert len(result["warnings"]) == 0
+
+def test_display_check_missing_corner():
+    """Image with only 3 corners should report missing."""
+    img = np.zeros((480, 640), dtype=np.uint8)
+    img[10:30, 10:30] = 255
+    img[10:30, 610:630] = 255
+    img[450:470, 10:30] = 255
+    result = analyze_display_check(img)
+    assert result["corners_found"] == 3
+    assert result["all_visible"] is False
+    assert result["status"] in ("fair", "poor")
+    assert any("not visible" in w.lower() or "fullscreen" in w.lower() for w in result["warnings"])
+
+def test_display_check_no_corners():
+    """Blank image should report 0 corners."""
+    img = np.zeros((480, 640), dtype=np.uint8)
+    result = analyze_display_check(img)
+    assert result["corners_found"] == 0
+    assert result["status"] == "poor"
