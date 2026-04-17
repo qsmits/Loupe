@@ -183,7 +183,9 @@ function _drawElement(el, reticle, scale, dpr) {
   ctx.globalAlpha = opacity;
   ctx.strokeStyle = color;
   ctx.fillStyle   = color;
-  ctx.lineWidth   = lineWidth / (scale * dpr);
+  // lineWidth is in screen px. scale = ppm * zoom * dpr already includes dpr,
+  // so to get `lineWidth` screen px we need: localWidth * scale = lineWidth * dpr
+  ctx.lineWidth   = lineWidth * dpr / scale;
 
   switch (el.type) {
     case "line":

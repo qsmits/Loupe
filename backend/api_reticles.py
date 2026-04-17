@@ -35,7 +35,10 @@ def _safe_path(category: str, name: str) -> Path:
     for part in (category, name):
         if ".." in part or "/" in part or "\\" in part:
             raise HTTPException(status_code=404, detail="Reticle not found")
-    path = (RETICLES_DIR / category / name).resolve()
+    # Strip .json suffix if the caller included it (both "m3" and "m3.json" work)
+    if name.endswith(".json"):
+        name = name[:-5]
+    path = (RETICLES_DIR / category / f"{name}.json").resolve()
     # Confirm the resolved path is still within RETICLES_DIR
     try:
         path.relative_to(RETICLES_DIR.resolve())

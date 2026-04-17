@@ -540,21 +540,7 @@ document.getElementById("btn-measurements-as-dxf")?.addEventListener("click", ()
   measurementsAsDxf();
 });
 
-// ── Crosshair toggle (now routes through reticle system) ─────────────────────
-document.getElementById("btn-crosshair").addEventListener("click", async () => {
-  if (state.activeReticle && state.activeReticle.crosshair) {
-    unloadReticle();
-    state.crosshair = false;
-    document.getElementById("btn-crosshair").classList.remove("active");
-  } else {
-    await loadReticle('crosshair', 'crosshair');
-    state.crosshair = true;
-    state.reticleColorOverride = state.settings.crosshairColor;
-    state.reticleOpacityOverride = state.settings.crosshairOpacity;
-    document.getElementById("btn-crosshair").classList.add("active");
-    redraw();
-  }
-});
+// Crosshair toggle removed — crosshair is now a reticle preset in the Overlay menu
 
 // ── Grid toggle ────────────────────────────────────────���──────────────────────
 document.getElementById("btn-grid")?.addEventListener("click", () => {

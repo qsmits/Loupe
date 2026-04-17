@@ -1261,17 +1261,17 @@ export function updateReticlePanel() {
   if (controls) {
     controls.hidden = !state.activeReticle || !!state.activeReticle.crosshair;
   }
+
+  // Sync dropdown value if reticle was unloaded externally
+  if (!state.activeReticle) {
+    _syncReticleSelects('');
+  }
 }
 
-export async function initReticlePanel() {
-  const select = document.getElementById('reticle-select');
-  if (!select) return;
-
-  const categories = await loadReticleList();
-
+/** Populate a <select> element with reticle categories (including crosshair). */
+function _populateReticleSelect(select, categories) {
   select.innerHTML = '<option value="">None</option>';
   for (const [cat, items] of Object.entries(categories)) {
-    if (cat === 'crosshair') continue;
     const group = document.createElement('optgroup');
     group.label = cat.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
     for (const item of items) {
@@ -1282,16 +1282,48 @@ export async function initReticlePanel() {
     }
     select.appendChild(group);
   }
+}
 
-  select.addEventListener('change', async () => {
-    const val = select.value;
-    if (!val) {
-      unloadReticle();
-      return;
-    }
-    const [cat, file] = val.split('/');
-    await loadReticle(cat, file);
-  });
+/** All reticle <select> elements — kept in sync. */
+const _reticleSelects = [];
+
+function _syncReticleSelects(value) {
+  for (const sel of _reticleSelects) sel.value = value;
+}
+
+async function _onReticleSelectChange(value) {
+  if (!value) {
+    unloadReticle();
+    // Also clear the old crosshair toggle state
+    state.crosshair = false;
+    document.getElementById('btn-crosshair')?.classList.remove('active');
+    _syncReticleSelects('');
+    return;
+  }
+  const [cat, file] = value.split('/');
+  await loadReticle(cat, file);
+  // If crosshair selected, sync the old toggle button state
+  state.crosshair = (cat === 'crosshair');
+  document.getElementById('btn-crosshair')?.classList.toggle('active', state.crosshair);
+  if (state.crosshair) {
+    state.reticleColorOverride = state.settings.crosshairColor;
+    state.reticleOpacityOverride = state.settings.crosshairOpacity;
+    redraw();
+  }
+  _syncReticleSelects(value);
+}
+
+export async function initReticlePanel() {
+  const categories = await loadReticleList();
+
+  // Wire up all reticle <select> elements (sidebar + overlay menu)
+  for (const id of ['reticle-select', 'reticle-menu-select']) {
+    const select = document.getElementById(id);
+    if (!select) continue;
+    _populateReticleSelect(select, categories);
+    _reticleSelects.push(select);
+    select.addEventListener('change', () => _onReticleSelectChange(select.value));
+  }
 
   document.getElementById('reticle-reset-rotation')?.addEventListener('click', () => {
     setReticleRotation(0);
