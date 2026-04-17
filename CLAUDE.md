@@ -112,6 +112,5 @@ When in doubt, render the output of your new code as a colored overlay on top of
 `config.json` at repo root stores runtime state: `camera_id`, `no_camera`, `version`, `tolerance_warn`, `tolerance_fail`. Managed by `backend/config.py`.
 
 ### Documentation
-- `docs/roadmap.md` — Product roadmap with completed and planned phases.
-- `docs/superpowers/specs/` — Design specs for major features.
-- `docs/superpowers/plans/` — Implementation plans for major features.
+Working notes, design specs, plans, and roadmap live in `docs/` locally
+but are gitignored — not part of the repo.
