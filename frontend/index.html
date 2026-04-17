@@ -35,6 +35,44 @@
             <input type="range" id="fringe-mask-thresh" min="0" max="100" step="1" value="15" style="flex:1" />
             <span id="fringe-mask-thresh-val" class="detect-val" style="min-width:28px">15%</span>
           </div>
+          <div style="font-size:10px;opacity:0.55;margin-top:2px;line-height:1.3">
+            Fraction of peak modulation below which pixels are excluded. Increase to trim weak-fringe edges.
+          </div>
+        </div>
+        <div class="detect-section">
+          <details id="fringe-advanced-tuning" style="margin-top:2px">
+            <summary style="font-size:11px;color:var(--text-secondary);cursor:pointer">Advanced tuning</summary>
+            <div style="margin-top:6px;font-size:10px;opacity:0.65;line-height:1.4;padding:6px 4px;border-left:2px solid var(--border)">
+              DC suppression has two layers. <strong>DC margin</strong> (hard) zeros a small region around the DC bin &mdash; increase to reject very low-frequency content (3&ndash;5 fringe images). <strong>DC cutoff</strong> (soft) applies a Gaussian ramp to magnitudes near DC &mdash; finer control for ringing-vs-detail tradeoff. <em>Auto</em> = sensible default. Set both manually only if you understand the interaction.
+            </div>
+            <div style="margin-top:6px">
+              <div class="detect-section-label">LPF &sigma; (fringe period fraction)</div>
+              <div class="detect-row">
+                <label style="font-size:10px;display:inline-flex;align-items:center;gap:4px;cursor:pointer">
+                  <input type="checkbox" id="fringe-lpf-sigma-auto" checked />
+                  auto
+                </label>
+                <input type="range" id="fringe-lpf-sigma" min="0.05" max="3.0" step="0.05" value="2.5" style="flex:1" disabled />
+                <span id="fringe-lpf-sigma-val" class="detect-val" style="min-width:34px">auto</span>
+              </div>
+              <div style="font-size:10px;opacity:0.55;margin-top:2px;line-height:1.3">
+                Smooths the extracted phase. Increase for noisy fringes; decrease to keep fine detail.
+              </div>
+            </div>
+            <div style="margin-top:8px">
+              <div class="detect-section-label">DC margin (bins)</div>
+              <div class="detect-row">
+                <label style="font-size:10px;display:inline-flex;align-items:center;gap:4px;cursor:pointer">
+                  <input type="checkbox" id="fringe-dc-margin-auto" checked />
+                  auto
+                </label>
+                <input type="number" id="fringe-dc-margin" min="0" max="32" step="1" value="2" style="width:60px;font-size:11px;padding:2px 4px" disabled />
+              </div>
+              <div style="font-size:10px;opacity:0.55;margin-top:2px;line-height:1.3">
+                Rejects very-low-frequency content near DC. Increase when the carrier snaps to the wrong bin on low-fringe images.
+              </div>
+            </div>
+          </details>
         </div>
         <div class="detect-section">
           <div class="detect-section-label">Reference Standard</div>
@@ -47,6 +85,22 @@
             <input type="checkbox" id="fringe-correct-2pi-jumps" checked style="margin-top:2px" />
             <span>Correct 2&pi; jumps <span style="opacity:0.6">(off for step measurements)</span></span>
           </label>
+        </div>
+        <div class="detect-section">
+          <div class="detect-section-label">Aperture Recipe (M1.4)</div>
+          <select id="fringe-recipe-select" style="width:100%;margin-top:4px;padding:4px;font-size:11px">
+            <option value="">None (auto-mask)</option>
+          </select>
+          <div style="display:flex;gap:4px;margin-top:4px;flex-wrap:wrap">
+            <button class="detect-btn" id="fringe-recipe-save" style="padding:3px 8px;font-size:10px;flex:1">Save current&hellip;</button>
+            <button class="detect-btn" id="fringe-recipe-manage" style="padding:3px 8px;font-size:10px">Manage</button>
+            <button class="detect-btn" id="fringe-recipe-export" style="padding:3px 8px;font-size:10px">Export</button>
+            <button class="detect-btn" id="fringe-recipe-import" style="padding:3px 8px;font-size:10px">Import</button>
+            <input type="file" id="fringe-recipe-import-file" accept=".json,application/json" hidden />
+          </div>
+          <div style="font-size:10px;opacity:0.55;margin-top:2px;line-height:1.3">
+            A saved recipe ships with every analyze so subsequent captures reuse the same aperture.
+          </div>
         </div>
       </div>
     </div>
@@ -737,17 +791,21 @@
 
           <div class="help-nav-section" data-help-modes="fringe">Overview</div>
           <button class="help-nav-item top-level" data-page="fringe-overview" data-help-modes="fringe">How It Works</button>
+          <button class="help-nav-item top-level" data-page="fringe-terms" data-help-modes="fringe">Terminology</button>
           <button class="help-nav-item top-level" data-page="fringe-setup" data-help-modes="fringe">Setup</button>
+          <button class="help-nav-item top-level" data-page="fringe-calibration-recipes" data-help-modes="fringe">Calibration &amp; Recipes</button>
 
           <div class="help-nav-section" data-help-modes="fringe">Analysis</div>
           <button class="help-nav-item top-level" data-page="fringe-capture" data-help-modes="fringe">Capture &amp; Analyze</button>
-          <button class="help-nav-item top-level" data-page="fringe-averaging" data-help-modes="fringe">Wavefront Averaging</button>
-          <button class="help-nav-item top-level" data-page="fringe-zernike" data-help-modes="fringe">Zernike Subtraction</button>
+          <button class="help-nav-item top-level" data-page="fringe-workflow-modes" data-help-modes="fringe">Workflow Modes</button>
+          <button class="help-nav-item top-level" data-page="fringe-averaging" data-help-modes="fringe">Averaging &amp; Subtraction</button>
+          <button class="help-nav-item top-level" data-page="fringe-zernike" data-help-modes="fringe">Form Removal</button>
 
           <div class="help-nav-section" data-help-modes="fringe">Results</div>
           <button class="help-nav-item top-level" data-page="fringe-results" data-help-modes="fringe">Results &amp; Tabs</button>
-          <button class="help-nav-item top-level" data-page="fringe-tips" data-help-modes="fringe">Tips &amp; Troubleshooting</button>
+          <button class="help-nav-item top-level" data-page="fringe-measurements" data-help-modes="fringe">Measurement Tools</button>
           <button class="help-nav-item top-level" data-page="fringe-diagnostics" data-help-modes="fringe">Diagnostics</button>
+          <button class="help-nav-item top-level" data-page="fringe-tips" data-help-modes="fringe">Tips &amp; Troubleshooting</button>
         </nav>
 
         <!-- Right content -->
@@ -879,11 +937,48 @@
             <h2 class="help-page-title">How It Works</h2>
             <p class="help-page-sub">Monochromatic interferometric fringe analysis for quantitative surface flatness measurement.</p>
             <div class="help-section-label">Principle</div>
-            <p class="help-p">When a flat optical reference (an optical flat) is placed on a lapped surface and illuminated with monochromatic light, interference fringes form. Each fringe represents a contour of constant air gap, spaced at half the wavelength of light (~295 nm for sodium). Straight, evenly spaced fringes indicate a flat surface; curved or irregularly spaced fringes indicate surface errors.</p>
+            <p class="help-p">When a flat optical reference (an optical flat) is placed on a lapped surface and illuminated with monochromatic light, interference fringes form. Each fringe is a contour of constant air gap, spaced at half the wavelength of light (~295 nm for sodium). The image shows gap geometry first; Loupe then converts that recovered phase into a signed surface-height map using the selected wavelength and form-removal model.</p>
             <div class="help-section-label">Digital analysis</div>
-            <p class="help-p">Loupe digitizes this process: a single photograph of the interferogram is analyzed using 2D Fourier transform (DFT) phase extraction. The carrier frequency (the regular fringe spacing) is isolated in the frequency domain, and the surface-error phase is extracted from the sideband. This phase is then unwrapped, decomposed into Zernike polynomials, and converted to physical height using the known wavelength.</p>
+            <p class="help-p">Loupe analyzes a single interferogram using spatial-carrier Fourier phase extraction. It detects the carrier peak in the 2D FFT, demodulates the sideband, unwraps the recovered phase, and converts it to height. The resulting surface can then be shown raw or with low-order form removed using Zernike, plane, or low-order polynomial models.</p>
+            <div class="help-section-label">What this mode is best at</div>
+            <p class="help-p">Fringe mode is strongest on smooth, continuous surfaces: optical flats, lapped faces, gentle wear patterns, curvature, and low-order form. Small region-to-region comparisons also work well when the step is comfortably below the single-wavelength ambiguity limit.</p>
+            <div class="help-section-label">Important limit</div>
+            <p class="help-p">Single-shot single-wavelength analysis cannot uniquely determine large discontinuous steps. If a step exceeds about &lambda;/4, the displayed value may be aliased by integer multiples of &lambda;/2. Loupe warns about this in the Step tool, but the underlying physics limit is still real.</p>
             <div class="help-section-label">What you need</div>
             <p class="help-p">A monochromatic light source (sodium lamp, HeNe laser, or narrow-band LED), an optical flat, the part to be measured, and a camera to photograph the fringes. No iPad or multi-frame capture is required, unlike deflectometry.</p>
+            <div class="help-tip">New to fringe analysis? Open <strong>Terminology</strong> in this help menu for plain-language explanations of terms like wavelength, &lambda;/4, carrier, unwrap, PV, and RMS.</div>
+          </div>
+
+          <!-- Fringe: Terminology -->
+          <div class="help-page" id="help-page-fringe-terms" hidden>
+            <h2 class="help-page-title">Terminology</h2>
+            <p class="help-page-sub">Plain-language explanations of the fringe-analysis terms you will see in the UI.</p>
+            <table>
+              <thead><tr><th>Term</th><th>Plain-language meaning</th></tr></thead>
+              <tbody>
+                <tr><td><strong>Optical flat</strong></td><td>A very flat reference surface placed on or near the part so the tiny air gap between them produces interference fringes.</td></tr>
+                <tr><td><strong>Air gap</strong></td><td>The tiny spacing between the optical flat and the part. The fringes describe this gap first; the app then converts that into a surface-height map.</td></tr>
+                <tr><td><strong>Wavelength (&lambda;)</strong></td><td>The color of the monochromatic light, measured in nanometers. It sets the height scale. Shorter wavelengths make the same phase change correspond to a smaller physical height.</td></tr>
+                <tr><td><strong>&lambda;/2</strong></td><td>Half a wavelength. In reflection interferometry, moving from one fringe to the next usually corresponds to about this much air-gap change.</td></tr>
+                <tr><td><strong>&lambda;/4</strong></td><td>A quarter wavelength. This matters because a single image cannot uniquely resolve every larger step. For sodium light, &lambda;/4 is about 147 nm. Once a discontinuous step gets larger than that, a single-shot reading can be ambiguous by multiples of &lambda;/2.</td></tr>
+                <tr><td><strong>Carrier</strong></td><td>The overall fringe spacing and direction. The software finds this dominant pattern in the FFT and uses it to separate the useful signal from the background.</td></tr>
+                <tr><td><strong>FFT</strong></td><td>Fast Fourier Transform. Think of it as a view of the image in terms of repeating patterns instead of pixels. In fringe mode it is used to find the fringe direction and spacing.</td></tr>
+                <tr><td><strong>Demodulation</strong></td><td>The step where the software isolates the fringe pattern it cares about and removes the large carrier ripple so the underlying phase can be measured.</td></tr>
+                <tr><td><strong>Wrapped phase</strong></td><td>The raw phase result before jumps are resolved. It repeats every 2&pi;, so it looks like bands that suddenly jump back around.</td></tr>
+                <tr><td><strong>Unwrap / unwrapped phase</strong></td><td>The process of stitching those 2&pi; jumps into one continuous surface. This is what turns repeating phase bands into a usable shape map.</td></tr>
+                <tr><td><strong>2&pi; jump correction</strong></td><td>An extra cleanup step that can fix isolated unwrap mistakes on smooth surfaces. For step measurements it can also hide real discontinuities, so it is often better to disable it there.</td></tr>
+                <tr><td><strong>Modulation</strong></td><td>How strong or visible the fringes are at each pixel. High modulation usually means a more trustworthy phase measurement; low modulation means weak or noisy fringes.</td></tr>
+                <tr><td><strong>Trusted pixels / trusted area</strong></td><td>Pixels that pass both the modulation checks and the unwrap-risk checks. Measurements restricted to trusted pixels are less likely to be polluted by weak data.</td></tr>
+                <tr><td><strong>PV</strong></td><td>Peak-to-valley. The full height range of the displayed surface: highest point minus lowest point.</td></tr>
+                <tr><td><strong>RMS</strong></td><td>Root mean square. A summary of how much the surface varies overall, not just the single highest and lowest spots.</td></tr>
+                <tr><td><strong>Form removal</strong></td><td>Subtracting broad shape like tilt or curvature so smaller features are easier to inspect. This changes the displayed map and its PV/RMS, so it should always be interpreted consciously.</td></tr>
+                <tr><td><strong>Zernike</strong></td><td>A standard set of smooth shape terms used in optics. They are handy for describing tilt, curvature, astigmatism, coma, and related low-order form.</td></tr>
+                <tr><td><strong>Aliasing</strong></td><td>When different physical surfaces can produce the same single-image phase result. In step measurements this is why a large step can masquerade as a smaller one shifted by multiples of &lambda;/2.</td></tr>
+            </tbody>
+            </table>
+            <div class="help-section-label">Two common mental traps</div>
+            <div class="help-tip"><strong>Fringes show gap first:</strong> By eye, it is easy to think a fringe pattern directly labels surface highs and lows. What it directly shows is the air-gap shape between the part and the optical flat.</div>
+            <div class="help-tip"><strong>The displayed map depends on what was removed:</strong> A surface map after tilt or curvature removal can look very different from the raw recovered shape. Always note the active form-removal setting before interpreting numbers.</div>
           </div>
 
           <!-- Fringe: Setup -->
@@ -891,11 +986,28 @@
             <h2 class="help-page-title">Setup</h2>
             <p class="help-page-sub">Prepare the system before analyzing an interferogram.</p>
             <div class="help-section-label">Wavelength</div>
-            <p class="help-p">Select the correct wavelength for your light source from the dropdown. Common choices: Sodium (589 nm), HeNe laser (632.8 nm), or Green LED (532 nm). If your source is different, select Custom and enter the wavelength in nanometers. The wavelength determines the physical height conversion: height = phase &times; &lambda; / (4&pi;).</p>
+            <p class="help-p">Select the wavelength that matches your actual light source. The active calibration record owns this value, and the wavelength dropdown acts as a quick editor for that record. The wavelength determines the physical height conversion: height = phase &times; &lambda; / (4&pi;).</p>
             <div class="help-section-label">Mask threshold</div>
-            <p class="help-p">The mask threshold slider controls how aggressively the auto-masking rejects low-contrast pixels. Increase it if background noise is contaminating the results; decrease it if valid fringe areas are being excluded. Default is 15%.</p>
+            <p class="help-p">The mask threshold slider controls how aggressively low-modulation pixels are excluded. Increase it when the background, rim, or weakly lit regions are contaminating the result. Decrease it when valid fringe areas are being cut away. The diagnostics tab shows the modulation and trusted-area consequences of this choice.</p>
+            <div class="help-section-label">Advanced tuning</div>
+            <p class="help-p">The Settings menu includes advanced DFT controls. <strong>LPF &sigma;</strong> changes how strongly the demodulated phase is smoothed. <strong>DC margin</strong> widens or narrows the rejection zone around the FFT center. <strong>Correct 2&pi; jumps</strong> enables a post-unwrap cleanup that is useful for ordinary smooth surfaces but should usually be disabled for step measurements.</p>
             <div class="help-section-label">Focus quality</div>
-            <p class="help-p">The focus quality bar shows a real-time sharpness score (0-100) for the camera preview. Higher is better. Adjust focus and lighting until the score is above 60 before capturing.</p>
+            <p class="help-p">The focus bar is a practical setup score, not a pure fringe-only metric. It rewards fringe contrast when fringes are present and edge sharpness for ordinary setup images. Use it to dial in focus and lighting before capturing.</p>
+            <div class="help-tip">Aim for a small number of clean fringes across the part, even illumination, and no clipped highlights. Dust, trapped bubbles, and stress spots are much easier to see in the live preview than after analysis.</div>
+          </div>
+
+          <!-- Fringe: Calibration & Recipes -->
+          <div class="help-page" id="help-page-fringe-calibration-recipes" hidden>
+            <h2 class="help-page-title">Calibration &amp; Recipes</h2>
+            <p class="help-page-sub">Keep wavelength, scaling, and aperture geometry repeatable across analyses.</p>
+            <div class="help-section-label">Calibration records</div>
+            <p class="help-p">Fringe mode keeps named calibration records in the browser. A calibration stores the nominal wavelength, spatial scale (mm/pixel when known), lens distortion term, capture date, and notes. The active calibration is shown in the summary bar and is sent with each analysis so session captures carry their calibration snapshot.</p>
+            <div class="help-section-label">Managing calibrations</div>
+            <p class="help-p">Use the <strong>change…</strong> link in the summary bar to switch, create, rename, or delete calibrations. Use <strong>Export…</strong> and <strong>Import…</strong> to move calibration sets between machines or browsers.</p>
+            <div class="help-section-label">Aperture recipes</div>
+            <p class="help-p">A recipe is a saved analysis geometry. It can be built from mask polygons drawn with <strong>Edit Mask</strong>, or imported from JSON. Recipes are useful when you measure the same part family repeatedly and want the same aperture and exclusion zones every time.</p>
+            <div class="help-section-label">Recipe behavior</div>
+            <p class="help-p">If no hand-drawn mask is active, the selected recipe supplies the analysis polygons automatically. Recipe coordinates are normalized, so they rescale with the current image size. Loupe warns in the console when the current preview resolution differs from the resolution the recipe was saved against.</p>
           </div>
 
           <!-- Fringe: Capture & Analyze -->
@@ -903,47 +1015,77 @@
             <h2 class="help-page-title">Capture &amp; Analyze</h2>
             <p class="help-page-sub">How to acquire and analyze an interferogram.</p>
             <div class="help-section-label">From camera</div>
-            <p class="help-p">Click <strong>Freeze &amp; Analyze</strong> to capture the current camera frame and run the full analysis pipeline. The camera frame is frozen, converted to grayscale, and processed through DFT phase extraction, Zernike fitting, and surface rendering.</p>
+            <p class="help-p">Click <strong>Freeze &amp; Analyze</strong> to grab the current frame and run the full analysis pipeline. The result is stored as a session capture with provenance, calibration snapshot, and the grids needed for later subtraction, export, and re-analysis.</p>
             <div class="help-section-label">From file</div>
-            <p class="help-p">Drag and drop any image file (PNG, JPEG, TIFF) onto the drop zone in the left column. This is useful for analyzing saved interferograms or images from other cameras.</p>
+            <p class="help-p">Drag and drop an image file onto the drop zone in the left column. Re-analysis paths such as carrier override and subtraction continue to use the dropped image until you switch back to camera capture.</p>
             <div class="help-section-label">Pipeline</div>
-            <div class="help-step"><span class="help-step-num">1</span><span>Auto-mask: pixels with low fringe contrast are excluded.</span></div>
-            <div class="help-step"><span class="help-step-num">2</span><span>2D FFT extracts the carrier frequency and isolates the surface-error sideband.</span></div>
-            <div class="help-step"><span class="help-step-num">3</span><span>Phase unwrapping resolves 2&pi; ambiguities into a continuous surface.</span></div>
-            <div class="help-step"><span class="help-step-num">4</span><span>Zernike polynomial fitting (36 terms) decomposes the surface into known aberration modes.</span></div>
-            <div class="help-step"><span class="help-step-num">5</span><span>Selected terms are subtracted and the residual is converted to physical height.</span></div>
+            <div class="help-step"><span class="help-step-num">1</span><span>Choose the best grayscale channel and build the analysis mask from polygons, recipe geometry, or auto-masking.</span></div>
+            <div class="help-step"><span class="help-step-num">2</span><span>Detect the FFT carrier, estimate alternates and confidence, and extract wrapped phase.</span></div>
+            <div class="help-step"><span class="help-step-num">3</span><span>Unwrap the phase using modulation and local phase-consistency quality signals.</span></div>
+            <div class="help-step"><span class="help-step-num">4</span><span>Convert phase to height, fit low-order form, and build raw and display height grids.</span></div>
+            <div class="help-step"><span class="help-step-num">5</span><span>Render the surface map, profiles, diagnostics, and confidence overlays.</span></div>
             <div class="help-section-label">Polygon mask</div>
-            <p class="help-p">Click <strong>Edit Mask</strong> to define analysis boundaries using Microscope mode's drawing tools. Draw area polygons to outline the part. Right-click any polygon to toggle between Punch (include) and Die (exclude). Click <strong>Apply Mask</strong> when done — the mask persists across re-analyses while the camera stays live. Click <strong>Clear Mask</strong> to remove all mask regions.</p>
+            <p class="help-p">Click <strong>Edit Mask</strong> to define include and exclude polygons. Draw the part boundary, then add exclusion islands for dust, chips, trapped bubbles, or fixture hardware. Hand-drawn polygons take precedence over the selected recipe until you clear them.</p>
+          </div>
+
+          <!-- Fringe: Workflow Modes -->
+          <div class="help-page" id="help-page-fringe-workflow-modes" hidden>
+            <h2 class="help-page-title">Workflow Modes</h2>
+            <p class="help-page-sub">The mode selector above the summary bar changes the tools and guidance shown in the results workspace.</p>
+            <table>
+              <thead><tr><th>Mode</th><th>Use it for</th></tr></thead>
+              <tbody>
+                <tr><td><strong>Surface</strong></td><td>General surface-form work: map inspection, cursor readout, profiles, area stats, and 3D view.</td></tr>
+                <tr><td><strong>Small-step (&lt; &lambda;/4)</strong></td><td>Region-to-region comparisons on smooth plateaus or genuinely small steps. The Step tool is emphasized and its aliasing warning matters here.</td></tr>
+                <tr><td><strong>Averaging</strong></td><td>Build a stable result from several captures of the same setup. The Session tab becomes the main workspace.</td></tr>
+                <tr><td><strong>Subtraction</strong></td><td>Compare one captured result against another reference result in the current session.</td></tr>
+              </tbody>
+            </table>
+            <div class="help-tip">These modes are UI guidance, not separate solvers. They change which controls are emphasized and how strongly Loupe warns about the physics of the measurement you are trying to make.</div>
           </div>
 
           <!-- Fringe: Wavefront Averaging -->
           <div class="help-page" id="help-page-fringe-averaging" hidden>
-            <h2 class="help-page-title">Wavefront Averaging</h2>
-            <p class="help-page-sub">Reduce random noise by averaging multiple captures of the same surface.</p>
-            <div class="help-section-label">How to average</div>
-            <p class="help-p">Click <strong>Add to Average</strong> after each analysis to accumulate captures. The averaged wavefront is recomputed after each addition. The capture log shows all included captures with their individual RMS values.</p>
-            <div class="help-section-label">Automatic rejection</div>
-            <p class="help-p">Captures with unusually high RMS (indicating vibration, air bubbles, or a bumped flat) are automatically rejected. The threshold is configurable: by default, a capture is rejected if its RMS exceeds 3&times; the running average. Rejected captures appear with a red &cross; in the capture log. Click any entry in the log to manually include or exclude it from the average.</p>
+            <h2 class="help-page-title">Averaging &amp; Subtraction</h2>
+            <p class="help-page-sub">Session tools for repeatability, reference-relative work, and capture provenance.</p>
+            <div class="help-section-label">Averaging from the panel</div>
+            <p class="help-p">The left panel still supports quick “Add to Average” accumulation. Each accepted capture contributes to a running average, and the log lets you include or exclude captures manually.</p>
+            <div class="help-section-label">Averaging from the Session tab</div>
+            <p class="help-p">For more deliberate work, open the <strong>Session</strong> tab, choose <strong>Select for average…</strong>, pick two or more captures, and run an average with optional sigma or MAD rejection. The averaged result becomes its own session capture with source links back to the inputs.</p>
+            <div class="help-section-label">Subtraction</div>
+            <p class="help-p">Use the <strong>Compare</strong> button in the Session tab to subtract a reference capture from a measurement capture. Loupe checks shape, wavelength, and calibration consistency, performs registration when enabled, and stores the resulting deviation map as a new session capture.</p>
+            <div class="help-section-label">What the warnings mean</div>
+            <p class="help-p">Subtraction and averaging warnings are not decoration. They flag low overlap, wavelength mismatch, suspicious registration confidence, and other conditions that can make a mathematically valid operation physically misleading.</p>
           </div>
 
           <!-- Fringe: Zernike Subtraction -->
           <div class="help-page" id="help-page-fringe-zernike" hidden>
-            <h2 class="help-page-title">Zernike Subtraction</h2>
-            <p class="help-page-sub">Control which surface error modes are removed from the measurement.</p>
+            <h2 class="help-page-title">Form Removal</h2>
+            <p class="help-page-sub">Control which low-order shape is removed from the measured surface.</p>
             <div class="help-section-label">Why subtract?</div>
-            <p class="help-p">Zernike polynomials describe common optical aberrations. Subtracting certain terms isolates the surface errors you care about. For example, tilt (Z2, Z3) is caused by the optical flat not being perfectly parallel to the surface; removing it shows only the actual surface shape error.</p>
-            <div class="help-section-label">Available terms</div>
+            <p class="help-p">Low-order form often reflects setup rather than the part feature you care about. Removing tilt, curvature, or other broad trends can make local structure easier to read. For metrology work, always be explicit about what has been removed before you interpret the PV/RMS numbers.</p>
+            <div class="help-section-label">Form models</div>
+            <table>
+              <thead><tr><th>Model</th><th>Best use</th></tr></thead>
+              <tbody>
+                <tr><td><strong>Zernike</strong></td><td>Circular or nearly circular apertures where you want per-term control over optical-style low-order modes.</td></tr>
+                <tr><td><strong>Plane</strong></td><td>Keep curvature, remove only tilt.</td></tr>
+                <tr><td><strong>Poly2</strong></td><td>Non-circular apertures with gentle quadratic form.</td></tr>
+                <tr><td><strong>Poly3</strong></td><td>Non-circular apertures with somewhat richer low-order shape.</td></tr>
+              </tbody>
+            </table>
+            <div class="help-section-label">Zernike term controls</div>
             <table>
               <thead><tr><th>Checkbox</th><th>Terms</th><th>What it removes</th></tr></thead>
               <tbody>
-                <tr><td><strong>Tilt X/Y</strong></td><td>Z2, Z3</td><td>Overall tilt (always on)</td></tr>
+                <tr><td><strong>Tilt X/Y</strong></td><td>Z2, Z3</td><td>Overall tilt</td></tr>
                 <tr><td><strong>Power</strong></td><td>Z4</td><td>Curvature / defocus (concavity or convexity)</td></tr>
                 <tr><td><strong>Astigmatism</strong></td><td>Z5, Z6</td><td>Saddle-shaped error</td></tr>
                 <tr><td><strong>Coma</strong></td><td>Z7, Z8</td><td>Comet-shaped aberration</td></tr>
                 <tr><td><strong>Spherical</strong></td><td>Z11</td><td>Center-to-edge variation (bowl shape)</td></tr>
               </tbody>
             </table>
-            <div class="help-tip">Toggling checkboxes triggers instant re-analysis (no re-capture needed). The Zernike bar chart tab shows all 36 fitted coefficients with subtracted terms grayed out.</div>
+            <div class="help-tip">Changing pills or form models triggers instant re-analysis using the cached raw grid when available, so the display is recomputed from the recovered surface rather than only from the low-order coefficient chart.</div>
           </div>
 
           <!-- Fringe: Results & Tabs -->
@@ -951,15 +1093,42 @@
             <h2 class="help-page-title">Results &amp; Tabs</h2>
             <p class="help-page-sub">Understanding the output of a fringe analysis.</p>
             <div class="help-section-label">Summary bar</div>
-            <p class="help-p">Shows PV (peak-to-valley) and RMS in both waves (&lambda;) and nanometers (nm). PV is the total range of surface error; RMS is the statistical spread. A surface with PV &lt; 1&lambda; is considered "optically flat" for many applications.</p>
+            <p class="help-p">Shows PV and RMS in both waves and nanometers, plus the active workflow mode, calibration, recipe badge, and current form-removal description. PV is the total range of the displayed surface. RMS is the statistical spread of that same displayed surface.</p>
             <div class="help-section-label">Surface Map tab</div>
-            <p class="help-p">False-color height map: red = high, blue = low (relative). The colormap is symmetric around zero after Zernike subtraction. Masked pixels appear black. Scroll to zoom, drag to pan.</p>
+            <p class="help-p">False-color height map of the displayed surface. Use the overlay buttons to switch between the surface map, confidence composite, and modulation image. The “use trusted pixels only” checkbox restricts measurements to pixels that are both well-modulated and unwrap-reliable.</p>
             <div class="help-section-label">3D View tab</div>
             <p class="help-p">Interactive 3D surface visualization. Drag to rotate, scroll to zoom, right-drag to pan. The Z exaggeration slider amplifies the height for visibility.</p>
             <div class="help-section-label">Zernike tab</div>
-            <p class="help-p">Bar chart of all 36 fitted Zernike coefficients in units of waves. Subtracted terms are shown in gray; active terms in blue. Large coefficients indicate dominant surface error modes.</p>
+            <p class="help-p">Bar chart plus per-term table for the fitted Zernike coefficients. Subtracted terms are grayed out. The table also shows per-term RMS contribution and normalization weights for the current aperture.</p>
             <div class="help-section-label">Profiles tab</div>
             <p class="help-p">Cross-section height profiles through the center of the surface: one horizontal, one vertical. Useful for identifying whether errors are primarily in one direction.</p>
+            <div class="help-section-label">PSF / MTF tab</div>
+            <p class="help-p">Optics-style visualization derived from the displayed surface. Useful when fringe mode is being used as a wavefront-analysis tool rather than only as a flatness map.</p>
+            <div class="help-section-label">Session tab</div>
+            <p class="help-p">In-session capture browser. Every new analysis, average, subtraction, and import appears here with origin tags, source links, export buttons, and a details panel.</p>
+            <div class="help-section-label">Trend tab</div>
+            <p class="help-p">Plots PV and RMS across the current session. Use it to spot drift, compare calibrations, and visualize the effect of repeated polishing or lapping passes.</p>
+          </div>
+
+          <!-- Fringe: Measurement Tools -->
+          <div class="help-page" id="help-page-fringe-measurements" hidden>
+            <h2 class="help-page-title">Measurement Tools</h2>
+            <p class="help-page-sub">Tools in the Surface Map toolbar operate on the displayed height grid.</p>
+            <table>
+              <thead><tr><th>Tool</th><th>What it does</th></tr></thead>
+              <tbody>
+                <tr><td><strong>Cursor</strong></td><td>Hover to read local height.</td></tr>
+                <tr><td><strong>&Delta;h</strong></td><td>Click two points to read the height difference between them.</td></tr>
+                <tr><td><strong>Profile</strong></td><td>Click two points to sample a line profile and show a profile chart.</td></tr>
+                <tr><td><strong>Area</strong></td><td>Click two corners of a rectangle to compute PV and RMS within that region.</td></tr>
+                <tr><td><strong>Step</strong></td><td>Draw two rectangles and compare their mean heights. Intended for smooth plateaus and small steps.</td></tr>
+              </tbody>
+            </table>
+            <div class="help-section-label">Trusted pixels</div>
+            <p class="help-p">When <strong>use trusted pixels only</strong> is enabled, Area and Step measurements ignore pixels outside the trusted-mask grid. This helps avoid reading unreliable values from weak-fringe or risky unwrap regions.</p>
+            <div class="help-section-label">Step tool limit</div>
+            <p class="help-p">The Step tool is only valid for small steps or smooth plateaus. If the reported step magnitude exceeds about &lambda;/4, Loupe shows an aliasing warning because a single interferogram cannot distinguish that result from step &plusmn; n&middot;&lambda;/2.</p>
+            <div class="help-tip">For step work, keep both rectangles away from the vertical edge itself. Measure plateau A and plateau B, not the transition zone.</div>
           </div>
 
           <!-- Fringe: Tips & Troubleshooting -->
@@ -972,8 +1141,9 @@
             <div class="help-tip">Adjust the camera exposure so that fringes are clearly visible without clipping (no fully white or fully black regions).</div>
             <div class="help-section-label">Troubleshooting</div>
             <div class="help-tip"><strong>No fringes detected:</strong> Check that the mask threshold is not too high. Try lowering it to 5-10%.</div>
-            <div class="help-tip"><strong>Noisy surface map:</strong> The fringe density may be too high for the camera resolution. Reduce the number of fringes by adjusting the angle of the optical flat.</div>
-            <div class="help-tip"><strong>Phase unwrapping errors:</strong> These appear as sharp step discontinuities in the surface map. They occur when fringes are too closely spaced or when the image is noisy. Try increasing the mask threshold to exclude low-quality regions.</div>
+            <div class="help-tip"><strong>Noisy surface map:</strong> The fringe density may be too high for the camera resolution, or the aperture may include weakly lit regions. Reduce fringe density, tighten the mask, or use trusted pixels only for measurements.</div>
+            <div class="help-tip"><strong>Unexpected sign by eye:</strong> Fringes are contours of air gap, not direct “high/low” labels. The surface map uses a sign convention after converting gap phase to height. Use rotation tests and known artifacts to sanity-check the interpretation.</div>
+            <div class="help-tip"><strong>Step reading seems wrong:</strong> Disable <strong>Correct 2&pi; jumps</strong> and use the Step tool only on plateaus away from the edge. If the step is larger than &lambda;/4, the single-image result is physically ambiguous.</div>
             <div class="help-tip"><strong>Wrong wavelength:</strong> If PV/RMS values seem unreasonable, verify the wavelength setting matches your actual light source.</div>
           </div>
 
@@ -982,13 +1152,15 @@
             <h2 class="help-page-title">Diagnostics</h2>
             <p class="help-page-sub">Inspect the carrier detection and modulation quality.</p>
             <div class="help-section-label">Carrier summary</div>
-            <p class="help-p">After analysis, a carrier summary row appears below the statistics bar showing the detected fringe period (pixels), angle, and confidence level. The confidence dot is green (good, peak ratio &gt;5), amber (fair, 2-5), or red (low, &lt;2). Click the row to open the Diagnostics tab.</p>
+            <p class="help-p">After analysis, a carrier summary row appears below the statistics bar showing the detected period, angle, and confidence. The row also exposes alternate peaks, manual-override state, and the tuning parameters the backend used for the analysis.</p>
             <div class="help-section-label">FFT magnitude image</div>
-            <p class="help-p">Shows the 2D Fourier transform of the interferogram on a log scale. The detected carrier peak is marked with a green crosshair. A clean interferogram shows two bright sideband peaks (the carrier and its conjugate) clearly separated from the DC center. If the wrong peak was selected, click on the correct peak to override and re-analyze.</p>
+            <p class="help-p">Shows the FFT magnitude on a log scale. A clean interferogram has two strong sidebands separated from the DC center. Click the desired sideband to override the carrier. Use <strong>Reset to Auto</strong> to go back to automatic selection.</p>
             <div class="help-section-label">Modulation map</div>
             <p class="help-p">False-color visualization of fringe contrast across the aperture. Green indicates high modulation (reliable phase extraction), red indicates low modulation (noisy or absent fringes). Masked pixels appear dark gray. Use this to verify that the mask threshold is appropriate and to understand where surface map noise originates.</p>
-            <div class="help-section-label">Manual carrier override</div>
-            <p class="help-p">If the auto-detected carrier is wrong (indicated by a low confidence score or unexpected results), click directly on the FFT image to select the correct sideband peak. The analysis re-runs with the forced carrier position. Click <strong>Reset to Auto</strong> to revert to automatic detection.</p>
+            <div class="help-section-label">Unwrap risk and trusted area</div>
+            <p class="help-p">The unwrap risk map highlights corrected and edge-risk regions. The trusted-area percentage in the confidence row reports how much of the analysis mask is both well-modulated and unwrap-reliable.</p>
+            <div class="help-section-label">How to use the numbers</div>
+            <p class="help-p">Low peak ratio, small DC margin, weak modulation coverage, or low trusted area do not automatically invalidate a result, but they are a strong hint that you should distrust fine detail and verify the setup before spending time interpreting the map.</p>
           </div>
 
           <!-- Camera Controls -->

@@ -11,10 +11,42 @@ import { analyzeWithProgress, createProgressBar } from './fringe-progress.js';
 import { initCrossMode } from './cross-mode.js';
 import { switchMode } from './modes.js';
 import { loadFringeLensProfiles, renderFringeLensDropdown, saveFringeLensProfile } from './fringe-lens-profiles.js';
+import {
+  getActiveCalibration,
+  calibrationPayload,
+  saveCalibration,
+  listCalibrations,
+  setActiveCalibrationId,
+  deleteCalibration,
+  exportCalibrationsJson,
+  importCalibrationsJson,
+} from './fringe-calibration.js';
+import {
+  listRecipes,
+  saveRecipe,
+  deleteRecipe,
+  getActiveRecipe,
+  getActiveRecipeId,
+  setActiveRecipeId,
+  recipePayload,
+  recipeToMaskPolygons,
+  exportRecipesJson,
+  importRecipesJson,
+} from './fringe-geometry.js';
 
 // ── Helpers ────────────────────────────────────────────────────────────
 
+/**
+ * Wavelength used for analysis. Sourced from the active calibration, with
+ * the UI wavelength select acting as a write-through editor for the active
+ * calibration (M1.2 keeps the input box functional).
+ */
 export function getWavelength() {
+  const active = getActiveCalibration();
+  if (active && Number.isFinite(active.wavelength_nm) && active.wavelength_nm > 0) {
+    return active.wavelength_nm;
+  }
+  // Fallback to the input box if the active calibration is somehow malformed.
   const sel = $("fringe-wavelength");
   if (!sel) return 589.0;
   if (sel.value === "custom") {
@@ -27,9 +59,69 @@ export function getWavelength() {
   return 589.0;
 }
 
+/** Build the `calibration` payload for /fringe/analyze* requests. */
+export function getCalibrationPayload() {
+  return calibrationPayload(getActiveCalibration());
+}
+
+/**
+ * Write-through: when the wavelength input changes, update the active
+ * calibration's wavelength_nm so it persists across reloads.
+ */
+function _persistWavelengthChange() {
+  const sel = $("fringe-wavelength");
+  if (!sel) return;
+  let nm;
+  if (sel.value === "custom") {
+    const el = $("fringe-custom-wl");
+    nm = parseFloat(el?.value || "");
+  } else {
+    const opt = sel.selectedOptions[0];
+    nm = opt ? parseFloat(opt.dataset.nm) : NaN;
+  }
+  if (!Number.isFinite(nm) || nm <= 0) return;
+  const active = getActiveCalibration();
+  if (!active || active.wavelength_nm === nm) return;
+  try {
+    saveCalibration({ ...active, wavelength_nm: nm });
+  } catch (_) { /* swallow — invalid values already filtered */ }
+  // Refresh the indicator after write-through.
+  const wlEl = document.getElementById("fringe-summary-wl");
+  if (wlEl) {
+    const a = getActiveCalibration();
+    wlEl.textContent = `${a.name} \u00B7 ${a.wavelength_nm} nm`;
+  }
+}
+
 export function getMaskThreshold() {
   const el = $("fringe-mask-thresh");
   return el ? parseInt(el.value, 10) / 100 : 0.15;
+}
+
+/**
+ * LPF σ override as a fraction of the fringe period. Returns null when the
+ * "auto" checkbox is checked so the backend keeps its computed default.
+ */
+export function getLpfSigmaFrac() {
+  const autoEl = $("fringe-lpf-sigma-auto");
+  if (!autoEl || autoEl.checked) return null;
+  const el = $("fringe-lpf-sigma");
+  if (!el) return null;
+  const v = parseFloat(el.value);
+  return Number.isFinite(v) && v > 0 ? v : null;
+}
+
+/**
+ * DC margin override in FFT bins. Returns null when the "auto" checkbox is
+ * checked so the backend keeps its hard-coded default of 2.
+ */
+export function getDcMarginOverride() {
+  const autoEl = $("fringe-dc-margin-auto");
+  if (!autoEl || autoEl.checked) return null;
+  const el = $("fringe-dc-margin");
+  if (!el) return null;
+  const v = parseInt(el.value, 10);
+  return Number.isFinite(v) && v >= 0 ? v : null;
 }
 
 export function getCorrect2piJumps() {
@@ -151,13 +243,55 @@ export function drawMaskOverlay() {
 
 // ── Analysis (SSE streaming) ───────────────────────────────────────────
 
+/**
+ * Build the `mask_polygons` payload for /fringe/analyze*.
+ *
+ * Precedence:
+ *   1. Hand-drawn `fr.maskPolygons` win if non-empty (user explicitly edited
+ *      the mask for this capture).
+ *   2. Otherwise, the active geometry recipe (if any) contributes its
+ *      polygon approximation.
+ *   3. Otherwise, undefined → backend auto-masks.
+ */
 function _buildMaskPayload() {
-  return fr.maskPolygons.length > 0
-    ? fr.maskPolygons.map(p => ({
-        vertices: p.vertices.map(v => [v.x, v.y]),
-        include: p.include,
-      }))
-    : undefined;
+  if (fr.maskPolygons.length > 0) {
+    return fr.maskPolygons.map(p => ({
+      vertices: p.vertices.map(v => [v.x, v.y]),
+      include: p.include,
+    }));
+  }
+  const active = getActiveRecipe();
+  if (active) {
+    const polys = recipeToMaskPolygons(active);
+    if (polys.length > 0) return polys;
+  }
+  return undefined;
+}
+
+/** Recipe payload (or null) for the `aperture_recipe` field. */
+export function getAperturePayload() {
+  return recipePayload(getActiveRecipe());
+}
+
+/**
+ * Resolution-mismatch check between a recipe's `source_resolution` and the
+ * current preview image.  Emits a console warning on mismatch.
+ */
+function _checkRecipeResolution() {
+  const recipe = getActiveRecipe();
+  if (!recipe || !recipe.source_resolution) return;
+  const img = document.getElementById('fringe-preview');
+  const w = img && img.naturalWidth ? img.naturalWidth : 0;
+  const h = img && img.naturalHeight ? img.naturalHeight : 0;
+  if (!w || !h) return;
+  const rw = recipe.source_resolution.width;
+  const rh = recipe.source_resolution.height;
+  if (rw === w && rh === h) return;
+  const msg = `[fringe] Recipe "${recipe.name}" saved for ${rw}\u00d7${rh}; applying to ${w}\u00d7${h} (normalized coords rescale automatically).`;
+  console.warn(msg);
+  // Best-effort banner into the summary bar.
+  const slot = document.getElementById('fringe-summary-recipe');
+  if (slot) slot.title = msg;
 }
 
 function _onAnalysisResult(data) {
@@ -184,14 +318,19 @@ function _runAnalysis() {
   const btn = $("fringe-btn-analyze");
   if (btn) btn.disabled = true;
 
+  _checkRecipeResolution();
   const payload = {
     wavelength_nm: getWavelength(),
     mask_threshold: getMaskThreshold(),
+    lpf_sigma_frac: getLpfSigmaFrac(),
+    dc_margin_override: getDcMarginOverride(),
     subtract_terms: getSubtractTerms(),
     mask_polygons: _buildMaskPayload(),
     form_model: getFormModel(),
     lens_k1: fr.lensK1,
     correct_2pi_jumps: getCorrect2piJumps(),
+    calibration: getCalibrationPayload(),
+    aperture_recipe: getAperturePayload(),
   };
   if (fr.droppedImageB64) payload.image_b64 = fr.droppedImageB64;
 
@@ -307,16 +446,27 @@ async function recomputeAverage() {
   const avgCoeffs = computeAverage();
   if (!avgCoeffs || accepted.length < 2) return;
 
+  const body = {
+    coefficients: avgCoeffs,
+    subtract_terms: getSubtractTerms(),
+    wavelength_nm: getWavelength(),
+    surface_height: fr.avgSurfaceHeight,
+    surface_width: fr.avgSurfaceWidth,
+  };
+  // Full-fidelity path — preserve high-frequency detail when recomputing the
+  // averaged surface (e.g. after toggling a subtract pill or changing form
+  // model). Guard: the averaged result may lack a raw grid, in which case
+  // the backend transparently falls back to coefficient-only reconstruction.
+  if (fr.lastResult && fr.lastResult.raw_height_grid_nm
+      && fr.lastResult.grid_rows && fr.lastResult.grid_cols) {
+    body.raw_height_grid_nm = fr.lastResult.raw_height_grid_nm;
+    body.raw_grid_rows = fr.lastResult.grid_rows;
+    body.raw_grid_cols = fr.lastResult.grid_cols;
+  }
   const resp = await apiFetch("/fringe/reanalyze", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      coefficients: avgCoeffs,
-      subtract_terms: getSubtractTerms(),
-      wavelength_nm: getWavelength(),
-      surface_height: fr.avgSurfaceHeight,
-      surface_width: fr.avgSurfaceWidth,
-    }),
+    body: JSON.stringify(body),
   });
   if (!resp.ok) return;
   const avgData = await resp.json();
@@ -339,11 +489,15 @@ async function addToAverage() {
       body: JSON.stringify({
         wavelength_nm: getWavelength(),
         mask_threshold: getMaskThreshold(),
+        lpf_sigma_frac: getLpfSigmaFrac(),
+        dc_margin_override: getDcMarginOverride(),
         subtract_terms: getSubtractTerms(),
         mask_polygons: _buildMaskPayload(),
         form_model: getFormModel(),
         lens_k1: fr.lensK1,
         correct_2pi_jumps: getCorrect2piJumps(),
+        calibration: getCalibrationPayload(),
+        aperture_recipe: getAperturePayload(),
       }),
     });
     if (!resp.ok) {
@@ -667,13 +821,20 @@ export function wirePanelEvents() {
     if (clearBtn) { clearBtn.disabled = true; clearBtn.style.opacity = "0.6"; }
   });
 
-  // Wavelength dropdown (now in top bar)
+  // Wavelength dropdown (now in top bar) — writes through to active calibration
   const wlSel = $("fringe-wavelength");
   if (wlSel) {
     wlSel.addEventListener("change", () => {
       const customLabel = $("fringe-custom-wl-label");
       if (customLabel) customLabel.hidden = wlSel.value !== "custom";
+      _persistWavelengthChange();
     });
+  }
+  const customInput = $("fringe-custom-wl");
+  if (customInput) {
+    const persist = () => _persistWavelengthChange();
+    customInput.addEventListener("change", persist);
+    customInput.addEventListener("input", persist);
   }
 
   // Mask threshold slider (now in top bar)
@@ -684,4 +845,286 @@ export function wirePanelEvents() {
       maskLabel.textContent = maskSlider.value + "%";
     });
   }
+
+  // M2.5 — Advanced tuning: LPF σ slider + auto checkbox
+  const lpfSlider = $("fringe-lpf-sigma");
+  const lpfLabel = $("fringe-lpf-sigma-val");
+  const lpfAuto = $("fringe-lpf-sigma-auto");
+  const syncLpfLabel = () => {
+    if (!lpfLabel) return;
+    if (lpfAuto && lpfAuto.checked) lpfLabel.textContent = "auto";
+    else if (lpfSlider) lpfLabel.textContent = parseFloat(lpfSlider.value).toFixed(2);
+  };
+  if (lpfAuto && lpfSlider) {
+    lpfAuto.addEventListener("change", () => {
+      lpfSlider.disabled = lpfAuto.checked;
+      syncLpfLabel();
+    });
+  }
+  if (lpfSlider) lpfSlider.addEventListener("input", syncLpfLabel);
+  syncLpfLabel();
+
+  // M2.5 — Advanced tuning: DC margin number input + auto checkbox
+  const dcInput = $("fringe-dc-margin");
+  const dcAuto = $("fringe-dc-margin-auto");
+  if (dcAuto && dcInput) {
+    dcAuto.addEventListener("change", () => {
+      dcInput.disabled = dcAuto.checked;
+    });
+  }
+
+  // M1.4 — Aperture recipes.
+  _wireRecipeControls();
+
+  // UI honesty affordances — mode tooltip, trend banner, recipe label.
+  _injectAffordances();
+}
+
+// ── UI affordances: mode tooltip / trend banner / recipe label ─────────
+//
+// These are pure label/help additions; no behavior change. Inserted after
+// the panel HTML is mounted so they live next to existing controls without
+// modifying the buildResultsHtml template.
+
+function _injectAffordances() {
+  // Item 1 — Mode switcher honesty: (i) icon + tooltip next to dropdown.
+  const modeSel = document.getElementById("fringe-mode-select");
+  if (modeSel && !document.getElementById("fringe-mode-info")) {
+    const info = document.createElement("span");
+    info.id = "fringe-mode-info";
+    info.textContent = "\u24D8";  // circled lowercase i
+    info.title =
+      "Mode is a UI label and tool-visibility filter only \u2014 it does not " +
+      "change the analysis. To change algorithm behavior, use the Settings \u25BE " +
+      "\u2192 Advanced tuning controls.";
+    info.style.cssText =
+      "margin-left:4px;font-size:11px;opacity:0.55;cursor:help;user-select:none";
+    modeSel.insertAdjacentElement("afterend", info);
+  }
+
+  // Item 2 — Trend tab session-scope banner.
+  const trendPanel = document.getElementById("fringe-panel-trend");
+  if (trendPanel && !document.getElementById("fringe-trend-scope-banner")) {
+    const banner = document.createElement("div");
+    banner.id = "fringe-trend-scope-banner";
+    banner.style.cssText =
+      "padding:4px 12px;font-size:11px;opacity:0.6;font-style:italic;line-height:1.4";
+    banner.textContent =
+      "Session-scoped data \u2014 captures are evicted on session timeout " +
+      "(default 30 min) or server restart. To preserve a measurement series, " +
+      "export each result and reimport in a future session.";
+    trendPanel.insertBefore(banner, trendPanel.firstChild);
+  }
+
+  // Item 3 — Recipe save: rename + subtitle clarifying polygon-only support.
+  const btnSave = document.getElementById("fringe-recipe-save");
+  if (btnSave) {
+    btnSave.innerHTML = "Save polygon as recipe&hellip;";
+    btnSave.title =
+      "Snapshot the currently drawn mask polygons as a reusable aperture recipe.";
+  }
+  const recipeSel = document.getElementById("fringe-recipe-select");
+  if (recipeSel && !document.getElementById("fringe-recipe-circle-help")) {
+    // Insert subtitle just below the button row (which is the next sibling
+    // div with display:flex). Find the existing helper text and insert
+    // before it so the order reads: select / buttons / circle-help / helper.
+    const buttonRow = recipeSel.parentElement?.querySelector(
+      'div[style*="flex-wrap"]'
+    );
+    if (buttonRow) {
+      const sub = document.createElement("div");
+      sub.id = "fringe-recipe-circle-help";
+      sub.style.cssText =
+        "font-size:10px;opacity:0.55;margin-top:3px;line-height:1.3;font-style:italic";
+      sub.textContent =
+        "Circle and ring apertures: import via the Manage \u2192 Import button " +
+        "using a hand-edited JSON. UI for drawing them is not yet built.";
+      buttonRow.insertAdjacentElement("afterend", sub);
+    }
+  }
+}
+
+// ── M1.4 — Aperture recipe UI wiring ───────────────────────────────────
+
+/**
+ * Refresh the recipe <select> and summary-bar badge to match storage.
+ * Called on every change (save/delete/import/active-change).
+ */
+export function refreshRecipeUi() {
+  const sel = document.getElementById("fringe-recipe-select");
+  if (sel) {
+    const list = listRecipes();
+    const activeId = getActiveRecipeId();
+    const opts = ['<option value="">None (auto-mask)</option>']
+      .concat(list.map((r) => {
+        const safe = (r.name || "Untitled").replace(/[<>&"]/g, (c) => ({
+          "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;",
+        }[c]));
+        return `<option value="${r.id}"${r.id === activeId ? " selected" : ""}>${safe} (${r.kind})</option>`;
+      }));
+    sel.innerHTML = opts.join("");
+  }
+  const badge = document.getElementById("fringe-summary-recipe");
+  const nameEl = document.getElementById("fringe-summary-recipe-name");
+  const active = getActiveRecipe();
+  if (badge && nameEl) {
+    if (active) {
+      nameEl.textContent = active.name;
+      badge.hidden = false;
+    } else {
+      badge.hidden = true;
+      nameEl.textContent = "";
+    }
+  }
+}
+
+function _wireRecipeControls() {
+  const sel = $("fringe-recipe-select");
+  const btnSave = $("fringe-recipe-save");
+  const btnManage = $("fringe-recipe-manage");
+  const btnExport = $("fringe-recipe-export");
+  const btnImport = $("fringe-recipe-import");
+  const fileInput = $("fringe-recipe-import-file");
+
+  refreshRecipeUi();
+
+  if (sel) {
+    sel.addEventListener("change", () => {
+      setActiveRecipeId(sel.value || null);
+      refreshRecipeUi();
+    });
+  }
+
+  if (btnSave) {
+    btnSave.addEventListener("click", () => _saveCurrentAsRecipe());
+  }
+
+  if (btnManage) {
+    btnManage.addEventListener("click", () => _manageRecipes());
+  }
+
+  if (btnExport) {
+    btnExport.addEventListener("click", () => {
+      try {
+        const json = exportRecipesJson();
+        const blob = new Blob([json], { type: "application/json" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `loupe-aperture-recipes-${new Date().toISOString().slice(0, 10)}.json`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      } catch (e) {
+        window.alert(`Export failed: ${e.message || e}`);
+      }
+    });
+  }
+
+  if (btnImport && fileInput) {
+    btnImport.addEventListener("click", () => fileInput.click());
+    fileInput.addEventListener("change", async () => {
+      const file = fileInput.files?.[0];
+      if (!file) return;
+      try {
+        const text = await file.text();
+        const result = importRecipesJson(text);
+        refreshRecipeUi();
+        const msg = [`Imported ${result.added} recipe(s).`]
+          .concat(result.errors.length > 0 ? ["Errors:", ...result.errors] : [])
+          .join("\n");
+        window.alert(msg);
+      } catch (e) {
+        window.alert(`Import failed: ${e.message || e}`);
+      } finally {
+        fileInput.value = "";
+      }
+    });
+  }
+}
+
+/**
+ * "Save current as recipe" — snapshot the currently drawn mask polygons
+ * into a polygon recipe.  Requires at least one mask polygon.
+ */
+function _saveCurrentAsRecipe() {
+  if (!Array.isArray(fr.maskPolygons) || fr.maskPolygons.length === 0) {
+    window.alert(
+      "No mask polygons drawn.  Use \"Edit Mask\" first to draw one, then save it as a recipe.\n\n" +
+      "(Only polygon recipes can be saved from the UI; circle/ring recipes can be imported from JSON.)"
+    );
+    return;
+  }
+  const defaultName = `Recipe ${new Date().toISOString().slice(0, 16).replace("T", " ")}`;
+  const name = window.prompt("Name for this aperture recipe:", defaultName);
+  if (!name) return;
+  // Snapshot the current preview resolution for cross-resolution warnings.
+  const img = document.getElementById("fringe-preview");
+  const srcRes = (img && img.naturalWidth && img.naturalHeight)
+    ? { width: img.naturalWidth, height: img.naturalHeight }
+    : null;
+  const polygons = fr.maskPolygons.map((p) => ({
+    vertices: p.vertices.map((v) => [v.x, v.y]),
+    include: p.include !== false,
+  }));
+  try {
+    const saved = saveRecipe({
+      kind: "polygon",
+      name: name.trim(),
+      polygons,
+      notes: "",
+      ...(srcRes ? { source_resolution: srcRes } : {}),
+    });
+    setActiveRecipeId(saved.id);
+    refreshRecipeUi();
+  } catch (e) {
+    window.alert(`Could not save recipe: ${e.message || e}`);
+  }
+}
+
+/**
+ * Minimal "Manage" flow: numbered list with a delete-by-number UX, per the
+ * M1.2 calibration manage pattern.
+ */
+function _manageRecipes() {
+  const list = listRecipes();
+  if (list.length === 0) {
+    window.alert("No saved recipes.");
+    return;
+  }
+  const activeId = getActiveRecipeId();
+  const lines = list.map((r, i) => {
+    const marker = r.id === activeId ? "  [active]" : "";
+    return `${i + 1}. ${r.name} (${r.kind})${marker}`;
+  }).join("\n");
+  const raw = window.prompt(
+    `Saved aperture recipes:\n${lines}\n\n` +
+    `Enter a number to activate, "delete <n>" to remove, "clear" to deactivate:`,
+    ""
+  );
+  if (raw === null) return;
+  const trimmed = raw.trim().toLowerCase();
+  if (!trimmed) return;
+  if (trimmed === "clear") {
+    setActiveRecipeId(null);
+    refreshRecipeUi();
+    return;
+  }
+  const delMatch = trimmed.match(/^delete\s+(\d+)$/);
+  if (delMatch) {
+    const idx = parseInt(delMatch[1], 10) - 1;
+    const target = list[idx];
+    if (!target) { window.alert("Out of range."); return; }
+    if (window.confirm(`Delete "${target.name}"?`)) {
+      deleteRecipe(target.id);
+      refreshRecipeUi();
+    }
+    return;
+  }
+  const idx = parseInt(trimmed, 10) - 1;
+  const target = list[idx];
+  if (!target) { window.alert("Out of range."); return; }
+  setActiveRecipeId(target.id);
+  refreshRecipeUi();
 }

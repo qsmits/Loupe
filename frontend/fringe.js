@@ -27,6 +27,8 @@ export const fr = {
   stepDragOffset: null,    // {dx, dy} drag offset in normalized coords
   heightGrid: null,        // Float32Array from server
   maskGrid: null,          // Uint8Array from server
+  trustedMaskGrid: null,   // Uint8Array from server (M1.6) — subset of maskGrid
+  useTrustedOnly: false,   // M1.6 — measurement tools may honor this flag
   gridRows: 0,
   gridCols: 0,
   avgCaptures: [],        // [{coefficients: Float64Array, rms_nm: number, accepted: bool, reason: string}]
@@ -37,6 +39,13 @@ export const fr = {
   lensK1: 0,
   droppedImageB64: null,   // base64 string when analyzing a dropped file
   droppedObjectUrl: null,  // blob URL for preview display
+  sessionCaptures: [],     // M1.7 — list of capture summaries from /fringe/session/captures
+  selectedCaptureId: null, // M1.7 — currently selected capture for the detail panel
+  // M4.1 — Workflow mode. UI-only concept; backend ignores it. Tagged onto
+  // every Step/Area measurement so saved values carry their mode of origin.
+  // One of: "surface", "step", "averaging", "subtraction".
+  mode: "surface",
+  measurements: [],         // M4.1 — recorded Step/Area measurements with mode tag
 };
 
 export function $(id) { return document.getElementById(id); }

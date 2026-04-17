@@ -321,11 +321,16 @@ export function computeAreaStats(p1, p2) {
   const row0 = Math.max(0, Math.floor(y0 * fr.gridRows));
   const row1 = Math.min(fr.gridRows - 1, Math.floor(y1 * fr.gridRows));
 
+  // M1.6: when fr.useTrustedOnly is on, restrict inclusion to the
+  // trusted subset of the analysis mask.
+  const m = fr.useTrustedOnly && fr.trustedMaskGrid ? fr.trustedMaskGrid : fr.maskGrid;
+  const useTrusted = fr.useTrustedOnly && !!fr.trustedMaskGrid;
+
   const values = [];
   for (let r = row0; r <= row1; r++) {
     for (let c = col0; c <= col1; c++) {
       const idx = r * fr.gridCols + c;
-      if (fr.maskGrid[idx]) values.push(fr.heightGrid[idx]);
+      if (m[idx]) values.push(fr.heightGrid[idx]);
     }
   }
 
@@ -341,6 +346,9 @@ export function computeAreaStats(p1, p2) {
     `;
   }
 
+  // Cache last area corners so we can refresh on trusted-only toggle.
+  fr.lastAreaRect = { p1: { nx: p1.nx, ny: p1.ny }, p2: { nx: p2.nx, ny: p2.ny } };
+
   if (values.length < 2) {
     setMeasureReadout("Not enough valid pixels in area");
     return;
@@ -352,7 +360,28 @@ export function computeAreaStats(p1, p2) {
   const mean = values.reduce((a, b) => a + b, 0) / values.length;
   const rms = Math.sqrt(values.reduce((a, v) => a + (v - mean) ** 2, 0) / values.length);
 
-  setMeasureReadout(`Area PV: ${fmtNm(pv)}  RMS: ${fmtNm(rms)}  (${values.length} px)`);
+  const trustedTag = useTrusted
+    ? ' <span class="fringe-stat-trusted" style="color:#ff9f0a;font-weight:600" title="Computed from trusted pixels only">(trusted)</span>'
+    : "";
+  const readout = $("fringe-measure-readout");
+  if (readout) {
+    readout.innerHTML = `Area PV: ${fmtNm(pv)}  RMS: ${fmtNm(rms)}  (${values.length} px)${trustedTag}`;
+  } else {
+    setMeasureReadout(`Area PV: ${fmtNm(pv)}  RMS: ${fmtNm(rms)}  (${values.length} px)`);
+  }
+
+  // M4.1: tag the recorded area measurement with the active workflow mode.
+  if (!Array.isArray(fr.measurements)) fr.measurements = [];
+  fr.measurements.push({
+    kind: "area",
+    mode: fr.mode || "surface",
+    captured_at: new Date().toISOString(),
+    x0, y0, x1, y1,
+    pv_nm: pv,
+    rms_nm: rms,
+    n_pixels: values.length,
+    trusted_only: useTrusted,
+  });
 }
 
 // ── Step tool (mean height difference between two regions) ─────────────
@@ -382,8 +411,19 @@ export function computeAreaStats(p1, p2) {
 const STEP_COLORS = ["#00d4ff", "#ff9944"];
 
 // Gaussian LPF σ used by the backend demodulator (in original-image pixels)
-// is roughly 2.5 × fringe_period_px. Kernel correlation area ≈ π·σ².
-const LPF_SIGMA_FACTOR = 2.5;
+// is roughly `lpf_sigma_frac` × fringe_period_px. Legacy default (and
+// "auto" mode) is 2.5; M2.5 lets the user override via the analyze body.
+//
+// M2.6 — anisotropic LPF preserves correlation-area geometric mean, so the
+// isotropic-equivalent area (π·σ_iso²) is the right input here.
+// σ_iso = lpf_sigma_frac × fringe_period_px when the multiplier is in
+// "auto"; otherwise the user-set value. Per-axis: σ_along ≈ 0.71·sigma_frac
+// ·period, σ_across ≈ 1.41·sigma_frac·period, so √(0.71·1.41) ≈ 1.0 and
+// the correlation *area* (π·σ_along·σ_across) matches the isotropic case.
+// The shape is now elliptical along the carrier, but for SEM-of-mean over
+// a rectangular ROI the area-based effective-N estimate remains correct
+// (within the worst-case orientation we already tolerate).
+const LPF_SIGMA_FACTOR_LEGACY = 2.5;
 
 function _normRect(p1, p2) {
   return {
@@ -407,7 +447,16 @@ function _corrCellsPerLpf() {
   const imgH = Number(lr.image_height || lr.surface_height);
   if (!(period > 1) || !(imgW > 0) || !(imgH > 0)) return 1.0;
 
-  const sigma = LPF_SIGMA_FACTOR * period;            // original-image px
+  // M2.5/M2.6: read the actually-applied LPF multiplier from the server
+  // echo. tuning.lpf_sigma_frac === null means "auto" (legacy 2.5). The
+  // anisotropic LPF preserves correlation-area geometric mean, so this
+  // isotropic-equivalent computation remains correct.
+  const tuning = lr.tuning || {};
+  const sigmaFrac = (tuning.lpf_sigma_frac != null && Number.isFinite(Number(tuning.lpf_sigma_frac)))
+    ? Number(tuning.lpf_sigma_frac)
+    : LPF_SIGMA_FACTOR_LEGACY;
+
+  const sigma = sigmaFrac * period;                    // original-image px (σ_iso)
   const corrAreaPx = Math.PI * sigma * sigma;          // original-image px²
   const cellArea = (imgW * imgH) / (fr.gridCols * fr.gridRows);
   if (!(cellArea > 0)) return 1.0;
@@ -430,6 +479,10 @@ export function regionStats(rect) {
   if (!fr.heightGrid || !fr.maskGrid || !fr.gridCols || !fr.gridRows) {
     return { mean: null, rms: null, n: 0, nEff: 0, sem: null, semNaive: null };
   }
+  // M1.6: when fr.useTrustedOnly is on, restrict inclusion to the
+  // trusted subset of the analysis mask.
+  const m = fr.useTrustedOnly && fr.trustedMaskGrid ? fr.trustedMaskGrid : fr.maskGrid;
+
   const col0 = Math.max(0, Math.floor(rect.x0 * fr.gridCols));
   const col1 = Math.min(fr.gridCols - 1, Math.floor(rect.x1 * fr.gridCols));
   const row0 = Math.max(0, Math.floor(rect.y0 * fr.gridRows));
@@ -439,7 +492,7 @@ export function regionStats(rect) {
   for (let r = row0; r <= row1; r++) {
     for (let c = col0; c <= col1; c++) {
       const idx = r * fr.gridCols + c;
-      if (fr.maskGrid[idx]) { sum += fr.heightGrid[idx]; n++; }
+      if (m[idx]) { sum += fr.heightGrid[idx]; n++; }
     }
   }
   if (n === 0) return { mean: null, rms: null, n: 0, nEff: 0, sem: null, semNaive: null };
@@ -449,7 +502,7 @@ export function regionStats(rect) {
   for (let r = row0; r <= row1; r++) {
     for (let c = col0; c <= col1; c++) {
       const idx = r * fr.gridCols + c;
-      if (fr.maskGrid[idx]) {
+      if (m[idx]) {
         const d = fr.heightGrid[idx] - mean;
         sq += d * d;
       }
@@ -556,9 +609,15 @@ export function updateStepReadout() {
   const bSemTitle = aSemTitle;
   const stepSemTitle = `Effective-N uncertainty: \u221a(\u03c3_A\u00b2 + \u03c3_B\u00b2), each using RMS / \u221aN_eff. Scatter-only \u2014 not a full metrology uncertainty.`;
 
+  // M1.6 — trusted-only tag (matches PV/RMS summary styling).
+  const useTrusted = fr.useTrustedOnly && !!fr.trustedMaskGrid;
+  const trustedTag = useTrusted
+    ? ' <span class="fringe-stat-trusted" style="color:#ff9f0a;font-weight:600" title="Computed from trusted pixels only">(trusted)</span>'
+    : "";
+
   // Rendered as HTML so we can include the warning badge and help tooltips.
   const html =
-    `<strong>${header}</strong>` +
+    `<strong>${header}${trustedTag}</strong>` +
     `  \u2014  A: ${fmtNm(sA.mean)} ` +
     `<span title="${aSemTitle}">(\u00b1${fmtNm(sA.sem)} eff-N, \u03c3 region=${fmtNm(sA.rms)}, N=${sA.n}, N_eff=${sA.nEff.toFixed(1)})</span>` +
     `  |  B: ${fmtNm(sB.mean)} ` +
@@ -568,6 +627,22 @@ export function updateStepReadout() {
     `${inWaves}` +
     warnHtml;
   readout.innerHTML = html;
+}
+
+/**
+ * M1.6 — refresh whatever Step/Area measurement is currently committed.
+ * Called by the trusted-only checkbox handler in fringe-results.js so that
+ * a displayed Step or Area readout updates in place when the user toggles
+ * the inclusion mask. No-op when no measurement is currently committed.
+ */
+export function refreshLastMeasurement() {
+  if (fr.measureMode === "step" && Array.isArray(fr.stepRegions) && fr.stepRegions.length === 2) {
+    updateStepReadout();
+    return;
+  }
+  if (fr.measureMode === "area" && fr.lastAreaRect) {
+    computeAreaStats(fr.lastAreaRect.p1, fr.lastAreaRect.p2);
+  }
 }
 
 /** Called on mousedown during step mode. Returns true if handled (drag started). */
@@ -700,6 +775,18 @@ export function wireMeasureEvents() {
         fr.measurePoints = [];
         drawStepRegions(null);
         updateStepReadout();
+        // M4.1: when a Step measurement is committed (both regions defined),
+        // tag the recorded measurement with the active workflow mode so
+        // saved/exported values carry their mode of origin.
+        if (fr.stepRegions.length === 2) {
+          if (!Array.isArray(fr.measurements)) fr.measurements = [];
+          fr.measurements.push({
+            kind: "step",
+            mode: fr.mode || "surface",
+            captured_at: new Date().toISOString(),
+            regions: [{ ...fr.stepRegions[0] }, { ...fr.stepRegions[1] }],
+          });
+        }
       }
     });
   }
@@ -713,6 +800,8 @@ export function wireMeasureEvents() {
       const mode = btn.dataset.mode || null;
       fr.measureMode = mode;
       fr.measurePoints = [];
+      // Forget any cached area rectangle when leaving area mode.
+      if (mode !== "area") fr.lastAreaRect = null;
       resetStepDrag();
       const viewport = $("fringe-surface-viewport");
       if (viewport) viewport.style.cursor = mode ? "crosshair" : "grab";
