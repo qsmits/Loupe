@@ -5,7 +5,7 @@
 
 import { fr, $ } from './fringe.js';
 import { apiFetch } from './api.js';
-import { getWavelength, getMaskThreshold } from './fringe-panel.js';
+import { getWavelength, getMaskThreshold, getCorrect2piJumps } from './fringe-panel.js';
 import { drawPeakValleyMarkers, resetSurfaceZoom } from './fringe-measure.js';
 
 // ── Subtraction pill state ──────────────────────────────────────────────
@@ -137,6 +137,11 @@ export function buildResultsHtml() {
               <button class="fringe-measure-btn" data-mode="point2point" title="Click two points to measure height difference">\u2b0d \u0394h</button>
               <button class="fringe-measure-btn" data-mode="lineProfile" title="Click two points to draw a line profile">\u2572 Profile</button>
               <button class="fringe-measure-btn" data-mode="area" title="Click two corners to get area statistics">\u25ad Area</button>
+              <button class="fringe-measure-btn" data-mode="step" title="Measure mean height difference between two regions (e.g., gage-block step)">
+                <svg width="12" height="10" viewBox="0 0 12 10" style="vertical-align:-1px" aria-hidden="true">
+                  <path d="M1 8 H5 V4 H11" stroke="currentColor" stroke-width="1.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg> Step
+              </button>
               <span class="fringe-measure-readout" id="fringe-measure-readout"></span>
             </div>
             <div class="fringe-surface-container" id="fringe-surface-viewport" style="overflow:hidden;cursor:grab">
@@ -600,6 +605,7 @@ function wireCarrierOverride() {
             ? fr.maskPolygons.map(p => ({ vertices: p.vertices.map(v => [v.x, v.y]), include: p.include }))
             : undefined,
           lens_k1: fr.lensK1,
+          correct_2pi_jumps: getCorrect2piJumps(),
           image_b64: fr.droppedImageB64 || undefined,
         }),
       });

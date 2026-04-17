@@ -355,6 +355,168 @@ export function computeAreaStats(p1, p2) {
   setMeasureReadout(`Area PV: ${fmtNm(pv)}  RMS: ${fmtNm(rms)}  (${values.length} px)`);
 }
 
+// ── Step tool (mean height difference between two regions) ─────────────
+
+const STEP_COLORS = ["#00d4ff", "#ff9944"];
+
+function _normRect(p1, p2) {
+  return {
+    x0: Math.min(p1.nx, p2.nx),
+    y0: Math.min(p1.ny, p2.ny),
+    x1: Math.max(p1.nx, p2.nx),
+    y1: Math.max(p1.ny, p2.ny),
+  };
+}
+
+/**
+ * Compute mean/RMS/N over valid pixels inside a normalized rectangle.
+ * Returns {mean, rms, n, sem} or {mean: null, rms: null, n: 0, sem: null}.
+ */
+export function regionStats(rect) {
+  if (!fr.heightGrid || !fr.maskGrid || !fr.gridCols || !fr.gridRows) {
+    return { mean: null, rms: null, n: 0, sem: null };
+  }
+  const col0 = Math.max(0, Math.floor(rect.x0 * fr.gridCols));
+  const col1 = Math.min(fr.gridCols - 1, Math.floor(rect.x1 * fr.gridCols));
+  const row0 = Math.max(0, Math.floor(rect.y0 * fr.gridRows));
+  const row1 = Math.min(fr.gridRows - 1, Math.floor(rect.y1 * fr.gridRows));
+
+  let sum = 0, n = 0;
+  for (let r = row0; r <= row1; r++) {
+    for (let c = col0; c <= col1; c++) {
+      const idx = r * fr.gridCols + c;
+      if (fr.maskGrid[idx]) { sum += fr.heightGrid[idx]; n++; }
+    }
+  }
+  if (n === 0) return { mean: null, rms: null, n: 0, sem: null };
+  const mean = sum / n;
+
+  let sq = 0;
+  for (let r = row0; r <= row1; r++) {
+    for (let c = col0; c <= col1; c++) {
+      const idx = r * fr.gridCols + c;
+      if (fr.maskGrid[idx]) {
+        const d = fr.heightGrid[idx] - mean;
+        sq += d * d;
+      }
+    }
+  }
+  const rms = Math.sqrt(sq / n);
+  const sem = n > 1 ? rms / Math.sqrt(n) : rms;
+  return { mean, rms, n, sem };
+}
+
+function _fmtSigned(v) {
+  if (v === null || v === undefined) return "\u2014";
+  const s = v >= 0 ? "+" : "";
+  return s + fmtNm(v);
+}
+
+function _pointInRect(nx, ny, rect) {
+  return nx >= rect.x0 && nx <= rect.x1 && ny >= rect.y0 && ny <= rect.y1;
+}
+
+export function drawStepRegions(previewRect) {
+  const svg = $("fringe-measure-svg");
+  const imgEl = $("fringe-surface-img");
+  if (!svg || !imgEl) return;
+  const w = imgEl.clientWidth;
+  const h = imgEl.clientHeight;
+  svg.setAttribute("viewBox", `0 0 ${w} ${h}`);
+
+  let html = "";
+  for (let i = 0; i < fr.stepRegions.length; i++) {
+    const r = fr.stepRegions[i];
+    const color = STEP_COLORS[i];
+    const label = i === 0 ? "A" : "B";
+    const x = r.x0 * w, y = r.y0 * h;
+    const rw = (r.x1 - r.x0) * w, rh = (r.y1 - r.y0) * h;
+    const fill = i === 0 ? "rgba(0,212,255,0.12)" : "rgba(255,153,68,0.12)";
+    html += `<rect x="${x}" y="${y}" width="${rw}" height="${rh}"
+              fill="${fill}" stroke="${color}" stroke-width="1.75" stroke-dasharray="5,3"/>`;
+    html += `<rect x="${x + 2}" y="${y + 2}" width="16" height="14" rx="2"
+              fill="rgba(0,0,0,0.75)" stroke="${color}" stroke-width="1"/>`;
+    html += `<text x="${x + 10}" y="${y + 13}" text-anchor="middle" fill="${color}"
+              font-size="11" font-weight="700">${label}</text>`;
+  }
+  if (previewRect) {
+    const idx = fr.stepRegions.length; // which slot is being drawn
+    const color = STEP_COLORS[idx] || "#ffffff";
+    const fill = idx === 0 ? "rgba(0,212,255,0.10)" : "rgba(255,153,68,0.10)";
+    const x = previewRect.x0 * w, y = previewRect.y0 * h;
+    const rw = (previewRect.x1 - previewRect.x0) * w;
+    const rh = (previewRect.y1 - previewRect.y0) * h;
+    html += `<rect x="${x}" y="${y}" width="${rw}" height="${rh}"
+              fill="${fill}" stroke="${color}" stroke-width="1.5" stroke-dasharray="5,3" opacity="0.7"/>`;
+  }
+  svg.innerHTML = html;
+}
+
+export function updateStepReadout() {
+  const readout = $("fringe-measure-readout");
+  if (!readout) return;
+  const n = fr.stepRegions.length;
+  if (n === 0) {
+    setMeasureReadout("Drag to mark Region A (reference)");
+    return;
+  }
+  const sA = regionStats(fr.stepRegions[0]);
+  if (n === 1) {
+    const aDesc = sA.n > 0
+      ? `A: mean=${fmtNm(sA.mean)} RMS=${fmtNm(sA.rms)} N=${sA.n}`
+      : "A: empty";
+    setMeasureReadout(`${aDesc}  \u2192 drag Region B`);
+    return;
+  }
+  const sB = regionStats(fr.stepRegions[1]);
+  if (sA.n === 0 || sB.n === 0) {
+    const which = sA.n === 0 ? "A" : "B";
+    setMeasureReadout(`Region ${which} is empty \u2014 reposition or clear (Esc)`);
+    return;
+  }
+  const step = sA.mean - sB.mean;
+  const sigmaStep = Math.sqrt(sA.sem * sA.sem + sB.sem * sB.sem);
+  const wl = (fr.lastResult && fr.lastResult.wavelength_nm) || 0;
+  const inWaves = wl > 0 ? ` [${(step / wl).toFixed(3)} \u03bb]` : "";
+  const stepStr = `Step (A\u2212B): ${_fmtSigned(step)} \u00b1 ${fmtNm(sigmaStep)}${inWaves}`;
+  const aStr = `A: ${fmtNm(sA.mean)} (\u00b1${fmtNm(sA.sem)}, N=${sA.n})`;
+  const bStr = `B: ${fmtNm(sB.mean)} (\u00b1${fmtNm(sB.sem)}, N=${sB.n})`;
+  setMeasureReadout(`${aStr}  |  ${bStr}  |  ${stepStr}`);
+}
+
+/** Called on mousedown during step mode. Returns true if handled (drag started). */
+function _stepMouseDown(coords) {
+  // If both rects exist and click is inside one, begin translating it.
+  if (fr.stepRegions.length === 2) {
+    for (let i = 0; i < 2; i++) {
+      const r = fr.stepRegions[i];
+      if (_pointInRect(coords.nx, coords.ny, r)) {
+        fr.stepDragIdx = i;
+        fr.stepDragOffset = { dx: coords.nx - r.x0, dy: coords.ny - r.y0 };
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+/** Reset any in-progress step drag state. */
+export function resetStepDrag() {
+  fr.stepDragIdx = -1;
+  fr.stepDragOffset = null;
+}
+
+/** Clear all step regions and readout. */
+export function clearStepMeasurement() {
+  fr.stepRegions = [];
+  fr.measurePoints = [];
+  resetStepDrag();
+  clearMeasureSvg();
+  if (fr.measureMode === "step") {
+    updateStepReadout();
+  }
+}
+
 export function resetSurfaceZoom() {
   if (fr.resetSurfaceZoom) fr.resetSurfaceZoom();
 }
@@ -393,7 +555,25 @@ export function wireMeasureEvents() {
     });
     viewport.addEventListener("mousedown", (e) => {
       e.preventDefault(); // prevent native image drag
-      if (fr.measureMode) return; // measurement mode handles its own clicks
+      if (fr.measureMode === "step") {
+        // Step tool: mousedown either starts dragging an existing region or begins drawing a new one.
+        const coords = surfaceMouseCoords(e);
+        if (!coords) return;
+        if (_stepMouseDown(coords)) {
+          // translate-drag initiated; nothing else to do here
+        } else if (fr.stepRegions.length < 2) {
+          // Start drawing a new rectangle
+          fr.measurePoints = [coords];
+        } else {
+          // Clicking outside both existing rects with two already drawn: restart.
+          fr.stepRegions = [];
+          fr.measurePoints = [coords];
+          drawStepRegions(null);
+          updateStepReadout();
+        }
+        return;
+      }
+      if (fr.measureMode) return; // other measurement modes handle their own clicks
       if (smZoom <= 1) return;
       smDragging = true; smDragX = e.clientX - smPanX; smDragY = e.clientY - smPanY;
       viewport.style.cursor = "grabbing";
@@ -403,8 +583,38 @@ export function wireMeasureEvents() {
       smPanX = e.clientX - smDragX; smPanY = e.clientY - smDragY;
       applySm();
     });
-    window.addEventListener("mouseup", () => {
+    window.addEventListener("mouseup", (e) => {
       smDragging = false; viewport.style.cursor = fr.measureMode ? "crosshair" : "grab";
+      if (fr.measureMode !== "step") return;
+
+      // Finish a translate-drag.
+      if (fr.stepDragIdx >= 0) {
+        resetStepDrag();
+        drawStepRegions(null);
+        updateStepReadout();
+        return;
+      }
+      // Commit a new rectangle drawn with mousedown..mouseup.
+      if (fr.measurePoints.length === 1) {
+        const coords = surfaceMouseCoords(e);
+        if (!coords) {
+          // released outside viewport — abort this draw
+          fr.measurePoints = [];
+          drawStepRegions(null);
+          return;
+        }
+        const rect = _normRect(fr.measurePoints[0], coords);
+        // Ignore trivially small rects (accidental click).
+        if ((rect.x1 - rect.x0) < 0.005 || (rect.y1 - rect.y0) < 0.005) {
+          fr.measurePoints = [];
+          drawStepRegions(null);
+          return;
+        }
+        fr.stepRegions.push(rect);
+        fr.measurePoints = [];
+        drawStepRegions(null);
+        updateStepReadout();
+      }
     });
   }
 
@@ -413,17 +623,37 @@ export function wireMeasureEvents() {
     btn.addEventListener("click", () => {
       document.querySelectorAll(".fringe-measure-btn").forEach(b => b.classList.remove("active"));
       btn.classList.add("active");
+      const prevMode = fr.measureMode;
       const mode = btn.dataset.mode || null;
       fr.measureMode = mode;
       fr.measurePoints = [];
+      resetStepDrag();
       const viewport = $("fringe-surface-viewport");
       if (viewport) viewport.style.cursor = mode ? "crosshair" : "grab";
-      clearMeasureSvg();
-      setMeasureReadout("");
       const chart = $("fringe-line-profile-chart");
       if (chart) chart.hidden = true;
-      if (!mode) drawPeakValleyMarkers(); // restore markers in pan mode
+
+      if (mode === "step") {
+        // Keep any existing step regions visible; just refresh.
+        drawStepRegions(null);
+        updateStepReadout();
+      } else if (prevMode === "step" && mode !== "step") {
+        // Switching away from step: leave regions drawn & readable but inert.
+        // (No-op; SVG already reflects final state.)
+      } else {
+        // Normal modes: clear overlays/readout and, in pan, restore PV markers.
+        clearMeasureSvg();
+        setMeasureReadout("");
+        if (!mode) drawPeakValleyMarkers();
+      }
     });
+  });
+
+  // Esc clears in-progress/committed step measurement.
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && fr.measureMode === "step") {
+      clearStepMeasurement();
+    }
   });
 
   // Surface measurement mouse events
@@ -451,6 +681,23 @@ export function wireMeasureEvents() {
           svg.innerHTML = `<rect x="${x0}" y="${y0}" width="${rw}" height="${rh}"
             fill="rgba(10,132,255,0.1)" stroke="#0a84ff" stroke-width="1.5" stroke-dasharray="5,3"/>`;
         }
+      } else if (fr.measureMode === "step") {
+        if (fr.stepDragIdx >= 0 && fr.stepDragOffset) {
+          // Translate an existing region, clamped to [0,1].
+          const r = fr.stepRegions[fr.stepDragIdx];
+          const w = r.x1 - r.x0, h = r.y1 - r.y0;
+          let nx0 = coords.nx - fr.stepDragOffset.dx;
+          let ny0 = coords.ny - fr.stepDragOffset.dy;
+          nx0 = Math.max(0, Math.min(1 - w, nx0));
+          ny0 = Math.max(0, Math.min(1 - h, ny0));
+          r.x0 = nx0; r.y0 = ny0; r.x1 = nx0 + w; r.y1 = ny0 + h;
+          drawStepRegions(null);
+          updateStepReadout();
+        } else if (fr.measurePoints.length === 1) {
+          // Rubber-band preview while drawing a new rectangle.
+          const preview = _normRect(fr.measurePoints[0], coords);
+          drawStepRegions(preview);
+        }
       } else if (fr.measureMode === "lineProfile" && fr.measurePoints.length === 1) {
         const p1 = fr.measurePoints[0];
         const svg = $("fringe-measure-svg");
@@ -476,6 +723,7 @@ export function wireMeasureEvents() {
 
     viewport.addEventListener("click", (e) => {
       if (!fr.measureMode || fr.measureMode === "cursor") return;
+      if (fr.measureMode === "step") return; // step uses mousedown/mouseup drag
       const coords = surfaceMouseCoords(e);
       if (!coords) return;
 

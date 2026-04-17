@@ -43,7 +43,8 @@ ssh ${SSH_OPTS} "${REMOTE_USER}@${REMOTE_HOST}" bash <<EOF
   set -e
   sudo rsync -a --exclude='__pycache__' --exclude='*.pyc' ${TMP_DIR}/backend/  ${REMOTE_DEST}/backend/
   sudo rsync -a                                            ${TMP_DIR}/frontend/ ${REMOTE_DEST}/frontend/
-  sudo chown -R www-data:www-data ${REMOTE_DEST}/backend ${REMOTE_DEST}/frontend
+  sudo rsync -a --delete                                   ${TMP_DIR}/reticles/ ${REMOTE_DEST}/reticles/
+  sudo chown -R www-data:www-data ${REMOTE_DEST}/backend ${REMOTE_DEST}/frontend ${REMOTE_DEST}/reticles
   rm -rf ${TMP_DIR}
   sudo systemctl restart loupe
   sleep 2

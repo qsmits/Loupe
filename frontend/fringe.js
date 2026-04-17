@@ -20,8 +20,11 @@ export const fr = {
   lastResult: null,
   lastMask: null,
   maskPolygons: [],        // [{vertices: [{x,y},...], include: bool}, ...]
-  measureMode: null,       // null | "cursor" | "point2point" | "lineProfile" | "area"
+  measureMode: null,       // null | "cursor" | "point2point" | "lineProfile" | "area" | "step"
   measurePoints: [],       // array of {nx, ny} normalized coords for active measurement
+  stepRegions: [],         // [{x0,y0,x1,y1}, ...] normalized rects for Step tool (0..2 committed)
+  stepDragIdx: -1,         // index of rect currently being translated, -1 if none
+  stepDragOffset: null,    // {dx, dy} drag offset in normalized coords
   heightGrid: null,        // Float32Array from server
   maskGrid: null,          // Uint8Array from server
   gridRows: 0,

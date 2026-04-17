@@ -432,12 +432,33 @@ def _dominant_brightness_bbox(image: np.ndarray) -> tuple[int, int, int, int] | 
     return y0, y1, x0, x1
 
 
-def _find_carrier(image: np.ndarray) -> tuple[int, int, float]:
-    """Find the carrier frequency peak in an interferogram.
+def _subpixel_peak_offset(m_minus: float, m_zero: float, m_plus: float) -> float:
+    """Parabolic-interpolation offset of a discrete peak.
+
+    Given three magnitudes around a local maximum (m_minus < m_zero >= m_plus),
+    fits a parabola and returns the fractional offset of the true peak from
+    the discrete index. Result is in (-1, 1); clamped if degenerate.
+    """
+    denom = m_minus - 2.0 * m_zero + m_plus
+    if denom >= -1e-12:  # not a strict maximum (or numerically flat)
+        return 0.0
+    offset = 0.5 * (m_minus - m_plus) / denom
+    if offset < -1.0 or offset > 1.0:
+        return 0.0
+    return offset
+
+
+def _find_carrier(image: np.ndarray) -> tuple[float, float, float]:
+    """Find the carrier frequency peak in an interferogram with sub-pixel precision.
 
     Returns (peak_y, peak_x, distance) in the fftshift coordinate system.
-    The peak is always in the upper half-plane (or left half for
-    horizontal fringes) to select the +1 order consistently.
+    Coordinates are floats (parabolic-interpolated for sub-FFT-bin accuracy).
+
+    The peak is always in the lower half-plane (or right half for horizontal
+    fringes) to select the +1 order — i.e. the surface-bearing sideband for
+    images of the form `cos(2π·(fy·y + fx·x) + surface)` with `fy>0` or `fx>0`.
+    The conjugate sideband, in the upper-left quadrant, would give a recovered
+    surface phase with the wrong sign.
     """
     img = np.asarray(image, dtype=np.float64)
     if img.ndim == 3:
@@ -480,15 +501,17 @@ def _find_carrier(image: np.ndarray) -> tuple[int, int, float]:
     mag_search[cy - dc_margin_y:cy + dc_margin_y + 1,
                cx - dc_margin_x:cx + dc_margin_x + 1] = 0
 
-    # Zero out the lower half-plane (and right half of center row) so we can
-    # only ever find the +1 order peak.  This makes the result deterministic
-    # regardless of noise — conjugate symmetry means the -1 order has
-    # identical magnitude, so argmax tie-breaking could flip otherwise.
-    mag_search[cy + 1:, :] = 0
-    mag_search[cy, cx + 1:] = 0
+    # Zero out the upper half-plane (and left half of center row) so we can
+    # only ever find the +1 order peak — the surface-bearing sideband for
+    # `cos(+carrier + surface)`. Conjugate symmetry means the −1 order has
+    # identical magnitude in the upper-left, so without this constraint
+    # argmax tie-breaking could flip and globally invert the recovered
+    # surface phase.
+    mag_search[:cy, :] = 0
+    mag_search[cy, :cx] = 0
 
     peak_idx = np.unravel_index(np.argmax(mag_search), mag_search.shape)
-    py, px = peak_idx
+    py, px = int(peak_idx[0]), int(peak_idx[1])
     peak_val = float(mag_search[py, px])
 
     dist = math.sqrt((py - cy) ** 2 + (px - cx) ** 2)
@@ -502,25 +525,44 @@ def _find_carrier(image: np.ndarray) -> tuple[int, int, float]:
         mag_retry = magnitude.copy()
         mag_retry[cy - retry_margin_y:cy + retry_margin_y + 1,
                   cx - retry_margin_x:cx + retry_margin_x + 1] = 0
-        mag_retry[cy + 1:, :] = 0
-        mag_retry[cy, cx + 1:] = 0
+        mag_retry[:cy, :] = 0
+        mag_retry[cy, :cx] = 0
         retry_idx = np.unravel_index(np.argmax(mag_retry), mag_retry.shape)
-        rpy, rpx = retry_idx
+        rpy, rpx = int(retry_idx[0]), int(retry_idx[1])
         retry_val = float(mag_retry[rpy, rpx])
         retry_dist = math.sqrt((rpy - cy) ** 2 + (rpx - cx) ** 2)
         if retry_dist > dist and retry_val >= 0.70 * peak_val:
-            py, px = int(rpy), int(rpx)
+            py, px = rpy, rpx
             dist = retry_dist
+
+    # Sub-pixel refinement via parabolic interpolation on the FFT magnitude.
+    # Uses raw `magnitude` (not the zeroed `mag_search`) so neighbors on the
+    # zeroed half-plane don't bias the fit. The peak itself is in the kept
+    # half-plane by construction.
+    py_f = float(py)
+    px_f = float(px)
+    if 0 < py < h - 1:
+        py_f += _subpixel_peak_offset(
+            float(magnitude[py - 1, px]),
+            float(magnitude[py, px]),
+            float(magnitude[py + 1, px]),
+        )
+    if 0 < px < w - 1:
+        px_f += _subpixel_peak_offset(
+            float(magnitude[py, px - 1]),
+            float(magnitude[py, px]),
+            float(magnitude[py, px + 1]),
+        )
 
     # Map the detected frequency back to the original fftshift coordinate
     # system. Cycles/pixel are invariant under uniform downsampling, so the
     # downsample factor is intentionally absent here. Cropping is different: a
     # frequency measured over a smaller field must be scaled back by the crop
     # ratio to express it as a full-frame FFT-bin offset.
-    off_y = (py - cy) * (orig_h / max(crop_h, 1))
-    off_x = (px - cx) * (orig_w / max(crop_w, 1))
-    py_orig = int(round(orig_h // 2 + off_y))
-    px_orig = int(round(orig_w // 2 + off_x))
+    off_y = (py_f - cy) * (orig_h / max(crop_h, 1))
+    off_x = (px_f - cx) * (orig_w / max(crop_w, 1))
+    py_orig = float(orig_h // 2) + off_y
+    px_orig = float(orig_w // 2) + off_x
     dist_orig = math.sqrt(off_y ** 2 + off_x ** 2)
     return py_orig, px_orig, dist_orig
 
@@ -867,7 +909,7 @@ from backend.vision.mask_utils import rasterize_polygon_mask  # noqa: F401
 
 
 def extract_phase_dft(image: np.ndarray, mask: np.ndarray | None = None,
-                      carrier_override: tuple[int, int] | None = None,
+                      carrier_override: tuple[float, float] | None = None,
                       ) -> np.ndarray:
     """Extract wrapped phase via spatial-domain complex demodulation.
 
@@ -1012,6 +1054,7 @@ def _quality_guided_unwrap(wrapped: np.ndarray, quality: np.ndarray,
 def unwrap_phase_2d(wrapped: np.ndarray, mask: np.ndarray | None = None,
                     quality: np.ndarray | None = None,
                     fringe_period_px: float | None = None,
+                    correct_2pi_jumps: bool = True,
                     ) -> tuple[np.ndarray, np.ndarray]:
     """2D spatial phase unwrapping using skimage's algorithm.
 
@@ -1034,6 +1077,13 @@ def unwrap_phase_2d(wrapped: np.ndarray, mask: np.ndarray | None = None,
     fringe_period_px : optional fringe period in pixels. When provided
               together with a mask, marks pixels near mask edges (within
               one fringe period) as edge-contamination in the risk mask.
+    correct_2pi_jumps : when True (default), apply a 9x9 median-filter
+              based correction that snaps pixels deviating by ~2π from
+              their local median back onto the surface. This fixes
+              "clouds with hard lines" unwrap glitches but will silently
+              destroy real physical steps of magnitude ≥ λ/4 (~158 nm
+              at 632.8 nm), rounding them to the nearest 2π. Set to
+              False for step measurements (e.g., gage-block validation).
 
     Returns
     -------
@@ -1071,12 +1121,15 @@ def unwrap_phase_2d(wrapped: np.ndarray, mask: np.ndarray | None = None,
 
     # Post-unwrapping correction: detect pixels that differ from their local
     # median by ~2π (unwrapping jump errors) and snap them back.  This fixes
-    # the "clouds with hard lines" artifact on noisy interferograms.
-    med = median_filter(unwrapped, size=9)
-    jump_diff = unwrapped - med
-    jump_pixels = np.abs(jump_diff) > np.pi
-    unwrapped -= 2.0 * np.pi * np.round(jump_diff / (2.0 * np.pi))
-    risk_mask[jump_pixels] = 1
+    # the "clouds with hard lines" artifact on noisy interferograms — but
+    # silently destroys real physical steps ≥ λ/4. Skip when the caller is
+    # measuring a true stepped surface (e.g., gage-block validation).
+    if correct_2pi_jumps:
+        med = median_filter(unwrapped, size=9)
+        jump_diff = unwrapped - med
+        jump_pixels = np.abs(jump_diff) > np.pi
+        unwrapped -= 2.0 * np.pi * np.round(jump_diff / (2.0 * np.pi))
+        risk_mask[jump_pixels] = 1
 
     # Edge contamination detection: pixels near mask boundary within one
     # fringe period are suspect because they mix valid/invalid data.
@@ -1596,10 +1649,11 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 632.8,
                           n_zernike: int = 36,
                           use_full_mask: bool = False,
                           custom_mask: np.ndarray | None = None,
-                          carrier_override: tuple[int, int] | None = None,
+                          carrier_override: tuple[float, float] | None = None,
                           on_progress: Callable[[str, float, str], None] | None = None,
                           form_model: str = "zernike",
-                          lens_k1: float = 0.0) -> dict:
+                          lens_k1: float = 0.0,
+                          correct_2pi_jumps: bool = True) -> dict:
     """Full analysis pipeline: single image in, all results out.
 
     Parameters
@@ -1618,6 +1672,10 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 632.8,
         logic.  Intended for polygon-based ROI selection from the UI.
     on_progress : optional callback ``(stage, progress, message)`` called at
         each pipeline stage; ``progress`` is in [0, 1].
+    correct_2pi_jumps : forwarded to ``unwrap_phase_2d``. Default True
+        preserves the legacy median-filter cleanup. Set False when the
+        sample has true physical steps (≥ λ/4) that the cleanup would
+        round away — e.g., gage-block validation.
 
     Returns
     -------
@@ -1686,7 +1744,8 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 632.8,
     # Step 3: Phase unwrapping
     unwrapped, unwrap_risk = unwrap_phase_2d(
         wrapped, mask, quality=modulation,
-        fringe_period_px=carrier_info.get("fringe_period_px"))
+        fringe_period_px=carrier_info.get("fringe_period_px"),
+        correct_2pi_jumps=correct_2pi_jumps)
     _progress("unwrap", 0.50, "Unwrapping phase...")
 
     # Confidence metrics (computed after unwrap, before form removal)

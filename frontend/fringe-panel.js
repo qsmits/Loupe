@@ -32,6 +32,12 @@ export function getMaskThreshold() {
   return el ? parseInt(el.value, 10) / 100 : 0.15;
 }
 
+export function getCorrect2piJumps() {
+  const el = $("fringe-correct-2pi-jumps");
+  // Default true preserves legacy behavior when the control is missing.
+  return el ? !!el.checked : true;
+}
+
 // ── Left panel HTML template ───────────────────────────────────────────
 
 export function buildPanelHtml() {
@@ -185,6 +191,7 @@ function _runAnalysis() {
     mask_polygons: _buildMaskPayload(),
     form_model: getFormModel(),
     lens_k1: fr.lensK1,
+    correct_2pi_jumps: getCorrect2piJumps(),
   };
   if (fr.droppedImageB64) payload.image_b64 = fr.droppedImageB64;
 
@@ -336,6 +343,7 @@ async function addToAverage() {
         mask_polygons: _buildMaskPayload(),
         form_model: getFormModel(),
         lens_k1: fr.lensK1,
+        correct_2pi_jumps: getCorrect2piJumps(),
       }),
     });
     if (!resp.ok) {

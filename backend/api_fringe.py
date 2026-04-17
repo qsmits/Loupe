@@ -133,6 +133,7 @@ class AnalyzeBody(BaseModel):
     mask_polygons: Optional[list[MaskPolygon]] = Field(default=None)
     form_model: str = Field(default="zernike", pattern="^(zernike|plane)$")
     lens_k1: float = Field(default=0.0, ge=-2.0, le=2.0)
+    correct_2pi_jumps: bool = Field(default=True)
 
 
 class ReanalyzeBody(BaseModel):
@@ -147,8 +148,8 @@ class ReanalyzeBody(BaseModel):
 
 
 class ReanalyzeCarrierBody(BaseModel):
-    carrier_y: int
-    carrier_x: int
+    carrier_y: float
+    carrier_x: float
     image_b64: Optional[str] = Field(default=None)
     wavelength_nm: float = Field(default=632.8, gt=0, le=2000)
     mask_threshold: float = Field(default=0.15, ge=0.0, le=1.0)
@@ -156,6 +157,7 @@ class ReanalyzeCarrierBody(BaseModel):
     n_zernike: int = Field(default=36, ge=1, le=66)
     mask_polygons: Optional[list[MaskPolygon]] = Field(default=None)
     lens_k1: float = Field(default=0.0, ge=-2.0, le=2.0)
+    correct_2pi_jumps: bool = Field(default=True)
 
 
 def make_fringe_router(camera: BaseCamera) -> APIRouter:
@@ -223,6 +225,7 @@ def make_fringe_router(camera: BaseCamera) -> APIRouter:
             custom_mask=custom_mask,
             form_model=body.form_model,
             lens_k1=body.lens_k1,
+            correct_2pi_jumps=body.correct_2pi_jumps,
         )
         # Cache full-res mask for reanalyze/invert (mask_grid is downsampled)
         if "_mask_full" in result:
@@ -311,6 +314,7 @@ def make_fringe_router(camera: BaseCamera) -> APIRouter:
                         on_progress=_on_progress,
                         form_model=body.form_model,
                         lens_k1=body.lens_k1,
+                        correct_2pi_jumps=body.correct_2pi_jumps,
                     ),
                 )
                 # Cache full-res mask before sending result to client
@@ -399,6 +403,7 @@ def make_fringe_router(camera: BaseCamera) -> APIRouter:
             custom_mask=custom_mask,
             carrier_override=(body.carrier_y, body.carrier_x),
             lens_k1=body.lens_k1,
+            correct_2pi_jumps=body.correct_2pi_jumps,
         )
         if "_mask_full" in result:
             _fringe_cache.put(session_id, "last_mask", result.pop("_mask_full"))
