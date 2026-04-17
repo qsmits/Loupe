@@ -1989,6 +1989,32 @@ def reanalyze(coefficients: list[float], subtract_terms: list[int],
     psf_b64 = render_psf(surface_waves, mask)
     mtf_data = render_mtf(surface_waves, mask)
 
+    # Downsample height grid for client-side measurements (max 256x256)
+    # Matches the algorithm used by analyze_interferogram so the Step tool
+    # and 3D view see the refreshed surface after re-subtraction.
+    max_grid = 256
+    gh, gw = height_nm.shape
+    if gh > max_grid or gw > max_grid:
+        scale_factor = min(max_grid / gh, max_grid / gw)
+        grid_h = max(1, int(gh * scale_factor))
+        grid_w = max(1, int(gw * scale_factor))
+        grid = cv2.resize(height_nm.astype(np.float32), (grid_w, grid_h),
+                          interpolation=cv2.INTER_AREA)
+        if mask is not None:
+            mask_resized = cv2.resize(mask.astype(np.uint8), (grid_w, grid_h),
+                                      interpolation=cv2.INTER_NEAREST)
+            grid_mask = (mask_resized > 0)
+        else:
+            grid_mask = np.ones((grid_h, grid_w), dtype=bool)
+    else:
+        grid = height_nm.astype(np.float32)
+        grid_h, grid_w = gh, gw
+        grid_mask = mask if mask is not None else np.ones((grid_h, grid_w), dtype=bool)
+
+    # Set masked pixels to 0 in the grid
+    grid_out = grid.copy()
+    grid_out[~grid_mask] = 0.0
+
     return {
         "surface_map": surface_map_b64,
         "zernike_chart": zernike_chart_b64,
@@ -2004,4 +2030,8 @@ def reanalyze(coefficients: list[float], subtract_terms: list[int],
         "subtracted_terms": subtract_terms,
         "form_model": form_model,
         "plane_fit": plane_coeffs,
+        "height_grid": [round(float(v), 2) for v in grid_out.ravel()],
+        "mask_grid": [int(v) for v in grid_mask.ravel()],
+        "grid_rows": grid_h,
+        "grid_cols": grid_w,
     }

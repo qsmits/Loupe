@@ -356,8 +356,34 @@ export function computeAreaStats(p1, p2) {
 }
 
 // ── Step tool (mean height difference between two regions) ─────────────
+//
+// Step tool — measures the mean height difference between two rectangular
+// regions on a fringe-analyzed surface. It's a post-processing step on
+// an already-unwrapped height map, so its correctness inherits from the
+// underlying single-analysis unwrap. Valid for:
+//   - smooth surfaces where the 2D unwrap is unambiguous (flats, bumps)
+//   - sharp steps smaller than λ/4 (~158 nm for He-Ne)
+// It is NOT valid for larger step heights: single-shot single-wavelength
+// interferometry cannot resolve the integer-λ/2 ambiguity, and no amount
+// of post-processing recovers the correct step from the wrapped data.
+// When |step| > λ/4 the readout shows an aliasing warning; the displayed
+// number could equally correspond to step ± n·λ/2 for any integer n.
+//
+// Uncertainty: the ±σ we report is an "effective-N" standard error of the
+// mean, derived from the region RMS and the number of *independent* grid
+// cells (not the raw cell count). The demodulation LPF correlates neighbor
+// pixels over roughly π·(2.5·fringe_period_px)² of original-image area, so
+// the naive RMS/√N would be wildly over-optimistic. We divide N by the
+// number of grid cells per LPF correlation area to get an effective N,
+// then compute σ_mean = RMS / √N_eff and σ_step = √(σ_A² + σ_B²).
+// This is still just a scatter-based indicator — it doesn't include
+// carrier-estimation bias, unwrap errors, or systematic tilt/curvature.
 
 const STEP_COLORS = ["#00d4ff", "#ff9944"];
+
+// Gaussian LPF σ used by the backend demodulator (in original-image pixels)
+// is roughly 2.5 × fringe_period_px. Kernel correlation area ≈ π·σ².
+const LPF_SIGMA_FACTOR = 2.5;
 
 function _normRect(p1, p2) {
   return {
@@ -369,12 +395,40 @@ function _normRect(p1, p2) {
 }
 
 /**
+ * Estimate how many grid cells fall inside one LPF correlation area.
+ * Returns 1.0 if we can't compute it (no carrier info) — which makes the
+ * effective-N SEM degenerate to the naive RMS/√N.
+ */
+function _corrCellsPerLpf() {
+  const lr = fr.lastResult;
+  if (!lr || !lr.carrier || !fr.gridCols || !fr.gridRows) return 1.0;
+  const period = Number(lr.carrier.fringe_period_px);
+  const imgW = Number(lr.image_width || lr.surface_width);
+  const imgH = Number(lr.image_height || lr.surface_height);
+  if (!(period > 1) || !(imgW > 0) || !(imgH > 0)) return 1.0;
+
+  const sigma = LPF_SIGMA_FACTOR * period;            // original-image px
+  const corrAreaPx = Math.PI * sigma * sigma;          // original-image px²
+  const cellArea = (imgW * imgH) / (fr.gridCols * fr.gridRows);
+  if (!(cellArea > 0)) return 1.0;
+  return Math.max(1, corrAreaPx / cellArea);
+}
+
+/**
  * Compute mean/RMS/N over valid pixels inside a normalized rectangle.
- * Returns {mean, rms, n, sem} or {mean: null, rms: null, n: 0, sem: null}.
+ *
+ * Returns:
+ *   mean      — arithmetic mean of height values (nm)
+ *   rms       — RMS of deviations from mean (nm), aka region scatter
+ *   n         — raw count of valid grid cells in the rectangle
+ *   nEff      — effective number of *independent* cells, = n / corr_cells_per_lpf.
+ *               Clamped to ≥1 so the SEM never blows up on tiny regions.
+ *   sem       — RMS / √nEff  (effective-N standard error of the mean, nm)
+ *   semNaive  — RMS / √n     (the over-optimistic version, kept for debug only)
  */
 export function regionStats(rect) {
   if (!fr.heightGrid || !fr.maskGrid || !fr.gridCols || !fr.gridRows) {
-    return { mean: null, rms: null, n: 0, sem: null };
+    return { mean: null, rms: null, n: 0, nEff: 0, sem: null, semNaive: null };
   }
   const col0 = Math.max(0, Math.floor(rect.x0 * fr.gridCols));
   const col1 = Math.min(fr.gridCols - 1, Math.floor(rect.x1 * fr.gridCols));
@@ -388,7 +442,7 @@ export function regionStats(rect) {
       if (fr.maskGrid[idx]) { sum += fr.heightGrid[idx]; n++; }
     }
   }
-  if (n === 0) return { mean: null, rms: null, n: 0, sem: null };
+  if (n === 0) return { mean: null, rms: null, n: 0, nEff: 0, sem: null, semNaive: null };
   const mean = sum / n;
 
   let sq = 0;
@@ -402,8 +456,11 @@ export function regionStats(rect) {
     }
   }
   const rms = Math.sqrt(sq / n);
-  const sem = n > 1 ? rms / Math.sqrt(n) : rms;
-  return { mean, rms, n, sem };
+  const semNaive = n > 1 ? rms / Math.sqrt(n) : rms;
+  const corrCells = _corrCellsPerLpf();
+  const nEff = Math.max(1, n / corrCells);
+  const sem = rms / Math.sqrt(nEff);
+  return { mean, rms, n, nEff, sem, semNaive };
 }
 
 function _fmtSigned(v) {
@@ -456,32 +513,61 @@ export function updateStepReadout() {
   const readout = $("fringe-measure-readout");
   if (!readout) return;
   const n = fr.stepRegions.length;
+  const header = "Step (A\u2212B) \u2014 valid for small steps only";
   if (n === 0) {
-    setMeasureReadout("Drag to mark Region A (reference)");
+    setMeasureReadout(`${header}  \u2192 drag to mark Region A (reference)`);
     return;
   }
   const sA = regionStats(fr.stepRegions[0]);
   if (n === 1) {
     const aDesc = sA.n > 0
-      ? `A: mean=${fmtNm(sA.mean)} RMS=${fmtNm(sA.rms)} N=${sA.n}`
+      ? `A: mean=${fmtNm(sA.mean)} \u03c3 region=${fmtNm(sA.rms)} N=${sA.n}`
       : "A: empty";
-    setMeasureReadout(`${aDesc}  \u2192 drag Region B`);
+    setMeasureReadout(`${header}  \u2014  ${aDesc}  \u2192 drag Region B`);
     return;
   }
   const sB = regionStats(fr.stepRegions[1]);
   if (sA.n === 0 || sB.n === 0) {
     const which = sA.n === 0 ? "A" : "B";
-    setMeasureReadout(`Region ${which} is empty \u2014 reposition or clear (Esc)`);
+    setMeasureReadout(`${header}  \u2014  Region ${which} is empty \u2014 reposition or clear (Esc)`);
     return;
   }
   const step = sA.mean - sB.mean;
+  // Effective-N SEM combination. sA.sem is RMS / √N_eff, which accounts
+  // for the demodulation LPF correlating neighbor cells. Still scatter-only
+  // — excludes carrier/unwrap/tilt bias.
   const sigmaStep = Math.sqrt(sA.sem * sA.sem + sB.sem * sB.sem);
   const wl = (fr.lastResult && fr.lastResult.wavelength_nm) || 0;
   const inWaves = wl > 0 ? ` [${(step / wl).toFixed(3)} \u03bb]` : "";
-  const stepStr = `Step (A\u2212B): ${_fmtSigned(step)} \u00b1 ${fmtNm(sigmaStep)}${inWaves}`;
-  const aStr = `A: ${fmtNm(sA.mean)} (\u00b1${fmtNm(sA.sem)}, N=${sA.n})`;
-  const bStr = `B: ${fmtNm(sB.mean)} (\u00b1${fmtNm(sB.sem)}, N=${sB.n})`;
-  setMeasureReadout(`${aStr}  |  ${bStr}  |  ${stepStr}`);
+
+  // λ/4 aliasing warning. Single-shot single-wavelength interferometry
+  // can't distinguish step from step ± n·λ/2. The warning fires on |step|
+  // > λ/4 (the conservative threshold: at λ/4 an adversarial noise step
+  // already wraps, and above λ/4 even ideal unwrap can't recover the
+  // correct integer-fringe offset).
+  let warnHtml = "";
+  const aliased = wl > 0 && Math.abs(step) > wl / 4;
+  if (aliased) {
+    const quarterWl = wl / 4;
+    warnHtml = `  <span style="background:#ff453a;color:#fff;font-weight:700;padding:2px 6px;border-radius:3px;margin-left:6px" title="Single-shot single-wavelength interferometry cannot distinguish this from a step of step \u00b1 n\u00b7\u03bb/2. The reported number is whatever the 2D unwrap happened to produce; it is not traceable to the true step.">\u26a0 |step| &gt; \u03bb/4 (${quarterWl.toFixed(0)} nm) \u2014 may be aliased by 2\u03c0 ambiguity</span>`;
+  }
+
+  const aSemTitle = `Effective-N SEM: RMS / \u221aN_eff where N_eff corrects for the demodulation LPF (\u03c3 \u2248 2.5\u00b7fringe_period) correlating neighbor cells. Scatter-only; excludes carrier/unwrap/tilt bias.`;
+  const bSemTitle = aSemTitle;
+  const stepSemTitle = `Effective-N uncertainty: \u221a(\u03c3_A\u00b2 + \u03c3_B\u00b2), each using RMS / \u221aN_eff. Scatter-only \u2014 not a full metrology uncertainty.`;
+
+  // Rendered as HTML so we can include the warning badge and help tooltips.
+  const html =
+    `<strong>${header}</strong>` +
+    `  \u2014  A: ${fmtNm(sA.mean)} ` +
+    `<span title="${aSemTitle}">(\u00b1${fmtNm(sA.sem)} eff-N, \u03c3 region=${fmtNm(sA.rms)}, N=${sA.n}, N_eff=${sA.nEff.toFixed(1)})</span>` +
+    `  |  B: ${fmtNm(sB.mean)} ` +
+    `<span title="${bSemTitle}">(\u00b1${fmtNm(sB.sem)} eff-N, \u03c3 region=${fmtNm(sB.rms)}, N=${sB.n}, N_eff=${sB.nEff.toFixed(1)})</span>` +
+    `  |  step = ${_fmtSigned(step)} ` +
+    `<span title="${stepSemTitle}">\u00b1 ${fmtNm(sigmaStep)} eff-N</span>` +
+    `${inWaves}` +
+    warnHtml;
+  readout.innerHTML = html;
 }
 
 /** Called on mousedown during step mode. Returns true if handled (drag started). */

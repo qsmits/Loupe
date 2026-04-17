@@ -137,7 +137,7 @@ export function buildResultsHtml() {
               <button class="fringe-measure-btn" data-mode="point2point" title="Click two points to measure height difference">\u2b0d \u0394h</button>
               <button class="fringe-measure-btn" data-mode="lineProfile" title="Click two points to draw a line profile">\u2572 Profile</button>
               <button class="fringe-measure-btn" data-mode="area" title="Click two corners to get area statistics">\u25ad Area</button>
-              <button class="fringe-measure-btn" data-mode="step" title="Measure mean height difference between two regions (e.g., gage-block step)">
+              <button class="fringe-measure-btn" data-mode="step" title="Measure small height differences between two regions. Valid for smooth surfaces and steps < &#955;/4 (~158 nm for He-Ne). Larger steps cannot be measured by single-shot single-wavelength interferometry &#8212; the 2&#960; wrap ambiguity makes step and step &#177; n&#183;&#955;/2 indistinguishable.">
                 <svg width="12" height="10" viewBox="0 0 12 10" style="vertical-align:-1px" aria-hidden="true">
                   <path d="M1 8 H5 V4 H11" stroke="currentColor" stroke-width="1.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
                 </svg> Step
@@ -949,12 +949,22 @@ export function mergeReanalyzeResult(data) {
   for (const key of [
     "surface_map", "zernike_chart", "profile_x", "profile_y",
     "pv_nm", "rms_nm", "pv_waves", "rms_waves", "subtracted_terms",
+    "height_grid", "mask_grid", "grid_rows", "grid_cols",
   ]) {
     if (data[key] !== undefined) fr.lastResult[key] = data[key];
   }
   if (data.strehl !== undefined) fr.lastResult.strehl = data.strehl;
   if (data.psf) fr.lastResult.psf = data.psf;
   if (data.mtf) fr.lastResult.mtf = data.mtf;
+
+  // Refresh cached typed arrays so the Step tool and 3D view see the
+  // post-subtraction surface, not the stale pre-reanalyze grid.
+  if (data.height_grid) {
+    fr.heightGrid = new Float32Array(data.height_grid);
+    fr.maskGrid = new Uint8Array(data.mask_grid);
+    fr.gridRows = data.grid_rows;
+    fr.gridCols = data.grid_cols;
+  }
 }
 
 async function doReanalyze() {

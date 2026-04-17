@@ -611,6 +611,46 @@ class TestCarrierDiagnostics:
 
 
 class TestReanalyze:
+    def test_reanalyze_returns_height_grid(self):
+        """reanalyze() must return a refreshed height_grid/mask_grid so the
+        frontend Step tool and 3D view don't read stale pre-reanalyze data."""
+        h, w = 64, 64
+        yy, xx = np.mgrid[0:h, 0:w]
+        carrier = 2 * np.pi * 4 * xx / w
+        # Flat-ish surface so Zernike reconstruction is meaningful
+        img = (128 + 80 * np.cos(carrier)).astype(np.uint8)
+
+        full = analyze_interferogram(img, wavelength_nm=632.8,
+                                     subtract_terms=[1, 2, 3])
+        coeffs = full["coefficients"]
+        mask_serialized = [int(v) for v in full["mask_grid"]]  # placeholder; replaced below
+
+        # Use the full-resolution mask that the API caches: rebuild one the
+        # same shape as the (cropped) surface returned by analyze.
+        sh, sw = full["surface_height"], full["surface_width"]
+        mask_full = np.ones(sh * sw, dtype=int).tolist()
+
+        result = reanalyze(
+            coefficients=coeffs,
+            subtract_terms=[1, 2, 3, 4],
+            wavelength_nm=632.8,
+            surface_shape=(sh, sw),
+            mask_serialized=mask_full,
+        )
+
+        assert "height_grid" in result
+        assert "mask_grid" in result
+        assert "grid_rows" in result
+        assert "grid_cols" in result
+        assert isinstance(result["height_grid"], list)
+        assert isinstance(result["mask_grid"], list)
+        assert result["grid_rows"] > 0
+        assert result["grid_cols"] > 0
+        assert len(result["height_grid"]) > 0
+        assert len(result["mask_grid"]) > 0
+        assert len(result["height_grid"]) == result["grid_rows"] * result["grid_cols"]
+        assert len(result["mask_grid"]) == result["grid_rows"] * result["grid_cols"]
+
     def test_reanalyze_changes_stats(self):
         """Re-analyzing with different subtraction should change PV/RMS."""
         # First do a full analysis
@@ -1459,26 +1499,32 @@ class TestPhysicalUnitsValidation:
             f"expected +{true_step_nm} nm. plateau_A={mean_A:.1f}, plateau_B={mean_B:.1f}."
         )
 
-    def test_dual_mask_protocol_for_larger_step(self):
-        """Large step (>λ/4) measured correctly using the dual-mask protocol.
+    def test_large_step_cannot_be_recovered_single_wavelength(self):
+        """Regression test documenting a physics limitation.
 
-        Single-shot recovery fails for steps > λ/4 because the 2D unwrap
-        does not bridge across a phase discontinuity. The workaround used
-        in practice: mask only one plateau, run the pipeline, record the
-        mean; repeat for the other plateau; subtract. Each analysis has
-        a smooth surface within its mask, so the unwrap is unambiguous.
+        Single-shot single-wavelength spatial-carrier interferometry cannot
+        unambiguously resolve a step > λ/4 (~158 nm at 632.8 nm). The phase
+        difference between the two plateaus is ambiguous mod 2π, so the
+        recovered step is the wrapped-phase alias of the true step, not the
+        true step itself.
 
-        This test validates the protocol with a 1000 nm step — well above
-        λ/4 and representative of gage-block measurements.
+        This test feeds the pipeline a synthetic 1000 nm step (> λ/2, well
+        outside the unambiguous range) and asserts that the recovered step
+        is NOT within 10 % of truth. It passes today because the pipeline
+        correctly reports the wrapped alias.
+
+        If this test starts failing, it means the pipeline gained step-aware
+        recovery (e.g., multi-wavelength, temporal phase shifting, or a
+        dual-analysis protocol actually wired up), at which point this test
+        should be DELETED — the limitation it documents no longer exists.
         """
         h, w = 256, 256
         wavelength_nm = 632.8
-        true_step_nm = 1000.0  # ~3.16 · λ/2, single-shot would alias
+        true_step_nm = 1000.0  # ~3.16 · λ/2, far outside λ/4 unambiguous range
         height = np.zeros((h, w), dtype=np.float64)
         height[:, w // 2:] = true_step_nm
 
-        # Use a small tilt on each plateau so the surface isn't perfectly flat
-        # (mimics a real Fizeau measurement where alignment introduces some tilt).
+        # Small tilt so the surface isn't perfectly flat (mimics real setup).
         yy, xx = np.mgrid[0:h, 0:w]
         height = height + 5.0 * (xx - w / 2) / w  # ±2.5 nm tilt
 
@@ -1487,42 +1533,141 @@ class TestPhysicalUnitsValidation:
         I = 0.5 + 0.5 * np.cos(carrier_phase + surface_phase)
         img = (I * 255.0).astype(np.uint8)
 
-        # Build two rectangular boolean masks, one per plateau, with a gap
-        # of ±15% image width around the step so each analysis sees a
-        # continuous smooth surface.
-        margin_x = int(0.15 * w)
-        mask_A = np.zeros((h, w), dtype=bool)
-        mask_A[h // 8:7 * h // 8, margin_x:w // 2 - margin_x] = True
-        mask_B = np.zeros((h, w), dtype=bool)
-        mask_B[h // 8:7 * h // 8, w // 2 + margin_x:w - margin_x] = True
-
-        r_A = analyze_interferogram(
-            img, wavelength_nm=wavelength_nm,
-            subtract_terms=[1, 2, 3],   # piston + tilt — removes alignment tilt
+        result = analyze_interferogram(
+            img,
+            wavelength_nm=wavelength_nm,
+            subtract_terms=[1],          # piston only — keep the step
+            use_full_mask=True,
             form_model="zernike",
-            custom_mask=mask_A,
+            correct_2pi_jumps=False,     # don't smooth the step away
+        )
+        grid, mask = _grid_to_2d(result)
+
+        gh, gw = grid.shape
+        margin_y = gh // 5
+        # Strips away from the edge on each plateau.
+        plateau_A = grid[margin_y:gh - margin_y, gw // 8: gw // 2 - gw // 8]
+        plateau_B = grid[margin_y:gh - margin_y, gw // 2 + gw // 8: 7 * gw // 8]
+        mask_A = mask[margin_y:gh - margin_y, gw // 8: gw // 2 - gw // 8]
+        mask_B = mask[margin_y:gh - margin_y, gw // 2 + gw // 8: 7 * gw // 8]
+
+        mean_A = float(np.mean(plateau_A[mask_A])) if mask_A.any() else 0.0
+        mean_B = float(np.mean(plateau_B[mask_B])) if mask_B.any() else 0.0
+        measured_step = mean_B - mean_A
+
+        assert abs(measured_step - true_step_nm) > 100.0, (
+            "Single-shot single-wavelength interferometry cannot resolve a "
+            "1000 nm step (>> λ/4). This test documents the limitation; if "
+            "it starts failing, it means the pipeline gained step-aware "
+            "recovery (e.g., multi-wavelength), and this test should be "
+            f"removed. Got measured_step={measured_step:.1f} nm, "
+            f"truth={true_step_nm:.1f} nm, |error|="
+            f"{abs(measured_step - true_step_nm):.1f} nm."
+        )
+
+    def test_small_smooth_surface_region_comparison(self):
+        """Step tool's actual valid use case: mean difference between two
+        regions on a SMOOTH surface (sub-λ/4 height variation everywhere).
+
+        Example use cases: checking asymmetry on an optical flat, comparing
+        peak vs background on a Gaussian bump, quantifying localized form
+        error. These are well-defined because the phase is continuous and
+        unambiguous across the whole field.
+
+        For sharp step features > λ/4, see
+        test_large_step_cannot_be_recovered_single_wavelength (limitation
+        doc — a single-wavelength pipeline cannot resolve those).
+        """
+        h, w = 256, 256
+        wavelength_nm = 632.8
+        peak_nm = 100.0  # under λ/4, no wrap ambiguity
+
+        yy, xx = np.mgrid[0:h, 0:w]
+        cx, cy = w / 2.0, h / 2.0
+        # Wide Gaussian bump so the LPF doesn't round the peak away.
+        sigma = w / 4.0
+        bump = peak_nm * np.exp(
+            -((xx - cx) ** 2 + (yy - cy) ** 2) / (2.0 * sigma ** 2)
+        )
+
+        surface_phase = (4.0 * np.pi / wavelength_nm) * bump
+        carrier_phase = 2.0 * np.pi * 30.0 * xx / w
+        I = 0.5 + 0.5 * np.cos(carrier_phase + surface_phase)
+        img = (I * 255.0).astype(np.uint8)
+
+        result = analyze_interferogram(
+            img,
+            wavelength_nm=wavelength_nm,
+            subtract_terms=[1],
+            use_full_mask=True,
+            form_model="zernike",
             correct_2pi_jumps=False,
         )
-        r_B = analyze_interferogram(
-            img, wavelength_nm=wavelength_nm,
-            subtract_terms=[1, 2, 3],
-            form_model="zernike",
-            custom_mask=mask_B,
-            correct_2pi_jumps=False,
-        )
-        rms_A = float(r_A["rms_nm"])
-        rms_B = float(r_B["rms_nm"])
+        grid, mask = _grid_to_2d(result)
+        gh, gw = grid.shape
 
-        # Each plateau's RMS after piston + tilt removal should be well below λ
-        # (would be near 0 for a perfect plane; we allow up to λ/2 for LPF/edge
-        # effects). If unwrap-per-plateau were broken, RMS would blow up.
-        assert rms_A < wavelength_nm / 2, (
-            f"Plateau A RMS = {rms_A:.1f} nm, expected << λ/2 ({wavelength_nm/2:.1f}). "
-            f"Indicates unwrap failure within a single plateau."
+        # Two rectangular regions defined in image pixel coords, then mapped
+        # into the (rows, cols) of the output height_grid (which covers the
+        # full image extent but may be subsampled).
+        peak_half = 16  # ±16 px around image center
+        bg_half = 20
+        bg_cx, bg_cy = bg_half + 4, bg_half + 4  # just inside upper-left corner
+
+        def img_rect_to_grid(y0, y1, x0, x1):
+            ry0 = int(round(y0 * gh / h))
+            ry1 = int(round(y1 * gh / h))
+            rx0 = int(round(x0 * gw / w))
+            rx1 = int(round(x1 * gw / w))
+            return ry0, ry1, rx0, rx1
+
+        py0, py1, px0, px1 = img_rect_to_grid(
+            int(cy) - peak_half, int(cy) + peak_half,
+            int(cx) - peak_half, int(cx) + peak_half,
         )
-        assert rms_B < wavelength_nm / 2, (
-            f"Plateau B RMS = {rms_B:.1f} nm, expected << λ/2 ({wavelength_nm/2:.1f}). "
-            f"Indicates unwrap failure within a single plateau."
+        by0, by1, bx0, bx1 = img_rect_to_grid(
+            bg_cy - bg_half, bg_cy + bg_half,
+            bg_cx - bg_half, bg_cx + bg_half,
+        )
+
+        peak_region = grid[py0:py1, px0:px1]
+        peak_mask = mask[py0:py1, px0:px1]
+        bg_region = grid[by0:by1, bx0:bx1]
+        bg_mask = mask[by0:by1, bx0:bx1]
+
+        assert peak_mask.any() and bg_mask.any(), (
+            "Region masks are empty — sampling rectangles landed outside "
+            "the valid mask."
+        )
+
+        peak_mean = float(np.mean(peak_region[peak_mask]))
+        bg_mean = float(np.mean(bg_region[bg_mask]))
+        measured_diff = peak_mean - bg_mean
+
+        # Analytic expectation: mean of the Gaussian bump over each rectangle
+        # in image-pixel space (where the synthetic truth is defined).
+        def bump_mean_over_rect(y0, y1, x0, x1):
+            y0, y1 = max(0, y0), min(h, y1)
+            x0, x1 = max(0, x0), min(w, x1)
+            return float(np.mean(bump[y0:y1, x0:x1]))
+
+        expected_peak = bump_mean_over_rect(
+            int(cy) - peak_half, int(cy) + peak_half,
+            int(cx) - peak_half, int(cx) + peak_half,
+        )
+        expected_bg = bump_mean_over_rect(
+            bg_cy - bg_half, bg_cy + bg_half,
+            bg_cx - bg_half, bg_cx + bg_half,
+        )
+        expected_diff = expected_peak - expected_bg
+
+        rel_err = abs(measured_diff - expected_diff) / max(abs(expected_diff), 1e-9)
+        assert rel_err < 0.30, (
+            f"Step-tool region comparison on a smooth surface differs from "
+            f"analytic expectation by more than 30%. "
+            f"measured={measured_diff:.2f} nm, expected={expected_diff:.2f} nm, "
+            f"rel_err={rel_err*100:.1f}%. "
+            f"peak_mean={peak_mean:.2f} nm, bg_mean={bg_mean:.2f} nm, "
+            f"expected_peak={expected_peak:.2f} nm, expected_bg={expected_bg:.2f} nm."
         )
 
 
