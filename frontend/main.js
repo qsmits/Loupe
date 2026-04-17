@@ -542,13 +542,7 @@ document.getElementById("btn-measurements-as-dxf")?.addEventListener("click", ()
 
 // Crosshair toggle removed — crosshair is now a reticle preset in the Overlay menu
 
-// ── Grid toggle ────────────────────────────────────────���──────────────────────
-document.getElementById("btn-grid")?.addEventListener("click", () => {
-  state.showGrid = !state.showGrid;
-  document.getElementById("btn-grid")?.classList.toggle("active", state.showGrid);
-  showStatus(state.showGrid ? "Grid on" : "Grid off");
-  redraw();
-});
+// Grid toggle removed — grid reticle presets available in Overlay menu
 
 // ── Gradient overlay toggle ──────────────────────────────────────────────────
 document.getElementById("btn-gradient-overlay")?.addEventListener("change", async (e) => {

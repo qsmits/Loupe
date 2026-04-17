@@ -715,8 +715,7 @@ body.no-camera #stream-img {
   padding: 10px 12px;
 }
 
-/* ── Reticle panel ──────────────────────────────────────────────────────── */
-.reticle-section { border-bottom: 1px solid var(--border); }
+/* ── Reticle controls ──────────────────────────────────────────────────── */
 .reticle-select { width: 100%; padding: 4px 6px; background: var(--surface-2); color: var(--text); border: 1px solid var(--border); border-radius: 4px; font-size: 12px; }
 .reticle-row { display: flex; align-items: center; gap: 6px; margin: 4px 0; font-size: 12px; }
 .reticle-label { color: var(--text-secondary); min-width: 60px; }

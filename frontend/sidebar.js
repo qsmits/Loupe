@@ -1248,12 +1248,8 @@ export function renderInspectionTable() {
 // ── Reticle panel ─────────────────────────────────────────────────────────────
 
 export function updateReticlePanel() {
-  const panel = document.getElementById('reticle-panel');
-  const controls = document.getElementById('reticle-controls');
-  const angleEl = document.getElementById('reticle-angle');
-  if (!panel) return;
-
-  panel.hidden = false;
+  const controls = document.getElementById('reticle-menu-controls');
+  const angleEl = document.getElementById('reticle-menu-angle');
 
   if (angleEl) {
     angleEl.textContent = `${(state.reticleRotationDeg || 0).toFixed(1)}°`;
@@ -1316,8 +1312,8 @@ async function _onReticleSelectChange(value) {
 export async function initReticlePanel() {
   const categories = await loadReticleList();
 
-  // Wire up all reticle <select> elements (sidebar + overlay menu)
-  for (const id of ['reticle-select', 'reticle-menu-select']) {
+  // Wire up reticle <select> element in overlay menu
+  for (const id of ['reticle-menu-select']) {
     const select = document.getElementById(id);
     if (!select) continue;
     _populateReticleSelect(select, categories);
@@ -1325,16 +1321,16 @@ export async function initReticlePanel() {
     select.addEventListener('change', () => _onReticleSelectChange(select.value));
   }
 
-  document.getElementById('reticle-reset-rotation')?.addEventListener('click', () => {
+  document.getElementById('reticle-menu-reset-rotation')?.addEventListener('click', () => {
     setReticleRotation(0);
   });
 
-  document.getElementById('reticle-color')?.addEventListener('input', e => {
+  document.getElementById('reticle-menu-color')?.addEventListener('input', e => {
     state.reticleColorOverride = e.target.value;
     redraw();
   });
 
-  document.getElementById('reticle-opacity')?.addEventListener('input', e => {
+  document.getElementById('reticle-menu-opacity')?.addEventListener('input', e => {
     state.reticleOpacityOverride = parseFloat(e.target.value);
     redraw();
   });
