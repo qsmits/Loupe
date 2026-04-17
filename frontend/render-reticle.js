@@ -185,6 +185,21 @@ function _drawFanReticle(angleRad, dpr, reticle) {
   }
 
   ctx.restore();
+
+  // Name badge in top-left corner
+  if (reticle.name) {
+    const { color: badgeColor, opacity: badgeOpacity } = _resolveStyle(reticle, null);
+    const fontSize = 14 * dpr;
+    const pad = 8 * dpr;
+    ctx.save();
+    ctx.font = `bold ${fontSize}px ui-monospace, monospace`;
+    ctx.fillStyle = badgeColor;
+    ctx.globalAlpha = badgeOpacity;
+    ctx.textAlign = "left";
+    ctx.textBaseline = "top";
+    ctx.fillText(reticle.name, pad, pad);
+    ctx.restore();
+  }
 }
 
 /**
