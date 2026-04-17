@@ -5,7 +5,6 @@ import re
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, Field
 
 RETICLES_DIR = Path(__file__).parent.parent / "reticles"
 
@@ -15,15 +14,6 @@ router = APIRouter(prefix="/reticles", tags=["reticles"])
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-def _slugify(text: str) -> str:
-    """Convert a human-readable name to a filename-safe slug."""
-    text = text.lower().strip()
-    text = re.sub(r"[^\w\s-]", "", text)          # drop punctuation except hyphen
-    text = re.sub(r"[\s_]+", "-", text)            # spaces/underscores → hyphen
-    text = re.sub(r"-{2,}", "-", text)             # collapse repeated hyphens
-    text = text.strip("-")
-    return text or "reticle"
 
 
 def _safe_path(category: str, name: str) -> Path:
@@ -64,15 +54,6 @@ def _entry_for(path: Path) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Models
-# ---------------------------------------------------------------------------
-
-class SaveReticleBody(BaseModel):
-    name: str = Field(min_length=1, max_length=100)
-    elements: list[dict] = Field(min_length=1)
-
-
-# ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
 
@@ -106,18 +87,4 @@ def get_reticle(category: str, name: str):
         raise HTTPException(status_code=500, detail="Failed to read reticle file")
 
 
-@router.post("/custom")
-def save_custom_reticle(body: SaveReticleBody):
-    """Save a custom reticle to reticles/custom/{slug}.json."""
-    custom_dir = RETICLES_DIR / "custom"
-    custom_dir.mkdir(parents=True, exist_ok=True)
-
-    slug = _slugify(body.name)
-    dest = custom_dir / f"{slug}.json"
-
-    payload = {
-        "name": body.name,
-        "elements": body.elements,
-    }
-    dest.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
-    return {"file": slug, "category": "custom"}
+# POST /reticles/custom removed — reticle export/import is client-side only

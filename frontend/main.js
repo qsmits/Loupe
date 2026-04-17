@@ -28,7 +28,7 @@ import { initZstack } from './zstack.js';
 import { initStitch } from './stitch.js';
 import { initSuperRes } from './superres.js';
 import { initDeflectometry } from './deflectometry.js';
-import { loadReticle, unloadReticle, saveCustomReticle } from './reticle.js';
+import { loadReticle, unloadReticle, saveCustomReticle, importReticle } from './reticle.js';
 import { initReticlePanel } from './sidebar.js';
 import { initGear } from './gear.js';
 import { initFringe } from './fringe.js';
@@ -1228,8 +1228,25 @@ document.getElementById("btn-save-reticle")?.addEventListener("click", async () 
   const name = prompt("Reticle name:");
   if (!name) return;
   try {
-    await saveCustomReticle(name);
-    showStatus(`Reticle "${name}" saved`);
+    saveCustomReticle(name);
+    showStatus(`Reticle "${name}" exported`);
+  } catch (err) {
+    showStatus(`Error: ${err.message}`);
+  }
+});
+
+document.getElementById("btn-import-reticle")?.addEventListener("click", () => {
+  closeAllDropdowns();
+  document.getElementById("reticle-import-input").click();
+});
+
+document.getElementById("reticle-import-input")?.addEventListener("change", async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  e.target.value = "";
+  try {
+    await importReticle(file);
+    showStatus(`Reticle "${file.name}" loaded`);
   } catch (err) {
     showStatus(`Error: ${err.message}`);
   }

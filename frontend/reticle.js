@@ -129,15 +129,31 @@ export async function saveCustomReticle(name) {
     style: { color: '#00ff00', lineWidth: 1, opacity: 0.7 },
   };
 
-  await apiFetch('/reticles/custom', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(reticle),
-  });
+  // Download as JSON file
+  const blob = new Blob([JSON.stringify(reticle, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
 
-  // Refresh the list
-  await loadReticleList();
-  renderSidebar();
+/**
+ * Import a reticle from a local JSON file and activate it.
+ * @param {File} file
+ */
+export async function importReticle(file) {
+  const text = await file.text();
+  const data = JSON.parse(text);
+  if (!Array.isArray(data.elements) || data.elements.length === 0) {
+    throw new Error('Invalid reticle file — no elements found');
+  }
+  state.activeReticle = data;
+  state.reticleRotationDeg = 0;
+  state.reticleColorOverride = null;
+  state.reticleOpacityOverride = null;
+  redraw();
 }
 
 /**
