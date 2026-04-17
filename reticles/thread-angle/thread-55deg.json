@@ -6,8 +6,7 @@
   "angles": [
     {
       "deg": 0,
-      "lineWidth": 2,
-      "label": "center"
+      "lineWidth": 2
     },
     {
       "deg": 27.5,
