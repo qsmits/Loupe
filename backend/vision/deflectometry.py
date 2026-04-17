@@ -9,6 +9,8 @@ encoding for the visualization helper.
 from __future__ import annotations
 
 import base64
+import uuid
+from datetime import datetime, timezone
 
 import cv2
 import numpy as np
@@ -738,3 +740,51 @@ def frankot_chellappa(dzdx: np.ndarray, dzdy: np.ndarray, mask: np.ndarray | Non
         height[~valid] = np.nan
 
     return height
+
+
+DEFLECTOMETRY_ORIGINS = ("capture", "averaged", "subtracted")
+
+
+def wrap_deflectometry_result(
+    result: dict,
+    *,
+    origin: str = "capture",
+    calibration_snapshot: dict | None = None,
+    geometry: dict | None = None,
+    source_ids: list[str] | None = None,
+    aperture_recipe: dict | None = None,
+    captured_at: str | None = None,
+    tuning: dict | None = None,
+    warnings: list[str] | None = None,
+) -> dict:
+    """Attach DeflectometryResult envelope fields to a deflectometry pipeline output dict.
+
+    Mutates ``result`` in place and returns it. Additive: existing keys are
+    preserved. Idempotent — calling twice keeps the original ``id`` while
+    refreshing other envelope fields.
+    """
+    if origin not in DEFLECTOMETRY_ORIGINS:
+        raise ValueError(
+            f"origin must be one of {DEFLECTOMETRY_ORIGINS}, got {origin!r}"
+        )
+
+    if "id" not in result:
+        result["id"] = uuid.uuid4().hex
+    result["origin"] = origin
+    result["source_ids"] = list(source_ids) if source_ids else []
+    result["captured_at"] = captured_at or datetime.now(timezone.utc).isoformat()
+    result["calibration_snapshot"] = calibration_snapshot
+    result["geometry"] = geometry
+    result["tuning"] = tuning
+    result["aperture_recipe"] = aperture_recipe
+
+    if warnings is not None:
+        result["warnings"] = list(warnings)
+    elif "warnings" not in result:
+        quality = result.get("quality")
+        if isinstance(quality, dict) and isinstance(quality.get("warnings"), list):
+            result["warnings"] = list(quality["warnings"])
+        else:
+            result["warnings"] = []
+
+    return result

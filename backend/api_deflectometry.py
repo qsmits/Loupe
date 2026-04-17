@@ -51,7 +51,55 @@ from .vision.deflectometry import (
     compute_curl_residual,
     compute_quality_summary,
     analyze_display_check,
+    wrap_deflectometry_result,
 )
+
+
+_ENVELOPE_CACHE_CAP = 20
+
+# Envelope keys that are additive on /compute responses (whitelist used to
+# build the response without leaking the heavy numpy grids).
+_ENVELOPE_RESPONSE_FIELDS = (
+    "id", "origin", "source_ids", "captured_at",
+    "calibration_snapshot", "geometry", "tuning",
+    "aperture_recipe", "warnings",
+)
+
+
+def _envelope_to_json_safe(env: dict) -> dict:
+    """Recursively convert numpy arrays / scalars / NaN to JSON-safe values.
+
+    Numpy arrays become nested lists; boolean masks become 0/1 ints; NaN
+    becomes None; numpy scalars become their Python equivalents.
+    """
+
+    def _convert(value):
+        if value is None:
+            return None
+        if isinstance(value, np.ndarray):
+            if value.dtype == bool:
+                return value.astype(np.int8).tolist()
+            arr = value
+            if np.issubdtype(arr.dtype, np.floating):
+                out = np.where(np.isnan(arr), None, arr.astype(object))
+                return out.tolist()
+            return arr.tolist()
+        if isinstance(value, (np.floating,)):
+            f = float(value)
+            return None if math.isnan(f) else f
+        if isinstance(value, (np.integer,)):
+            return int(value)
+        if isinstance(value, (np.bool_,)):
+            return bool(value)
+        if isinstance(value, float):
+            return None if math.isnan(value) else value
+        if isinstance(value, dict):
+            return {k: _convert(v) for k, v in value.items()}
+        if isinstance(value, (list, tuple)):
+            return [_convert(v) for v in value]
+        return value
+
+    return _convert(env)
 
 
 def _reject_hosted(request: Request):
@@ -68,6 +116,9 @@ class _Session:
         self.pending_acks: dict[int, asyncio.Event] = {}
         self.frames: list[np.ndarray] = []
         self.last_result: Optional[dict] = None
+        self.last_envelope: Optional[dict] = None
+        self._envelope_cache: dict[str, dict] = {}
+        self._envelope_order: list[str] = []
         self.flat_white: Optional[np.ndarray] = None
         self.flat_black: Optional[np.ndarray] = None
         self.ref_phase_x: Optional[np.ndarray] = None
@@ -80,9 +131,26 @@ class _Session:
 
     def clear_capture(self) -> None:
         # NOTE: flat_white / flat_black and ref_phase_x / ref_phase_y persist
-        # across resets — they are only recaptured explicitly.
+        # across resets — they are only recaptured explicitly. _envelope_cache
+        # also persists so previously-fetched results stay retrievable.
         self.frames = []
         self.last_result = None
+        self.last_envelope = None
+
+    def cache_envelope(self, env: dict) -> None:
+        eid = env.get("id")
+        if not eid:
+            return
+        if eid in self._envelope_cache:
+            try:
+                self._envelope_order.remove(eid)
+            except ValueError:
+                pass
+        self._envelope_cache[eid] = env
+        self._envelope_order.append(eid)
+        while len(self._envelope_order) > _ENVELOPE_CACHE_CAP:
+            evicted = self._envelope_order.pop(0)
+            self._envelope_cache.pop(evicted, None)
 
     def is_unused(self) -> bool:
         return (
@@ -498,7 +566,76 @@ def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
         s._last_unw_x = unw_x
         s._last_unw_y = unw_y
         s._last_mask = mask
+
+        # ── Phase 0: build the DeflectometryResult envelope ─────────────
+        calibration_snapshot = {
+            "cal_factor": s.cal_factor,
+            "has_flat_field": s.flat_white is not None,
+            "has_reference": s.ref_phase_x is not None,
+            "has_display_lut": s.inverse_lut is not None,
+            "freq": s.freq,
+        }
+        geometry = {
+            "screen_pose": None,
+            "camera_pose": None,
+            "surface_pose": None,
+            "screen_distance_mm": None,
+            "surface_distance_mm": None,
+        }
+        tuning = {
+            "freq": s.freq,
+            "smooth_sigma": body.smooth_sigma,
+            "mask_threshold": body.mask_threshold,
+            "capture_style": "single_freq",
+        }
+        aperture_recipe = {
+            "mask_threshold": body.mask_threshold,
+            "polygons": (
+                [p.model_dump() for p in body.mask_polygons]
+                if body.mask_polygons else None
+            ),
+        }
+
+        envelope = dict(result)
+        envelope["phase_x_grid"] = unw_x
+        envelope["phase_y_grid"] = unw_y
+        envelope["modulation_x_grid"] = mod_x
+        envelope["modulation_y_grid"] = mod_y
+        # Phase 0 stub: geometric slope solver ships in Phase 4. For now
+        # slopes alias the unwrapped phases so the envelope schema is stable.
+        envelope["slope_x_grid"] = unw_x
+        envelope["slope_y_grid"] = unw_y
+        envelope["trusted_mask_grid"] = mask
+        envelope["display_phase_x_grid"] = unw_x
+        envelope["display_phase_y_grid"] = unw_y
+
+        wrap_deflectometry_result(
+            envelope,
+            origin="capture",
+            calibration_snapshot=calibration_snapshot,
+            geometry=geometry,
+            tuning=tuning,
+            aperture_recipe=aperture_recipe,
+        )
+
+        s.last_envelope = envelope
+        s.cache_envelope(envelope)
+
+        # Additive: surface envelope metadata on the response without
+        # ballooning it with the numeric grids.
+        for field in _ENVELOPE_RESPONSE_FIELDS:
+            result[field] = envelope[field]
         return result
+
+    @router.get("/deflectometry/result/{result_id}", dependencies=[Depends(_reject_hosted)])
+    def deflectometry_get_result(result_id: str):
+        s = _current()
+        if s is None:
+            raise HTTPException(404, detail="No active session")
+        env = s._envelope_cache.get(result_id)
+        if env is None:
+            raise HTTPException(404, detail=f"Result {result_id} not found")
+        return _envelope_to_json_safe(env)
 
     @router.post("/deflectometry/heightmap", dependencies=[Depends(_reject_hosted)])
     async def deflectometry_heightmap(body: HeightmapBody = HeightmapBody()):  # noqa: B008
