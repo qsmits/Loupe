@@ -328,10 +328,8 @@ export function drawReticle() {
     _drawHandle(angleRad);
   }
 
-  // Uncalibrated badge (skip for screen-space reticles)
-  if (!isScreenSpace && uncalibrated) {
-    _drawUncalibratedBadge();
-  }
+  // Uncalibrated state is already shown by the status bar cal-badge —
+  // no need for a redundant canvas badge here.
 }
 
 /**

@@ -547,6 +547,7 @@ document.getElementById("btn-measurements-as-dxf")?.addEventListener("click", ()
 // ── Gradient overlay toggle ──────────────────────────────────────────────────
 document.getElementById("btn-gradient-overlay")?.addEventListener("change", async (e) => {
   state.showGradientOverlay = e.target.checked;
+  if (e.target.checked && !state.frozen) await doFreeze();
   if (e.target.checked && state.frozen && !state._gradientOverlayImg) {
     try {
       const resp = await apiFetch("/gradient-overlay", { method: "POST" });
