@@ -137,6 +137,57 @@ function _drawHandle(angleRad) {
 }
 
 /**
+ * Draw a fan reticle — lines converging at a vertex near the top of the screen,
+ * fanning downward. Used for threading tool angle measurement.
+ *
+ * Each element in reticle.angles: { deg, lineWidth?, label?, labelSizePx? }
+ *   deg: angle from vertical centerline (positive = clockwise)
+ */
+function _drawFanReticle(angleRad, dpr, reticle) {
+  const { color, opacity, lineWidth } = _resolveStyle(reticle, null);
+  const vertexFrac = reticle.vertexScreenY ?? 0.1;  // fraction from top
+  const vx = canvas.width / 2;
+  const vy = canvas.height * vertexFrac;
+  // Lines extend to the bottom edge (plus margin for rotation)
+  const lineLen = Math.max(canvas.width, canvas.height) * 1.2;
+
+  ctx.save();
+  ctx.translate(vx, vy);
+  ctx.rotate(angleRad);
+  ctx.globalAlpha = opacity;
+
+  for (const a of (reticle.angles || [])) {
+    const { color: aColor, opacity: aOpacity, lineWidth: aLW } = _resolveStyle(reticle, a.style);
+    const rad = (a.deg * Math.PI) / 180;
+    const ex = Math.sin(rad) * lineLen;
+    const ey = Math.cos(rad) * lineLen;  // positive = downward in canvas
+
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    ctx.lineTo(ex, ey);
+    ctx.strokeStyle = aColor;
+    ctx.globalAlpha = aOpacity;
+    ctx.lineWidth = (a.lineWidth ?? lineWidth) * dpr;
+    ctx.stroke();
+
+    if (a.label) {
+      const labelDist = 30 * dpr;  // label offset from vertex in screen px
+      const lx = Math.sin(rad) * labelDist;
+      const ly = Math.cos(rad) * labelDist;
+      const fontSize = (a.labelSizePx ?? 10) * dpr;
+      ctx.font = `${fontSize}px ui-monospace, monospace`;
+      ctx.fillStyle = aColor;
+      ctx.textAlign = rad >= 0 ? "left" : "right";
+      ctx.textBaseline = "middle";
+      const nudge = (rad >= 0 ? 4 : -4) * dpr;
+      ctx.fillText(a.label, lx + nudge, ly);
+    }
+  }
+
+  ctx.restore();
+}
+
+/**
  * Draw a crosshair reticle — edge-to-edge dashed lines in screen-space.
  */
 function _drawCrosshairReticle(cxCanvas, cyCanvas, angleRad, dpr, color, opacity, lineWidth) {
@@ -226,7 +277,10 @@ function _drawElement(el, reticle, scale, dpr) {
  */
 export function drawReticle() {
   const reticle = state.activeReticle;
-  if (!reticle || !Array.isArray(reticle.elements) || reticle.elements.length === 0) return;
+  if (!reticle) return;
+  const hasElements = Array.isArray(reticle.elements) && reticle.elements.length > 0;
+  const hasAngles   = Array.isArray(reticle.angles)   && reticle.angles.length > 0;
+  if (!hasElements && !hasAngles && !reticle.crosshair && !reticle.fan) return;
 
   const { scale, uncalibrated, dpr } = _computeScale();
   const angleRad = (state.reticleRotationDeg * Math.PI) / 180;
@@ -234,9 +288,11 @@ export function drawReticle() {
   const cyCanvas = canvas.height / 2;
 
   const { color, opacity, lineWidth } = _resolveStyle(reticle, null);
+  const isScreenSpace = reticle.crosshair || reticle.fan;
 
-  if (reticle.crosshair) {
-    // Special case: crosshair extends edge-to-edge with dashed lines
+  if (reticle.fan) {
+    _drawFanReticle(angleRad, dpr, reticle);
+  } else if (reticle.crosshair) {
     _drawCrosshairReticle(cxCanvas, cyCanvas, angleRad, dpr, color, opacity, lineWidth);
   } else {
     // Normal reticle: mm-space elements
@@ -252,13 +308,13 @@ export function drawReticle() {
     ctx.restore();
   }
 
-  // Draw rotation handle (only for non-crosshair reticles, or when rotated)
+  // Draw rotation handle (always for fan/mm-space, only when rotated for crosshair)
   if (!reticle.crosshair || state.reticleRotationDeg !== 0) {
     _drawHandle(angleRad);
   }
 
-  // Uncalibrated badge (skip for crosshair — it's scale-independent)
-  if (!reticle.crosshair && uncalibrated) {
+  // Uncalibrated badge (skip for screen-space reticles)
+  if (!isScreenSpace && uncalibrated) {
     _drawUncalibratedBadge();
   }
 }

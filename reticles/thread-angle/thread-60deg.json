@@ -1,0 +1,28 @@
+{
+  "name": "60\u00b0 Thread (Metric/UN)",
+  "description": "Thread angle overlay for ISO metric (M) and Unified (UN/UNC/UNF) threads \u2014 60\u00b0 included angle",
+  "fan": true,
+  "vertexScreenY": 0.1,
+  "angles": [
+    {
+      "deg": 0,
+      "lineWidth": 2,
+      "label": "center"
+    },
+    {
+      "deg": 30,
+      "lineWidth": 2,
+      "label": "30\u00b0"
+    },
+    {
+      "deg": -30,
+      "lineWidth": 2,
+      "label": "30\u00b0"
+    }
+  ],
+  "style": {
+    "color": "#00ff00",
+    "lineWidth": 1,
+    "opacity": 0.7
+  }
+}
