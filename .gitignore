@@ -22,8 +22,8 @@ poc_output/
 # Ad-hoc DXF test fixtures kept locally
 demuth-vblock-cleaned.dxf
 
-# Internal design specs and implementation plans (working docs, not user-facing)
-docs/superpowers/
+# Internal design specs, plans, working notes — not user-facing
+docs/
 
 # Local competitive/reporting artifacts — not for the public repo
 Loupe_Competitive_Analysis.*
