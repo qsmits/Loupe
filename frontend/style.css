@@ -3779,6 +3779,30 @@ body.no-camera .camera-section { display: none; }
   opacity: 0.55;
   font-size: 13px;
 }
+/* Honesty milestone: highlight pulse for the Specimen-distance input when
+ * the user clicks the "set Specimen distance" nudge in the slope-method
+ * badge. Applied for ~2s then removed. */
+@keyframes defl-highlight-pulse {
+  0%   { box-shadow: 0 0 0 0 rgba(251, 191, 36, 0.0); background: transparent; }
+  15%  { box-shadow: 0 0 0 4px rgba(251, 191, 36, 0.55); background: rgba(251, 191, 36, 0.18); }
+  100% { box-shadow: 0 0 0 0 rgba(251, 191, 36, 0.0); background: transparent; }
+}
+.defl-highlight-pulse {
+  animation: defl-highlight-pulse 2s ease-out;
+  border-radius: 3px;
+}
+/* Branch-mismatch indicator on the Height tab (defensive — should never fire
+ * in normal operation; surfaces a bug if compute + heightmap disagree). */
+.defl-branch-mismatch {
+  padding: 6px 10px;
+  border-radius: 3px;
+  background: rgba(239, 68, 68, 0.10);
+  border: 1px solid rgba(239, 68, 68, 0.45);
+  color: #fca5a5;
+  font-size: 11px;
+  font-weight: 500;
+  flex-shrink: 0;
+}
 
 /* Height tab: geometric-mode affirmation banner (replaces uncal in geo mode) */
 .defl-geo-banner {

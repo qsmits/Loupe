@@ -473,6 +473,7 @@ def resolve_geometry_inputs(
     *,
     pixels_per_mm: float | None = None,
     screen_distance_mm: float | None = None,
+    surface_distance_mm: float | None = None,
 ) -> dict:
     """Assemble the geometry inputs for the Phase-4 slope solver.
 
@@ -481,25 +482,61 @@ def resolve_geometry_inputs(
     for camera_pose, screen_pose, and surface_plane. This keeps the geometric
     path usable before Wave-2 delivers a proper camera+screen pose calibration.
 
+    User-asserted geometry convention
+    ---------------------------------
+    When ``surface_distance_mm`` is supplied, we adopt the following
+    non-degenerate placeholder convention (every Y-flip rule in CLAUDE.md
+    still applies — we do not introduce any new flips here):
+
+    - **Camera frame = world frame.** ``camera_pose = Pose.identity()``.
+      The camera frame has x right, y down, z forward (into the scene),
+      matching ``CameraModel`` conventions.
+    - **Telecentric camera ray** for pixel (u, v): origin
+      ``(u·px_size, v·px_size, 0)``, direction ``(0, 0, 1)``.
+    - **Specimen plane:** point ``(0, 0, surface_distance_mm)``, outward
+      normal ``(0, 0, -1)``. The specimen sits at distance
+      ``surface_distance_mm`` along +z (away from the camera, into the
+      scene), with its reflective side facing back toward the camera.
+    - **Screen pose:** identity rotation, translation ``(0, 0,
+      screen_distance_mm)``. Physically the iPad sits closer to the
+      camera than the specimen, so sensible rigs use
+      ``screen_distance_mm < surface_distance_mm`` — otherwise the
+      reflected rays (direction ``(0, 0, -1)`` off the flat-ish specimen)
+      never reach the screen plane and the chain is degenerate.
+
+    This convention is deliberately simple and rig-agnostic. It is meant to
+    unlock "experiment with geometric mode" without a full ball-calibration.
+    A real pose calibration (Wave-2) will override these placeholders.
+
     Parameters
     ----------
     session : live ``_Session`` instance. May be None.
     pixels_per_mm : lateral cal; if not supplied, taken from the bound
         CalibrationSession's ``sphere_cal`` if present, else None.
-    screen_distance_mm : iPad-over-specimen distance (mm); defaults to
-        ``_DEFAULT_SCREEN_DISTANCE_MM`` when not supplied.
+    screen_distance_mm : iPad-to-camera distance (mm). Falls back to the
+        session's stored profile value, then ``_DEFAULT_SCREEN_DISTANCE_MM``.
+    surface_distance_mm : specimen-to-camera distance along the optical
+        axis (mm). When None, no user-asserted geometry is available and
+        ``geometry_complete`` stays False regardless of other inputs. When
+        supplied and positive, the specimen plane is built at
+        ``z = surface_distance_mm`` (see convention above).
 
     Returns
     -------
     dict with:
         camera_model : CameraModel | None
-        camera_pose : Pose | None (identity placeholder)
+        camera_pose : Pose (identity placeholder)
         screen_shape : ScreenShape | None
-        screen_pose : Pose | None
+        screen_pose : Pose
         surface_plane : {"point": (3,) ndarray, "normal": (3,) ndarray}
         surface_distance_mm : float | None
-        screen_distance_mm : float | None
-        geometry_complete : bool
+        screen_distance_mm : float
+        pixels_per_mm : float | None
+        has_explicit_geometry : bool — whether the user asserted a
+            surface_distance_mm (the gate that unlocks geometric mode).
+        geometry_complete : bool — True only when camera_model, screen_shape,
+            a bound cal session with sphere_cal, AND has_explicit_geometry
+            are all true.
         notes : list[str] — what placeholders were used
     """
     notes: list[str] = []
@@ -570,24 +607,42 @@ def resolve_geometry_inputs(
     )
     notes.append(f"screen_pose: identity + z={sd}mm placeholder")
 
-    # --- specimen plane: z=0, normal +z ---
-    surface_plane = {
-        "point": np.zeros(3, dtype=np.float64),
-        "normal": np.array([0.0, 0.0, 1.0], dtype=np.float64),
-    }
-    notes.append("surface_plane: z=0, normal=+z placeholder")
+    # --- specimen plane ---
+    # When the user asserts surface_distance_mm, place the specimen at
+    # (0, 0, surface_distance_mm) with outward normal -z (facing back at
+    # the camera). Without a user assertion, we fall back to the old
+    # degenerate placeholder — the geometry_complete gate below will keep
+    # auto-select on phase_proxy so the degenerate surface never reaches
+    # the solver.
+    has_explicit_geometry = (
+        surface_distance_mm is not None and float(surface_distance_mm) > 0.0
+    )
+    if has_explicit_geometry:
+        surf_d = float(surface_distance_mm)
+        surface_plane = {
+            "point": np.array([0.0, 0.0, surf_d], dtype=np.float64),
+            "normal": np.array([0.0, 0.0, -1.0], dtype=np.float64),
+        }
+        notes.append(
+            f"surface_plane: user-asserted z={surf_d}mm, normal=-z"
+        )
+        surface_distance_out: float | None = surf_d
+    else:
+        surface_plane = {
+            "point": np.zeros(3, dtype=np.float64),
+            "normal": np.array([0.0, 0.0, 1.0], dtype=np.float64),
+        }
+        notes.append(
+            "surface_plane: z=0, normal=+z placeholder (no "
+            "surface_distance_mm asserted — geometric mode locked)"
+        )
+        surface_distance_out = None
 
-    # Auto-select guard: placeholder camera_pose + surface_plane at z=0 is
-    # physically degenerate (telecentric rays originate AT the surface plane,
-    # t ≈ 0, valid_mask all False, stats collapse to zero). Until the rig has
-    # an explicit user-asserted camera height + surface distance (or a proper
-    # multi-step pose calibration from the ball cal extension), auto-select
-    # MUST stay on phase_proxy. Forcing slope_method="geometric" still works
-    # for experimentation but will produce garbage without real poses.
-    #
-    # Review finding #1 (2026-04-18): placeholder geometry was auto-selecting
-    # geometric mode and silently returning zero-mask results. Fixed here.
-    has_explicit_geometry = False  # No path populates this yet.
+    # geometry_complete requires: real camera model + screen shape + bound
+    # cal session with sphere_cal + user-asserted surface_distance_mm.
+    # Placeholder poses are allowed (they're the best we have until Wave-2
+    # ball-cal populates real camera/screen pose), but a missing
+    # surface_distance_mm means we have no non-degenerate surface plane.
     geometry_complete = bool(
         camera_model is not None
         and screen_shape is not None
@@ -602,9 +657,10 @@ def resolve_geometry_inputs(
         "screen_shape": screen_shape,
         "screen_pose": screen_pose,
         "surface_plane": surface_plane,
-        "surface_distance_mm": 0.0 if geometry_complete else None,
+        "surface_distance_mm": surface_distance_out,
         "screen_distance_mm": sd,
         "pixels_per_mm": ppm,
+        "has_explicit_geometry": has_explicit_geometry,
         "geometry_complete": geometry_complete,
         "notes": notes,
     }

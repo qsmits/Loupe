@@ -249,6 +249,9 @@ function buildWorkspace() {
               <label style="font-size:11px">Screen distance override (mm)
                 <input type="number" id="defl-screen-distance-override" min="1" max="5000" step="1" placeholder="(default 250)" style="font-size:11px;width:90px" />
               </label>
+              <label style="font-size:11px" id="defl-surface-distance-label" title="Distance from specimen surface to camera entrance along the optical axis. Required to unlock geometric mode. Try 250\u20131000 mm depending on your rig. Affects per-pixel ray geometry.">Specimen distance (mm)
+                <input type="number" id="defl-surface-distance" min="1" max="2000" step="1" placeholder="(unset \u2014 required for geometric mode)" style="font-size:11px;width:120px" />
+              </label>
               <div style="font-size:10px;opacity:0.55">
                 Leave at defaults unless you are intentionally tuning the solver.
               </div>
@@ -296,12 +299,12 @@ function buildWorkspace() {
         <div class="defl-results-body">
           <div class="defl-results-main">
             <div class="defl-tab-bar">
-              <button class="defl-tab active" data-tab="height">Height</button>
-              <button class="defl-tab" data-tab="x_slope">X Slope</button>
-              <button class="defl-tab" data-tab="y_slope">Y Slope</button>
-              <button class="defl-tab" data-tab="slope_mag">Slope Mag</button>
-              <button class="defl-tab" data-tab="curl">Curl</button>
-              <button class="defl-tab" data-tab="diag">Diagnostics</button>
+              <button class="defl-tab active" data-tab="height" id="defl-tab-height">Height</button>
+              <button class="defl-tab" data-tab="x_slope" id="defl-tab-x_slope">X Slope</button>
+              <button class="defl-tab" data-tab="y_slope" id="defl-tab-y_slope">Y Slope</button>
+              <button class="defl-tab" data-tab="slope_mag" id="defl-tab-slope_mag">Slope Mag</button>
+              <button class="defl-tab" data-tab="curl" id="defl-tab-curl">Curl</button>
+              <button class="defl-tab" data-tab="diag" id="defl-tab-diag">Diagnostics</button>
             </div>
 
             <!-- Height: 3D + 2D pseudocolor -->
@@ -316,6 +319,9 @@ function buildWorkspace() {
                 <div id="defl-geo-banner" class="defl-geo-banner" hidden>
                   <span id="defl-geo-banner-text">Geometric height</span>
                 </div>
+                <!-- Honesty milestone: branch-mismatch indicator (compute vs heightmap).
+                     Defensive — should never fire in normal operation post backend fix. -->
+                <div id="defl-branch-mismatch" class="defl-branch-mismatch" hidden></div>
                 <!-- Phase 4 Wave 3: compact Height stats block (±µm error bars in geometric mode) -->
                 <pre id="defl-height-stats" class="defl-height-stats" hidden>\u2014</pre>
                 <div class="defl-height-views">
@@ -345,7 +351,7 @@ function buildWorkspace() {
             <div class="defl-tab-panel" id="defl-panel-x_slope" hidden>
               <div class="defl-empty-state" id="defl-x_slope-empty">Compute results first.</div>
               <div id="defl-x_slope-content" hidden class="defl-single-view">
-                <div class="defl-single-label">X Slope <span class="defl-unit-tag" id="defl-x-slope-unit">(phase-radians)</span></div>
+                <div class="defl-single-label"><span id="defl-x-slope-title">X Slope</span> <span class="defl-unit-tag" id="defl-x-slope-unit">(phase-radians)</span></div>
                 <div class="defl-single-img-host">
                   <img id="defl-phase-x-img" />
                 </div>
@@ -357,7 +363,7 @@ function buildWorkspace() {
             <div class="defl-tab-panel" id="defl-panel-y_slope" hidden>
               <div class="defl-empty-state" id="defl-y_slope-empty">Compute results first.</div>
               <div id="defl-y_slope-content" hidden class="defl-single-view">
-                <div class="defl-single-label">Y Slope <span class="defl-unit-tag" id="defl-y-slope-unit">(phase-radians)</span></div>
+                <div class="defl-single-label"><span id="defl-y-slope-title">Y Slope</span> <span class="defl-unit-tag" id="defl-y-slope-unit">(phase-radians)</span></div>
                 <div class="defl-single-img-host">
                   <img id="defl-phase-y-img" />
                 </div>
@@ -369,7 +375,7 @@ function buildWorkspace() {
             <div class="defl-tab-panel" id="defl-panel-slope_mag" hidden>
               <div class="defl-empty-state" id="defl-slope_mag-empty">Compute results first.</div>
               <div id="defl-slope_mag-content" hidden class="defl-single-view">
-                <div class="defl-single-label">Slope Magnitude <span class="defl-unit-tag" id="defl-slope-mag-unit">(phase-radians)</span></div>
+                <div class="defl-single-label"><span id="defl-slope-mag-title">Slope Magnitude</span> <span class="defl-unit-tag" id="defl-slope-mag-unit">(phase-radians)</span></div>
                 <div class="defl-single-img-host">
                   <img id="defl-slope-mag-img" />
                 </div>
@@ -381,7 +387,7 @@ function buildWorkspace() {
               <div class="defl-empty-state" id="defl-curl-empty">Compute results first.</div>
               <div id="defl-curl-content" hidden class="defl-single-view">
                 <div class="defl-single-label" style="display:flex;align-items:center;gap:8px">
-                  <span>Curl Residual (phase-units)</span>
+                  <span id="defl-curl-title">Curl Residual (phase-units)</span>
                   <span class="defl-jump-risk-badge" id="defl-jump-risk-badge" hidden>—</span>
                 </div>
                 <div class="defl-single-img-host">
@@ -573,6 +579,13 @@ async function saveProfile() {
     },
     geometry: {
       notes: document.getElementById("defl-geometry-notes")?.value || "",
+      // Honesty milestone: round-trip user-asserted specimen distance.
+      // Default to null (do NOT pre-fill a dangerous default).
+      surface_distance_mm: (() => {
+        const el = document.getElementById("defl-surface-distance");
+        const v = el ? parseFloat(el.value) : NaN;
+        return (Number.isFinite(v) && v > 0) ? v : null;
+      })(),
     },
     calibration: {
       cal_factor: null,
@@ -665,6 +678,17 @@ async function loadSelectedProfile() {
     }
     const notesEl = document.getElementById("defl-geometry-notes");
     if (notesEl) notesEl.value = p.geometry?.notes || "";
+    // Honesty milestone: restore Specimen distance (geometry.surface_distance_mm).
+    // null/undefined → leave input blank so the user doesn't get a surprise default.
+    const surfEl = document.getElementById("defl-surface-distance");
+    if (surfEl) {
+      const sv = p.geometry?.surface_distance_mm;
+      if (Number.isFinite(sv) && sv > 0) {
+        surfEl.value = sv;
+      } else {
+        surfEl.value = "";
+      }
+    }
     // UI: default tab. Old profiles without ui field default to "height".
     const defaultTab = (p.ui && TAB_IDS.includes(p.ui.default_tab)) ? p.ui.default_tab : "height";
     const dtEl = document.getElementById("defl-default-tab");
@@ -853,8 +877,17 @@ function wireEvents() {
     df.uncalDismissed = true;
   });
 
-  // Phase 4 Wave 3: slope-method badge → details modal
+  // Phase 4 Wave 3 + Honesty milestone: slope-method badge click.
+  // If the nudge condition is active (proxy mode + cal complete + ppm set +
+  // surface distance unset), scroll+highlight Specimen-distance. Otherwise
+  // open the details modal as before.
   $("defl-slope-method-badge")?.addEventListener("click", () => {
+    const result = df.lastResult || {};
+    const slopeMethod = result.slope_method || null;
+    if (slopeMethod !== "geometric" && _canNudgeForSurfaceDistance()) {
+      _openAdvancedAndHighlightSurfaceDistance();
+      return;
+    }
     showSlopeMethodDetails();
   });
 
@@ -1159,6 +1192,10 @@ async function compute() {
     const sdOvr = $("defl-screen-distance-override");
     const sdVal = sdOvr ? parseFloat(sdOvr.value) : NaN;
     if (Number.isFinite(sdVal) && sdVal > 0) payload.screen_distance_mm = sdVal;
+    // Honesty milestone: user-asserted specimen distance unlocks geometric mode.
+    const surfEl = $("defl-surface-distance");
+    const surfVal = surfEl ? parseFloat(surfEl.value) : NaN;
+    if (Number.isFinite(surfVal) && surfVal > 0) payload.surface_distance_mm = surfVal;
     const ppm = state.calibration?.pixelsPerMm;
     if (ppm && ppm > 0) payload.pixels_per_mm = ppm;
     const r = await apiFetch("/deflectometry/compute", {
@@ -1297,6 +1334,9 @@ async function resetSession() {
   if (ppNote) ppNote.hidden = true;
   const heightStats = $("defl-height-stats");
   if (heightStats) { heightStats.hidden = true; heightStats.textContent = "\u2014"; }
+  // Honesty milestone: clear branch-mismatch indicator
+  const bm = $("defl-branch-mismatch");
+  if (bm) { bm.hidden = true; bm.textContent = ""; }
 }
 
 async function exportRun() {
@@ -1331,6 +1371,100 @@ function showSlopePanelContent(tabId) {
   if (e) e.hidden = true;
 }
 
+// Honesty milestone (A3 §3): apply branch-aware labels to tab buttons, tab
+// content titles, unit tags and the Height-tab unit tag. Centralized here so
+// future tab additions only need to touch one function. In phase_proxy mode
+// every slope-ish label is suffixed with "(phase proxy)" to make it visually
+// clear the solver hasn't engaged the real reflection geometry yet.
+function applyBranchAwareLabels(slopeMethod, calFactor) {
+  const isGeo = slopeMethod === "geometric";
+  const proxyTag = " (phase proxy)";
+
+  // Tab bar buttons
+  const setTab = (id, base) => {
+    const el = document.getElementById(id);
+    if (el) el.textContent = isGeo ? base : base + proxyTag;
+  };
+  setTab("defl-tab-x_slope", "X Slope");
+  setTab("defl-tab-y_slope", "Y Slope");
+  setTab("defl-tab-slope_mag", "Slope Mag");
+  // Height + curl + diag are handled separately (height uses its own unit
+  // tag, curl is always phase-units, diag is mode-agnostic).
+
+  // Slope panel titles (inside the content area, larger font)
+  const xTitle = document.getElementById("defl-x-slope-title");
+  const yTitle = document.getElementById("defl-y-slope-title");
+  const smTitle = document.getElementById("defl-slope-mag-title");
+  if (xTitle) xTitle.textContent = isGeo ? "X slope" : "X slope (phase proxy)";
+  if (yTitle) yTitle.textContent = isGeo ? "Y slope" : "Y slope (phase proxy)";
+  if (smTitle) smTitle.textContent = isGeo ? "Slope magnitude" : "Slope magnitude (phase proxy)";
+
+  // Curl title — always phase-units, but spell out the branch for clarity.
+  const curlTitle = document.getElementById("defl-curl-title");
+  if (curlTitle) {
+    curlTitle.textContent = isGeo
+      ? "Curl Residual (phase-units)"
+      : "Curl (phase-units)";
+  }
+
+  // Slope tab unit tags
+  const slopeUnitTag = isGeo ? "(mrad)" : "(phase-rad \u2014 uncalibrated slope proxy)";
+  const xUnit = document.getElementById("defl-x-slope-unit");
+  const yUnit = document.getElementById("defl-y-slope-unit");
+  const smUnit = document.getElementById("defl-slope-mag-unit");
+  if (xUnit) xUnit.textContent = slopeUnitTag;
+  if (yUnit) yUnit.textContent = slopeUnitTag;
+  if (smUnit) smUnit.textContent = slopeUnitTag;
+
+  // Height tab — the heightmap call owns the authoritative unit tag, but we
+  // preview it here based on compute's slope_method + cal_factor presence so
+  // the label reflects the latest state even before the heightmap lands.
+  let heightUnit;
+  if (isGeo) {
+    heightUnit = "(\u00b5m, geometric)";
+  } else if (calFactor) {
+    heightUnit = "(\u00b5m, calibrated phase proxy)";
+  } else {
+    heightUnit = "(uncalibrated phase proxy)";
+  }
+  const u3d = document.getElementById("defl-height-unit-3d");
+  const u2d = document.getElementById("defl-height-unit-2d");
+  if (u3d) u3d.textContent = heightUnit;
+  if (u2d) u2d.textContent = heightUnit;
+
+  // Tooltip on the slope tab buttons + titles for hover discoverability.
+  const slopeTabTip =
+    "dz/dx (or dz/dy) field. In phase-proxy mode this is unwrapped phase treated " +
+    "as a slope proxy; in geometric mode this is the real surface slope in mm/mm " +
+    "(displayed as mrad).";
+  for (const id of ["defl-tab-x_slope", "defl-tab-y_slope", "defl-tab-slope_mag"]) {
+    const el = document.getElementById(id);
+    if (el) el.title = slopeTabTip;
+  }
+}
+
+// Honesty milestone (A2): after a compute+heightmap round-trip we have two
+// slope_method values. If they disagree, surface it. Should not fire in
+// normal operation post-backend-fix — presence means a backend regression.
+function renderBranchMismatchIndicator() {
+  const el = document.getElementById("defl-branch-mismatch");
+  if (!el) return;
+  const compMethod = df.lastResult?.slope_method || null;
+  const hmMethod = df.lastHeightmap?.slope_method || null;
+  if (!compMethod || !hmMethod) {
+    el.hidden = true;
+    el.textContent = "";
+    return;
+  }
+  if (compMethod !== hmMethod) {
+    el.hidden = false;
+    el.textContent = `\u26a0 Branch mismatch: compute=${compMethod}, heightmap=${hmMethod} \u2014 this is a bug. Please report.`;
+  } else {
+    el.hidden = true;
+    el.textContent = "";
+  }
+}
+
 function renderPhaseResult(result) {
   if (!result) return;
   df.lastResult = result;
@@ -1342,13 +1476,20 @@ function renderPhaseResult(result) {
   const uncertaintyUm = result.uncertainty_um || null;
   const isGeometric = slopeMethod === "geometric";
 
-  // Per-axis slope panels
-  if (result.phase_x_png_b64) {
-    $("defl-phase-x-img").src = "data:image/png;base64," + result.phase_x_png_b64;
+  // Per-axis slope panels.
+  // Honesty milestone (A3): source of truth for slope tabs is the slope PNGs,
+  // not the phase PNGs. In phase_proxy mode these are visually identical (slope
+  // aliases phase); in geometric mode they diverge and binding phase here would
+  // be actively wrong. Fall back to phase_* only for legacy responses without
+  // the new fields so mid-upgrade sessions don't blank out.
+  const slopeXPng = result.slope_x_png_b64 || result.phase_x_png_b64;
+  const slopeYPng = result.slope_y_png_b64 || result.phase_y_png_b64;
+  if (slopeXPng) {
+    $("defl-phase-x-img").src = "data:image/png;base64," + slopeXPng;
     showSlopePanelContent("x_slope");
   }
-  if (result.phase_y_png_b64) {
-    $("defl-phase-y-img").src = "data:image/png;base64," + result.phase_y_png_b64;
+  if (slopeYPng) {
+    $("defl-phase-y-img").src = "data:image/png;base64," + slopeYPng;
     showSlopePanelContent("y_slope");
   }
   if (result.slope_mag_png_b64) {
@@ -1360,21 +1501,20 @@ function renderPhaseResult(result) {
     showSlopePanelContent("curl");
   }
 
-  // Slope stats — mrad in geometric mode, rad in phase-proxy (legacy).
-  $("defl-phase-x-stats").textContent = formatSlopeStats(result.stats_x, slopeMethod);
-  $("defl-phase-y-stats").textContent = formatSlopeStats(result.stats_y, slopeMethod);
+  // Slope stats — prefer the new stats_slope_x/y fields (source of truth);
+  // fall back to legacy stats_x/stats_y for older responses. formatSlopeStats
+  // converts mm/mm → mrad when slopeMethod === "geometric".
+  const statsSlopeX = result.stats_slope_x || result.stats_x;
+  const statsSlopeY = result.stats_slope_y || result.stats_y;
+  $("defl-phase-x-stats").textContent = formatSlopeStats(statsSlopeX, slopeMethod);
+  $("defl-phase-y-stats").textContent = formatSlopeStats(statsSlopeY, slopeMethod);
   $("defl-slope-mag-stats").textContent = formatSlopeStats(result.stats_slope_mag, slopeMethod);
   // Curl stays in phase-units regardless of slope_method (diagnostic-only).
   $("defl-curl-stats").textContent = formatSlopeStats(result.stats_curl, null);
 
-  // Slope tab unit tags (phase-radians vs mrad)
-  const slopeUnitTag = isGeometric ? "(mrad)" : "(phase-rad — uncalibrated slope proxy)";
-  const xUnit = $("defl-x-slope-unit");
-  const yUnit = $("defl-y-slope-unit");
-  const smUnit = $("defl-slope-mag-unit");
-  if (xUnit) xUnit.textContent = slopeUnitTag;
-  if (yUnit) yUnit.textContent = slopeUnitTag;
-  if (smUnit) smUnit.textContent = slopeUnitTag;
+  // Branch-aware tab labels (A3 §3). Keeps the visible labels honest about
+  // what the user is actually looking at.
+  applyBranchAwareLabels(slopeMethod, cal);
 
   // Show Height empty-state cleared (3D/2D will populate when load3dSurface runs)
   const he = $("defl-height-empty");
@@ -1409,6 +1549,20 @@ function renderPhaseResult(result) {
 
   // Phase 4 Wave 3: top-of-results slope-method indicator badge
   renderSlopeMethodBadge(slopeMethod, uncertaintyUm);
+
+  // Honesty milestone: one-time "Geometric mode unlocked" toast on first
+  // geometric-mode result per page load. Skipped if localStorage says we've
+  // shown it on any prior visit.
+  if (isGeometric && !df._geometricUnlockToastShown) {
+    df._geometricUnlockToastShown = true;
+    try {
+      const key = "defl.geometric_unlock_toast_shown";
+      if (!localStorage.getItem(key)) {
+        _showGeometricUnlockToast();
+        localStorage.setItem(key, "1");
+      }
+    } catch { /* localStorage disabled — skip */ }
+  }
 
   // Phase 4 Wave 3: compact Height stats block with ±µm error bars (geometric)
   const heightStats = $("defl-height-stats");
@@ -1568,11 +1722,92 @@ function renderSlopeMethodBadge(slopeMethod, uncertaintyUm) {
     }
   } else {
     badge.className = "defl-slope-method-badge defl-sm-proxy";
-    title.textContent = "Phase-proxy fallback";
     uncert.hidden = true;
     uncert.textContent = "";
-    badge.title = "Height in phase-rad (uncalibrated proxy). Run full calibration to enable the geometric slope solver. Click for details.";
+    // Honesty milestone: nudge the user toward Specimen-distance when cal is
+    // otherwise complete. If cal is incomplete we keep the generic message.
+    if (_canNudgeForSurfaceDistance()) {
+      title.textContent = "Phase-proxy fallback \u2014 set Specimen distance in Advanced to unlock geometric";
+      badge.title = "Click to open Advanced compute options and set Specimen distance (mm). With a bound calibration and saved screen shape, this is the final input needed for the geometric solver.";
+    } else {
+      title.textContent = "Phase-proxy fallback";
+      badge.title = "Height in phase-rad (uncalibrated proxy). Run full calibration to enable the geometric slope solver. Click for details.";
+    }
   }
+}
+
+// True when cal is complete enough that the only missing input is
+// surface_distance_mm. Used to decide whether the slope-method badge should
+// show the "set Specimen distance" nudge vs the generic phase-proxy message.
+function _canNudgeForSurfaceDistance() {
+  const comp = df.activeCalSession?.completeness || null;
+  if (!comp) return false;
+  // Need a bound session with sphere cal + calibrated display + corner check
+  // + saved screen shape. (These mirror the backend's geometry_complete
+  // prerequisites in deflectometry_compute.)
+  if (!(comp.display && comp.corner && comp.sphere && comp.screen_shape)) return false;
+  // And pixels_per_mm must be known (microscope cal) for the compute to have
+  // any shot at the geometric branch.
+  const ppm = state.calibration?.pixelsPerMm;
+  if (!(ppm && ppm > 0)) return false;
+  // And Specimen distance must currently be unset.
+  const surfEl = document.getElementById("defl-surface-distance");
+  const surfVal = surfEl ? parseFloat(surfEl.value) : NaN;
+  if (Number.isFinite(surfVal) && surfVal > 0) return false;
+  return true;
+}
+
+// Scroll to / expand the Advanced compute options and pulse the
+// Specimen-distance input for ~2s to draw the eye. Wired to the slope-method
+// badge click when the nudge condition is active.
+function _openAdvancedAndHighlightSurfaceDistance() {
+  const details = document.querySelector(".defl-advanced-compute");
+  if (details && details.tagName === "DETAILS") details.open = true;
+  const surfEl = document.getElementById("defl-surface-distance");
+  const label = document.getElementById("defl-surface-distance-label");
+  const target = label || surfEl;
+  if (target && typeof target.scrollIntoView === "function") {
+    target.scrollIntoView({ behavior: "smooth", block: "center" });
+  }
+  if (surfEl) {
+    surfEl.classList.remove("defl-highlight-pulse");
+    // Force reflow so re-adding the class re-triggers the animation.
+    // eslint-disable-next-line no-unused-expressions
+    void surfEl.offsetWidth;
+    surfEl.classList.add("defl-highlight-pulse");
+    surfEl.focus({ preventScroll: true });
+    setTimeout(() => surfEl.classList.remove("defl-highlight-pulse"), 2200);
+  }
+}
+
+// One-time toast announcing that the geometric solver has engaged.
+// Lightweight DOM-only — no dependency on any toast library.
+function _showGeometricUnlockToast() {
+  const existing = document.getElementById("defl-geo-unlock-toast");
+  if (existing) existing.remove();
+  const toast = document.createElement("div");
+  toast.id = "defl-geo-unlock-toast";
+  toast.style.cssText = [
+    "position:fixed",
+    "right:18px",
+    "bottom:18px",
+    "z-index:9999",
+    "padding:10px 14px",
+    "background:rgba(34,197,94,0.95)",
+    "color:#0a2a12",
+    "border-radius:6px",
+    "box-shadow:0 4px 14px rgba(0,0,0,0.45)",
+    "font-size:12px",
+    "font-weight:600",
+    "max-width:360px",
+    "cursor:pointer",
+  ].join(";");
+  toast.textContent = "Geometric mode unlocked. Height is now in \u00b5m with quoted uncertainty.";
+  toast.addEventListener("click", () => toast.remove());
+  document.body.appendChild(toast);
+  setTimeout(() => {
+    if (toast.parentNode) toast.parentNode.removeChild(toast);
+  }, 6000);
 }
 
 function renderAxisWarnings(quality) {
@@ -3745,10 +3980,21 @@ async function load3dSurface() {
     }
     const hm = await r.json();
     df.lastHeightmap = hm;
+    // Honesty milestone: assert compute + heightmap agree on slope_method.
+    // A mismatch would indicate a backend regression; surface it on the Height tab.
+    renderBranchMismatchIndicator();
     if (empty) empty.hidden = true;
     if (content) content.hidden = false;
-    // Update unit tags using the heightmap's authoritative unit field
-    const unitText = hm.unit === "µm" ? "(µm)" : "(phase-rad — uncalibrated)";
+    // Update unit tags using the heightmap's authoritative unit + slope_method.
+    // Honesty milestone: in geometric mode, tag as "geometric µm"; in cal-only
+    // phase_proxy mode ("µm" unit but no geometric branch), tag as calibrated.
+    const hmMethod = hm.slope_method || null;
+    let unitText;
+    if (hm.unit === "µm") {
+      unitText = hmMethod === "geometric" ? "(µm, geometric)" : "(µm, calibrated)";
+    } else {
+      unitText = "(phase-rad \u2014 uncalibrated proxy)";
+    }
     const u3d = $("defl-height-unit-3d");
     const u2d = $("defl-height-unit-2d");
     if (u3d) u3d.textContent = unitText;

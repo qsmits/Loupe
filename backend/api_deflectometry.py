@@ -80,6 +80,12 @@ _ENVELOPE_RESPONSE_FIELDS = (
     # Phase 4 Wave 3 additions — small scalar/dict metadata; the heavy
     # ``surface_hits_world_grid`` stays off the compute response.
     "slope_method", "paraboloid_fit", "uncertainty_um",
+    # Honesty milestone (A1): split phase vs slope products. These are
+    # rendered PNG strings + small stats dicts, safe to include on the
+    # response.
+    "slope_x_png_b64", "slope_y_png_b64",
+    "stats_phase_x", "stats_phase_y",
+    "stats_slope_x", "stats_slope_y",
 )
 
 
@@ -170,6 +176,10 @@ class _Session:
         # Each entry is a dict matching the BallSampleBody shape plus the
         # grids resolved from the referenced envelope at add-time.
         self.ball_samples: list[dict] = []
+        # Honesty milestone: user-asserted specimen-to-camera distance (mm).
+        # Set by profile load or carried on the body; /compute consults this
+        # when the body does not override. None → geometric mode locked out.
+        self.surface_distance_mm: float | None = None
         # Serializes capture-sequence so two concurrent runs can't interleave
         self.lock: asyncio.Lock = asyncio.Lock()
 
@@ -232,6 +242,11 @@ class ComputeBody(BaseModel):
     pixels_per_mm: float | None = Field(default=None, gt=0)
     # Phase 4 Wave 3: optional explicit screen distance hint (mm).
     screen_distance_mm: float | None = Field(default=None, gt=0)
+    # Honesty milestone: user-asserted specimen-to-camera distance along the
+    # optical axis (mm). When supplied, unlocks geometric mode (combined with
+    # the other geometry completeness checks). See
+    # ``resolve_geometry_inputs`` docstring for the exact convention.
+    surface_distance_mm: float | None = Field(default=None, gt=0, le=2000)
 
 
 class CaptureBody(BaseModel):
@@ -294,6 +309,10 @@ class ProfileProcessing(BaseModel):
 
 class ProfileGeometry(BaseModel):
     notes: str = ""
+    # Honesty milestone: persisted user-asserted specimen-to-camera distance.
+    # When a profile is loaded, this value is stashed on the live session so
+    # subsequent /compute calls auto-pick it up (body override still wins).
+    surface_distance_mm: float | None = Field(default=None, gt=0, le=2000)
 
 class ProfileCalibration(BaseModel):
     cal_factor: float | None = None
@@ -948,10 +967,17 @@ def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
         mask_valid_frac = float(mask.sum()) / float(mask.size) if mask.size > 0 else 0.0
 
         # ── Phase 4 Wave 3: pick the slope-solver branch ────────────────
+        # Resolve user-asserted surface distance: body field wins, otherwise
+        # whatever the last loaded profile stashed on the session.
+        effective_surface_distance_mm = body.surface_distance_mm
+        if effective_surface_distance_mm is None:
+            effective_surface_distance_mm = getattr(s, "surface_distance_mm", None)
+
         geom = resolve_geometry_inputs(
             s,
             pixels_per_mm=body.pixels_per_mm,
             screen_distance_mm=body.screen_distance_mm,
+            surface_distance_mm=effective_surface_distance_mm,
         )
         if body.slope_method == "geometric":
             use_geometric = bool(geom["geometry_complete"])
@@ -960,8 +986,9 @@ def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
                     400,
                     detail=(
                         "slope_method='geometric' requested but geometry is "
-                        "incomplete — bind a CalibrationSession with sphere_cal "
-                        "and provide pixels_per_mm."
+                        "incomplete — bind a CalibrationSession with sphere_cal, "
+                        "provide pixels_per_mm, and supply surface_distance_mm "
+                        "(the specimen-to-camera distance along the optical axis)."
                     ),
                 )
         elif body.slope_method == "phase_proxy":
@@ -1074,13 +1101,32 @@ def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
             unwrap_jump_risk = "unknown"
         quality["unwrap_jump_risk"] = unwrap_jump_risk
 
+        # A1: split phase vs slope products. Phase PNGs/stats come from the
+        # unwrapped-phase grids (``unw_x/unw_y``); slope PNGs/stats come from
+        # the selected solver's slope grids (``slope_x_grid/slope_y_grid``).
+        # In phase_proxy mode the slope grids ARE aliases of the phase grids,
+        # so the rendered slope PNGs look identical — that's correct, because
+        # in proxy mode "phase IS the slope proxy".
+        stats_phase_x = phase_stats(unw_x, mask=mask)
+        stats_phase_y = phase_stats(unw_y, mask=mask)
+        stats_slope_x = phase_stats(slope_x_grid, mask=mask)
+        stats_slope_y = phase_stats(slope_y_grid, mask=mask)
         result = {
             "phase_x_png_b64": pseudocolor_png_b64(unw_x, mask=mask),
             "phase_y_png_b64": pseudocolor_png_b64(unw_y, mask=mask),
+            "slope_x_png_b64": pseudocolor_png_b64(slope_x_grid, mask=mask),
+            "slope_y_png_b64": pseudocolor_png_b64(slope_y_grid, mask=mask),
             "slope_mag_png_b64": pseudocolor_png_b64(slope_mag, mask=mask),
             "curl_png_b64": diverging_png_b64(curl, mask=mask),
-            "stats_x": phase_stats(unw_x, mask=mask),
-            "stats_y": phase_stats(unw_y, mask=mask),
+            # Legacy aliases kept for backward compat: stats_x/stats_y
+            # continue to reflect the unwrapped-phase grid (same as
+            # stats_phase_x/stats_phase_y).
+            "stats_x": stats_phase_x,
+            "stats_y": stats_phase_y,
+            "stats_phase_x": stats_phase_x,
+            "stats_phase_y": stats_phase_y,
+            "stats_slope_x": stats_slope_x,
+            "stats_slope_y": stats_slope_y,
             "stats_slope_mag": phase_stats(slope_mag, mask=mask),
             "stats_curl": phase_stats(curl, mask=mask),
             "has_reference": has_reference,
@@ -1093,6 +1139,13 @@ def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
         s._last_unw_x = unw_x
         s._last_unw_y = unw_y
         s._last_mask = mask
+        # A2: also cache the slope grids the solver actually picked, so
+        # /heightmap integrates the same branch /compute selected. In
+        # phase_proxy mode the grids alias the phase grids (no-op); in
+        # geometric mode they are geometry-derived and numerically differ.
+        s._last_slope_x = slope_x_grid
+        s._last_slope_y = slope_y_grid
+        s._last_slope_method = slope_method
 
         # ── Phase 0: build the DeflectometryResult envelope ─────────────
         style_tag = "fast" if s.capture_style == "fast" else "multi_freq"
@@ -1206,8 +1259,18 @@ def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
         if s is None or s.last_result is None:
             raise HTTPException(400, detail="Run compute first")
 
-        unw_x = s._last_unw_x
-        unw_y = s._last_unw_y
+        # A2: integrate the SLOPE grids the solver picked, not the raw
+        # unwrapped phase. In phase_proxy mode these alias unw_x/unw_y so
+        # behavior is unchanged; in geometric mode this makes the 3D view
+        # and the "±µm RMS" headline read from the same data source.
+        slope_x_src = getattr(s, "_last_slope_x", None)
+        slope_y_src = getattr(s, "_last_slope_y", None)
+        slope_method = getattr(s, "_last_slope_method", None)
+        if slope_x_src is None or slope_y_src is None:
+            # Legacy / defensive: pre-A2 compute results only cached phase.
+            slope_x_src = s._last_unw_x
+            slope_y_src = s._last_unw_y
+            slope_method = slope_method or "phase_proxy"
         # Recompute mask with the requested threshold so the 3D view
         # respects the slider value even if it differs from the last compute.
         # For multi_freq captures the modulation must come from the finest
@@ -1247,7 +1310,7 @@ def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
             )
             mask = mask & user_mask
 
-        height = frankot_chellappa(unw_x, unw_y, mask=mask)
+        height = frankot_chellappa(slope_x_src, slope_y_src, mask=mask)
 
         # Apply calibration if available (phase-rad → mm → µm)
         cal = s.cal_factor
@@ -1310,6 +1373,9 @@ def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
             "has_reference": has_reference,
             "unit": unit,
             "cal_factor": cal,
+            # A2: surface the slope branch this integration used. Frontend
+            # uses this to confirm compute/heightmap branch consistency.
+            "slope_method": slope_method,
         }
 
     @router.post("/deflectometry/calibrate-sphere", dependencies=[Depends(_reject_hosted)])
@@ -1619,6 +1685,19 @@ def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
         s = state.get("session")
         if s and match.get("calibration", {}).get("cal_factor") is not None:
             s.cal_factor = match["calibration"]["cal_factor"]
+        # Honesty milestone: persist user-asserted surface distance onto
+        # the live session so subsequent /compute calls can pick it up
+        # without requiring the frontend to thread it through every body.
+        if s is not None:
+            geom_blk = match.get("geometry") or {}
+            raw = geom_blk.get("surface_distance_mm")
+            if raw is not None:
+                try:
+                    val = float(raw)
+                    if val > 0:
+                        s.surface_distance_mm = val
+                except (TypeError, ValueError):
+                    pass
         save_config({"deflectometry_active_profile": body.name})
         return match
 

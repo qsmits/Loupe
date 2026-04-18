@@ -160,16 +160,13 @@ def test_envelope_carries_slope_method_field(
     assert data["slope_method"] in ("geometric", "phase_proxy")
 
 
-@pytest.mark.skip(
-    reason=(
-        "Geometric path requires user-asserted camera_pose + surface_plane "
-        "which no test fixture populates yet. Un-skip once the user-asserted-"
-        "geometry input path lands (part of the Honesty milestone)."
-    )
-)
 def test_envelope_includes_uncertainty_um_in_geometric_path(
     client: TestClient, tmp_path, monkeypatch
 ):
+    """Honesty milestone: asserting surface_distance_mm unlocks geometric
+    mode, which populates the uncertainty envelope when the paraboloid fit
+    succeeds.
+    """
     client.post("/deflectometry/reset", json={})
     client.post("/deflectometry/start", json={})
     _bind_full_cal(client, tmp_path, monkeypatch)
@@ -177,9 +174,13 @@ def test_envelope_includes_uncertainty_um_in_geometric_path(
 
     r = client.post(
         "/deflectometry/compute",
-        json={"mask_threshold": 0.02, "slope_method": "geometric"},
+        json={
+            "mask_threshold": 0.02,
+            "slope_method": "geometric",
+            "surface_distance_mm": 500.0,
+        },
     )
-    assert r.status_code == 200
+    assert r.status_code == 200, r.text
     data = r.json()
     assert data["slope_method"] == "geometric"
     # Synthetic sinusoidal frames may or may not produce a meaningful fit
@@ -536,3 +537,298 @@ def test_phase_to_screen_uv_roundtrip():
 def test_phase_to_screen_uv_rejects_zero_freq():
     with pytest.raises(ValueError):
         phase_to_screen_uv(np.zeros(3), np.zeros(3), freq=0.0)
+
+
+# ---------------------------------------------------------------------------
+# Honesty milestone — split phase/slope products, heightmap branch, NaN render
+# ---------------------------------------------------------------------------
+
+
+def test_compute_response_includes_slope_products(client: TestClient):
+    """A1: /compute response carries the new split phase/slope PNG+stats
+    fields (proxy mode is enough — slope aliases phase)."""
+    client.post("/deflectometry/reset", json={})
+    client.post("/deflectometry/start", json={})
+    _inject(client)
+    r = client.post("/deflectometry/compute", json={"mask_threshold": 0.02})
+    assert r.status_code == 200, r.text
+    data = r.json()
+    for key in (
+        "slope_x_png_b64", "slope_y_png_b64",
+        "stats_phase_x", "stats_phase_y",
+        "stats_slope_x", "stats_slope_y",
+    ):
+        assert key in data, f"missing response field: {key}"
+    # PNGs are non-empty base64 strings.
+    assert isinstance(data["slope_x_png_b64"], str) and len(data["slope_x_png_b64"]) > 32
+    assert isinstance(data["slope_y_png_b64"], str) and len(data["slope_y_png_b64"]) > 32
+    # Stats are PV/RMS/mean dicts.
+    for key in ("stats_phase_x", "stats_phase_y", "stats_slope_x", "stats_slope_y"):
+        stats = data[key]
+        assert set(stats.keys()) == {"pv", "rms", "mean"}
+
+
+def test_stats_phase_x_aliases_stats_x(client: TestClient):
+    """A1: stats_phase_x must equal stats_x (kept as a legacy alias)."""
+    client.post("/deflectometry/reset", json={})
+    client.post("/deflectometry/start", json={})
+    _inject(client)
+    r = client.post("/deflectometry/compute", json={"mask_threshold": 0.02})
+    assert r.status_code == 200, r.text
+    data = r.json()
+    assert data["stats_phase_x"] == data["stats_x"]
+    assert data["stats_phase_y"] == data["stats_y"]
+
+
+def test_heightmap_uses_stored_slope_method(client: TestClient):
+    """A2: /heightmap response surfaces the slope_method from compute."""
+    client.post("/deflectometry/reset", json={})
+    client.post("/deflectometry/start", json={})
+    _inject(client)
+    r = client.post("/deflectometry/compute", json={"mask_threshold": 0.02})
+    assert r.status_code == 200, r.text
+    r2 = client.post("/deflectometry/heightmap", json={"mask_threshold": 0.02})
+    assert r2.status_code == 200, r2.text
+    data = r2.json()
+    assert "slope_method" in data
+    assert data["slope_method"] == "phase_proxy"
+
+
+def test_heightmap_slope_based_in_proxy_mode_matches_legacy(client: TestClient):
+    """A2: in proxy mode the slope grids alias the phase grids, so the
+    integrated height must match what the old (phase-based) path produced.
+    We verify by comparing the stats — bitwise equivalent data, same stats.
+    """
+    import numpy as np
+    from backend.vision.deflectometry import frankot_chellappa
+    client.post("/deflectometry/reset", json={})
+    client.post("/deflectometry/start", json={})
+    _inject(client)
+    r = client.post("/deflectometry/compute", json={"mask_threshold": 0.02})
+    assert r.status_code == 200, r.text
+    # Recover the session and re-integrate using the legacy phase grids
+    # directly. In proxy mode slope_x == unw_x and slope_y == unw_y.
+    state = _get_state(client)
+    s = state["session"]
+    legacy = frankot_chellappa(s._last_unw_x, s._last_unw_y, mask=s._last_mask)
+    # The heightmap endpoint now integrates s._last_slope_{x,y} — which
+    # MUST equal s._last_unw_{x,y} bitwise in proxy mode.
+    np.testing.assert_array_equal(s._last_slope_x, s._last_unw_x)
+    np.testing.assert_array_equal(s._last_slope_y, s._last_unw_y)
+    # And a re-integration with the slopes gives the same field.
+    from_slopes = frankot_chellappa(s._last_slope_x, s._last_slope_y, mask=s._last_mask)
+    np.testing.assert_allclose(legacy, from_slopes, atol=1e-12, equal_nan=True)
+
+
+def test_surface_distance_mm_unlocks_geometric_mode(
+    client: TestClient, tmp_path, monkeypatch
+):
+    """Work Item 4: asserted surface_distance_mm + full cal → geometric mode."""
+    client.post("/deflectometry/reset", json={})
+    client.post("/deflectometry/start", json={})
+    _bind_full_cal(client, tmp_path, monkeypatch)
+    _inject(client)
+    r = client.post(
+        "/deflectometry/compute",
+        json={"mask_threshold": 0.02, "surface_distance_mm": 500.0},
+    )
+    assert r.status_code == 200, r.text
+    data = r.json()
+    assert data["slope_method"] == "geometric"
+    assert data["calibration_snapshot"]["geometry_complete"] is True
+
+
+def test_surface_distance_mm_from_profile(
+    client: TestClient, tmp_path, monkeypatch
+):
+    """Work Item 4: loading a profile with surface_distance_mm stashes it
+    on the live session so subsequent /compute picks it up."""
+    client.post("/deflectometry/reset", json={})
+    client.post("/deflectometry/start", json={})
+    _bind_full_cal(client, tmp_path, monkeypatch)
+
+    profile = {
+        "name": "geom-test",
+        "display": {"model": "iPadPro11", "pixel_pitch_mm": 0.0962},
+        "capture": {"freq": 16, "averages": 3, "gamma": 2.2, "capture_style": "fast"},
+        "processing": {"mask_threshold": 0.02, "smooth_sigma": 0.0},
+        "geometry": {"notes": "", "surface_distance_mm": 500.0},
+        "calibration": {"cal_factor": None, "sphere_diameter_mm": None},
+        "ui": {"default_tab": "height"},
+    }
+    r = client.post("/deflectometry/profiles", json=profile)
+    assert r.status_code == 200, r.text
+    r = client.post("/deflectometry/profiles/load", json={"name": "geom-test"})
+    assert r.status_code == 200, r.text
+
+    # Session is set up above; inject frames and compute WITHOUT providing
+    # surface_distance_mm on the body. The profile load should have stashed
+    # it on the session.
+    _inject(client)
+    r = client.post("/deflectometry/compute", json={"mask_threshold": 0.02})
+    assert r.status_code == 200, r.text
+    data = r.json()
+    assert data["slope_method"] == "geometric"
+    assert data["calibration_snapshot"]["geometry_complete"] is True
+
+
+def test_geometric_force_without_surface_distance_400s(
+    client: TestClient, tmp_path, monkeypatch
+):
+    """Forcing slope_method='geometric' without surface_distance_mm returns
+    a 400 with a message that mentions the missing input."""
+    client.post("/deflectometry/reset", json={})
+    client.post("/deflectometry/start", json={})
+    _bind_full_cal(client, tmp_path, monkeypatch)
+    _inject(client)
+    r = client.post(
+        "/deflectometry/compute",
+        json={"mask_threshold": 0.02, "slope_method": "geometric"},
+    )
+    assert r.status_code == 400, r.text
+    detail = r.json().get("detail", "").lower()
+    assert "surface_distance_mm" in detail
+
+
+def test_pseudocolor_handles_nan_without_warning():
+    """A5: pseudocolor_png_b64 / diverging_png_b64 on NaN-heavy input do
+    not emit RuntimeWarning from the uint8 cast."""
+    import warnings
+    from backend.vision.deflectometry import (
+        diverging_png_b64,
+        pseudocolor_png_b64,
+    )
+    rng = np.random.default_rng(3)
+    grid = rng.normal(size=(16, 16))
+    # Sprinkle NaNs liberally.
+    nan_mask = rng.random((16, 16)) < 0.4
+    grid[nan_mask] = np.nan
+    mask = ~nan_mask
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        pseudocolor_png_b64(grid, mask=mask)
+        diverging_png_b64(grid, mask=mask)
+    # No invalid-value-encountered-in-cast RuntimeWarnings.
+    for w in caught:
+        assert "invalid value encountered" not in str(w.message), (
+            f"unexpected warning: {w.message}"
+        )
+
+
+def test_geometric_synthetic_flat_mirror_recovers_zero_slopes():
+    """Canary: an axis-aligned flat mirror at z=surface_distance_mm produces
+    phase that, when fed through ``compute_geometric_slopes`` with the
+    placeholder pose convention (camera identity, screen at z=sd, surface
+    at z=surf_d with -z normal), recovers ~zero slopes everywhere.
+
+    If the coordinate convention is wrong, this test fails — that's the
+    whole point. See the docstring on ``resolve_geometry_inputs`` for the
+    exact convention.
+    """
+    from backend.vision.screen_shape import Rectangular2DShape
+
+    H, W = 24, 24
+    ppm = 4.0
+    cam = CameraModel.telecentric_from_pixels_per_mm(ppm, W, H)
+    cam_pose = Pose.identity()
+
+    # Screen smaller than the default so the whole FOV maps inside [0, 1]²
+    # even for pixels at the corners.
+    screen_w_mm = float(W / ppm) * 4.0
+    screen_h_mm = float(H / ppm) * 4.0
+    screen_shape = Rectangular2DShape(width_mm=screen_w_mm, height_mm=screen_h_mm)
+
+    screen_distance_mm = 100.0
+    surface_distance_mm = 500.0
+    screen_pose = Pose(
+        rotation=Pose.identity().rotation,
+        translation=np.array([0.0, 0.0, screen_distance_mm], dtype=np.float64),
+    )
+    surface_point = np.array([0.0, 0.0, surface_distance_mm], dtype=np.float64)
+    surface_normal = np.array([0.0, 0.0, -1.0], dtype=np.float64)
+
+    # Forward-synthesize phase: for a flat mirror with these conventions the
+    # screen hit for pixel (u, v) is at world (u/ppm, v/ppm, screen_distance),
+    # which maps to screen-local (u/ppm, v/ppm, 0) → u_norm = x_mm/screen_w.
+    freq = 4.0
+    ys, xs = np.mgrid[0:H, 0:W].astype(np.float64)
+    x_mm = xs / ppm
+    y_mm = ys / ppm
+    u_norm = x_mm / screen_w_mm
+    v_norm = y_mm / screen_h_mm
+    phase_x = 2.0 * np.pi * freq * u_norm
+    phase_y = 2.0 * np.pi * freq * v_norm
+    mask = np.ones((H, W), dtype=bool)
+
+    sx, sy, hits, valid = compute_geometric_slopes(
+        phase_x=phase_x,
+        phase_y=phase_y,
+        trusted_mask=mask,
+        camera_model=cam,
+        camera_pose=cam_pose,
+        screen_shape=screen_shape,
+        screen_pose=screen_pose,
+        surface_plane_point=surface_point,
+        surface_plane_normal=surface_normal,
+        freq=freq,
+    )
+
+    in_valid = valid & np.isfinite(sx) & np.isfinite(sy)
+    assert in_valid.sum() > H * W // 2, (
+        f"geometric chain lost too many pixels: {in_valid.sum()} / {H * W}"
+    )
+    # Flat-mirror canary: slopes must be ~0 everywhere valid.
+    assert np.abs(sx[in_valid]).max() < 1e-6, (
+        f"slope_x not ~0: max |sx|={np.abs(sx[in_valid]).max():g}"
+    )
+    assert np.abs(sy[in_valid]).max() < 1e-6, (
+        f"slope_y not ~0: max |sy|={np.abs(sy[in_valid]).max():g}"
+    )
+
+
+def test_heightmap_uses_geometric_slopes_when_geometric(
+    client: TestClient, tmp_path, monkeypatch
+):
+    """A2 + Work Item 4: with asserted geometry, heightmap.slope_method is
+    'geometric' and the integrated field numerically differs from the
+    proxy-mode one (slopes come from a different grid)."""
+    import numpy as np
+    # Geometric-mode heightmap.
+    client.post("/deflectometry/reset", json={})
+    client.post("/deflectometry/start", json={})
+    _bind_full_cal(client, tmp_path, monkeypatch)
+    _inject(client)
+    r = client.post(
+        "/deflectometry/compute",
+        json={"mask_threshold": 0.02, "surface_distance_mm": 500.0},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["slope_method"] == "geometric"
+    r2 = client.post("/deflectometry/heightmap", json={"mask_threshold": 0.02})
+    assert r2.status_code == 200, r2.text
+    geo_map = r2.json()
+    assert geo_map["slope_method"] == "geometric"
+    geo_data = np.array([v if v is not None else np.nan for v in geo_map["data"]])
+
+    # Proxy-mode heightmap: reset, don't bind cal, no surface distance.
+    client.post("/deflectometry/reset", json={})
+    client.post("/deflectometry/start", json={})
+    _inject(client)
+    r = client.post("/deflectometry/compute", json={"mask_threshold": 0.02})
+    assert r.status_code == 200, r.text
+    assert r.json()["slope_method"] == "phase_proxy"
+    r2 = client.post("/deflectometry/heightmap", json={"mask_threshold": 0.02})
+    assert r2.status_code == 200, r2.text
+    proxy_map = r2.json()
+    assert proxy_map["slope_method"] == "phase_proxy"
+    proxy_data = np.array([v if v is not None else np.nan for v in proxy_map["data"]])
+
+    # The two height fields come from different slope sources, so the
+    # finite values must not be identical. (We allow for the possibility
+    # that some pixels match — just not all of them.)
+    finite = np.isfinite(geo_data) & np.isfinite(proxy_data)
+    assert finite.any(), "no overlapping finite pixels between runs"
+    assert not np.allclose(
+        geo_data[finite], proxy_data[finite], atol=1e-9
+    ), "geometric and proxy heightmaps should differ numerically"

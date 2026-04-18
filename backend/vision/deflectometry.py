@@ -469,6 +469,10 @@ def pseudocolor_png_b64(unwrapped: np.ndarray, mask: np.ndarray | None = None) -
         norm = (u - umin) * (255.0 / (umax - umin))
     else:
         norm = np.zeros_like(u)
+    # NaN-safe: replace NaN/±Inf before the uint8 cast to silence the
+    # "invalid value encountered in cast" RuntimeWarning on masked grids
+    # (e.g. geometric-mode slope fields where out-of-chain pixels are NaN).
+    norm = np.nan_to_num(norm, nan=0.0, posinf=0.0, neginf=0.0)
     gray = np.clip(norm, 0, 255).astype(np.uint8)
     if mask is not None:
         gray[~valid] = 0
@@ -502,6 +506,9 @@ def diverging_png_b64(data: np.ndarray, mask: np.ndarray | None = None) -> str:
         vmax = 1.0
     # Normalize to [-1, 1], then map to [0, 255]
     norm = np.clip(d / vmax, -1, 1)
+    # NaN-safe: replace NaN/±Inf before any uint8 cast. Masked pixels
+    # remain zeroed below via the ``valid`` mask.
+    norm = np.nan_to_num(norm, nan=0.0, posinf=0.0, neginf=0.0)
     # Blue (negative) → White (zero) → Red (positive)
     # Piecewise linear: neg lerps blue→white, pos lerps white→red
     r = np.where(norm >= 0, 255, np.clip((norm + 1) * 255, 0, 255)).astype(np.uint8)
