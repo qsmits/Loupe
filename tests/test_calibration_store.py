@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 
+import numpy as np
 import pytest
 
 from backend import calibration_store
@@ -23,6 +24,11 @@ from backend.vision.deflectometry import (
 def cal_dir(tmp_path, monkeypatch):
     """Point DEFLECTOMETRY_CAL_DIR at a per-test tmp_path."""
     monkeypatch.setenv("DEFLECTOMETRY_CAL_DIR", str(tmp_path))
+    # Colocate the ref-flat dir under tmp_path too so tests never touch
+    # the repo's real data/reference_flat directory.
+    monkeypatch.setenv(
+        "DEFLECTOMETRY_REF_FLAT_DIR", str(tmp_path / "reference_flat"),
+    )
     return tmp_path
 
 
@@ -42,7 +48,7 @@ def test_build_calibration_session_minimum_valid():
     assert session["rig_fingerprint"] == "deadbeefcafebabe"
     assert session["completeness"] == {
         "display": True, "corner": True, "sphere": True, "reference": False,
-        "screen_shape": False,
+        "screen_shape": False, "microscope": False,
     }
     is_valid, missing = is_calibration_session_valid(session)
     assert is_valid is True
@@ -275,3 +281,111 @@ def test_list_ignores_tmp_and_non_json(cal_dir):
     listed = calibration_store.list_calibration_sessions()
     assert len(listed) == 1
     assert listed[0]["id"] == session["id"]
+
+
+# ---------------------------------------------------------------------------
+# Microscope calibration snapshot on the envelope
+# ---------------------------------------------------------------------------
+
+def test_build_calibration_session_includes_microscope_cal():
+    micro = {
+        "pixels_per_mm": 24.789,
+        "calibrated_at": "2026-04-18T09:00:00+00:00",
+        "source": "microscope_mode_cal",
+    }
+    session = build_calibration_session(
+        display_response={"ok": True},
+        corner_check={"status": "good"},
+        sphere_cal={"cal_factor": 0.001},
+        microscope_calibration=micro,
+        rig_fingerprint="fp",
+    )
+    assert session["microscope_calibration"] == micro
+    assert session["completeness"]["microscope"] is True
+
+
+def test_build_calibration_session_no_microscope_cal_marks_incomplete():
+    session = build_calibration_session(
+        display_response={"ok": True},
+        corner_check={"status": "good"},
+        sphere_cal={"cal_factor": 0.001},
+        rig_fingerprint="fp",
+    )
+    assert session["microscope_calibration"] is None
+    assert session["completeness"]["microscope"] is False
+    # But legacy sessions remain "valid" (is_calibration_session_valid
+    # doesn't gate on microscope — backwards compatibility).
+    assert is_calibration_session_valid(session)[0] is True
+
+
+def test_build_calibration_session_microscope_zero_not_counted():
+    # A dict with pixels_per_mm=0 or None shouldn't mark microscope complete.
+    session = build_calibration_session(
+        display_response={"ok": True},
+        microscope_calibration={"pixels_per_mm": 0, "source": "x"},
+        rig_fingerprint="fp",
+    )
+    assert session["completeness"]["microscope"] is False
+
+
+# ---------------------------------------------------------------------------
+# Rig fingerprint: microscope_px_per_mm participates in the hash
+# ---------------------------------------------------------------------------
+
+def test_rig_fingerprint_includes_microscope_cal():
+    base = dict(
+        camera_id="cam-1",
+        display_model="iPad",
+        display_pixel_pitch_mm=0.0962,
+        pixels_per_mm=25.0,
+    )
+    fp_a = compute_rig_fingerprint(**base, microscope_px_per_mm=24.0)
+    fp_b = compute_rig_fingerprint(**base, microscope_px_per_mm=25.0)
+    fp_none = compute_rig_fingerprint(**base, microscope_px_per_mm=None)
+    assert fp_a != fp_b
+    assert fp_a != fp_none
+    assert fp_b != fp_none
+
+
+# ---------------------------------------------------------------------------
+# Reference-flat npz persistence
+# ---------------------------------------------------------------------------
+
+def test_save_and_load_reference_flat_roundtrip(cal_dir):
+    rng = np.random.default_rng(42)
+    ref_x = rng.normal(size=(16, 20)).astype(np.float32)
+    ref_y = rng.normal(size=(16, 20)).astype(np.float32)
+    path = calibration_store.save_reference_flat("session-abc", ref_x, ref_y)
+    assert path.endswith("session-abc.npz")
+    loaded = calibration_store.load_reference_flat("session-abc")
+    assert loaded is not None
+    got_x, got_y = loaded
+    np.testing.assert_array_equal(got_x, ref_x)
+    np.testing.assert_array_equal(got_y, ref_y)
+
+
+def test_load_reference_flat_missing_returns_none(cal_dir):
+    assert calibration_store.load_reference_flat("doesnotexist") is None
+
+
+def test_delete_reference_flat(cal_dir):
+    ref = np.ones((4, 4), dtype=np.float32)
+    calibration_store.save_reference_flat("to-delete", ref, ref)
+    assert calibration_store.load_reference_flat("to-delete") is not None
+    assert calibration_store.delete_reference_flat("to-delete") is True
+    assert calibration_store.load_reference_flat("to-delete") is None
+    # Idempotent: second delete returns False.
+    assert calibration_store.delete_reference_flat("to-delete") is False
+
+
+def test_save_reference_flat_rejects_shape_mismatch(cal_dir):
+    a = np.zeros((5, 6), dtype=np.float32)
+    b = np.zeros((5, 7), dtype=np.float32)
+    with pytest.raises(ValueError):
+        calibration_store.save_reference_flat("s", a, b)
+
+
+def test_save_reference_flat_rejects_bad_session_id(cal_dir):
+    a = np.zeros((3, 3), dtype=np.float32)
+    with pytest.raises(ValueError):
+        calibration_store.save_reference_flat("../evil", a, a)

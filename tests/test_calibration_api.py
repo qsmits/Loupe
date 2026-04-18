@@ -48,7 +48,7 @@ def test_save_calibration_endpoint(cal_client: TestClient):
     assert saved["rig_fingerprint"] == "fp-test-1"
     assert saved["completeness"] == {
         "display": True, "corner": True, "sphere": True, "reference": False,
-        "screen_shape": False,
+        "screen_shape": False, "microscope": False,
     }
     assert saved["notes"] == "bench cal"
 

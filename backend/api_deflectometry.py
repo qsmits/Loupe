@@ -324,7 +324,26 @@ class SaveCalibrationBody(BaseModel):
     sphere_cal: dict | None = None
     reference_flat: dict | None = None
     screen_shape: dict | None = None
+    # Snapshot of the microscope-mode lateral calibration at save time.
+    # Expected shape: {"pixels_per_mm": float, "calibrated_at": iso8601 | None,
+    # "source": "microscope_mode_cal"}. The frontend sources pixels_per_mm
+    # from state.calibration (microscope-mode cal); None means the user never
+    # ran microscope cal before the wizard.
+    microscope_calibration: dict | None = None
     notes: str = ""
+
+
+class AutoRebindBody(BaseModel):
+    rig_fingerprint: str
+    # Microscope mm/px (from state.calibration.pixelsPerMm on the frontend).
+    # Used to detect drift between the saved cal session and the current
+    # microscope cal — emits a warning in the response if they differ.
+    microscope_px_per_mm: float | None = None
+    # These aren't strictly required by the endpoint (we match by rig
+    # fingerprint only) but are carried so the frontend can pass the same
+    # rig descriptor as its /rig-fingerprint call without a second trip.
+    display_model: str | None = None
+    pixel_pitch_mm: float | None = None
 
 
 class ScreenShapeBody(BaseModel):
@@ -698,6 +717,22 @@ def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
 
         s.ref_phase_x = unw_x
         s.ref_phase_y = unw_y
+
+        # If a CalibrationSession is already bound, persist the ref arrays
+        # to its .npz sidecar so a server restart can restore them via
+        # /auto-rebind. If not bound yet (wizard hasn't saved), the arrays
+        # live only on the live session until save_calibration picks them up.
+        if s.active_cal_session_id:
+            try:
+                calibration_store.save_reference_flat(
+                    s.active_cal_session_id, s.ref_phase_x, s.ref_phase_y,
+                )
+            except Exception:
+                import logging as _logging
+                _logging.getLogger(__name__).exception(
+                    "failed to persist reference_flat for bound session %s",
+                    s.active_cal_session_id,
+                )
 
         # Return iPad to centering pattern
         if s.ws is not None:
@@ -1618,25 +1653,62 @@ def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
 
     @router.post("/deflectometry/calibrations", dependencies=[Depends(_reject_hosted)])
     def save_calibration(body: SaveCalibrationBody):
-        """Build + persist a CalibrationSession from the supplied step results."""
+        """Build + persist a CalibrationSession from the supplied step results.
+
+        If the live session has captured reference-flat phase arrays
+        (``s.ref_phase_x/y``) and the wizard is saving a session that
+        includes a ``reference_flat`` metadata dict, we also persist the
+        arrays to ``data/reference_flat/{id}.npz`` so they survive a
+        server restart and can be restored via /auto-rebind.
+        """
         session = build_calibration_session(
             display_response=body.display_response,
             corner_check=body.corner_check,
             sphere_cal=body.sphere_cal,
             reference_flat=body.reference_flat,
             screen_shape=body.screen_shape,
+            microscope_calibration=body.microscope_calibration,
             rig_fingerprint=body.rig_fingerprint,
             notes=body.notes,
         )
         calibration_store.save_calibration_session(session)
+        # Persist ref-flat arrays under this new session id if the wizard
+        # captured them during this run. Non-fatal if it fails — the cal
+        # session is still usable, just without a ref subtract.
+        s = _current()
+        if (
+            body.reference_flat is not None
+            and s is not None
+            and s.ref_phase_x is not None
+            and s.ref_phase_y is not None
+        ):
+            try:
+                calibration_store.save_reference_flat(
+                    session["id"], s.ref_phase_x, s.ref_phase_y,
+                )
+            except Exception:
+                import logging as _logging
+                _logging.getLogger(__name__).exception(
+                    "failed to persist reference_flat for session %s",
+                    session["id"],
+                )
         return session
 
     @router.delete("/deflectometry/calibrations/{session_id}", dependencies=[Depends(_reject_hosted)])
     def delete_calibration(session_id: str):
-        """Delete a CalibrationSession by id. 404 if missing."""
+        """Delete a CalibrationSession by id. 404 if missing.
+
+        Also removes the reference-flat ``.npz`` sidecar (if present) and
+        unbinds the live session if it was pointing at this id.
+        """
         removed = calibration_store.delete_calibration_session(session_id)
         if not removed:
             raise HTTPException(404, detail=f"CalibrationSession {session_id!r} not found")
+        # Reference-flat sidecar is best-effort — absence is normal.
+        try:
+            calibration_store.delete_reference_flat(session_id)
+        except Exception:
+            pass
         # If the deleted session was bound to the live session, unbind it.
         s = _current()
         if s is not None and s.active_cal_session_id == session_id:
@@ -1649,11 +1721,15 @@ def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
         pixel_pitch_mm: float = 0.0962,
         pixels_per_mm: float | None = None,
         screen_distance_mm: float | None = None,
+        microscope_px_per_mm: float | None = None,
     ):
         """Return a rig fingerprint for the caller's current rig inputs.
 
         Includes the active camera device_id if available; callers do not
-        need to pass it.
+        need to pass it. ``microscope_px_per_mm`` participates in the hash;
+        pre-3-snapshot sessions saved without it will have different
+        fingerprints than post-snapshot sessions — that's intentional, the
+        old sessions had no way to warn about microscope cal drift.
         """
         try:
             info = camera.get_info() or {}
@@ -1666,16 +1742,64 @@ def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
             display_pixel_pitch_mm=pixel_pitch_mm,
             pixels_per_mm=pixels_per_mm,
             screen_distance_mm=screen_distance_mm,
+            microscope_px_per_mm=microscope_px_per_mm,
         )
         return {"rig_fingerprint": fp}
+
+    def _restore_session_state_from_cal(s: _Session, session: dict) -> dict:
+        """Rebuild ``s.inverse_lut`` / ``s.cal_factor`` / ``s.ref_phase_x/y``
+        from a persisted CalibrationSession envelope.
+
+        Returns a dict of flags ``{"lut": bool, "cal_factor": bool,
+        "reference_flat": bool}`` describing which fields were restored
+        (useful for telemetry and UI diagnostics).
+        """
+        restored = {"lut": False, "cal_factor": False, "reference_flat": False}
+        # 1) Rebuild display-response LUT from the observed/commanded samples.
+        dr = session.get("display_response") or {}
+        observed = dr.get("observed")
+        commanded = dr.get("commanded")
+        if observed is not None and commanded is not None:
+            try:
+                cmd_arr = np.asarray(commanded, dtype=np.float64)
+                obs_arr = np.asarray(observed, dtype=np.float64)
+                _fwd, inv = build_response_lut(cmd_arr, obs_arr)
+                s.inverse_lut = inv
+                restored["lut"] = True
+            except Exception:
+                import logging as _logging
+                _logging.getLogger(__name__).exception(
+                    "failed to rebuild inverse LUT for session %s",
+                    session.get("id"),
+                )
+        # 2) Sphere cal → cal_factor (phase rad → mm).
+        sphere = session.get("sphere_cal") or {}
+        cf = sphere.get("cal_factor")
+        if cf is not None:
+            try:
+                s.cal_factor = float(cf)
+                restored["cal_factor"] = True
+            except (TypeError, ValueError):
+                pass
+        # 3) Reference-flat npz sidecar.
+        sid = session.get("id")
+        if sid:
+            ref = calibration_store.load_reference_flat(sid)
+            if ref is not None:
+                s.ref_phase_x, s.ref_phase_y = ref
+                restored["reference_flat"] = True
+        return restored
 
     @router.post("/deflectometry/calibrations/bind/{session_id}", dependencies=[Depends(_reject_hosted)])
     def bind_calibration_to_session(session_id: str):
         """Bind a saved CalibrationSession to the current live _Session.
 
         Creates a live session on the fly if none exists (the wizard may
-        run before /start was ever called). Returns the bound session
-        summary (same shape as status.active_cal_session).
+        run before /start was ever called). Also restores derived runtime
+        state (inverse LUT, cal_factor, ref_phase_x/y) so the live session
+        behaves identically to one produced by the wizard end-to-end.
+        Returns the bound session summary (same shape as
+        status.active_cal_session).
         """
         session = calibration_store.load_calibration_session(session_id)
         if session is None:
@@ -1695,11 +1819,71 @@ def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
             s = _Session(sid)
             state["session"] = s
         s.active_cal_session_id = session_id
+        _restore_session_state_from_cal(s, session)
         return {
             "id": session.get("id"),
             "captured_at": session.get("captured_at"),
             "completeness": session.get("completeness"),
             "rig_fingerprint": session.get("rig_fingerprint"),
+        }
+
+    @router.post("/deflectometry/auto-rebind", dependencies=[Depends(_reject_hosted)])
+    def auto_rebind(body: AutoRebindBody):
+        """Find the newest complete CalibrationSession matching the supplied
+        rig fingerprint and bind it to the live session.
+
+        Returns::
+
+            {"restored": bool, "session": summary_dict | None, "warnings": [...]}
+
+        On match: rebuilds ``s.inverse_lut`` from
+        ``session.display_response.observed/commanded``, sets ``s.cal_factor``
+        from ``session.sphere_cal.cal_factor``, and loads
+        ``s.ref_phase_x/y`` from the reference-flat .npz sidecar if present.
+
+        If the saved session carries a microscope-cal snapshot and it differs
+        from the caller-supplied ``microscope_px_per_mm`` by more than 0.5%,
+        a drift warning is included (non-fatal — the bind still happens so
+        the user can decide whether to trust or recalibrate).
+        """
+        session = calibration_store.latest_for_rig(body.rig_fingerprint)
+        if session is None:
+            return {"restored": False, "session": None, "warnings": []}
+        s = _current()
+        if s is None:
+            sid = uuid.uuid4().hex
+            s = _Session(sid)
+            state["session"] = s
+        s.active_cal_session_id = session.get("id")
+        _restore_session_state_from_cal(s, session)
+        warnings: list[str] = []
+        saved_micro = (session.get("microscope_calibration") or {}).get("pixels_per_mm")
+        if (
+            body.microscope_px_per_mm is not None
+            and saved_micro is not None
+        ):
+            try:
+                a = float(saved_micro)
+                b = float(body.microscope_px_per_mm)
+                if a > 0 and b > 0:
+                    # Relative drift threshold: 0.5%.
+                    rel = abs(a - b) / max(a, b)
+                    if rel > 0.005:
+                        warnings.append(
+                            "Microscope calibration changed since this "
+                            f"session was saved ({a:.3f} vs {b:.3f} px/mm)"
+                        )
+            except (TypeError, ValueError):
+                pass
+        return {
+            "restored": True,
+            "session": {
+                "id": session.get("id"),
+                "captured_at": session.get("captured_at"),
+                "completeness": session.get("completeness"),
+                "rig_fingerprint": session.get("rig_fingerprint"),
+            },
+            "warnings": warnings,
         }
 
     # -------------------------------------------------------------------

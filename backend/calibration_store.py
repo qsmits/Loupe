@@ -15,9 +15,12 @@ import logging
 import os
 import pathlib
 
+import numpy as np
+
 log = logging.getLogger(__name__)
 
 _DEFAULT_DIR = pathlib.Path(__file__).parent.parent / "data" / "calibration_sessions"
+_DEFAULT_REF_FLAT_DIR = pathlib.Path(__file__).parent.parent / "data" / "reference_flat"
 
 
 def _base_dir() -> pathlib.Path:
@@ -122,6 +125,89 @@ def list_calibration_sessions(rig_fingerprint: str | None = None) -> list[dict]:
 def delete_calibration_session(session_id: str) -> bool:
     """Delete a session. Returns True if removed, False if it was missing."""
     path = _session_path(session_id)
+    if not path.exists():
+        return False
+    try:
+        path.unlink()
+        return True
+    except FileNotFoundError:
+        return False
+
+
+def _ref_flat_base_dir() -> pathlib.Path:
+    """Resolve the on-disk directory for reference-flat .npz arrays.
+
+    Mirrors ``_base_dir``: reads ``DEFLECTOMETRY_REF_FLAT_DIR`` fresh on
+    every call so tests can point it at a tmp_path via monkeypatch. Falls
+    back to a sibling of the calibration-session dir by default.
+    """
+    env = os.environ.get("DEFLECTOMETRY_REF_FLAT_DIR")
+    if env:
+        return pathlib.Path(env)
+    # If the main cal dir was overridden, colocate the ref-flat dir beside
+    # it so pytest tmp_path tests stay self-contained.
+    env_main = os.environ.get("DEFLECTOMETRY_CAL_DIR")
+    if env_main:
+        return pathlib.Path(env_main).parent / "reference_flat"
+    return _DEFAULT_REF_FLAT_DIR
+
+
+def _ref_flat_path(session_id: str) -> pathlib.Path:
+    if not session_id or "/" in session_id or "\\" in session_id or ".." in session_id:
+        raise ValueError(f"invalid session_id: {session_id!r}")
+    return _ref_flat_base_dir() / f"{session_id}.npz"
+
+
+def save_reference_flat(
+    session_id: str,
+    ref_phase_x: np.ndarray,
+    ref_phase_y: np.ndarray,
+) -> str:
+    """Persist reference-flat phase arrays to ``data/reference_flat/{id}.npz``.
+
+    Uses compressed npz (``numpy.savez_compressed``). Overwrites any prior
+    file for this id. Returns the absolute path written.
+    """
+    if ref_phase_x is None or ref_phase_y is None:
+        raise ValueError("ref_phase_x and ref_phase_y are required")
+    arr_x = np.asarray(ref_phase_x)
+    arr_y = np.asarray(ref_phase_y)
+    if arr_x.shape != arr_y.shape:
+        raise ValueError(
+            f"ref_phase_x shape {arr_x.shape} != ref_phase_y shape {arr_y.shape}"
+        )
+    d = _ref_flat_base_dir()
+    d.mkdir(parents=True, exist_ok=True)
+    path = _ref_flat_path(session_id)
+    # Atomic write via sibling .tmp + replace — same pattern as the JSON store.
+    # ``numpy.savez_compressed`` auto-appends ``.npz`` to the filename unless
+    # it already ends with ``.npz``, so we include the suffix up front and
+    # pass a plain string — otherwise tmp.replace points at the wrong name.
+    tmp = path.with_name(f".{path.name}.tmp.npz")
+    np.savez_compressed(str(tmp), ref_phase_x=arr_x, ref_phase_y=arr_y)
+    tmp.replace(path)
+    return str(path)
+
+
+def load_reference_flat(
+    session_id: str,
+) -> tuple[np.ndarray, np.ndarray] | None:
+    """Load ``(ref_phase_x, ref_phase_y)`` from disk, or None if missing."""
+    path = _ref_flat_path(session_id)
+    if not path.exists():
+        return None
+    try:
+        with np.load(path) as data:
+            return np.asarray(data["ref_phase_x"]), np.asarray(data["ref_phase_y"])
+    except Exception:
+        log.exception("failed to load reference_flat at %s", path)
+        return None
+
+
+def delete_reference_flat(session_id: str) -> bool:
+    """Remove the reference-flat npz for this session id. Returns True if
+    a file was removed, False if nothing to delete."""
+    path = _ref_flat_path(session_id)
     if not path.exists():
         return False
     try:

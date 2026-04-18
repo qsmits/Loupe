@@ -1128,13 +1128,25 @@ def _compute_completeness(
     sphere_cal: dict | None,
     reference_flat: dict | None,
     screen_shape: dict | None = None,
+    microscope_calibration: dict | None = None,
 ) -> dict:
+    # ``microscope`` is True only when a positive pixels_per_mm was supplied.
+    # A dict with pixels_per_mm=None/0 counts as absent — the lateral scale
+    # is what actually matters for sphere-cal reuse.
+    has_microscope = False
+    if microscope_calibration is not None:
+        ppm = microscope_calibration.get("pixels_per_mm")
+        try:
+            has_microscope = ppm is not None and float(ppm) > 0
+        except (TypeError, ValueError):
+            has_microscope = False
     return {
         "display": display_response is not None,
         "corner": corner_check is not None,
         "sphere": sphere_cal is not None,
         "reference": reference_flat is not None,
         "screen_shape": screen_shape is not None,
+        "microscope": has_microscope,
     }
 
 
@@ -1145,6 +1157,7 @@ def build_calibration_session(
     sphere_cal: dict | None = None,
     reference_flat: dict | None = None,
     screen_shape: dict | None = None,
+    microscope_calibration: dict | None = None,
     rig_fingerprint: str,
     notes: str = "",
     captured_at: str | None = None,
@@ -1170,6 +1183,11 @@ def build_calibration_session(
           :mod:`backend.vision.screen_shape`), or None. Optional: the session
           remains "valid" without it; the completeness dict surfaces it so
           the UI can show whether screen-shape cal has been done.
+        - ``microscope_calibration`` — snapshot of the microscope-mode lateral
+          calibration at wizard save-time (``{"pixels_per_mm": float,
+          "calibrated_at": iso8601 | None, "source": "microscope_mode_cal"}``)
+          or None. Required for full validity: without px/mm the sphere cal
+          has no lateral scale.
         - ``notes`` — free-form text
         - ``completeness`` — derived dict of which steps are present
     """
@@ -1186,10 +1204,11 @@ def build_calibration_session(
         "sphere_cal": sphere_cal,
         "reference_flat": reference_flat,
         "screen_shape": screen_shape,
+        "microscope_calibration": microscope_calibration,
         "notes": notes,
         "completeness": _compute_completeness(
             display_response, corner_check, sphere_cal, reference_flat,
-            screen_shape,
+            screen_shape, microscope_calibration,
         ),
     }
 
@@ -1202,6 +1221,11 @@ def is_calibration_session_valid(
     Returns ``(is_valid, missing_steps)``. A valid session always requires
     display response + corner check + sphere cal. Reference flat is optional
     unless ``require_reference=True`` (for reference-subtracted measurements).
+
+    Microscope calibration (pixels/mm) is surfaced in completeness but does
+    NOT gate validity for backwards compatibility with pre-snapshot sessions.
+    Callers that need to refuse legacy sessions should check
+    ``completeness["microscope"]`` explicitly.
     """
     missing: list[str] = []
     # Tolerate sessions that were built without the derived completeness dict
@@ -1212,6 +1236,7 @@ def is_calibration_session_valid(
         session.get("sphere_cal"),
         session.get("reference_flat"),
         session.get("screen_shape"),
+        session.get("microscope_calibration"),
     )
     if not completeness.get("display"):
         missing.append("display")
@@ -1247,12 +1272,18 @@ def compute_rig_fingerprint(
     display_pixel_pitch_mm: float,
     pixels_per_mm: float | None,
     screen_distance_mm: float | None = None,
+    microscope_px_per_mm: float | None = None,
 ) -> str:
     """Deterministic SHA-256 (first 16 hex chars) of the rig inputs.
 
     Two sessions with the same fingerprint can safely share a
     CalibrationSession. Floats are rounded to 4 significant digits to
     tolerate tiny config drift.
+
+    ``microscope_px_per_mm`` — the lateral microscope-mode calibration —
+    participates in the hash so a microscope re-cal invalidates cross-rig
+    reuse of the sphere cal. ``None`` hashes distinctly from any positive
+    value (treated as "microscope cal unknown").
     """
     payload = {
         "camera_id": camera_id or "",
@@ -1260,6 +1291,7 @@ def compute_rig_fingerprint(
         "display_pixel_pitch_mm": _round_sig(display_pixel_pitch_mm, 4),
         "pixels_per_mm": _round_sig(pixels_per_mm, 4),
         "screen_distance_mm": _round_sig(screen_distance_mm, 4),
+        "microscope_px_per_mm": _round_sig(microscope_px_per_mm, 4),
     }
     # Stable, order-independent key ordering.
     import json as _json

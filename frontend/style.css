@@ -2943,6 +2943,34 @@ body.no-camera .camera-section { display: none; }
   opacity: 0.85;
 }
 
+/* Microscope-cal indicator: state-ok (green), state-amber (drifted),
+   state-missing (red). Same layout as screen-shape row. */
+.defl-microscope-cal-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+  padding: 4px 6px;
+  background: #0d0d0d;
+  border: 1px solid #2a2a2a;
+  border-left: 3px solid #2a2a2a;
+  border-radius: 3px;
+  font-size: 11px;
+}
+.defl-microscope-cal-row.state-ok {
+  border-left-color: #22c55e;
+}
+.defl-microscope-cal-row.state-amber {
+  border-left-color: #f5a623;
+}
+.defl-microscope-cal-row.state-missing {
+  border-left-color: #ef4444;
+}
+.defl-microscope-cal-label {
+  flex: 1;
+  opacity: 0.85;
+}
+
 .defl-ball-capture-controls {
   display: flex;
   flex-wrap: wrap;

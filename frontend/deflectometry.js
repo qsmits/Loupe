@@ -205,6 +205,13 @@ function buildWorkspace() {
             <div class="defl-screen-shape-label" id="defl-screen-shape-label">Screen shape: \u2014</div>
             <button class="detect-btn" id="defl-btn-open-screen-shape" title="Open the ball-calibration wizard step">Recalibrate</button>
           </div>
+          <!-- Microscope-cal drift indicator: red if unset, amber if drifted,
+               green if matches the bound session's snapshot. Click opens
+               microscope mode so the user can recalibrate. -->
+          <div class="defl-microscope-cal-row" id="defl-microscope-cal-row">
+            <div class="defl-microscope-cal-label" id="defl-microscope-cal-label">Microscope cal: \u2014</div>
+            <button class="detect-btn" id="defl-btn-open-microscope-cal" title="Switch to microscope mode to (re)calibrate lateral scale">Calibrate</button>
+          </div>
           <label>Averages per phase step
             <input type="number" id="defl-averages" min="1" max="10" step="1" value="3" style="width:65px" />
           </label>
@@ -883,6 +890,15 @@ function wireEvents() {
   $("defl-btn-load-previous-cal")?.addEventListener("click", () => openCalPicker());
   // Phase 3B Wave 2: jump into wizard screen-shape step
   $("defl-btn-open-screen-shape")?.addEventListener("click", () => openWizard({ startStep: 5 }));
+  // Jump to microscope mode so the user can (re)calibrate the lateral scale.
+  // Microscope cal uses the two-point calibration flow there — there's no
+  // programmatic hand-off, so we switch modes and let the user trigger the
+  // "C" shortcut or sidebar button.
+  $("defl-btn-open-microscope-cal")?.addEventListener("click", () => {
+    const sel = document.getElementById("mode-switcher");
+    if (sel) sel.value = "microscope";
+    switchMode("microscope");
+  });
   $("defl-cal-active-badge")?.addEventListener("click", (ev) => {
     ev.stopPropagation();
     toggleCalBadgeMenu();
@@ -2004,7 +2020,26 @@ async function refreshStatus() {
       if (compStatus) compStatus.textContent = "Done";
     }
     // Phase 3A Track E: update cal-gating UI from status.active_cal_session
+    const prev = df.activeCalSession?.id || null;
     df.activeCalSession = d.active_cal_session || null;
+    const nowId = df.activeCalSession?.id || null;
+    // When the bound session changes, fetch the microscope-cal snapshot
+    // from the full envelope so drift detection works. We only refetch on
+    // id change to keep the 1Hz poll cheap.
+    if (nowId !== prev) {
+      df._microscopeSnapshotPxPerMm = null;
+      if (nowId) {
+        try {
+          const full = await apiFetch(`/deflectometry/calibrations/${encodeURIComponent(nowId)}`);
+          if (full.ok) {
+            const fullJson = await full.json();
+            const mc = fullJson?.microscope_calibration;
+            const ppm = mc?.pixels_per_mm;
+            df._microscopeSnapshotPxPerMm = Number.isFinite(ppm) && ppm > 0 ? ppm : null;
+          }
+        } catch { /* ignore */ }
+      }
+    }
     applyCalGating();
   } catch { /* ignore */ }
 }
@@ -2037,6 +2072,10 @@ function _currentRigParams() {
     display_model: displayModel,
     pixel_pitch_mm: pitch,
     pixels_per_mm: ppm,
+    // Microscope lateral cal — flows into the rig fingerprint so a
+    // microscope re-cal invalidates silent cross-rig reuse of old
+    // sphere-cal sessions.
+    microscope_px_per_mm: ppm,
   };
 }
 
@@ -2068,7 +2107,14 @@ function applyCalGating() {
       const shapeFlag = hasShape
         ? ` \u2022 screen \u2713`
         : ` \u2022 <span style="opacity:0.55">screen \u2717</span>`;
-      label.innerHTML = "Calibrated " + _relativeTime(capturedAt) + shapeFlag;
+      // Microscope cal match indicator — amber signal if it drifted.
+      const microDrift = _microscopeCalDrifted();
+      const microFlag = microDrift === "drifted"
+        ? ` \u2022 <span style="color:#f5a623">microscope \u26a0</span>`
+        : microDrift === "missing"
+          ? ` \u2022 <span style="opacity:0.55">microscope \u2717</span>`
+          : ` \u2022 microscope \u2713`;
+      label.innerHTML = "Calibrated " + _relativeTime(capturedAt) + shapeFlag + microFlag;
     } else {
       badge.hidden = true;
     }
@@ -2077,6 +2123,54 @@ function applyCalGating() {
   const hint = $("defl-mask-hint");
   if (hint) {
     hint.hidden = !(valid && (!df.maskPolygons || df.maskPolygons.length === 0));
+  }
+  // Microscope-cal settings-panel row — always refresh so unset/drifted
+  // states are surfaced even if no cal session is bound.
+  _refreshMicroscopeCalIndicator();
+}
+
+// Compare the saved session's snapshot of microscope mm/px against the
+// current state.calibration.pixelsPerMm. Returns:
+//   "matches"  — current is within 0.5% of the snapshot (or both unset)
+//   "drifted"  — snapshot + current both present but diverge by > 0.5%
+//   "missing"  — either snapshot absent (legacy session) or no current cal
+function _microscopeCalDrifted() {
+  const cachedSnap = df._microscopeSnapshotPxPerMm;  // cached by refreshStatus
+  const current = state.calibration?.pixelsPerMm || null;
+  if (!cachedSnap && !current) return "matches";
+  if (!cachedSnap || !current) return "missing";
+  const rel = Math.abs(cachedSnap - current) / Math.max(cachedSnap, current);
+  return rel > 0.005 ? "drifted" : "matches";
+}
+
+function _refreshMicroscopeCalIndicator() {
+  const row = $("defl-microscope-cal-row");
+  const label = $("defl-microscope-cal-label");
+  if (!row || !label) return;
+  const current = state.calibration?.pixelsPerMm || null;
+  const snap = df._microscopeSnapshotPxPerMm;
+  row.classList.remove("state-ok", "state-amber", "state-missing");
+  if (!current) {
+    row.classList.add("state-missing");
+    label.textContent = "Microscope cal: not set";
+    return;
+  }
+  const cur = current.toFixed(3);
+  if (!snap) {
+    // No bound session, or legacy session w/o snapshot. Still surface the
+    // live value so the user knows microscope cal is active.
+    label.textContent = `Microscope cal: ${cur} px/mm`;
+    row.classList.add("state-ok");
+    return;
+  }
+  const rel = Math.abs(snap - current) / Math.max(snap, current);
+  if (rel > 0.005) {
+    row.classList.add("state-amber");
+    label.textContent =
+      `Microscope cal: ${cur} px/mm (changed; saved ${snap.toFixed(3)})`;
+  } else {
+    row.classList.add("state-ok");
+    label.textContent = `Microscope cal: ${cur} px/mm (matches)`;
   }
 }
 
@@ -2155,6 +2249,17 @@ async function showCalDetails() {
     const sc = full.sphere_cal || {};
     const dr = full.display_response || {};
     const cc = full.corner_check || {};
+    const mc = full.microscope_calibration || null;
+    const microStr = mc?.pixels_per_mm
+      ? `${mc.pixels_per_mm.toFixed(3)} px/mm`
+      : "(not snapshotted)";
+    const drift = _microscopeCalDrifted();
+    const matchStr = drift === "drifted"
+      ? " (changed since save)"
+      : drift === "missing"
+        ? " (current: unset)"
+        : " (matches)";
+    const warnLines = (df._autoRebindWarnings || []).map(w => "\u26a0 " + w);
     const lines = [
       `ID: ${full.id}`,
       `Captured: ${full.captured_at}`,
@@ -2165,6 +2270,8 @@ async function showCalDetails() {
       `Corner check: ${cc.corners_found ?? "?"}/4 corners, ${cc.status ?? "?"}`,
       `Sphere cal: cal_factor = ${sc.cal_factor ?? "?"}, R = ${sc.fitted_radius_mm ?? "?"} mm`,
       `Reference flat: ${full.reference_flat ? "captured" : "none"}`,
+      `Microscope cal: ${microStr}${matchStr}`,
+      ...(warnLines.length ? ["", ...warnLines] : []),
     ];
     alert(lines.join("\n"));
   } catch (e) {
@@ -2181,6 +2288,7 @@ async function openCalPicker() {
     if (rigParams.display_model) qs.set("display_model", rigParams.display_model);
     if (rigParams.pixel_pitch_mm) qs.set("pixel_pitch_mm", rigParams.pixel_pitch_mm);
     if (rigParams.pixels_per_mm) qs.set("pixels_per_mm", rigParams.pixels_per_mm);
+    if (rigParams.microscope_px_per_mm) qs.set("microscope_px_per_mm", rigParams.microscope_px_per_mm);
     const fpr = await apiFetch(`/deflectometry/rig-fingerprint?${qs}`);
     if (fpr.ok) {
       const fpd = await fpr.json();
@@ -3498,6 +3606,7 @@ async function saveWizardSession() {
     qs.set("display_model", params.display_model || "");
     qs.set("pixel_pitch_mm", String(params.pixel_pitch_mm || 0.0962));
     if (params.pixels_per_mm) qs.set("pixels_per_mm", String(params.pixels_per_mm));
+    if (params.microscope_px_per_mm) qs.set("microscope_px_per_mm", String(params.microscope_px_per_mm));
     const fpr = await apiFetch(`/deflectometry/rig-fingerprint?${qs}`);
     if (!fpr.ok) {
       const err = await fpr.json().catch(() => ({}));
@@ -3509,7 +3618,16 @@ async function saveWizardSession() {
     }
     const fpd = await fpr.json();
 
-    // 2) save session
+    // 2) save session — snapshot the microscope lateral cal so future
+    // sessions can warn if it drifts. Source tag lets consumers tell
+    // "snapshot was taken" apart from "user never calibrated".
+    const microscope_calibration = params.microscope_px_per_mm
+      ? {
+          pixels_per_mm: params.microscope_px_per_mm,
+          calibrated_at: null,
+          source: "microscope_mode_cal",
+        }
+      : null;
     resEl.textContent = "Saving CalibrationSession\u2026";
     const saveR = await apiFetch("/deflectometry/calibrations", {
       method: "POST",
@@ -3521,6 +3639,7 @@ async function saveWizardSession() {
         sphere_cal: w.sphere_cal,
         reference_flat: w.reference_flat,
         screen_shape: w.screen_shape,
+        microscope_calibration,
         notes: w.notes || "",
       }),
     });
@@ -3563,19 +3682,21 @@ async function saveWizardSession() {
   }
 }
 
-function _showToast(msg) {
+function _showToast(msg, opts = {}) {
   let t = document.getElementById("defl-toast");
   if (t) t.remove();
   t = document.createElement("div");
   t.id = "defl-toast";
   t.textContent = msg;
+  const bg = opts.amber ? "#b45309" : "#1e40af";
   t.style.cssText = `
     position:fixed;bottom:24px;left:50%;transform:translateX(-50%);
-    background:#1e40af;color:#fff;padding:8px 16px;border-radius:4px;
+    background:${bg};color:#fff;padding:8px 16px;border-radius:4px;
     font-size:13px;z-index:10000;box-shadow:0 4px 14px rgba(0,0,0,0.4);
+    max-width:80vw;
   `;
   document.body.appendChild(t);
-  setTimeout(() => { t?.remove(); }, 2600);
+  setTimeout(() => { t?.remove(); }, opts.amber ? 5000 : 2600);
 }
 
 function startPolling() {
@@ -3886,8 +4007,63 @@ export function initDeflectometry() {
       stopPolling();
     } else {
       startPolling();
+      // Fire-and-forget auto-rebind on mode entry. If the server just
+      // restarted and the active cal session id was lost, this restores
+      // the latest matching session (including LUT, cal_factor, and
+      // ref_phase_x/y from the .npz sidecar) without the user having to
+      // click "Load previous cal". Runs AFTER the mode switch so the
+      // status poll from startPolling picks up the restored binding.
+      tryAutoRebind().catch(() => {});
     }
   });
   const root = $("mode-deflectometry");
   if (root) observer.observe(root, { attributes: true, attributeFilter: ["hidden"] });
+}
+
+async function tryAutoRebind() {
+  // Skip if a session is already bound (user ran the wizard this session).
+  if (df.activeCalSession) return;
+  const params = _currentRigParams();
+  // Build rig fingerprint first so /auto-rebind knows which rig to match.
+  const qs = new URLSearchParams();
+  qs.set("display_model", params.display_model || "");
+  qs.set("pixel_pitch_mm", String(params.pixel_pitch_mm || 0.0962));
+  if (params.pixels_per_mm) qs.set("pixels_per_mm", String(params.pixels_per_mm));
+  if (params.microscope_px_per_mm) qs.set("microscope_px_per_mm", String(params.microscope_px_per_mm));
+  let fp = null;
+  try {
+    const fpr = await apiFetch(`/deflectometry/rig-fingerprint?${qs}`);
+    if (!fpr.ok) return;
+    const fpd = await fpr.json();
+    fp = fpd.rig_fingerprint;
+  } catch { return; }
+  if (!fp) return;
+  let data;
+  try {
+    const r = await apiFetch("/deflectometry/auto-rebind", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        rig_fingerprint: fp,
+        microscope_px_per_mm: params.microscope_px_per_mm || null,
+        display_model: params.display_model || null,
+        pixel_pitch_mm: params.pixel_pitch_mm || null,
+      }),
+    });
+    if (!r.ok) return;
+    data = await r.json();
+  } catch { return; }
+  if (!data || !data.restored) return;
+  // Toast + refresh. Drift warnings use amber styling.
+  const hasWarn = Array.isArray(data.warnings) && data.warnings.length > 0;
+  const capturedAt = data.session?.captured_at;
+  const rel = capturedAt ? _relativeTime(capturedAt) : "";
+  if (hasWarn) {
+    _showToast("Calibration restored \u2014 " + data.warnings[0], { amber: true });
+  } else {
+    _showToast(`Calibration restored${rel ? " (" + rel + ")" : ""}`);
+  }
+  // Cache the warning so the cal-badge menu can surface it.
+  df._autoRebindWarnings = data.warnings || [];
+  refreshStatus();
 }
