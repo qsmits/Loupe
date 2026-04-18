@@ -577,11 +577,23 @@ def resolve_geometry_inputs(
     }
     notes.append("surface_plane: z=0, normal=+z placeholder")
 
+    # Auto-select guard: placeholder camera_pose + surface_plane at z=0 is
+    # physically degenerate (telecentric rays originate AT the surface plane,
+    # t ≈ 0, valid_mask all False, stats collapse to zero). Until the rig has
+    # an explicit user-asserted camera height + surface distance (or a proper
+    # multi-step pose calibration from the ball cal extension), auto-select
+    # MUST stay on phase_proxy. Forcing slope_method="geometric" still works
+    # for experimentation but will produce garbage without real poses.
+    #
+    # Review finding #1 (2026-04-18): placeholder geometry was auto-selecting
+    # geometric mode and silently returning zero-mask results. Fixed here.
+    has_explicit_geometry = False  # No path populates this yet.
     geometry_complete = bool(
         camera_model is not None
         and screen_shape is not None
         and cal_session is not None
         and sphere_cal is not None
+        and has_explicit_geometry
     )
 
     return {

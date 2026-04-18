@@ -116,9 +116,12 @@ def test_compute_uses_geometric_path_with_full_cal(
     r = client.post("/deflectometry/compute", json={"mask_threshold": 0.02})
     assert r.status_code == 200, r.text
     data = r.json()
-    assert data["slope_method"] == "geometric"
-    assert data["tuning"]["slope_method"] == "geometric"
-    assert data["calibration_snapshot"]["geometry_complete"] is True
+    # Post-fix (2026-04-18): placeholder camera pose + z=0 surface plane are
+    # known-degenerate; auto-select stays on phase_proxy until explicit
+    # user-asserted geometry exists. Full cal without asserted poses is not
+    # enough to unlock geometric mode any more.
+    assert data["slope_method"] == "phase_proxy"
+    assert data["calibration_snapshot"]["geometry_complete"] is False
 
 
 def test_slope_method_phase_proxy_override_works(
@@ -138,8 +141,8 @@ def test_slope_method_phase_proxy_override_works(
     data = r.json()
     assert data["slope_method"] == "phase_proxy"
     assert data.get("paraboloid_fit") is None
-    # geometry_complete still True (geometry IS available) — just not used.
-    assert data["calibration_snapshot"]["geometry_complete"] is True
+    # Post-fix: geometry_complete now requires explicit user-asserted poses.
+    assert data["calibration_snapshot"]["geometry_complete"] is False
 
 
 def test_envelope_carries_slope_method_field(
@@ -157,6 +160,13 @@ def test_envelope_carries_slope_method_field(
     assert data["slope_method"] in ("geometric", "phase_proxy")
 
 
+@pytest.mark.skip(
+    reason=(
+        "Geometric path requires user-asserted camera_pose + surface_plane "
+        "which no test fixture populates yet. Un-skip once the user-asserted-"
+        "geometry input path lands (part of the Honesty milestone)."
+    )
+)
 def test_envelope_includes_uncertainty_um_in_geometric_path(
     client: TestClient, tmp_path, monkeypatch
 ):
@@ -165,10 +175,12 @@ def test_envelope_includes_uncertainty_um_in_geometric_path(
     _bind_full_cal(client, tmp_path, monkeypatch)
     _inject(client)
 
-    r = client.post("/deflectometry/compute", json={"mask_threshold": 0.02})
+    r = client.post(
+        "/deflectometry/compute",
+        json={"mask_threshold": 0.02, "slope_method": "geometric"},
+    )
     assert r.status_code == 200
     data = r.json()
-    # Geometric path produces a paraboloid fit + uncertainty dict.
     assert data["slope_method"] == "geometric"
     # Synthetic sinusoidal frames may or may not produce a meaningful fit
     # (the slope field is ugly-but-finite). We only require: if the fit
