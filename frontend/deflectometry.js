@@ -2,7 +2,9 @@
 //
 // Two-column layout:
 //   Left:   camera preview + status badges + setup + sphere cal + settings
-//   Right:  action bar + tabbed results (Phase Maps | 3D Surface | Diagnostics)
+//   Right:  action bar + tabbed results
+//
+// Tabs (Phase 1 spec): Height | X Slope | Y Slope | Slope Mag | Curl | Diagnostics
 //
 // Lives inside #mode-deflectometry, managed by modes.js.
 
@@ -16,7 +18,14 @@ const df = {
   built: false,
   threeLoaded: false,
   maskPolygons: [],
+  // Cached last result so we can re-render on tab switch / cal change
+  lastResult: null,
+  lastHeightmap: null,
+  // Tracks which slope tab the user picked so we don't auto-jump
+  activeTab: "height",
 };
+
+const TAB_IDS = ["height", "x_slope", "y_slope", "slope_mag", "curl", "diag"];
 
 function $(id) { return document.getElementById(id); }
 
@@ -27,6 +36,7 @@ function setBadge(id, active) {
   else el.classList.remove("active");
 }
 
+// Format stats. Always honest: shows µm only when calFactor is set, otherwise rad.
 function formatStats(stats, calFactor) {
   if (!stats) return "\u2014";
   if (calFactor) {
@@ -36,6 +46,16 @@ function formatStats(stats, calFactor) {
     const mean = Number.isFinite(stats.mean) ? (stats.mean * k).toFixed(2) : "\u2014";
     return `PV:   ${pv} \u00b5m\nRMS:  ${rms} \u00b5m\nMean: ${mean} \u00b5m`;
   }
+  const pv = Number.isFinite(stats.pv) ? stats.pv.toFixed(3) : "\u2014";
+  const rms = Number.isFinite(stats.rms) ? stats.rms.toFixed(3) : "\u2014";
+  const mean = Number.isFinite(stats.mean) ? stats.mean.toFixed(3) : "\u2014";
+  return `PV:   ${pv} rad\nRMS:  ${rms} rad\nMean: ${mean} rad`;
+}
+
+// Slope stats stay in radians regardless of cal_factor (per Phase 1 spec —
+// height-cal does not legitimize slope-as-µm-per-pixel until Phase 4).
+function formatSlopeStats(stats) {
+  if (!stats) return "\u2014";
   const pv = Number.isFinite(stats.pv) ? stats.pv.toFixed(3) : "\u2014";
   const rms = Number.isFinite(stats.rms) ? stats.rms.toFixed(3) : "\u2014";
   const mean = Number.isFinite(stats.mean) ? stats.mean.toFixed(3) : "\u2014";
@@ -105,6 +125,16 @@ function buildWorkspace() {
             <button id="defl-btn-save-profile" class="detect-btn" style="font-size:10px;padding:2px 6px">Save</button>
             <button id="defl-btn-delete-profile" class="detect-btn" style="font-size:10px;padding:2px 6px;opacity:0.6" disabled>Del</button>
           </div>
+          <label>Default tab
+            <select id="defl-default-tab" style="font-size:11px">
+              <option value="height">Height</option>
+              <option value="x_slope">X Slope</option>
+              <option value="y_slope">Y Slope</option>
+              <option value="slope_mag">Slope Magnitude</option>
+              <option value="curl">Curl</option>
+              <option value="diag">Diagnostics</option>
+            </select>
+          </label>
           <label>Display device
             <select id="defl-display-device">
               <option value="0.0962">iPad Air 1 (264 ppi)</option>
@@ -145,89 +175,149 @@ function buildWorkspace() {
             <button class="detect-btn" id="defl-btn-auto-smooth" style="font-size:10px;padding:1px 6px">Auto</button>
           </span>
         </div>
-        <div class="defl-tab-bar">
-          <button class="defl-tab active" data-tab="phase">Slope & Phase</button>
-          <button class="defl-tab" data-tab="3d">3D Surface</button>
-          <button class="defl-tab" data-tab="diag">Diagnostics</button>
-        </div>
 
-        <div class="defl-tab-panel" id="defl-panel-phase">
-          <div class="defl-empty-state" id="defl-phase-empty">Capture a part and compute to see results.</div>
-          <div id="defl-phase-content" hidden>
-            <div id="defl-quality-banner" class="defl-quality-banner" hidden></div>
-            <div class="defl-phase-grid">
-              <div>
-                <div style="font-size:12px;opacity:0.85;margin-bottom:4px">Slope X (phase)</div>
-                <img id="defl-phase-x-img" />
+        <!-- Results body: tabs on top, content + sidebar quality block side-by-side -->
+        <div class="defl-results-body">
+          <div class="defl-results-main">
+            <div class="defl-tab-bar">
+              <button class="defl-tab active" data-tab="height">Height</button>
+              <button class="defl-tab" data-tab="x_slope">X Slope</button>
+              <button class="defl-tab" data-tab="y_slope">Y Slope</button>
+              <button class="defl-tab" data-tab="slope_mag">Slope Mag</button>
+              <button class="defl-tab" data-tab="curl">Curl</button>
+              <button class="defl-tab" data-tab="diag">Diagnostics</button>
+            </div>
+
+            <!-- Height: 3D + 2D pseudocolor -->
+            <div class="defl-tab-panel" id="defl-panel-height">
+              <div class="defl-empty-state" id="defl-height-empty">Capture a part and compute to see results.</div>
+              <div id="defl-height-content" hidden style="display:flex;flex-direction:column;flex:1;min-height:0;gap:10px">
+                <div id="defl-uncal-banner" class="defl-uncal-banner" hidden>
+                  <span>Uncalibrated &mdash; phase-radian proxy. Run Sphere Calibration to convert to physical units.</span>
+                  <button id="defl-uncal-dismiss" title="Dismiss">&times;</button>
+                </div>
+                <div class="defl-height-views">
+                  <div class="defl-height-view-3d">
+                    <div class="defl-height-label">3D Surface <span id="defl-height-unit-3d" class="defl-unit-tag"></span></div>
+                    <div class="defl-3d-host" id="defl-3d-host">
+                      <div class="defl-3d-controls" id="defl-3d-controls">
+                        <label style="font-size:12px">Z exaggeration:
+                          <input type="range" id="defl-3d-z-scale" min="1" max="200" step="1" value="10" style="width:120px" />
+                          <span id="defl-3d-z-val">10x</span>
+                        </label>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="defl-height-view-2d">
+                    <div class="defl-height-label">2D Height Map <span id="defl-height-unit-2d" class="defl-unit-tag"></span></div>
+                    <div class="defl-2d-host">
+                      <canvas id="defl-height-2d-canvas"></canvas>
+                      <div class="defl-2d-colorbar" id="defl-height-colorbar"></div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Slope tabs: large image + stats -->
+            <div class="defl-tab-panel" id="defl-panel-x_slope" hidden>
+              <div class="defl-empty-state" id="defl-x_slope-empty">Compute results first.</div>
+              <div id="defl-x_slope-content" hidden class="defl-single-view">
+                <div class="defl-single-label">X Slope (phase-radians)</div>
+                <div class="defl-single-img-host">
+                  <img id="defl-phase-x-img" />
+                </div>
                 <pre id="defl-phase-x-stats">\u2014</pre>
+                <div class="defl-axis-warn" id="defl-x-warn" hidden></div>
               </div>
-              <div>
-                <div style="font-size:12px;opacity:0.85;margin-bottom:4px">Slope Y (phase)</div>
-                <img id="defl-phase-y-img" />
+            </div>
+
+            <div class="defl-tab-panel" id="defl-panel-y_slope" hidden>
+              <div class="defl-empty-state" id="defl-y_slope-empty">Compute results first.</div>
+              <div id="defl-y_slope-content" hidden class="defl-single-view">
+                <div class="defl-single-label">Y Slope (phase-radians)</div>
+                <div class="defl-single-img-host">
+                  <img id="defl-phase-y-img" />
+                </div>
                 <pre id="defl-phase-y-stats">\u2014</pre>
+                <div class="defl-axis-warn" id="defl-y-warn" hidden></div>
               </div>
-              <div>
-                <div style="font-size:12px;opacity:0.85;margin-bottom:4px">Slope Magnitude</div>
-                <img id="defl-slope-mag-img" />
+            </div>
+
+            <div class="defl-tab-panel" id="defl-panel-slope_mag" hidden>
+              <div class="defl-empty-state" id="defl-slope_mag-empty">Compute results first.</div>
+              <div id="defl-slope_mag-content" hidden class="defl-single-view">
+                <div class="defl-single-label">Slope Magnitude (phase-radians)</div>
+                <div class="defl-single-img-host">
+                  <img id="defl-slope-mag-img" />
+                </div>
                 <pre id="defl-slope-mag-stats">\u2014</pre>
               </div>
-              <div>
-                <div style="font-size:12px;opacity:0.85;margin-bottom:4px">Curl Residual</div>
-                <img id="defl-curl-img" />
+            </div>
+
+            <div class="defl-tab-panel" id="defl-panel-curl" hidden>
+              <div class="defl-empty-state" id="defl-curl-empty">Compute results first.</div>
+              <div id="defl-curl-content" hidden class="defl-single-view">
+                <div class="defl-single-label">Curl Residual (phase-units)</div>
+                <div class="defl-single-img-host">
+                  <img id="defl-curl-img" />
+                </div>
                 <pre id="defl-curl-stats">\u2014</pre>
+                <div class="defl-axis-warn" id="defl-curl-warn" hidden></div>
+                <div style="font-size:10px;opacity:0.55;margin-top:6px">
+                  Curl is reported in phase-units regardless of calibration. A high curl
+                  value indicates the slope field is non-conservative (likely from noise
+                  or unmodeled distortion); the integrated height map is suspect there.
+                </div>
               </div>
             </div>
-            <div id="defl-unit-note" style="font-size:10px;opacity:0.5;text-align:center;margin-top:4px"></div>
-          </div>
-        </div>
 
-        <div class="defl-tab-panel" id="defl-panel-3d" hidden>
-          <div class="defl-empty-state" id="defl-3d-empty">Compute results first, then view the 3D surface.</div>
-          <div id="defl-3d-content" hidden style="display:flex;flex-direction:column;flex:1;min-height:0">
-            <div class="defl-3d-host" id="defl-3d-host">
-              <div class="defl-3d-controls" id="defl-3d-controls">
-                <label style="font-size:12px">Z exaggeration:
-                  <input type="range" id="defl-3d-z-scale" min="1" max="200" step="1" value="10" style="width:120px" />
-                  <span id="defl-3d-z-val">10x</span>
-                </label>
+            <div class="defl-tab-panel" id="defl-panel-diag" hidden>
+              <div class="defl-empty-state" id="defl-diag-empty">Run diagnostics to see detailed frame analysis.</div>
+              <div id="defl-diag-content" hidden>
+                <pre id="defl-diag-framestats" style="margin:0 0 10px;padding:6px 8px;background:#0b0b0b;border:1px solid #2a2a2a;border-radius:3px;font-size:11px;overflow-x:auto">\u2014</pre>
+                <div class="defl-diag-grid">
+                  <div>
+                    <div style="font-size:11px;opacity:0.7;margin-bottom:2px">Modulation X</div>
+                    <img id="defl-diag-mod-x" />
+                    <pre id="defl-diag-mod-x-stats">\u2014</pre>
+                  </div>
+                  <div>
+                    <div style="font-size:11px;opacity:0.7;margin-bottom:2px">Modulation Y</div>
+                    <img id="defl-diag-mod-y" />
+                    <pre id="defl-diag-mod-y-stats">\u2014</pre>
+                  </div>
+                  <div>
+                    <div style="font-size:11px;opacity:0.7;margin-bottom:2px">Wrapped phase X</div>
+                    <img id="defl-diag-wrap-x" />
+                  </div>
+                  <div>
+                    <div style="font-size:11px;opacity:0.7;margin-bottom:2px">Wrapped phase Y</div>
+                    <img id="defl-diag-wrap-y" />
+                  </div>
+                  <div>
+                    <div style="font-size:11px;opacity:0.7;margin-bottom:2px">Unwrapped X (before tilt removal)</div>
+                    <img id="defl-diag-unw-x" />
+                  </div>
+                  <div>
+                    <div style="font-size:11px;opacity:0.7;margin-bottom:2px">Unwrapped Y (before tilt removal)</div>
+                    <img id="defl-diag-unw-y" />
+                  </div>
+                </div>
               </div>
             </div>
           </div>
-        </div>
 
-        <div class="defl-tab-panel" id="defl-panel-diag" hidden>
-          <div class="defl-empty-state" id="defl-diag-empty">Run diagnostics to see detailed frame analysis.</div>
-          <div id="defl-diag-content" hidden>
-            <pre id="defl-diag-framestats" style="margin:0 0 10px;padding:6px 8px;background:#0b0b0b;border:1px solid #2a2a2a;border-radius:3px;font-size:11px;overflow-x:auto">\u2014</pre>
-            <div class="defl-diag-grid">
-              <div>
-                <div style="font-size:11px;opacity:0.7;margin-bottom:2px">Modulation X</div>
-                <img id="defl-diag-mod-x" />
-                <pre id="defl-diag-mod-x-stats">\u2014</pre>
-              </div>
-              <div>
-                <div style="font-size:11px;opacity:0.7;margin-bottom:2px">Modulation Y</div>
-                <img id="defl-diag-mod-y" />
-                <pre id="defl-diag-mod-y-stats">\u2014</pre>
-              </div>
-              <div>
-                <div style="font-size:11px;opacity:0.7;margin-bottom:2px">Wrapped phase X</div>
-                <img id="defl-diag-wrap-x" />
-              </div>
-              <div>
-                <div style="font-size:11px;opacity:0.7;margin-bottom:2px">Wrapped phase Y</div>
-                <img id="defl-diag-wrap-y" />
-              </div>
-              <div>
-                <div style="font-size:11px;opacity:0.7;margin-bottom:2px">Unwrapped X (before tilt removal)</div>
-                <img id="defl-diag-unw-x" />
-              </div>
-              <div>
-                <div style="font-size:11px;opacity:0.7;margin-bottom:2px">Unwrapped Y (before tilt removal)</div>
-                <img id="defl-diag-unw-y" />
-              </div>
-            </div>
-          </div>
+          <!-- Quality sidebar: always visible after compute -->
+          <aside class="defl-quality-sidebar" id="defl-quality-sidebar" hidden>
+            <div class="defl-quality-title">Quality Summary</div>
+            <div class="defl-quality-overall" id="defl-q-overall">—</div>
+            <div class="defl-quality-rows" id="defl-q-rows"></div>
+            <details id="defl-q-warnings-details" class="defl-quality-warnings">
+              <summary id="defl-q-warnings-summary">No warnings</summary>
+              <ul id="defl-q-warnings-list"></ul>
+            </details>
+          </aside>
         </div>
       </div>
     </div>
@@ -263,6 +353,7 @@ async function loadProfileList() {
 async function saveProfile() {
   const name = prompt("Profile name:", document.getElementById("defl-profile-select")?.value || "");
   if (!name) return;
+  const defaultTab = document.getElementById("defl-default-tab")?.value || "height";
   const profile = {
     name,
     display: {
@@ -284,6 +375,9 @@ async function saveProfile() {
     calibration: {
       cal_factor: null,
       sphere_diameter_mm: null,
+    },
+    ui: {
+      default_tab: TAB_IDS.includes(defaultTab) ? defaultTab : "height",
     },
   };
   try {
@@ -332,6 +426,11 @@ async function loadSelectedProfile() {
     if (deviceEl) deviceEl.value = p.display?.model || "";
     const notesEl = document.getElementById("defl-geometry-notes");
     if (notesEl) notesEl.value = p.geometry?.notes || "";
+    // UI: default tab. Old profiles without ui field default to "height".
+    const defaultTab = (p.ui && TAB_IDS.includes(p.ui.default_tab)) ? p.ui.default_tab : "height";
+    const dtEl = document.getElementById("defl-default-tab");
+    if (dtEl) dtEl.value = defaultTab;
+    activateTab(defaultTab);
     const delBtn = document.getElementById("defl-btn-delete-profile");
     if (delBtn) { delBtn.disabled = false; delBtn.style.opacity = "1"; }
   } catch (e) {
@@ -430,15 +529,28 @@ function clearMask() {
   if (clearBtn) { clearBtn.disabled = true; clearBtn.style.opacity = "0.6"; }
 }
 
+function activateTab(tabId) {
+  if (!TAB_IDS.includes(tabId)) tabId = "height";
+  df.activeTab = tabId;
+  document.querySelectorAll(".defl-tab").forEach(t => {
+    t.classList.toggle("active", t.dataset.tab === tabId);
+  });
+  document.querySelectorAll(".defl-tab-panel").forEach(p => {
+    p.hidden = (p.id !== "defl-panel-" + tabId);
+  });
+  // Lazy-init expensive panels
+  if (tabId === "height" && df.lastResult) {
+    load3dSurface();
+  }
+  if (tabId === "diag") {
+    runDiagnostics();
+  }
+}
+
 function wireEvents() {
-  // Tab switching
+  // Tab switching — single handler
   document.querySelectorAll(".defl-tab").forEach(tab => {
-    tab.addEventListener("click", () => {
-      document.querySelectorAll(".defl-tab").forEach(t => t.classList.remove("active"));
-      document.querySelectorAll(".defl-tab-panel").forEach(p => p.hidden = true);
-      tab.classList.add("active");
-      $("defl-panel-" + tab.dataset.tab).hidden = false;
-    });
+    tab.addEventListener("click", () => activateTab(tab.dataset.tab));
   });
 
   // Display device dropdown
@@ -459,8 +571,7 @@ function wireEvents() {
       maskLabel.textContent = maskSlider.value + "%";
       if (_maskDebounce) clearTimeout(_maskDebounce);
       _maskDebounce = setTimeout(() => {
-        const content = $("defl-phase-content");
-        if (content && !content.hidden) compute();
+        if (df.lastResult) compute();
       }, 300);
     });
   }
@@ -492,6 +603,13 @@ function wireEvents() {
   $("defl-btn-auto-smooth")?.addEventListener("click", autoSmooth);
   $("defl-btn-reset")?.addEventListener("click", resetSession);
   $("defl-btn-export")?.addEventListener("click", exportRun);
+
+  // Uncalibrated banner dismiss (per-session)
+  $("defl-uncal-dismiss")?.addEventListener("click", () => {
+    const b = $("defl-uncal-banner");
+    if (b) b.hidden = true;
+    df.uncalDismissed = true;
+  });
 }
 
 function getFreq() {
@@ -540,9 +658,7 @@ async function autoSmooth() {
     if (slider) {
       slider.value = data.sigma;
       if (label) label.textContent = data.sigma;
-      // Recompute if we have results showing
-      const content = $("defl-phase-content");
-      if (content && !content.hidden) compute();
+      if (df.lastResult) compute();
     }
   } catch (e) {
     console.warn("Auto-smooth error:", e);
@@ -708,9 +824,10 @@ async function compute() {
     }
     const result = await r.json();
     if (statusEl) statusEl.textContent = "Done";
+    df.lastResult = result;
     renderPhaseResult(result);
-    // Reload 3D view if it's been opened before
-    if (!$("defl-3d-content")?.hidden) {
+    // Refresh height views (3D + 2D) if user is on Height tab
+    if (df.activeTab === "height") {
       load3dSurface();
     }
   } catch (e) {
@@ -754,7 +871,11 @@ async function calibrateSphere() {
     const status = await apiFetch("/deflectometry/status");
     if (status.ok) {
       const sd = await status.json();
-      if (sd.last_result) renderPhaseResult(sd.last_result);
+      if (sd.last_result) {
+        df.lastResult = sd.last_result;
+        renderPhaseResult(sd.last_result);
+        if (df.activeTab === "height") load3dSurface();
+      }
     }
   } catch (e) {
     if (statusEl) statusEl.textContent = "Failed: " + (e?.message || e);
@@ -775,15 +896,23 @@ async function resetSession() {
   if (capStatus) capStatus.textContent = "\u2014";
   const compStatus = $("defl-status-compute");
   if (compStatus) compStatus.textContent = "\u2014";
-  // Hide results
-  const content = $("defl-phase-content");
-  const empty = $("defl-phase-empty");
-  if (content) content.hidden = true;
-  if (empty) empty.hidden = false;
-  const content3d = $("defl-3d-content");
-  const empty3d = $("defl-3d-empty");
-  if (content3d) content3d.hidden = true;
-  if (empty3d) empty3d.hidden = false;
+  df.lastResult = null;
+  df.lastHeightmap = null;
+  // Hide all result content; show empty states
+  for (const id of TAB_IDS) {
+    const c = $("defl-" + id + "-content");
+    const e = $("defl-" + id + "-empty");
+    if (c) c.hidden = true;
+    if (e) e.hidden = false;
+  }
+  // Special-case height (different element id pattern)
+  const hc = $("defl-height-content");
+  const he = $("defl-height-empty");
+  if (hc) hc.hidden = true;
+  if (he) he.hidden = false;
+  // Hide quality sidebar
+  const qs = $("defl-quality-sidebar");
+  if (qs) qs.hidden = true;
 }
 
 async function exportRun() {
@@ -811,63 +940,161 @@ async function exportRun() {
   }
 }
 
+function showSlopePanelContent(tabId) {
+  const c = $("defl-" + tabId + "-content");
+  const e = $("defl-" + tabId + "-empty");
+  if (c) c.hidden = false;
+  if (e) e.hidden = true;
+}
+
 function renderPhaseResult(result) {
   if (!result) return;
-  const content = $("defl-phase-content");
-  const empty = $("defl-phase-empty");
-  if (content) content.hidden = false;
-  if (empty) empty.hidden = true;
+  df.lastResult = result;
 
-  // Phase / slope images
+  const cal = result.cal_factor || null;
+
+  // Per-axis slope panels
   if (result.phase_x_png_b64) {
     $("defl-phase-x-img").src = "data:image/png;base64," + result.phase_x_png_b64;
+    showSlopePanelContent("x_slope");
   }
   if (result.phase_y_png_b64) {
     $("defl-phase-y-img").src = "data:image/png;base64," + result.phase_y_png_b64;
+    showSlopePanelContent("y_slope");
   }
   if (result.slope_mag_png_b64) {
     $("defl-slope-mag-img").src = "data:image/png;base64," + result.slope_mag_png_b64;
+    showSlopePanelContent("slope_mag");
   }
   if (result.curl_png_b64) {
     $("defl-curl-img").src = "data:image/png;base64," + result.curl_png_b64;
+    showSlopePanelContent("curl");
   }
 
-  // Stats
-  const cal = result.cal_factor || null;
-  $("defl-phase-x-stats").textContent = formatStats(result.stats_x, cal);
-  $("defl-phase-y-stats").textContent = formatStats(result.stats_y, cal);
-  $("defl-slope-mag-stats").textContent = formatStats(result.stats_slope_mag, cal);
-  $("defl-curl-stats").textContent = formatStats(result.stats_curl, null);  // curl is always in rad
+  // Slope stats stay in radians (per Phase 1 spec — no silent rad→µm).
+  $("defl-phase-x-stats").textContent = formatSlopeStats(result.stats_x);
+  $("defl-phase-y-stats").textContent = formatSlopeStats(result.stats_y);
+  $("defl-slope-mag-stats").textContent = formatSlopeStats(result.stats_slope_mag);
+  $("defl-curl-stats").textContent = formatSlopeStats(result.stats_curl);
 
-  // Unit note
-  const unitNote = $("defl-unit-note");
-  if (unitNote) {
-    if (cal) {
-      unitNote.textContent = "Calibrated: heights in \u00b5m";
+  // Show Height empty-state cleared (3D/2D will populate when load3dSurface runs)
+  const he = $("defl-height-empty");
+  const hc = $("defl-height-content");
+  if (he) he.hidden = true;
+  if (hc) hc.hidden = false;
+
+  // Uncalibrated banner on Height tab
+  const uncalBanner = $("defl-uncal-banner");
+  if (uncalBanner) {
+    if (!cal && !df.uncalDismissed) {
+      uncalBanner.hidden = false;
     } else {
-      unitNote.textContent = "Uncalibrated: values in phase-radians. Sphere calibration needed for physical units.";
+      uncalBanner.hidden = true;
     }
   }
 
-  // Quality banner
-  renderQualityBanner(result.quality);
+  // Per-axis warnings (filtered from quality.warnings)
+  renderAxisWarnings(result.quality);
+
+  // Quality sidebar
+  renderQualitySidebar(result.quality);
 }
 
-function renderQualityBanner(quality) {
-  const banner = $("defl-quality-banner");
-  if (!banner || !quality) { if (banner) banner.hidden = true; return; }
-  banner.hidden = false;
-
-  const colors = { good: "rgba(48,209,88,0.15)", fair: "rgba(255,159,10,0.15)", poor: "rgba(255,69,58,0.15)" };
-  const labels = { good: "Result is reliable.", fair: "Result is usable but check warnings.", poor: "Result may be unreliable." };
-
-  let msg = labels[quality.overall] || "";
-  if (quality.warnings && quality.warnings.length > 0) {
-    msg += " " + quality.warnings[0];
+function renderAxisWarnings(quality) {
+  const xWarn = $("defl-x-warn");
+  const yWarn = $("defl-y-warn");
+  const cWarn = $("defl-curl-warn");
+  if (xWarn) { xWarn.hidden = true; xWarn.textContent = ""; }
+  if (yWarn) { yWarn.hidden = true; yWarn.textContent = ""; }
+  if (cWarn) { cWarn.hidden = true; cWarn.textContent = ""; }
+  if (!quality || !quality.warnings) return;
+  for (const w of quality.warnings) {
+    const lower = w.toLowerCase();
+    if (xWarn && /x modulation/i.test(w)) {
+      xWarn.hidden = false;
+      xWarn.textContent = "\u26a0 " + w;
+    }
+    if (yWarn && /y modulation/i.test(w)) {
+      yWarn.hidden = false;
+      yWarn.textContent = "\u26a0 " + w;
+    }
+    if (cWarn && lower.includes("integration residual")) {
+      cWarn.hidden = false;
+      cWarn.textContent = "\u26a0 " + w;
+    }
   }
-  banner.textContent = msg;
-  banner.style.background = colors[quality.overall] || colors.fair;
-  banner.title = quality.warnings ? quality.warnings.join("\n") : "";
+}
+
+function renderQualitySidebar(quality) {
+  const sidebar = $("defl-quality-sidebar");
+  if (!sidebar) return;
+  if (!quality) { sidebar.hidden = true; return; }
+  sidebar.hidden = false;
+
+  const overall = quality.overall || "fair";
+  const overallEl = $("defl-q-overall");
+  const labels = { good: "GOOD", fair: "FAIR", poor: "POOR" };
+  const captions = {
+    good: "Result is reliable.",
+    fair: "Result is usable; check warnings.",
+    poor: "Result may be unreliable.",
+  };
+  if (overallEl) {
+    overallEl.className = "defl-quality-overall defl-q-" + overall;
+    overallEl.innerHTML =
+      `<div class="defl-q-overall-label">${labels[overall] || overall.toUpperCase()}</div>` +
+      `<div class="defl-q-overall-caption">${captions[overall] || ""}</div>`;
+  }
+
+  const cov = quality.modulation_coverage;
+  const modX = quality.modulation_x_median;
+  const modY = quality.modulation_y_median;
+  const clipped = quality.clipped_fraction;
+  const maskValid = quality.mask_valid_frac;  // 0..1
+  const curlRms = quality.curl_rms;
+
+  // Modulation imbalance
+  let modImb = null;
+  if (Number.isFinite(modX) && Number.isFinite(modY)) {
+    const m = Math.max(modX, modY, 1e-10);
+    modImb = Math.abs(modX - modY) / m * 100;
+  }
+
+  const rows = $("defl-q-rows");
+  if (rows) {
+    const fmt = (v, d = 1, suffix = "") =>
+      Number.isFinite(v) ? v.toFixed(d) + suffix : "\u2014";
+    const covCls = (cov < 50) ? "warn" : (cov >= 70 ? "ok" : "");
+    const clippedCls = (clipped > 5) ? "warn" : "";
+    const curlCls = (curlRms > 0.05) ? "warn" : "";
+    const imbCls = (modImb !== null && modImb > 20) ? "warn" : "";
+    rows.innerHTML = `
+      <div class="defl-q-row ${covCls}"><span>Modulation coverage</span><span>${fmt(cov, 1, "%")}</span></div>
+      <div class="defl-q-row"><span>Mod X / Y median</span><span>${fmt(modX, 1)} / ${fmt(modY, 1)}</span></div>
+      <div class="defl-q-row ${imbCls}"><span>Mod imbalance</span><span>${modImb !== null ? modImb.toFixed(0) + "%" : "\u2014"}</span></div>
+      <div class="defl-q-row ${clippedCls}"><span>Clipped pixels</span><span>${fmt(clipped, 1, "%")}</span></div>
+      <div class="defl-q-row"><span>Mask valid</span><span>${Number.isFinite(maskValid) ? (maskValid * 100).toFixed(1) + "%" : "\u2014"}</span></div>
+      <div class="defl-q-row ${curlCls}"><span>Curl RMS</span><span>${fmt(curlRms, 4)} <span class="defl-q-unit">phase-units</span></span></div>
+    `;
+  }
+
+  // Warnings collapsible
+  const warns = (quality.warnings || []);
+  const summary = $("defl-q-warnings-summary");
+  const list = $("defl-q-warnings-list");
+  const details = $("defl-q-warnings-details");
+  if (summary) summary.textContent = warns.length
+    ? `${warns.length} warning${warns.length === 1 ? "" : "s"}`
+    : "No warnings";
+  if (details) details.open = warns.length > 0;
+  if (list) {
+    list.innerHTML = "";
+    for (const w of warns) {
+      const li = document.createElement("li");
+      li.textContent = w;
+      list.appendChild(li);
+    }
+  }
 }
 
 async function refreshStatus() {
@@ -875,21 +1102,16 @@ async function refreshStatus() {
     const r = await apiFetch("/deflectometry/status");
     if (!r.ok) return;
     const d = await r.json();
-    // iPad
     const connected = !!d.ipad_connected;
     setBadge("defl-badge-ipad", connected);
     $("defl-badge-ipad").textContent = "iPad: " + (connected ? "connected" : "\u2014");
-    // Flat field
     setBadge("defl-badge-flat", !!d.has_flat_field);
     $("defl-badge-flat").textContent = "Flat field: " + (d.has_flat_field ? "\u2713" : "\u2014");
-    // Baseline
     setBadge("defl-badge-ref", !!d.has_reference);
     $("defl-badge-ref").textContent = "Baseline: " + (d.has_reference ? "\u2713" : "\u2014");
-    // Calibration
     const hasCal = d.cal_factor != null;
     setBadge("defl-badge-cal", hasCal);
     $("defl-badge-cal").textContent = "Calibration: " + (hasCal ? "\u2713" : "\u2014");
-    // Display calibration
     const dispCalBadge = $("defl-badge-display-cal");
     if (dispCalBadge) {
       if (d.has_display_cal) {
@@ -899,8 +1121,9 @@ async function refreshStatus() {
         dispCalBadge.textContent = "Display: \u2014";
       }
     }
-    // Render last result if we have one and phase content is not showing
-    if (d.last_result && $("defl-phase-content")?.hidden) {
+    // Render last result if we have one and we don't already have it cached
+    if (d.last_result && !df.lastResult) {
+      df.lastResult = d.last_result;
       renderPhaseResult(d.last_result);
       const compStatus = $("defl-status-compute");
       if (compStatus) compStatus.textContent = "Done";
@@ -913,7 +1136,6 @@ function startPolling() {
   stopPolling();
   const preview = document.getElementById("defl-preview");
   if (preview && !preview.src.includes("/stream")) preview.src = "/stream";
-  // Immediately fire + start session
   apiFetch("/deflectometry/start", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -930,10 +1152,12 @@ function stopPolling() {
   }
 }
 
+// ──────── Height views ────────
+
 async function load3dSurface() {
-  const empty = $("defl-3d-empty");
-  const content = $("defl-3d-content");
-  if (empty) empty.textContent = "Loading 3D surface\u2026";
+  const empty = $("defl-height-empty");
+  const content = $("defl-height-content");
+  if (empty) empty.textContent = "Loading height map\u2026";
   try {
     const payload = { mask_threshold: getMaskThreshold(), smooth_sigma: getSmoothSigma() };
     if (df.maskPolygons.length > 0) {
@@ -952,11 +1176,97 @@ async function load3dSurface() {
       return;
     }
     const hm = await r.json();
+    df.lastHeightmap = hm;
     if (empty) empty.hidden = true;
     if (content) content.hidden = false;
+    // Update unit tags using the heightmap's authoritative unit field
+    const unitText = hm.unit === "µm" ? "(µm)" : "(phase-rad — uncalibrated)";
+    const u3d = $("defl-height-unit-3d");
+    const u2d = $("defl-height-unit-2d");
+    if (u3d) u3d.textContent = unitText;
+    if (u2d) u2d.textContent = unitText;
     await render3d(hm);
+    render2dHeight(hm);
   } catch (e) {
     if (empty) empty.textContent = "Error: " + (e?.message || e);
+  }
+}
+
+// Viridis colormap approximation (5 stops). Returns [r,g,b] in 0..255.
+const VIRIDIS_STOPS = [
+  [68, 1, 84],     // 0.00
+  [59, 82, 139],   // 0.25
+  [33, 145, 140],  // 0.50
+  [94, 201, 98],   // 0.75
+  [253, 231, 37],  // 1.00
+];
+function viridis(t) {
+  if (!Number.isFinite(t)) return [0, 0, 0];
+  t = Math.max(0, Math.min(1, t));
+  const x = t * (VIRIDIS_STOPS.length - 1);
+  const i = Math.floor(x);
+  const f = x - i;
+  const a = VIRIDIS_STOPS[i];
+  const b = VIRIDIS_STOPS[Math.min(i + 1, VIRIDIS_STOPS.length - 1)];
+  return [
+    Math.round(a[0] + (b[0] - a[0]) * f),
+    Math.round(a[1] + (b[1] - a[1]) * f),
+    Math.round(a[2] + (b[2] - a[2]) * f),
+  ];
+}
+
+function render2dHeight(hm) {
+  const canvas = $("defl-height-2d-canvas");
+  if (!canvas || !hm) return;
+  const w = hm.width, h = hm.height;
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext("2d");
+  const img = ctx.createImageData(w, h);
+
+  // Find min/max
+  let zMin = Infinity, zMax = -Infinity;
+  for (let i = 0; i < hm.data.length; i++) {
+    const v = hm.data[i];
+    if (v != null && Number.isFinite(v)) {
+      if (v < zMin) zMin = v;
+      if (v > zMax) zMax = v;
+    }
+  }
+  if (!Number.isFinite(zMin)) { zMin = 0; zMax = 1; }
+  const zRange = zMax - zMin || 1;
+
+  for (let i = 0; i < hm.data.length; i++) {
+    const v = hm.data[i];
+    const k = i * 4;
+    if (v == null || !Number.isFinite(v)) {
+      // Transparent for masked pixels
+      img.data[k] = 0;
+      img.data[k + 1] = 0;
+      img.data[k + 2] = 0;
+      img.data[k + 3] = 0;
+    } else {
+      const t = (v - zMin) / zRange;
+      const [r, g, b] = viridis(t);
+      img.data[k] = r;
+      img.data[k + 1] = g;
+      img.data[k + 2] = b;
+      img.data[k + 3] = 255;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+
+  // Colorbar: vertical strip with min/max labels
+  const cb = $("defl-height-colorbar");
+  if (cb) {
+    const unit = hm.unit === "µm" ? "µm" : "rad";
+    cb.innerHTML = `
+      <div class="defl-cb-strip"></div>
+      <div class="defl-cb-labels">
+        <span>${zMax.toFixed(unit === "µm" ? 2 : 3)} ${unit}</span>
+        <span>${zMin.toFixed(unit === "µm" ? 2 : 3)} ${unit}</span>
+      </div>
+    `;
   }
 }
 
@@ -992,7 +1302,6 @@ async function render3d(hm) {
   const pos = geo.attributes.position;
   const colors = new Float32Array(pos.count * 3);
 
-  // Find min/max for normalization
   let zMin = Infinity, zMax = -Infinity;
   for (let i = 0; i < hm.data.length; i++) {
     const v = hm.data[i];
@@ -1011,11 +1320,11 @@ async function render3d(hm) {
         const v = hm.data[idx];
         const z = (v != null) ? ((v - zMin) / zRange - 0.5) * zScale : 0;
         pos.setZ(idx, z);
-        // Viridis-like color
         const t = (v != null) ? (v - zMin) / zRange : 0;
-        colors[idx * 3] = t < 0.5 ? t * 1.2 : 0.3 + t * 0.4;
-        colors[idx * 3 + 1] = 0.1 + t * 0.7;
-        colors[idx * 3 + 2] = 0.4 + (1 - t) * 0.5;
+        const [vr, vg, vb] = viridis(t);
+        colors[idx * 3] = vr / 255;
+        colors[idx * 3 + 1] = vg / 255;
+        colors[idx * 3 + 2] = vb / 255;
       }
     }
     geo.setAttribute("color", new THREE.BufferAttribute(colors, 3));
@@ -1053,7 +1362,6 @@ async function render3d(hm) {
   }
   animate();
 
-  // Handle resize
   const ro = new ResizeObserver(() => {
     const nw = host.clientWidth, nh = host.clientHeight;
     if (nw > 0 && nh > 0) {
@@ -1090,14 +1398,12 @@ async function runDiagnostics() {
     const d = await r.json();
     if (empty) empty.hidden = true;
     if (content) content.hidden = false;
-    // Frame stats
     const fs = $("defl-diag-framestats");
     if (fs && d.frame_stats) {
       fs.textContent = d.frame_stats.map(f =>
         `${f.name}  min=${f.min.toFixed(0)}  max=${f.max.toFixed(0)}  mean=${f.mean.toFixed(1)}  std=${f.std.toFixed(1)}`
       ).join("\n");
     }
-    // Modulation images and stats
     if (d.modulation_x) {
       $("defl-diag-mod-x").src = "data:image/png;base64," + d.modulation_x.png_b64;
       const el = $("defl-diag-mod-x-stats");
@@ -1108,7 +1414,6 @@ async function runDiagnostics() {
       const el = $("defl-diag-mod-y-stats");
       if (el) el.textContent = `min=${d.modulation_y.min.toFixed(1)} max=${d.modulation_y.max.toFixed(1)} mean=${d.modulation_y.mean.toFixed(1)} median=${d.modulation_y.median.toFixed(1)}`;
     }
-    // Wrapped/unwrapped phase images
     const b64 = (id, key) => { const el = $(id); if (el && d[key]) el.src = "data:image/png;base64," + d[key]; };
     b64("defl-diag-wrap-x", "wrapped_x_png_b64");
     b64("defl-diag-wrap-y", "wrapped_y_png_b64");
@@ -1119,26 +1424,10 @@ async function runDiagnostics() {
   }
 }
 
-function wireTabActivation() {
-  document.querySelectorAll(".defl-tab").forEach(tab => {
-    tab.addEventListener("click", () => {
-      if (tab.dataset.tab === "3d") {
-        load3dSurface();
-      }
-      if (tab.dataset.tab === "diag") {
-        runDiagnostics();
-      }
-    });
-  });
-}
-
 export function initDeflectometry() {
-  // Build workspace DOM on first init
   buildWorkspace();
-  wireTabActivation();
   loadProfileList();
 
-  // Start polling when mode becomes active, stop when hidden
   const observer = new MutationObserver(() => {
     const root = $("mode-deflectometry");
     if (!root) return;

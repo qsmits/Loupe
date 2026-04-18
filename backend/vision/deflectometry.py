@@ -31,6 +31,17 @@ def generate_fringe_pattern(
     If gamma != 1.0, apply inverse gamma pre-correction so that a display
     with the given gamma curve produces linear sinusoidal light output:
       corrected = 255 * (v/255)^(1/gamma)
+
+    NOTE on gamma in the live pipeline (audit, 2026-04):
+    This function is NOT used by the live iPad capture path. The capture
+    endpoints in ``backend.api_deflectometry`` send only the pattern
+    parameters (freq, phase, orientation, gamma) over the WebSocket; the
+    iPad client (``frontend/deflectometry-screen.html::renderPattern``)
+    generates the pattern locally and applies the inverse-gamma there.
+    Gamma is therefore applied exactly once in the live pipeline (on the
+    iPad). The gamma/LUT branches below are exercised only by tests and
+    standalone synthetic-frame callers (e.g. test_deflectometry_api.py,
+    test_deflectometry_envelope.py); keep them for those callers.
     """
     if orientation == "x":
         coord = np.arange(width, dtype=np.float64)

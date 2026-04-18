@@ -2160,6 +2160,290 @@ body.no-camera .camera-section { display: none; }
   font-size: 10px;
 }
 
+/* ── Phase 1 rewrite: 6-tab layout, single-view slope panels,
+       Height tab (3D + 2D), quality sidebar ───────────── */
+
+.defl-results-body {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+.defl-results-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* Quality sidebar */
+.defl-quality-sidebar {
+  width: 240px;
+  min-width: 240px;
+  border-left: 1px solid var(--border);
+  padding: 10px 12px;
+  overflow-y: auto;
+  background: rgba(255, 255, 255, 0.015);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.defl-quality-title {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  opacity: 0.6;
+}
+.defl-quality-overall {
+  border-radius: 4px;
+  padding: 8px 10px;
+  border: 1px solid #2a2a2a;
+  background: #18181b;
+}
+.defl-quality-overall.defl-q-good {
+  background: rgba(48, 209, 88, 0.10);
+  border-color: rgba(48, 209, 88, 0.4);
+}
+.defl-quality-overall.defl-q-fair {
+  background: rgba(255, 159, 10, 0.10);
+  border-color: rgba(255, 159, 10, 0.4);
+}
+.defl-quality-overall.defl-q-poor {
+  background: rgba(255, 69, 58, 0.10);
+  border-color: rgba(255, 69, 58, 0.4);
+}
+.defl-q-overall-label {
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+}
+.defl-q-good .defl-q-overall-label { color: #4ade80; }
+.defl-q-fair .defl-q-overall-label { color: #fbbf24; }
+.defl-q-poor .defl-q-overall-label { color: #f87171; }
+.defl-q-overall-caption {
+  font-size: 11px;
+  opacity: 0.7;
+  margin-top: 2px;
+}
+.defl-quality-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.defl-q-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 11px;
+  padding: 4px 6px;
+  border-radius: 3px;
+  background: #131316;
+  border: 1px solid #1e1e22;
+  font-variant-numeric: tabular-nums;
+}
+.defl-q-row.warn {
+  background: rgba(255, 159, 10, 0.10);
+  border-color: rgba(255, 159, 10, 0.35);
+  color: #fbbf24;
+}
+.defl-q-row.ok {
+  background: rgba(48, 209, 88, 0.07);
+  border-color: rgba(48, 209, 88, 0.25);
+}
+.defl-q-row > span:first-child {
+  opacity: 0.85;
+}
+.defl-q-row > span:last-child {
+  font-weight: 600;
+}
+.defl-q-unit {
+  font-size: 10px;
+  opacity: 0.6;
+  margin-left: 2px;
+  font-weight: 400;
+}
+.defl-quality-warnings {
+  font-size: 11px;
+  border: 1px solid #2a2a2a;
+  border-radius: 3px;
+  padding: 4px 8px;
+  background: #131316;
+}
+.defl-quality-warnings summary {
+  cursor: pointer;
+  opacity: 0.85;
+  outline: none;
+}
+.defl-quality-warnings ul {
+  margin: 6px 0 4px;
+  padding-left: 18px;
+  font-size: 11px;
+  opacity: 0.85;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* Single-view slope/curl panels */
+.defl-single-view {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  gap: 6px;
+}
+.defl-single-label {
+  font-size: 12px;
+  opacity: 0.85;
+  font-weight: 500;
+}
+.defl-single-img-host {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #0b0b0b;
+  border: 1px solid #2a2a2a;
+  border-radius: 3px;
+  overflow: hidden;
+}
+.defl-single-img-host img {
+  max-width: 100%;
+  max-height: 100%;
+  width: auto;
+  height: auto;
+  display: block;
+  object-fit: contain;
+}
+.defl-single-view pre {
+  margin: 0;
+  padding: 6px 8px;
+  background: #0b0b0b;
+  border: 1px solid #2a2a2a;
+  border-radius: 3px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: pre;
+}
+.defl-axis-warn {
+  font-size: 11px;
+  padding: 6px 8px;
+  border-radius: 3px;
+  background: rgba(255, 159, 10, 0.12);
+  border: 1px solid rgba(255, 159, 10, 0.35);
+  color: #fbbf24;
+}
+
+/* Height tab: 3D + 2D side-by-side */
+.defl-height-views {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  min-height: 0;
+}
+.defl-height-view-3d,
+.defl-height-view-2d {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+}
+.defl-height-label {
+  font-size: 12px;
+  opacity: 0.85;
+  margin-bottom: 4px;
+  font-weight: 500;
+}
+.defl-unit-tag {
+  font-size: 10px;
+  opacity: 0.6;
+  font-weight: 400;
+  margin-left: 4px;
+}
+.defl-2d-host {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  background: #0b0b0b;
+  border: 1px solid #2a2a2a;
+  border-radius: 3px;
+  padding: 4px;
+  gap: 6px;
+  overflow: hidden;
+}
+.defl-2d-host canvas {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  /* Pixel-perfect upscaling for the small downsampled heightmap */
+  image-rendering: pixelated;
+  object-fit: contain;
+  align-self: stretch;
+  background: #000;
+  display: block;
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: 100%;
+}
+.defl-2d-colorbar {
+  width: 28px;
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+}
+.defl-cb-strip {
+  width: 12px;
+  background: linear-gradient(
+    to top,
+    rgb(68, 1, 84) 0%,
+    rgb(59, 82, 139) 25%,
+    rgb(33, 145, 140) 50%,
+    rgb(94, 201, 98) 75%,
+    rgb(253, 231, 37) 100%
+  );
+  border: 1px solid #2a2a2a;
+  border-radius: 2px;
+}
+.defl-cb-labels {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  font-size: 9px;
+  opacity: 0.75;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Uncalibrated banner on Height tab */
+.defl-uncal-banner {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 10px;
+  border-radius: 3px;
+  background: rgba(255, 159, 10, 0.10);
+  border: 1px solid rgba(255, 159, 10, 0.35);
+  color: #fbbf24;
+  font-size: 11px;
+  flex-shrink: 0;
+}
+.defl-uncal-banner button {
+  background: transparent;
+  border: none;
+  color: #fbbf24;
+  font-size: 16px;
+  cursor: pointer;
+  padding: 0 4px;
+  line-height: 1;
+}
+.defl-uncal-banner button:hover {
+  color: #fff;
+}
+
 /* ── Fringe Analysis workspace ───────────────────────────── */
 
 .fringe-workspace {

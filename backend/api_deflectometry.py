@@ -231,6 +231,11 @@ class ProfileCalibration(BaseModel):
     cal_factor: float | None = None
     sphere_diameter_mm: float | None = None
 
+class ProfileUI(BaseModel):
+    # Default tab to switch to when this profile is loaded.
+    # One of: "height", "x_slope", "y_slope", "slope_mag", "curl", "diag".
+    default_tab: str = "height"
+
 class DeflectometryProfile(BaseModel):
     name: str
     display: ProfileDisplay = ProfileDisplay()
@@ -238,6 +243,7 @@ class DeflectometryProfile(BaseModel):
     processing: ProfileProcessing = ProfileProcessing()
     geometry: ProfileGeometry = ProfileGeometry()
     calibration: ProfileCalibration = ProfileCalibration()
+    ui: ProfileUI = ProfileUI()
 
 class LoadProfileBody(BaseModel):
     name: str
@@ -965,42 +971,20 @@ def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
 
     @router.post("/deflectometry/export-run", dependencies=[Depends(_reject_hosted)])
     async def deflectometry_export_run(body: ExportRunBody = ExportRunBody()):  # noqa: B008
-        """Return a structured JSON record of the current measurement run."""
+        """Return the full DeflectometryResult envelope for the current run.
+
+        Schema v2 (Phase 1): wraps the JSON-safe envelope — including all
+        numeric grids — in a small export header for traceability.
+        """
         import datetime
         s = _current()
-        if s is None or s.last_result is None:
+        if s is None or s.last_envelope is None:
             raise HTTPException(400, detail="Run compute first")
 
-        result = s.last_result
-
         return {
-            "version": 1,
-            "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-            "acquisition": {
-                "n_frames": len(s.frames),
-                "n_phase_steps": 8,
-                "frequency_cycles": s.freq,
-                "gamma": 2.2,
-                "smooth_sigma": 0.0,
-                "mask_threshold": 0.02,
-                "has_flat_field": s.flat_white is not None,
-                "has_reference": s.ref_phase_x is not None,
-            },
-            "calibration": {
-                "cal_factor": s.cal_factor,
-            },
-            "quality": result.get("quality"),
-            "stats": {
-                "phase_x": result.get("stats_x"),
-                "phase_y": result.get("stats_y"),
-                "slope_magnitude": result.get("stats_slope_mag"),
-                "curl": result.get("stats_curl"),
-            },
-            "modulation": {
-                "x_median": result.get("quality", {}).get("modulation_x_median"),
-                "y_median": result.get("quality", {}).get("modulation_y_median"),
-            },
-            "mask_valid_frac": result.get("mask_valid_frac"),
+            "schema_version": 2,
+            "exported_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            "envelope": _envelope_to_json_safe(s.last_envelope),
         }
 
     @router.get("/deflectometry/profiles", dependencies=[Depends(_reject_hosted)])

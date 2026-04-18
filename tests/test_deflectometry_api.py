@@ -170,7 +170,9 @@ def _inject_synthetic_frames(client, width: int = 64, height: int = 64, freq: in
 
 
 def test_export_run_returns_structured_json(client):
-    """Export-run should return a complete run record."""
+    """Export-run should return the full DeflectometryResult envelope (schema v2)."""
+    import datetime
+
     client.post("/deflectometry/reset", json={})
     client.post("/deflectometry/start", json={})
     _inject_synthetic_frames(client)
@@ -178,13 +180,111 @@ def test_export_run_returns_structured_json(client):
     r = client.post("/deflectometry/export-run", json={})
     assert r.status_code == 200
     data = r.json()
-    assert data["version"] == 1
-    assert "timestamp" in data
-    assert "acquisition" in data
-    assert data["acquisition"]["n_phase_steps"] == 8
-    assert "quality" in data
-    assert "stats" in data
-    assert "modulation" in data
+
+    # Export header
+    assert data["schema_version"] == 2
+    assert "exported_at" in data
+    # ISO-formatted timestamp parses cleanly
+    parsed = datetime.datetime.fromisoformat(data["exported_at"])
+    assert parsed.tzinfo is not None
+
+    # Envelope payload
+    assert "envelope" in data
+    env = data["envelope"]
+    for field in (
+        "id",
+        "origin",
+        "captured_at",
+        "tuning",
+        "calibration_snapshot",
+        "geometry",
+        "aperture_recipe",
+        "warnings",
+    ):
+        assert field in env, f"missing envelope field {field!r}"
+
+    # Quality block carries through
+    assert "quality" in env
+    assert env["quality"] is not None
+
+    # Numeric grids present as nested lists
+    assert isinstance(env["phase_x_grid"], list)
+    assert env["phase_x_grid"] and isinstance(env["phase_x_grid"][0], list)
+
+
+def test_export_run_envelope_full(client):
+    """Export-run carries FULL envelope grids — distinguishing it from /compute
+    which deliberately strips heavy numeric arrays from its response."""
+    client.post("/deflectometry/reset", json={})
+    client.post("/deflectometry/start", json={})
+    _inject_synthetic_frames(client)
+
+    compute_r = client.post("/deflectometry/compute", json={"mask_threshold": 0.02})
+    assert compute_r.status_code == 200
+    compute_data = compute_r.json()
+    # /compute response must NOT include the heavy grids
+    for grid_field in (
+        "phase_x_grid",
+        "phase_y_grid",
+        "modulation_x_grid",
+        "modulation_y_grid",
+        "slope_x_grid",
+        "slope_y_grid",
+        "trusted_mask_grid",
+        "display_phase_x_grid",
+        "display_phase_y_grid",
+    ):
+        assert grid_field not in compute_data, (
+            f"/compute response unexpectedly includes {grid_field!r}"
+        )
+
+    r = client.post("/deflectometry/export-run", json={})
+    assert r.status_code == 200
+    env = r.json()["envelope"]
+
+    # All envelope grids present and shaped as 2-D nested lists
+    for grid_field in (
+        "phase_x_grid",
+        "phase_y_grid",
+        "modulation_x_grid",
+        "modulation_y_grid",
+        "slope_x_grid",
+        "slope_y_grid",
+        "trusted_mask_grid",
+        "display_phase_x_grid",
+        "display_phase_y_grid",
+    ):
+        assert grid_field in env, f"export missing envelope grid {grid_field!r}"
+        grid = env[grid_field]
+        assert isinstance(grid, list), f"{grid_field} is not a list"
+        assert grid, f"{grid_field} is empty"
+        assert isinstance(grid[0], list), f"{grid_field} is not 2-D"
+
+    # All envelope metadata fields present
+    for field in (
+        "id",
+        "origin",
+        "source_ids",
+        "captured_at",
+        "calibration_snapshot",
+        "geometry",
+        "tuning",
+        "aperture_recipe",
+        "warnings",
+    ):
+        assert field in env, f"export envelope missing {field!r}"
+
+    # And the export envelope id matches the one /compute surfaced
+    assert env["id"] == compute_data["id"]
+
+
+def test_export_run_without_compute_returns_400(client):
+    """Export-run before compute should 400 with 'Run compute first'."""
+    client.post("/deflectometry/reset", json={})
+    client.post("/deflectometry/start", json={})
+    r = client.post("/deflectometry/export-run", json={})
+    assert r.status_code == 400
+    assert "compute" in r.json()["detail"].lower()
 
 
 def test_profiles_list_empty(client):
