@@ -39,6 +39,7 @@ from .vision.deflectometry import (
     compute_wrapped_phase,
     create_modulation_mask,
     build_response_lut,
+    cascade_unwrap,
     find_optimal_smooth_sigma,
     fit_sphere_calibration,
     frankot_chellappa,
@@ -52,6 +53,9 @@ from .vision.deflectometry import (
     compute_quality_summary,
     analyze_display_check,
     wrap_deflectometry_result,
+    CAPTURE_STYLES,
+    DEFAULT_CONSISTENCY_THRESHOLD,
+    DEFAULT_MULTI_FREQ_PERIODS,
 )
 
 
@@ -108,13 +112,32 @@ def _reject_hosted(request: Request):
 
 
 class _Session:
-    """In-memory state for one active deflectometry session."""
+    """In-memory state for one active deflectometry session.
+
+    Frame ordering convention in ``self.frames`` depends on ``capture_style``:
+
+    ``capture_style == "fast"`` (legacy, 16 frames)::
+        frames[0..7]   : freq=self.freq, orientation X, phases 0..7
+        frames[8..15]  : freq=self.freq, orientation Y, phases 0..7
+
+    ``capture_style == "multi_freq"`` (16 × len(periods) frames)::
+        for each period p in self.periods (coarsest → finest):
+            frames[base+0..7]  : freq=p, orientation X, phases 0..7
+            frames[base+8..15] : freq=p, orientation Y, phases 0..7
+
+    For 3 periods this is 48 frames arranged as::
+        [P0 X×8, P0 Y×8, P1 X×8, P1 Y×8, P2 X×8, P2 Y×8]
+    """
 
     def __init__(self, sid: str) -> None:
         self.id: str = sid
         self.ws: Optional[WebSocket] = None
         self.pending_acks: dict[int, asyncio.Event] = {}
+        # Flat list of captured frames; see class docstring for the ordering
+        # convention per capture_style.
         self.frames: list[np.ndarray] = []
+        self.capture_style: str = "multi_freq"
+        self.periods: tuple[int, ...] = tuple(DEFAULT_MULTI_FREQ_PERIODS)
         self.last_result: Optional[dict] = None
         self.last_envelope: Optional[dict] = None
         self._envelope_cache: dict[str, dict] = {}
@@ -124,7 +147,7 @@ class _Session:
         self.ref_phase_x: Optional[np.ndarray] = None
         self.ref_phase_y: Optional[np.ndarray] = None
         self.cal_factor: Optional[float] = None  # phase-rad → mm
-        self.freq: int = 16  # fringe frequency used during last capture
+        self.freq: int = 16  # fringe frequency used during last fast capture
         self.inverse_lut: Optional[np.ndarray] = None  # 256-entry uint8 LUT
         # Serializes capture-sequence so two concurrent runs can't interleave
         self.lock: asyncio.Lock = asyncio.Lock()
@@ -136,6 +159,8 @@ class _Session:
         self.frames = []
         self.last_result = None
         self.last_envelope = None
+        self.capture_style = "multi_freq"
+        self.periods = tuple(DEFAULT_MULTI_FREQ_PERIODS)
 
     def cache_envelope(self, env: dict) -> None:
         eid = env.get("id")
@@ -180,15 +205,23 @@ class ComputeBody(BaseModel):
 
 
 class CaptureBody(BaseModel):
+    # ``freq`` is only honored when capture_style='fast' (legacy single-freq).
     freq: int = Field(default=16, ge=1, le=256)
     averages: int = Field(default=3, ge=1, le=10)
     gamma: float = Field(default=2.2, ge=1.0, le=3.0)
+    capture_style: str = Field(default="multi_freq")
+    # Optional list of fringe periods for multi_freq mode. None → default
+    # (DEFAULT_MULTI_FREQ_PERIODS). MUST be strictly ascending positive ints
+    # (coarsest → finest). Ignored when capture_style='fast'.
+    periods: list[int] | None = None
 
 
 class CaptureReferenceBody(BaseModel):
     freq: int = Field(default=16, ge=1, le=256)
     averages: int = Field(default=3, ge=1, le=10)
     gamma: float = Field(default=2.2, ge=1.0, le=3.0)
+    capture_style: str = Field(default="multi_freq")
+    periods: list[int] | None = None
 
 
 class HeightmapBody(BaseModel):
@@ -219,6 +252,11 @@ class ProfileCapture(BaseModel):
     freq: int = 16
     averages: int = 3
     gamma: float = 2.2
+    # Capture style: "multi_freq" (default, ~24s, recommended) or "fast" (~8s).
+    # multi_freq uses cascade-unwrapping across 3 fringe periods for robust phase
+    # extraction; fast uses a single period (legacy 16-frame). Older profiles
+    # without this field default to "multi_freq" per Phase 2 plan decision #4.
+    capture_style: str = "multi_freq"
 
 class ProfileProcessing(BaseModel):
     mask_threshold: float = 0.02
@@ -338,8 +376,22 @@ def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
     def _compute_unwrapped(s: _Session, smooth_sigma: float = 0.0):
         """Shared pipeline: flat-field correct, wrap, unwrap, tilt-remove.
 
-        Returns (unw_x, unw_y, frames_x, frames_y) where frames are the
-        (possibly flat-field-corrected) gray frames used for modulation.
+        Capture-style aware:
+
+        * "fast": single-period captures (16 frames). Uses ``np.unwrap`` along
+          the varying axis. Consistency maps are all-ones.
+        * "multi_freq": len(periods) periods × 16 frames. Per-orientation
+          wrapped phases are fed through :func:`cascade_unwrap` to produce
+          an unambiguous absolute phase plus a per-pixel consistency map.
+          The **finest-period** frames are returned as ``frames_x/frames_y``
+          so modulation, clipping, and other quality metrics are computed
+          against the highest-fidelity data.
+
+        Returns
+        -------
+        (unw_x, unw_y, frames_x, frames_y,
+         consistency_x, consistency_y,
+         wraps_x_per_period, wraps_y_per_period)
         """
         def _to_gray(f: np.ndarray) -> np.ndarray:
             arr = np.asarray(f, dtype=np.float64)
@@ -347,27 +399,121 @@ def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
                 arr = arr.mean(axis=-1)
             return arr
 
-        frames_x = [_to_gray(f) for f in s.frames[:8]]
-        frames_y = [_to_gray(f) for f in s.frames[8:16]]
-
-        if s.flat_white is not None and s.flat_black is not None:
+        def _flat_field(frames: list[np.ndarray]) -> list[np.ndarray]:
+            if s.flat_white is None or s.flat_black is None:
+                return frames
             white = _to_gray(s.flat_white)
             black = _to_gray(s.flat_black)
             denom = white - black + 1e-6
-            frames_x = [(f - black) / denom for f in frames_x]
-            frames_y = [(f - black) / denom for f in frames_y]
+            return [(f - black) / denom for f in frames]
 
-        if smooth_sigma > 0:
+        def _smooth(frames: list[np.ndarray]) -> list[np.ndarray]:
+            if smooth_sigma <= 0:
+                return frames
             from scipy.ndimage import gaussian_filter
-            frames_x = [gaussian_filter(f, sigma=smooth_sigma) for f in frames_x]
-            frames_y = [gaussian_filter(f, sigma=smooth_sigma) for f in frames_y]
+            return [gaussian_filter(f, sigma=smooth_sigma) for f in frames]
+
+        if s.capture_style == "multi_freq":
+            periods = list(s.periods)
+            n_periods = len(periods)
+            expected = 16 * n_periods
+            if len(s.frames) < expected:
+                raise HTTPException(
+                    400,
+                    detail=(
+                        f"Need {expected} frames for multi_freq "
+                        f"({n_periods} periods × 16), have {len(s.frames)}"
+                    ),
+                )
+            wraps_x: list[np.ndarray] = []
+            wraps_y: list[np.ndarray] = []
+            frames_x_last: list[np.ndarray] = []
+            frames_y_last: list[np.ndarray] = []
+            for i in range(n_periods):
+                base = 16 * i
+                fx = [_to_gray(f) for f in s.frames[base:base + 8]]
+                fy = [_to_gray(f) for f in s.frames[base + 8:base + 16]]
+                fx = _flat_field(fx)
+                fy = _flat_field(fy)
+                fx = _smooth(fx)
+                fy = _smooth(fy)
+                wraps_x.append(compute_wrapped_phase(fx))
+                wraps_y.append(compute_wrapped_phase(fy))
+                if i == n_periods - 1:
+                    frames_x_last = fx
+                    frames_y_last = fy
+
+            casc_x, cons_x = cascade_unwrap(wraps_x, periods)
+            casc_y, cons_y = cascade_unwrap(wraps_y, periods)
+            unw_x = remove_tilt(casc_x)
+            unw_y = remove_tilt(casc_y)
+            return (
+                unw_x, unw_y, frames_x_last, frames_y_last,
+                cons_x, cons_y, wraps_x, wraps_y,
+            )
+
+        # Fast (legacy single-freq) path.
+        frames_x = [_to_gray(f) for f in s.frames[:8]]
+        frames_y = [_to_gray(f) for f in s.frames[8:16]]
+        frames_x = _flat_field(frames_x)
+        frames_y = _flat_field(frames_y)
+        frames_x = _smooth(frames_x)
+        frames_y = _smooth(frames_y)
 
         wrap_x = compute_wrapped_phase(frames_x)
         wrap_y = compute_wrapped_phase(frames_y)
         unw_x = remove_tilt(unwrap_phase(wrap_x, orientation="x"))
         unw_y = remove_tilt(unwrap_phase(wrap_y, orientation="y"))
 
-        return unw_x, unw_y, frames_x, frames_y
+        cons_x = np.ones_like(unw_x)
+        cons_y = np.ones_like(unw_y)
+        return (
+            unw_x, unw_y, frames_x, frames_y,
+            cons_x, cons_y, [wrap_x], [wrap_y],
+        )
+
+    def _resolve_periods(capture_style: str, body_freq: int,
+                         body_periods: list[int] | None) -> list[int]:
+        """Resolve the period list used for a capture given the body args.
+
+        fast        → [body_freq] (single period).
+        multi_freq  → body_periods if provided else DEFAULT_MULTI_FREQ_PERIODS.
+
+        Validates: strictly ascending positive ints. Raises HTTPException 422
+        on invalid input.
+        """
+        if capture_style == "fast":
+            return [int(body_freq)]
+        if capture_style == "multi_freq":
+            periods = (
+                list(body_periods) if body_periods is not None
+                else list(DEFAULT_MULTI_FREQ_PERIODS)
+            )
+            if not periods:
+                raise HTTPException(422, detail="periods must be non-empty")
+            prev = 0
+            for p in periods:
+                if not isinstance(p, int) or p <= 0:
+                    raise HTTPException(
+                        422, detail=f"periods must be positive ints, got {periods}"
+                    )
+                if p <= prev:
+                    raise HTTPException(
+                        422,
+                        detail=(
+                            f"periods must be strictly ascending (coarsest → finest), "
+                            f"got {periods}"
+                        ),
+                    )
+                prev = p
+            return periods
+        raise HTTPException(
+            422,
+            detail=(
+                f"capture_style must be one of {list(CAPTURE_STYLES)}, "
+                f"got {capture_style!r}"
+            ),
+        )
 
     @router.post("/deflectometry/capture-reference", dependencies=[Depends(_reject_hosted)])
     async def deflectometry_capture_reference(body: CaptureReferenceBody):
@@ -377,45 +523,62 @@ def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
         if s.ws is None:
             raise HTTPException(400, detail="iPad not connected")
 
+        if body.capture_style not in CAPTURE_STYLES:
+            raise HTTPException(
+                422,
+                detail=(
+                    f"capture_style must be one of {list(CAPTURE_STYLES)}, "
+                    f"got {body.capture_style!r}"
+                ),
+            )
+        periods = _resolve_periods(body.capture_style, body.freq, body.periods)
+
         phases = [k * math.pi / 4.0 for k in range(8)]
 
         async with s.lock:
             ref_frames: list[np.ndarray] = []
             pid = 0
-            for orientation in ("x", "y"):
-                for phase in phases:
-                    pid += 1
-                    await _push_and_wait(
-                        s,
-                        {
-                            "type": "pattern",
-                            "pattern_id": pid,
-                            "freq": int(body.freq),
-                            "phase": float(phase),
-                            "orientation": orientation,
-                            "gamma": float(body.gamma),
-                        },
-                    )
-                    accum = None
-                    for _avg in range(body.averages):
-                        frame = camera.get_frame()
-                        if frame is None:
-                            raise HTTPException(503, detail="Camera returned no frame")
-                        f = frame.astype(np.float64)
-                        accum = f if accum is None else accum + f
-                        if _avg < body.averages - 1:
-                            await asyncio.sleep(0.05)
-                    ref_frames.append((accum / body.averages).astype(np.uint8))
+            for period in periods:
+                for orientation in ("x", "y"):
+                    for phase in phases:
+                        pid += 1
+                        await _push_and_wait(
+                            s,
+                            {
+                                "type": "pattern",
+                                "pattern_id": pid,
+                                "freq": int(period),
+                                "phase": float(phase),
+                                "orientation": orientation,
+                                "gamma": float(body.gamma),
+                            },
+                        )
+                        accum = None
+                        for _avg in range(body.averages):
+                            frame = camera.get_frame()
+                            if frame is None:
+                                raise HTTPException(503, detail="Camera returned no frame")
+                            f = frame.astype(np.float64)
+                            accum = f if accum is None else accum + f
+                            if _avg < body.averages - 1:
+                                await asyncio.sleep(0.05)
+                        ref_frames.append((accum / body.averages).astype(np.uint8))
 
         # Temporarily stash ref_frames, compute unwrapped phase, then restore
         orig_frames = s.frames
         orig_result = s.last_result
+        orig_style = s.capture_style
+        orig_periods = s.periods
         s.frames = ref_frames
+        s.capture_style = body.capture_style
+        s.periods = tuple(periods)
         try:
-            unw_x, unw_y, _, _ = _compute_unwrapped(s)
+            unw_x, unw_y, *_ = _compute_unwrapped(s)
         finally:
             s.frames = orig_frames
             s.last_result = orig_result
+            s.capture_style = orig_style
+            s.periods = orig_periods
 
         s.ref_phase_x = unw_x
         s.ref_phase_y = unw_y
@@ -424,7 +587,12 @@ def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
         if s.ws is not None:
             await s.ws.send_json({"type": "centering"})
 
-        return {"status": "ok", "has_reference": True}
+        return {
+            "status": "ok",
+            "has_reference": True,
+            "capture_style": body.capture_style,
+            "periods": list(periods),
+        }
 
     @router.post("/deflectometry/reset", dependencies=[Depends(_reject_hosted)])
     async def deflectometry_reset(body: ResetBody = ResetBody()):  # noqa: B008
@@ -459,6 +627,18 @@ def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
 
     @router.post("/deflectometry/capture-sequence", dependencies=[Depends(_reject_hosted)])
     async def deflectometry_capture_sequence(body: CaptureBody):
+        # Validate body before checking session / ws state so invalid input
+        # surfaces as 422 regardless of pairing status.
+        if body.capture_style not in CAPTURE_STYLES:
+            raise HTTPException(
+                422,
+                detail=(
+                    f"capture_style must be one of {list(CAPTURE_STYLES)}, "
+                    f"got {body.capture_style!r}"
+                ),
+            )
+        periods = _resolve_periods(body.capture_style, body.freq, body.periods)
+
         s = _current()
         if s is None:
             raise HTTPException(400, detail="No active deflectometry session")
@@ -468,57 +648,74 @@ def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
         phases = [k * math.pi / 4.0 for k in range(8)]
 
         async with s.lock:
-            # Start of a new capture wipes any previous frames/result so the
-            # 16-frame invariant holds.
+            # Start of a new capture wipes any previous frames/result. The
+            # frame-count invariant depends on capture_style (see _Session).
             s.frames = []
             s.last_result = None
-            s.freq = body.freq
+            s.capture_style = body.capture_style
+            s.periods = tuple(periods)
+            s.freq = int(periods[-1])  # finest period, for auto-smooth / legacy
             pid = 0
-            for orientation in ("x", "y"):
-                for phase in phases:
-                    pid += 1
-                    await _push_and_wait(
-                        s,
-                        {
-                            "type": "pattern",
-                            "pattern_id": pid,
-                            "freq": int(body.freq),
-                            "phase": float(phase),
-                            "orientation": orientation,
-                            "gamma": float(body.gamma),
-                        },
-                    )
-                    # Average multiple captures to reduce random noise
-                    accum = None
-                    for _avg in range(body.averages):
-                        frame = camera.get_frame()
-                        if frame is None:
-                            raise HTTPException(
-                                503, detail="Camera returned no frame"
-                            )
-                        f = frame.astype(np.float64)
-                        accum = f if accum is None else accum + f
-                        if _avg < body.averages - 1:
-                            await asyncio.sleep(0.05)
-                    s.frames.append((accum / body.averages).astype(np.uint8))
+            for period in periods:
+                for orientation in ("x", "y"):
+                    for phase in phases:
+                        pid += 1
+                        await _push_and_wait(
+                            s,
+                            {
+                                "type": "pattern",
+                                "pattern_id": pid,
+                                "freq": int(period),
+                                "phase": float(phase),
+                                "orientation": orientation,
+                                "gamma": float(body.gamma),
+                            },
+                        )
+                        # Average multiple captures to reduce random noise
+                        accum = None
+                        for _avg in range(body.averages):
+                            frame = camera.get_frame()
+                            if frame is None:
+                                raise HTTPException(
+                                    503, detail="Camera returned no frame"
+                                )
+                            f = frame.astype(np.float64)
+                            accum = f if accum is None else accum + f
+                            if _avg < body.averages - 1:
+                                await asyncio.sleep(0.05)
+                        s.frames.append((accum / body.averages).astype(np.uint8))
 
         # Return iPad to centering pattern
         if s.ws is not None:
             await s.ws.send_json({"type": "centering"})
 
-        return {"captured_count": len(s.frames)}
+        return {
+            "captured_count": len(s.frames),
+            "capture_style": s.capture_style,
+            "periods": list(s.periods),
+        }
 
     @router.post("/deflectometry/compute", dependencies=[Depends(_reject_hosted)])
     async def deflectometry_compute(body: ComputeBody = ComputeBody()):  # noqa: B008
         s = _current()
-        if s is None or len(s.frames) < 16:
-            have = 0 if s is None else len(s.frames)
+        if s is None:
+            raise HTTPException(400, detail="No active deflectometry session")
+        expected_frames = (
+            16 * len(s.periods) if s.capture_style == "multi_freq" else 16
+        )
+        if len(s.frames) < expected_frames:
             raise HTTPException(
                 400,
-                detail=f"Need 16 captured frames before compute (have {have})",
+                detail=(
+                    f"Need {expected_frames} captured frames before compute "
+                    f"(have {len(s.frames)}, capture_style={s.capture_style})"
+                ),
             )
 
-        unw_x, unw_y, frames_x, frames_y = _compute_unwrapped(s, smooth_sigma=body.smooth_sigma)
+        (
+            unw_x, unw_y, frames_x, frames_y,
+            cons_x, cons_y, wraps_x_per_period, wraps_y_per_period,
+        ) = _compute_unwrapped(s, smooth_sigma=body.smooth_sigma)
 
         # Reference subtraction
         has_reference = False
@@ -528,10 +725,20 @@ def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
                 unw_y = unw_y - s.ref_phase_y
                 has_reference = True
 
-        # Modulation-based masking
+        # Modulation-based masking (uses finest-period frames)
         mod_x = compute_modulation(frames_x)
         mod_y = compute_modulation(frames_y)
-        mask = create_modulation_mask(mod_x, mod_y, threshold_frac=body.mask_threshold)
+        modulation_mask = create_modulation_mask(
+            mod_x, mod_y, threshold_frac=body.mask_threshold
+        )
+
+        # Combine X and Y consistency into a single worst-case map.
+        phase_consistency = np.minimum(cons_x, cons_y)
+
+        # Base trusted mask is modulation ∩ (consistency ≥ threshold).
+        # For fast captures consistency is all-ones so this collapses to modulation.
+        consistency_ok = phase_consistency >= DEFAULT_CONSISTENCY_THRESHOLD
+        mask = modulation_mask & consistency_ok
 
         # Intersect with user-drawn mask if provided
         if body.mask_polygons:
@@ -552,6 +759,28 @@ def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
         quality = compute_quality_summary(
             unw_x, unw_y, mask, mod_x, mod_y, frames_x, frames_y,
         )
+
+        # ── Unwrap-jump risk indicator ──────────────────────────────────
+        if s.capture_style == "multi_freq":
+            if modulation_mask.any():
+                bad = (phase_consistency < DEFAULT_CONSISTENCY_THRESHOLD) & modulation_mask
+                bad_frac = float(bad.sum()) / float(modulation_mask.sum())
+            else:
+                bad_frac = 0.0
+            if bad_frac > 0.05:
+                unwrap_jump_risk = "high"
+            elif bad_frac > 0.01:
+                unwrap_jump_risk = "medium"
+            else:
+                unwrap_jump_risk = "low"
+            if unwrap_jump_risk == "high":
+                quality.setdefault("warnings", []).append(
+                    f"{bad_frac*100:.1f}% of in-mask pixels show phase "
+                    f"inconsistency across periods — unwrap errors likely."
+                )
+        else:
+            unwrap_jump_risk = "unknown"
+        quality["unwrap_jump_risk"] = unwrap_jump_risk
 
         result = {
             "phase_x_png_b64": pseudocolor_png_b64(unw_x, mask=mask),
@@ -574,6 +803,7 @@ def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
         s._last_mask = mask
 
         # ── Phase 0: build the DeflectometryResult envelope ─────────────
+        style_tag = "fast" if s.capture_style == "fast" else "multi_freq"
         calibration_snapshot = {
             "cal_factor": s.cal_factor,
             "has_flat_field": s.flat_white is not None,
@@ -592,7 +822,8 @@ def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
             "freq": s.freq,
             "smooth_sigma": body.smooth_sigma,
             "mask_threshold": body.mask_threshold,
-            "capture_style": "single_freq",
+            "capture_style": style_tag,
+            "periods": list(s.periods),
         }
         aperture_recipe = {
             "mask_threshold": body.mask_threshold,
@@ -614,6 +845,11 @@ def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
         envelope["trusted_mask_grid"] = mask
         envelope["display_phase_x_grid"] = unw_x
         envelope["display_phase_y_grid"] = unw_y
+        # ── Phase 2 / Track 1 additions ─────────────────────────────────
+        envelope["phase_consistency_grid"] = phase_consistency
+        envelope["phase_x_grid_per_period"] = list(wraps_x_per_period)
+        envelope["phase_y_grid_per_period"] = list(wraps_y_per_period)
+        envelope["periods_used"] = list(s.periods)
 
         wrap_deflectometry_result(
             envelope,
@@ -654,12 +890,18 @@ def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
         unw_y = s._last_unw_y
         # Recompute mask with the requested threshold so the 3D view
         # respects the slider value even if it differs from the last compute.
-        if len(s.frames) >= 16:
+        # For multi_freq captures the modulation must come from the finest
+        # period (the last block of 16 frames), which is what compute uses.
+        if s.capture_style == "multi_freq":
+            base = 16 * (len(s.periods) - 1)
+        else:
+            base = 0
+        if len(s.frames) >= base + 16:
             def _to_gray(f):
                 arr = np.asarray(f, dtype=np.float64)
                 return arr.mean(axis=-1) if arr.ndim == 3 else arr
-            frames_x = [_to_gray(f) for f in s.frames[:8]]
-            frames_y = [_to_gray(f) for f in s.frames[8:16]]
+            frames_x = [_to_gray(f) for f in s.frames[base:base + 8]]
+            frames_y = [_to_gray(f) for f in s.frames[base + 8:base + 16]]
             if s.flat_white is not None and s.flat_black is not None:
                 white = _to_gray(s.flat_white)
                 black = _to_gray(s.flat_black)
@@ -786,8 +1028,13 @@ def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
         if len(s.frames) < 16:
             raise HTTPException(400, detail="Capture frames first (need at least 16)")
 
-        # Use the first X-fringe frame (index 0), converted to grayscale
-        frame = np.asarray(s.frames[0], dtype=np.float64)
+        # Pick the first X-fringe frame at the finest period (this matches
+        # s.freq, which represents the finest period in multi_freq mode).
+        if s.capture_style == "multi_freq":
+            base = 16 * (len(s.periods) - 1)
+        else:
+            base = 0
+        frame = np.asarray(s.frames[base], dtype=np.float64)
         if frame.ndim == 3:
             frame = frame.mean(axis=-1)
 
@@ -890,9 +1137,21 @@ def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
         """
         import os
         s = _current()
-        if s is None or len(s.frames) < 16:
-            have = 0 if s is None else len(s.frames)
-            raise HTTPException(400, detail=f"Need 16 frames (have {have})")
+        if s is None:
+            raise HTTPException(400, detail="No active deflectometry session")
+        expected = 16 * len(s.periods) if s.capture_style == "multi_freq" else 16
+        if len(s.frames) < expected:
+            raise HTTPException(
+                400,
+                detail=f"Need {expected} frames (have {len(s.frames)})",
+            )
+
+        # For multi_freq, diagnostics inspect the finest-period block, which
+        # is what /compute uses for modulation and the final wrapped phase.
+        if s.capture_style == "multi_freq":
+            base = 16 * (len(s.periods) - 1)
+        else:
+            base = 0
 
         out_dir = os.path.join(os.path.dirname(__file__), "..", "poc_output", "deflectometry")
         os.makedirs(out_dir, exist_ok=True)
@@ -901,9 +1160,9 @@ def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
             arr = np.asarray(f, dtype=np.float64)
             return arr.mean(axis=-1) if arr.ndim == 3 else arr
 
-        # Save raw frames as PNGs
+        # Save raw frames as PNGs (from the finest-period block)
         frame_stats = []
-        for i, f in enumerate(s.frames[:16]):
+        for i, f in enumerate(s.frames[base:base + 16]):
             orientation = "x" if i < 8 else "y"
             phase_idx = i % 8
             fname = f"frame_{orientation}_{phase_idx}.png"
@@ -918,8 +1177,8 @@ def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
                 "std": float(gray.std()),
             })
 
-        frames_x = [_to_gray(f) for f in s.frames[:8]]
-        frames_y = [_to_gray(f) for f in s.frames[8:16]]
+        frames_x = [_to_gray(f) for f in s.frames[base:base + 8]]
+        frames_y = [_to_gray(f) for f in s.frames[base + 8:base + 16]]
 
         # Apply flat-field if available
         if s.flat_white is not None and s.flat_black is not None:

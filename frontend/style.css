@@ -2418,6 +2418,122 @@ body.no-camera .camera-section { display: none; }
   font-variant-numeric: tabular-nums;
 }
 
+/* ── Phase 2 Track 3: Capture-style + trusted-only + quality maps ─── */
+
+.defl-trusted-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border: 1px solid #2a2a2a;
+  border-radius: 3px;
+  background: #131316;
+  font-size: 11px;
+  cursor: pointer;
+  user-select: none;
+  flex-wrap: wrap;
+}
+.defl-trusted-toggle input[type="checkbox"] {
+  margin: 0;
+  cursor: pointer;
+}
+.defl-trusted-toggle:hover {
+  background: #18181c;
+}
+.defl-trusted-hint {
+  flex: 1 0 100%;
+  font-size: 10px;
+  opacity: 0.6;
+  font-variant-numeric: tabular-nums;
+  padding-left: 22px;
+}
+
+.defl-jump-risk-badge {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 3px;
+  border: 1px solid #2a2a2a;
+  background: #18181b;
+  color: #888;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+}
+.defl-jump-risk-badge.defl-jr-low {
+  background: rgba(48, 209, 88, 0.12);
+  border-color: rgba(48, 209, 88, 0.4);
+  color: #4ade80;
+}
+.defl-jump-risk-badge.defl-jr-medium {
+  background: rgba(255, 159, 10, 0.12);
+  border-color: rgba(255, 159, 10, 0.4);
+  color: #fbbf24;
+}
+.defl-jump-risk-badge.defl-jr-high {
+  background: rgba(255, 69, 58, 0.12);
+  border-color: rgba(255, 69, 58, 0.4);
+  color: #f87171;
+}
+.defl-jump-risk-badge.defl-jr-unknown {
+  background: #18181b;
+  border-color: #2a2a2a;
+  color: #888;
+}
+
+.defl-quality-maps {
+  border-top: 1px solid #2a2a2a;
+  padding-top: 10px;
+}
+.defl-quality-maps summary::marker {
+  color: #888;
+}
+.defl-quality-maps-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.defl-qmap-label {
+  font-size: 11px;
+  opacity: 0.8;
+  font-weight: 500;
+  margin-bottom: 4px;
+}
+.defl-qmap-host {
+  display: flex;
+  gap: 6px;
+  background: #0b0b0b;
+  border: 1px solid #2a2a2a;
+  border-radius: 3px;
+  padding: 4px;
+}
+.defl-qmap-host canvas {
+  flex: 1;
+  min-width: 0;
+  max-width: 100%;
+  image-rendering: pixelated;
+  object-fit: contain;
+  display: block;
+  background: #000;
+  width: 100%;
+  height: auto;
+}
+.defl-qmap-cb {
+  width: 28px;
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.defl-qmap-cb .defl-cb-strip {
+  width: 10px;
+}
+.defl-qmap-caption {
+  font-size: 10px;
+  opacity: 0.55;
+  margin-top: 4px;
+  line-height: 1.35;
+}
+
 /* Uncalibrated banner on Height tab */
 .defl-uncal-banner {
   display: flex;

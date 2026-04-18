@@ -21,9 +21,23 @@ const df = {
   // Cached last result so we can re-render on tab switch / cal change
   lastResult: null,
   lastHeightmap: null,
+  // Phase 2 Track 3: full envelope (with numeric grids) fetched lazily
+  // from /deflectometry/result/{id} after compute. Used to recompute
+  // stats under the "trusted pixels only" toggle and to render the
+  // per-pixel quality map overlays.
+  lastEnvelope: null,
+  useTrustedOnly: false,
+  // User-selected capture style. "multi_freq" is the recommended default
+  // (matches backend default); "fast" is the legacy single-period mode.
+  captureStyle: "multi_freq",
   // Tracks which slope tab the user picked so we don't auto-jump
   activeTab: "height",
 };
+
+// Phase 2 Track 3: consistency threshold used by the backend for the
+// "trusted" predicate. Keep in sync with DEFAULT_CONSISTENCY_THRESHOLD in
+// backend/vision/deflectometry.py.
+const TRUSTED_CONSISTENCY_THRESHOLD = 0.7;
 
 const TAB_IDS = ["height", "x_slope", "y_slope", "slope_mag", "curl", "diag"];
 
@@ -147,9 +161,21 @@ function buildWorkspace() {
           <label id="defl-custom-pitch-label" hidden>Pixel pitch (mm)
             <input type="number" id="defl-custom-pitch" min="0.01" max="1" step="0.001" value="0.096" />
           </label>
-          <label>Fringe frequency (cycles)
+          <label>Capture style
+            <select id="defl-capture-style" style="font-size:11px">
+              <option value="multi_freq">Multi-frequency (recommended, ~24s)</option>
+              <option value="fast">Fast single-frequency (~8s)</option>
+            </select>
+          </label>
+          <label id="defl-freq-label">Fringe frequency (cycles)
             <input type="number" id="defl-freq" min="2" max="64" step="1" value="16" />
           </label>
+          <div id="defl-periods-display" style="font-size:11px;opacity:0.7;padding:2px 0" hidden>
+            Periods: 3, 12, 48 cycles
+            <!-- TODO: expose periods editing in UI. Backend accepts a
+                 periods override on capture requests; UI keeps it locked
+                 to the default list for simplicity. -->
+          </div>
           <label>Display gamma
             <input type="number" id="defl-gamma" min="1.0" max="3.0" step="0.1" value="2.2" style="width:65px" />
           </label>
@@ -258,7 +284,10 @@ function buildWorkspace() {
             <div class="defl-tab-panel" id="defl-panel-curl" hidden>
               <div class="defl-empty-state" id="defl-curl-empty">Compute results first.</div>
               <div id="defl-curl-content" hidden class="defl-single-view">
-                <div class="defl-single-label">Curl Residual (phase-units)</div>
+                <div class="defl-single-label" style="display:flex;align-items:center;gap:8px">
+                  <span>Curl Residual (phase-units)</span>
+                  <span class="defl-jump-risk-badge" id="defl-jump-risk-badge" hidden>—</span>
+                </div>
                 <div class="defl-single-img-host">
                   <img id="defl-curl-img" />
                 </div>
@@ -269,6 +298,7 @@ function buildWorkspace() {
                   value indicates the slope field is non-conservative (likely from noise
                   or unmodeled distortion); the integrated height map is suspect there.
                 </div>
+                <div style="font-size:10px;opacity:0.55;margin-top:4px" id="defl-jump-risk-caption" hidden></div>
               </div>
             </div>
 
@@ -304,6 +334,52 @@ function buildWorkspace() {
                     <img id="defl-diag-unw-y" />
                   </div>
                 </div>
+
+                <!-- Phase 2 Track 3: Per-pixel quality maps (from envelope grids) -->
+                <details class="defl-quality-maps" id="defl-quality-maps" open style="margin-top:14px">
+                  <summary style="cursor:pointer;font-size:12px;font-weight:600;opacity:0.8;margin-bottom:8px">
+                    Per-pixel quality maps
+                  </summary>
+                  <div id="defl-quality-maps-empty" style="font-size:11px;opacity:0.55;padding:6px 0">
+                    Compute a capture to populate quality maps.
+                  </div>
+                  <div id="defl-quality-maps-body" hidden>
+                    <div class="defl-quality-maps-grid">
+                      <div>
+                        <div class="defl-qmap-label">Modulation (fringe contrast)</div>
+                        <div class="defl-qmap-host">
+                          <canvas id="defl-qmap-mod"></canvas>
+                          <div class="defl-qmap-cb">
+                            <div class="defl-cb-strip"></div>
+                            <div class="defl-cb-labels" id="defl-qmap-mod-labels">
+                              <span>max</span><span>0</span>
+                            </div>
+                          </div>
+                        </div>
+                        <div class="defl-qmap-caption">min(mod_x, mod_y). Higher = stronger fringe signal.</div>
+                      </div>
+                      <div>
+                        <div class="defl-qmap-label">Phase consistency (multi-freq agreement)</div>
+                        <div class="defl-qmap-host">
+                          <canvas id="defl-qmap-cons"></canvas>
+                          <div class="defl-qmap-cb">
+                            <div class="defl-cb-strip"></div>
+                            <div class="defl-cb-labels">
+                              <span>1.0</span><span>0.0</span>
+                            </div>
+                          </div>
+                        </div>
+                        <div class="defl-qmap-caption">
+                          1.0 = perfect agreement, &lt;0.7 = unreliable.
+                          Fast captures show uniform 1.0 (single-period).
+                        </div>
+                      </div>
+                      <!-- TODO: Standardized-residual map — requires backend to expose
+                           IRLS residuals from fit_sphere_calibration in the envelope.
+                           Not in Track 2's scope. -->
+                    </div>
+                  </div>
+                </details>
               </div>
             </div>
           </div>
@@ -312,6 +388,11 @@ function buildWorkspace() {
           <aside class="defl-quality-sidebar" id="defl-quality-sidebar" hidden>
             <div class="defl-quality-title">Quality Summary</div>
             <div class="defl-quality-overall" id="defl-q-overall">—</div>
+            <label class="defl-trusted-toggle" id="defl-trusted-toggle-wrap" hidden>
+              <input type="checkbox" id="defl-trusted-toggle" />
+              <span>Use trusted pixels only</span>
+              <span class="defl-trusted-hint" id="defl-trusted-hint" hidden>—</span>
+            </label>
             <div class="defl-quality-rows" id="defl-q-rows"></div>
             <details id="defl-q-warnings-details" class="defl-quality-warnings">
               <summary id="defl-q-warnings-summary">No warnings</summary>
@@ -364,6 +445,7 @@ async function saveProfile() {
       freq: getFreq(),
       averages: parseInt(document.getElementById("defl-averages")?.value) || 3,
       gamma: getGamma(),
+      capture_style: df.captureStyle === "fast" ? "fast" : "multi_freq",
     },
     processing: {
       mask_threshold: getMaskThreshold(),
@@ -416,6 +498,13 @@ async function loadSelectedProfile() {
     if (freqEl) freqEl.value = p.capture?.freq ?? 16;
     const gammaEl = document.getElementById("defl-gamma");
     if (gammaEl) gammaEl.value = p.capture?.gamma ?? 2.2;
+    // Capture style: older profiles without this field default to multi_freq
+    // (matches the Phase 2 plan decision and backend ProfileCapture default).
+    const style = (p.capture?.capture_style === "fast") ? "fast" : "multi_freq";
+    df.captureStyle = style;
+    const styleEl = document.getElementById("defl-capture-style");
+    if (styleEl) styleEl.value = style;
+    applyCaptureStyleUI();
     const threshEl = document.getElementById("defl-mask-thresh");
     if (threshEl) threshEl.value = Math.round((p.processing?.mask_threshold ?? 0.02) * 100);
     const smoothEl = document.getElementById("defl-smooth");
@@ -610,6 +699,41 @@ function wireEvents() {
     if (b) b.hidden = true;
     df.uncalDismissed = true;
   });
+
+  // Capture style toggle (multi_freq | fast). Drives UI visibility + state.
+  const captureStyleEl = $("defl-capture-style");
+  if (captureStyleEl) {
+    captureStyleEl.value = df.captureStyle;
+    applyCaptureStyleUI();
+    captureStyleEl.addEventListener("change", () => {
+      df.captureStyle = captureStyleEl.value === "fast" ? "fast" : "multi_freq";
+      applyCaptureStyleUI();
+    });
+  }
+
+  // "Use trusted pixels only" toggle (Phase 2 Track 3)
+  const trustedEl = $("defl-trusted-toggle");
+  if (trustedEl) {
+    trustedEl.addEventListener("change", () => {
+      df.useTrustedOnly = !!trustedEl.checked;
+      applyTrustedFilterToDisplays();
+    });
+  }
+}
+
+// Reflect df.captureStyle into the settings panel + action bar.
+function applyCaptureStyleUI() {
+  const style = df.captureStyle === "fast" ? "fast" : "multi_freq";
+  const freqLabel = $("defl-freq-label");
+  const periodsDisplay = $("defl-periods-display");
+  const captureBtn = $("defl-btn-capture");
+  if (freqLabel) freqLabel.hidden = (style !== "fast");
+  if (periodsDisplay) periodsDisplay.hidden = (style === "fast");
+  if (captureBtn) {
+    captureBtn.textContent = (style === "fast")
+      ? "Capture (~8s)"
+      : "Capture (~24s)";
+  }
 }
 
 function getFreq() {
@@ -754,12 +878,17 @@ async function captureReference() {
   const btn = $("defl-btn-ref");
   if (btn) btn.disabled = true;
   const statusEl = $("defl-status-ref");
+  const style = df.captureStyle === "fast" ? "fast" : "multi_freq";
   if (statusEl) statusEl.textContent = "Capturing\u2026";
   try {
     const r = await apiFetch("/deflectometry/capture-reference", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ freq: getFreq(), gamma: getGamma() }),
+      body: JSON.stringify({
+        freq: getFreq(),
+        gamma: getGamma(),
+        capture_style: style,
+      }),
     });
     if (!r.ok) {
       const msg = await r.text();
@@ -778,12 +907,20 @@ async function captureSequence() {
   const btn = $("defl-btn-capture");
   if (btn) btn.disabled = true;
   const statusEl = $("defl-status-capture");
-  if (statusEl) statusEl.textContent = "Capturing 16 frames\u2026";
+  const style = df.captureStyle === "fast" ? "fast" : "multi_freq";
+  // Denominator reflects the capture style: fast=16 frames, multi_freq=48 (3 periods × 16)
+  const totalFrames = (style === "fast") ? 16 : 48;
+  df._lastCaptureTotalFrames = totalFrames;
+  if (statusEl) statusEl.textContent = `Capturing 0 of ${totalFrames}\u2026`;
   try {
     const r = await apiFetch("/deflectometry/capture-sequence", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ freq: getFreq(), gamma: getGamma() }),
+      body: JSON.stringify({
+        freq: getFreq(),
+        gamma: getGamma(),
+        capture_style: style,
+      }),
     });
     if (!r.ok) {
       const msg = await r.text();
@@ -791,7 +928,8 @@ async function captureSequence() {
       return;
     }
     const data = await r.json();
-    if (statusEl) statusEl.textContent = data.captured_count + " frames";
+    const captured = data.captured_count ?? 0;
+    if (statusEl) statusEl.textContent = `${captured} of ${totalFrames} frames`;
   } catch (e) {
     if (statusEl) statusEl.textContent = "Failed: " + (e?.message || e);
   } finally {
@@ -825,11 +963,21 @@ async function compute() {
     const result = await r.json();
     if (statusEl) statusEl.textContent = "Done";
     df.lastResult = result;
+    df.lastEnvelope = null;  // will refetch with grids below
     renderPhaseResult(result);
     // Refresh height views (3D + 2D) if user is on Height tab
     if (df.activeTab === "height") {
       load3dSurface();
     }
+    // Phase 2 Track 3: fetch full envelope (with numeric grids) so the
+    // "trusted pixels only" toggle can recompute stats without another
+    // compute call, and the Diagnostics tab can render quality maps.
+    // We picked this approach (as opposed to a trusted-mask-PNG) because
+    // (a) the grids are already materialised server-side in the envelope
+    // cache, (b) it lets us recompute *per-tab* stats with no additional
+    // round-trip, and (c) it future-proofs for later overlays that need
+    // other grids (slopes, residuals) without more API surface.
+    fetchEnvelopeAsync(result.id).catch(() => {});
   } catch (e) {
     if (statusEl) statusEl.textContent = "Failed: " + (e?.message || e);
   } finally {
@@ -898,6 +1046,22 @@ async function resetSession() {
   if (compStatus) compStatus.textContent = "\u2014";
   df.lastResult = null;
   df.lastHeightmap = null;
+  df.lastEnvelope = null;
+  df.useTrustedOnly = false;
+  const trustedEl = $("defl-trusted-toggle");
+  if (trustedEl) trustedEl.checked = false;
+  const trustedWrap = $("defl-trusted-toggle-wrap");
+  if (trustedWrap) trustedWrap.hidden = true;
+  // Hide quality maps (Diagnostics)
+  const qmBody = $("defl-quality-maps-body");
+  const qmEmpty = $("defl-quality-maps-empty");
+  if (qmBody) qmBody.hidden = true;
+  if (qmEmpty) qmEmpty.hidden = false;
+  // Hide jump-risk badge
+  const jrBadge = $("defl-jump-risk-badge");
+  if (jrBadge) jrBadge.hidden = true;
+  const jrCap = $("defl-jump-risk-caption");
+  if (jrCap) jrCap.hidden = true;
   // Hide all result content; show empty states
   for (const id of TAB_IDS) {
     const c = $("defl-" + id + "-content");
@@ -998,6 +1162,9 @@ function renderPhaseResult(result) {
 
   // Quality sidebar
   renderQualitySidebar(result.quality);
+
+  // Curl tab: unwrap-jump-risk headline badge
+  renderJumpRiskBadge(result.quality);
 }
 
 function renderAxisWarnings(quality) {
@@ -1023,6 +1190,289 @@ function renderAxisWarnings(quality) {
       cWarn.textContent = "\u26a0 " + w;
     }
   }
+}
+
+// ──────── Phase 2 Track 3: envelope fetch + trusted-only stats ────────
+
+async function fetchEnvelopeAsync(resultId) {
+  if (!resultId) return;
+  try {
+    const r = await apiFetch(`/deflectometry/result/${encodeURIComponent(resultId)}`);
+    if (!r.ok) return;
+    const env = await r.json();
+    df.lastEnvelope = env;
+    // Enable the trusted-only toggle now that grids are available
+    const wrap = $("defl-trusted-toggle-wrap");
+    if (wrap) wrap.hidden = false;
+    // Render per-pixel quality maps (Diagnostics tab) if user is there
+    renderQualityMaps(env);
+    // If user has already toggled trusted-only, apply it now
+    if (df.useTrustedOnly) applyTrustedFilterToDisplays();
+  } catch { /* ignore */ }
+}
+
+// Iterate a nested 2D grid (rows of numbers/null), yielding pixels as
+// (value, rowIdx, colIdx). Calls `visit(value, r, c)`; skips null.
+function _iterGrid(grid, visit) {
+  if (!Array.isArray(grid)) return;
+  for (let r = 0; r < grid.length; r++) {
+    const row = grid[r];
+    if (!Array.isArray(row)) continue;
+    for (let c = 0; c < row.length; c++) {
+      const v = row[c];
+      if (v == null) continue;
+      visit(v, r, c);
+    }
+  }
+}
+
+// Compute PV/RMS/mean over a 2D grid (nested arrays, null for NaN),
+// optionally restricted to pixels where trustedMask[r][c] is truthy
+// (1 or true). Returns {pv, rms, mean, count} with NaN when empty.
+function statsFromGrid(grid, trustedMask) {
+  if (!Array.isArray(grid)) return { pv: NaN, rms: NaN, mean: NaN, count: 0 };
+  let n = 0, sum = 0, sumSq = 0, min = Infinity, max = -Infinity;
+  for (let r = 0; r < grid.length; r++) {
+    const row = grid[r];
+    if (!Array.isArray(row)) continue;
+    const mrow = trustedMask ? trustedMask[r] : null;
+    for (let c = 0; c < row.length; c++) {
+      const v = row[c];
+      if (v == null || !Number.isFinite(v)) continue;
+      if (trustedMask) {
+        const m = mrow ? mrow[c] : 0;
+        if (!m) continue;
+      }
+      n += 1;
+      sum += v;
+      sumSq += v * v;
+      if (v < min) min = v;
+      if (v > max) max = v;
+    }
+  }
+  if (n === 0) return { pv: NaN, rms: NaN, mean: NaN, count: 0 };
+  const mean = sum / n;
+  const rms = Math.sqrt(sumSq / n);
+  return { pv: (max - min), rms, mean, count: n };
+}
+
+// Effective coverage: fraction of image pixels passing the trusted gate.
+// If useTrusted is false, returns the envelope's original modulation_coverage.
+function effectiveCoverage(envelope, useTrusted) {
+  if (!envelope) return null;
+  if (!useTrusted) {
+    const q = envelope.quality || {};
+    return Number.isFinite(q.modulation_coverage) ? q.modulation_coverage : null;
+  }
+  const mask = envelope.trusted_mask_grid;
+  if (!Array.isArray(mask)) return null;
+  let total = 0, trusted = 0;
+  for (let r = 0; r < mask.length; r++) {
+    const row = mask[r];
+    if (!Array.isArray(row)) continue;
+    for (let c = 0; c < row.length; c++) {
+      total += 1;
+      if (row[c]) trusted += 1;
+    }
+  }
+  return total > 0 ? (trusted / total) * 100 : null;
+}
+
+// Recompute stats for each tab and the quality sidebar, either using all
+// valid pixels (useTrusted=false) or only trusted pixels (true).
+function recomputeStatsWithTrustedMask(envelope, useTrusted) {
+  if (!envelope) return;
+  const mask = useTrusted ? envelope.trusted_mask_grid : null;
+
+  const statsPhaseX = statsFromGrid(envelope.phase_x_grid, mask);
+  const statsPhaseY = statsFromGrid(envelope.phase_y_grid, mask);
+  // slope_mag and curl aren't shipped as grids in the envelope today (only
+  // the slope_x/slope_y aliases are). Best-effort: derive |∇phase| from
+  // phase_x_grid, phase_y_grid (these alias slopes in Phase 0/1/2 until the
+  // geometric solver lands in Phase 4). For now, keep the server-computed
+  // all-pixel slope/curl stats when useTrusted=false and blank them when
+  // we don't have the numeric grid — this is honest about scope.
+  // TODO (Phase 4): surface slope_mag_grid + curl_grid in the envelope so
+  // these tabs get trusted-only stats too.
+
+  // Update DOM text blocks (preserve original "—" format on NaN).
+  const pre = (id, s) => {
+    const el = $(id);
+    if (!el) return;
+    el.textContent = formatSlopeStats(s);
+  };
+  pre("defl-phase-x-stats", statsPhaseX);
+  pre("defl-phase-y-stats", statsPhaseY);
+  // slope_mag / curl: if we don't recompute, keep the server values visible
+  // via df.lastResult. Those were already rendered by renderPhaseResult.
+
+  // Quality sidebar: patch coverage row when trusted-only is on.
+  const covEl = document.querySelector("#defl-q-rows .defl-q-row");
+  if (covEl) {
+    const cov = effectiveCoverage(envelope, useTrusted);
+    const label = useTrusted ? "Effective coverage (trusted)" : "Modulation coverage";
+    const covCls = (cov != null && cov < 50) ? "warn" : ((cov != null && cov >= 70) ? "ok" : "");
+    covEl.className = "defl-q-row " + covCls;
+    covEl.innerHTML = `<span>${label}</span><span>${cov != null ? cov.toFixed(1) + "%" : "\u2014"}</span>`;
+  }
+
+  // Hint under the toggle
+  const hint = $("defl-trusted-hint");
+  if (hint) {
+    const covRaw = envelope?.quality?.modulation_coverage;
+    const covEff = effectiveCoverage(envelope, true);
+    if (useTrusted && Number.isFinite(covRaw) && Number.isFinite(covEff)) {
+      hint.hidden = false;
+      hint.textContent = `(${covEff.toFixed(0)}% vs ${covRaw.toFixed(0)}% of all pixels)`;
+    } else {
+      hint.hidden = true;
+      hint.textContent = "";
+    }
+  }
+}
+
+function applyTrustedFilterToDisplays() {
+  if (!df.lastEnvelope) {
+    // No grids yet — fall back to all-pixel rendering from last result
+    if (df.lastResult) renderPhaseResult(df.lastResult);
+    return;
+  }
+  recomputeStatsWithTrustedMask(df.lastEnvelope, df.useTrustedOnly);
+}
+
+// ──────── Per-pixel quality map overlays (Diagnostics tab) ────────
+
+function renderQualityMaps(envelope) {
+  const body = $("defl-quality-maps-body");
+  const empty = $("defl-quality-maps-empty");
+  if (!body || !empty) return;
+  if (!envelope) {
+    body.hidden = true;
+    empty.hidden = false;
+    return;
+  }
+  body.hidden = false;
+  empty.hidden = true;
+
+  // Modulation = min(mod_x, mod_y) element-wise
+  const modX = envelope.modulation_x_grid;
+  const modY = envelope.modulation_y_grid;
+  const cons = envelope.phase_consistency_grid;
+
+  if (Array.isArray(modX) && Array.isArray(modY)) {
+    renderGridToCanvas(
+      "defl-qmap-mod",
+      combineMinGrid(modX, modY),
+      { autoRange: true, labelsId: "defl-qmap-mod-labels" },
+    );
+  }
+  if (Array.isArray(cons)) {
+    renderGridToCanvas(
+      "defl-qmap-cons",
+      cons,
+      { fixedMin: 0, fixedMax: 1, labelsId: null },
+    );
+  }
+}
+
+function combineMinGrid(a, b) {
+  const h = a.length;
+  const out = new Array(h);
+  for (let r = 0; r < h; r++) {
+    const ra = a[r] || [];
+    const rb = b[r] || [];
+    const w = Math.min(ra.length, rb.length);
+    const row = new Array(w);
+    for (let c = 0; c < w; c++) {
+      const va = ra[c], vb = rb[c];
+      if (va == null || vb == null) { row[c] = null; continue; }
+      row[c] = Math.min(va, vb);
+    }
+    out[r] = row;
+  }
+  return out;
+}
+
+function renderGridToCanvas(canvasId, grid, opts) {
+  const canvas = $(canvasId);
+  if (!canvas || !Array.isArray(grid) || grid.length === 0) return;
+  const h = grid.length;
+  const w = Array.isArray(grid[0]) ? grid[0].length : 0;
+  if (w === 0) return;
+
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext("2d");
+  const img = ctx.createImageData(w, h);
+
+  let vMin, vMax;
+  if (opts.autoRange) {
+    vMin = Infinity; vMax = -Infinity;
+    _iterGrid(grid, (v) => {
+      if (v < vMin) vMin = v;
+      if (v > vMax) vMax = v;
+    });
+    if (!Number.isFinite(vMin)) { vMin = 0; vMax = 1; }
+  } else {
+    vMin = opts.fixedMin ?? 0;
+    vMax = opts.fixedMax ?? 1;
+  }
+  const range = (vMax - vMin) || 1;
+
+  for (let r = 0; r < h; r++) {
+    const row = grid[r] || [];
+    for (let c = 0; c < w; c++) {
+      const v = row[c];
+      const k = (r * w + c) * 4;
+      if (v == null || !Number.isFinite(v)) {
+        img.data[k] = 0;
+        img.data[k + 1] = 0;
+        img.data[k + 2] = 0;
+        img.data[k + 3] = 0;
+      } else {
+        const t = (v - vMin) / range;
+        const [rr, gg, bb] = viridis(t);
+        img.data[k] = rr;
+        img.data[k + 1] = gg;
+        img.data[k + 2] = bb;
+        img.data[k + 3] = 255;
+      }
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+
+  if (opts.labelsId) {
+    const labelsEl = $(opts.labelsId);
+    if (labelsEl) {
+      labelsEl.innerHTML = `<span>${vMax.toFixed(1)}</span><span>${vMin.toFixed(1)}</span>`;
+    }
+  }
+}
+
+// ──────── Unwrap-jump-risk badge (Curl tab) ────────
+
+function renderJumpRiskBadge(quality) {
+  const badge = $("defl-jump-risk-badge");
+  const caption = $("defl-jump-risk-caption");
+  if (!badge || !caption) return;
+  const risk = (quality && quality.unwrap_jump_risk) || "unknown";
+  const labels = {
+    low: "Unwrap OK",
+    medium: "Unwrap: some risk",
+    high: "Unwrap: high risk",
+    unknown: "Unwrap: N/A",
+  };
+  const captions = {
+    low: "Multi-freq phases agree across periods — integrated height is trustworthy where modulation is adequate.",
+    medium: "A small fraction of in-mask pixels disagree across periods. Inspect the Phase Consistency map.",
+    high: "Significant fraction of pixels show phase inconsistency — unwrap errors likely. Consider recapturing.",
+    unknown: "Fast (single-period) capture — no consistency signal available. Switch to multi-frequency to diagnose unwrap errors.",
+  };
+  badge.hidden = false;
+  badge.textContent = labels[risk] || risk;
+  badge.className = "defl-jump-risk-badge defl-jr-" + risk;
+  caption.hidden = false;
+  caption.textContent = captions[risk] || "";
 }
 
 function renderQualitySidebar(quality) {
@@ -1419,6 +1869,8 @@ async function runDiagnostics() {
     b64("defl-diag-wrap-y", "wrapped_y_png_b64");
     b64("defl-diag-unw-x", "unwrapped_raw_x_png_b64");
     b64("defl-diag-unw-y", "unwrapped_raw_y_png_b64");
+    // Phase 2 Track 3: render per-pixel quality maps from envelope (if loaded)
+    if (df.lastEnvelope) renderQualityMaps(df.lastEnvelope);
   } catch (e) {
     if (empty) empty.textContent = "Error: " + (e?.message || e);
   }

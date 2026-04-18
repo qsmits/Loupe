@@ -11,6 +11,7 @@ from backend.vision.deflectometry import (
     diverging_png_b64,
     compute_quality_summary,
     build_response_lut,
+    _irls_fit,
 )
 
 def test_generate_fringe_pattern_x_is_sinusoidal():
@@ -440,3 +441,215 @@ def test_display_check_no_corners():
     result = analyze_display_check(img)
     assert result["corners_found"] == 0
     assert result["status"] == "poor"
+
+
+# ---------------------------------------------------------------------------
+# Robust IRLS fit tests
+# ---------------------------------------------------------------------------
+
+def test_irls_recovers_linear_fit_in_presence_of_outliers():
+    """IRLS should recover the clean slope despite ~10% outliers, while
+    unweighted LS would be dragged by them."""
+    rng = np.random.default_rng(42)
+    N = 500
+    x = np.linspace(0, 10, N)
+    y_clean = 2.0 * x + 3.0
+    noise = rng.normal(scale=0.05, size=N)
+    y = y_clean + noise
+    # Inject outliers: 10% of points get a large positive offset
+    n_out = N // 10
+    outlier_idx = rng.choice(N, size=n_out, replace=False)
+    y[outlier_idx] += 20.0
+
+    Phi = np.column_stack([x, np.ones(N)])
+    coeffs_irls, weights, _ = _irls_fit(Phi, y)
+
+    # Plain LS for comparison: should be pulled toward the outliers
+    coeffs_ls, *_ = np.linalg.lstsq(Phi, y, rcond=None)
+
+    # IRLS should be close to the truth (slope=2, intercept=3)
+    assert abs(coeffs_irls[0] - 2.0) < 0.1
+    assert abs(coeffs_irls[1] - 3.0) < 0.2
+    # IRLS should be noticeably closer than plain LS
+    assert abs(coeffs_irls[1] - 3.0) < abs(coeffs_ls[1] - 3.0)
+    # And outliers should carry low weight on average
+    assert weights[outlier_idx].mean() < 0.5
+
+
+def test_irls_matches_lstsq_without_outliers():
+    """With clean Gaussian noise and no outliers, IRLS should match LS
+    within a small tolerance (Tukey gives ~95% Gaussian efficiency)."""
+    rng = np.random.default_rng(0)
+    N = 1000
+    x = np.linspace(-1, 1, N)
+    y = 1.5 * x - 0.3 + rng.normal(scale=0.01, size=N)
+    Phi = np.column_stack([x, np.ones(N)])
+
+    coeffs_irls, _, _ = _irls_fit(Phi, y)
+    coeffs_ls, *_ = np.linalg.lstsq(Phi, y, rcond=None)
+
+    # They won't be identical, but close (Tukey efficiency ~95%)
+    np.testing.assert_allclose(coeffs_irls, coeffs_ls, atol=5e-3)
+
+
+def test_irls_handles_perfect_fit():
+    """Exact linear data with no noise: weights all 1, standardized residuals 0."""
+    N = 50
+    x = np.linspace(0, 1, N)
+    y = 3.0 * x + 2.0
+    Phi = np.column_stack([x, np.ones(N)])
+
+    coeffs, weights, res_std = _irls_fit(Phi, y)
+    np.testing.assert_allclose(coeffs, [3.0, 2.0], atol=1e-10)
+    np.testing.assert_allclose(weights, np.ones(N), atol=1e-12)
+    np.testing.assert_allclose(res_std, np.zeros(N), atol=1e-12)
+
+
+def test_irls_returns_outlier_mask_as_expected():
+    """Injected outliers should receive weights < 0.5; inliers ≥ 0.5."""
+    rng = np.random.default_rng(7)
+    N = 400
+    x = np.linspace(-2, 2, N)
+    y = 0.5 * x + 1.0 + rng.normal(scale=0.02, size=N)
+    # Inject strong outliers at known indices
+    outlier_idx = np.array([10, 50, 100, 150, 200, 250, 300, 350])
+    y[outlier_idx] += 15.0
+
+    Phi = np.column_stack([x, np.ones(N)])
+    _, weights, _ = _irls_fit(Phi, y)
+
+    inlier_mask = np.ones(N, dtype=bool)
+    inlier_mask[outlier_idx] = False
+
+    assert np.all(weights[outlier_idx] < 0.5), (
+        f"Outlier weights too high: {weights[outlier_idx]}"
+    )
+    assert np.median(weights[inlier_mask]) >= 0.5
+
+
+# ---------------------------------------------------------------------------
+# Robust remove_tilt and sphere calibration tests
+# ---------------------------------------------------------------------------
+
+def test_remove_tilt_with_outliers_matches_clean_plane():
+    """Inject outliers into a tilted plane; the robust fit should still
+    recover a near-zero residual plane (LS would leave a residual tilt)."""
+    rng = np.random.default_rng(1)
+    h, w = 32, 64
+    yy, xx = np.mgrid[0:h, 0:w]
+    plane = 0.5 * xx + 0.3 * yy + 10.0
+    data = plane.astype(np.float64).copy()
+
+    # 5% of pixels get a big spike
+    n_pix = h * w
+    n_out = n_pix // 20
+    flat_idx = rng.choice(n_pix, size=n_out, replace=False)
+    flat = data.ravel()
+    flat[flat_idx] += 50.0
+    data = flat.reshape(h, w)
+
+    result = remove_tilt(data)
+    # Mask out the outliers themselves; the remaining pixels should be
+    # ~zero (i.e. the plane was recovered correctly from the inliers).
+    inlier_mask = np.ones(n_pix, dtype=bool)
+    inlier_mask[flat_idx] = False
+    inlier_residuals = result.ravel()[inlier_mask]
+    assert abs(inlier_residuals.mean()) < 0.05
+    assert np.abs(inlier_residuals).max() < 1.0
+
+
+def test_remove_tilt_standardized_residual_map_identifies_outliers():
+    """Injected-outlier pixels should have |r_std| ≥ 1; inliers |r_std| < 1."""
+    rng = np.random.default_rng(2)
+    h, w = 24, 48
+    yy, xx = np.mgrid[0:h, 0:w]
+    plane = 0.2 * xx - 0.1 * yy + 5.0
+    data = plane + rng.normal(scale=0.001, size=plane.shape)
+
+    # Inject outliers at known positions
+    outlier_positions = [(5, 10), (12, 20), (20, 40), (3, 45)]
+    for (r, c) in outlier_positions:
+        data[r, c] += 10.0
+
+    detrended, res_map = remove_tilt(data, return_residual_map=True)
+    assert detrended.shape == (h, w)
+    assert res_map.shape == (h, w)
+
+    # Outliers should have |r_std| ≥ 1
+    for (r, c) in outlier_positions:
+        assert abs(res_map[r, c]) >= 1.0, (
+            f"outlier at ({r},{c}) has |r_std|={abs(res_map[r, c]):.3f}"
+        )
+
+    # At least the vast majority of non-outlier pixels should have |r_std| < 1
+    inlier_mask = np.ones_like(data, dtype=bool)
+    for (r, c) in outlier_positions:
+        inlier_mask[r, c] = False
+    inlier_r = np.abs(res_map[inlier_mask])
+    assert (inlier_r < 1.0).mean() > 0.99
+
+
+def test_remove_tilt_signature_backwards_compatible():
+    """Calling remove_tilt(u) without the new flag returns a single array."""
+    h, w = 16, 32
+    yy, xx = np.mgrid[0:h, 0:w]
+    data = 0.5 * xx + 0.3 * yy + 1.0
+    result = remove_tilt(data)
+    # Must be a bare ndarray (not a tuple)
+    assert isinstance(result, np.ndarray)
+    assert result.shape == (h, w)
+    # And tilt is still removed
+    assert np.ptp(result) < 0.01
+
+
+def test_sphere_calibration_robust_to_outliers():
+    """Robust fit's cal_factor should match clean-fit cal_factor even when
+    5% of pixels are outliers that would drag an LS fit."""
+    R_mm = 25.0
+    px_per_mm = 100.0
+    mm_per_px = 1.0 / px_per_mm
+    h, w = 64, 64
+    y, x = np.mgrid[0:h, 0:w]
+    cx, cy = w / 2.0, h / 2.0
+    x_mm = (x - cx) * mm_per_px
+    y_mm = (y - cy) * mm_per_px
+    z_mm_clean = (x_mm ** 2 + y_mm ** 2) / (2.0 * R_mm)
+
+    clean = fit_sphere_calibration(z_mm_clean, None, R_mm, mm_per_px)
+
+    # Inject outliers
+    rng = np.random.default_rng(3)
+    z_mm_dirty = z_mm_clean.copy()
+    n_pix = h * w
+    n_out = n_pix // 20  # 5%
+    flat = z_mm_dirty.ravel()
+    idx = rng.choice(n_pix, size=n_out, replace=False)
+    flat[idx] += rng.uniform(0.05, 0.2, size=n_out)  # large spikes vs sag scale
+    z_mm_dirty = flat.reshape(h, w)
+
+    dirty = fit_sphere_calibration(z_mm_dirty, None, R_mm, mm_per_px)
+
+    # Robust cal_factor should be close to clean cal_factor
+    assert abs(dirty["cal_factor"] - clean["cal_factor"]) / clean["cal_factor"] < 0.01, (
+        f"robust cal_factor diverged: clean={clean['cal_factor']}, "
+        f"dirty={dirty['cal_factor']}"
+    )
+
+
+def test_sphere_calibration_returns_outlier_fraction():
+    """New fields outlier_fraction and residual_rms_um_robust must be present."""
+    R_mm = 25.0
+    px_per_mm = 100.0
+    mm_per_px = 1.0 / px_per_mm
+    h, w = 32, 32
+    y, x = np.mgrid[0:h, 0:w]
+    cx, cy = w / 2.0, h / 2.0
+    x_mm = (x - cx) * mm_per_px
+    y_mm = (y - cy) * mm_per_px
+    z_mm = (x_mm ** 2 + y_mm ** 2) / (2.0 * R_mm)
+
+    cal = fit_sphere_calibration(z_mm, None, R_mm, mm_per_px)
+    assert "outlier_fraction" in cal
+    assert 0.0 <= cal["outlier_fraction"] <= 1.0
+    assert "residual_rms_um_robust" in cal
+    assert cal["residual_rms_um_robust"] >= 0.0

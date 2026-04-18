@@ -114,23 +114,151 @@ def unwrap_phase(wrapped: np.ndarray, orientation: str) -> np.ndarray:
     return np.unwrap(wrapped, axis=axis)
 
 
-def remove_tilt(unwrapped: np.ndarray) -> np.ndarray:
-    """Subtract the best-fit plane from a 2D phase map.
+def _irls_fit(
+    design_matrix: np.ndarray,
+    target: np.ndarray,
+    max_iter: int = 50,
+    tol: float = 1e-6,
+    c1: float = 4.685,
+    c2: float = 0.6745,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Iteratively reweighted least squares with Tukey bisquare weights.
 
-    Fits z = a*x + b*y + c via least-squares and returns the residual.
-    This removes alignment tilt so the stats and colormap reflect actual
-    surface shape rather than how well the part is levelled.
+    Solves a linear fit ``Phi @ c ≈ y`` that is robust to outliers. Outlier
+    pixels (bright specks, dust, edge clipping, surface defects) receive
+    shrinking weights across iterations and ultimately contribute little to
+    the fitted coefficients, unlike plain LS where a single bright speck can
+    drag the whole fit.
+
+    Algorithm (adapted from Sandia OpenCSP's ``fit_slope_robust_ls``):
+
+        1. Start with uniform weights w_i = 1.
+        2. Solve the weighted normal equations (Φ^T W Φ) c = Φ^T W y.
+        3. Compute residuals r = y - Φ c.
+        4. Standardize residuals by the weighted hat-diagonal leverage and
+           the MAD-based robust scale ``scale = median(|r_adj - median|)/c2``.
+        5. Tukey bisquare weights: w = (1 - (r/(c1·scale))²)² for |r|<c1·scale,
+           else 0.
+        6. Iterate until ``max(|Δweights|) < tol`` or ``max_iter`` reached.
+
+    Parameters
+    ----------
+    design_matrix : (N, k) array.
+    target : (N,) array.
+    max_iter : iteration cap (default 50).
+    tol : convergence tolerance on max(|Δweights|) (default 1e-6).
+    c1 : Tukey bisquare tuning constant (default 4.685, 95% Gaussian efficiency).
+    c2 : MAD-to-σ conversion constant (default 0.6745).
+
+    Returns
+    -------
+    coefficients : (k,) coefficient vector.
+    weights : (N,) final weights in [0, 1]. 0 = outlier, 1 = inlier.
+    standardized_residuals : (N,) residuals divided by (c1·scale). |r|<1 ⇒ inlier,
+        |r|≥1 ⇒ outlier.
+    """
+    Phi = np.asarray(design_matrix, dtype=np.float64)
+    y = np.asarray(target, dtype=np.float64).ravel()
+    if Phi.ndim != 2 or Phi.shape[0] != y.shape[0]:
+        raise ValueError(
+            f"design_matrix shape {Phi.shape} incompatible with target shape {y.shape}"
+        )
+
+    N, k = Phi.shape
+    weights = np.ones(N, dtype=np.float64)
+    coeffs = np.zeros(k, dtype=np.float64)
+    res_std = np.zeros(N, dtype=np.float64)
+
+    for _ in range(max_iter):
+        # Weighted least squares via sqrt-weight scaling (numerically stable).
+        sw = np.sqrt(weights)
+        Aw = Phi * sw[:, None]
+        bw = y * sw
+        AtA = Aw.T @ Aw
+        Atb = Aw.T @ bw
+        try:
+            coeffs = np.linalg.solve(AtA, Atb)
+        except np.linalg.LinAlgError:
+            coeffs, *_ = np.linalg.lstsq(Aw, bw, rcond=None)
+
+        residuals = y - Phi @ coeffs
+
+        # Weighted hat-diagonal H_ii = w_i * phi_i^T (Phi^T W Phi)^{-1} phi_i
+        # We standardize residuals by sqrt(1 - H_ii) so high-leverage points
+        # don't masquerade as inliers just because the fit is pinned to them.
+        try:
+            AtA_inv = np.linalg.inv(AtA)
+            hat_diag = weights * np.einsum("ij,jk,ik->i", Phi, AtA_inv, Phi)
+        except np.linalg.LinAlgError:
+            hat_diag = np.zeros(N, dtype=np.float64)
+
+        one_minus_h = np.maximum(1.0 - hat_diag, 1e-10)
+        res_adj = residuals / np.sqrt(one_minus_h)
+
+        med = np.median(res_adj)
+        scale = np.median(np.abs(res_adj - med)) / c2
+
+        if scale < 1e-12:
+            # Clean fit — all residuals essentially zero
+            weights = np.ones(N, dtype=np.float64)
+            res_std = np.zeros(N, dtype=np.float64)
+            return coeffs, weights, res_std
+
+        res_std = res_adj / (c1 * scale)
+        new_weights = np.where(
+            np.abs(res_std) < 1.0,
+            (1.0 - res_std ** 2) ** 2,
+            0.0,
+        )
+
+        if np.max(np.abs(new_weights - weights)) < tol:
+            weights = new_weights
+            break
+        weights = new_weights
+
+    return coeffs, weights, res_std
+
+
+def remove_tilt(
+    unwrapped: np.ndarray,
+    return_residual_map: bool = False,
+) -> np.ndarray | tuple[np.ndarray, np.ndarray]:
+    """Subtract the best-fit plane (Tukey bisquare IRLS) from a 2D phase map.
+
+    Fits z = a*x + b*y + c via robust iteratively-reweighted least squares
+    and returns the residual. This removes alignment tilt so the stats and
+    colormap reflect actual surface shape rather than how well the part is
+    levelled.
+
+    Pre-2026-04-18 this was plain ``np.linalg.lstsq`` — a single bright
+    scratch, a dust speck, or an edge-clipping artifact could drag the plane
+    fit off the true mean plane. The IRLS version downweights such outliers;
+    surface features no longer bias the tilt correction.
+
+    Parameters
+    ----------
+    unwrapped : 2D phase map.
+    return_residual_map : if True, also return an (H, W) map of standardized
+        residuals from the robust fit. |r| < 1 = pixel consistent with the
+        plane (inlier); |r| ≥ 1 = outlier candidate (surface feature, dust,
+        defect, edge artifact).
+
+    Returns
+    -------
+    If ``return_residual_map`` is False (default): the (H, W) detrended map.
+    If True: tuple ``(detrended, standardized_residual_map)``.
     """
     u = np.asarray(unwrapped, dtype=np.float64)
     h, w = u.shape
     yy, xx = np.mgrid[0:h, 0:w]
-    # Build the (N, 3) design matrix [x, y, 1]
     A = np.column_stack([xx.ravel(), yy.ravel(), np.ones(h * w)])
     z = u.ravel()
-    # Least-squares solve for [a, b, c]
-    coeffs, _, _, _ = np.linalg.lstsq(A, z, rcond=None)
+    coeffs, _weights, res_std = _irls_fit(A, z)
     plane = (coeffs[0] * xx + coeffs[1] * yy + coeffs[2])
-    return u - plane
+    detrended = u - plane
+    if return_residual_map:
+        return detrended, res_std.reshape(h, w)
+    return detrended
 
 
 def compute_modulation(frames: list[np.ndarray]) -> np.ndarray:
@@ -406,13 +534,22 @@ def fit_sphere_calibration(
     sphere_radius_mm : known radius of the calibration sphere.
     mm_per_px : lateral calibration (1 / pixelsPerMm).
 
+    The fit is robust to dust, edge clipping, and surface defects via
+    Tukey bisquare IRLS. Pre-2026-04-18 this was plain least squares, where
+    a single bright speck or edge artifact could drag ``cal_factor`` far
+    from its true value.
+
     Returns
     -------
     dict with keys:
         cal_factor    : multiply any height map by this to get mm.
         cal_factor_um : same, but height map → µm.
         fitted_radius_mm : radius implied by the paraboloid fit (sanity check).
-        residual_rms_um  : RMS of (measured − fitted paraboloid) in µm.
+        residual_rms_um  : RMS of (measured − fitted paraboloid) in µm
+                           (over ALL valid pixels, as before — kept for
+                           backward compatibility).
+        residual_rms_um_robust : RMS over inliers only (weight ≥ 0.5).
+        outlier_fraction : 1 − mean(weights). 0 ⇒ perfect fit, 1 ⇒ all outliers.
         center_px        : (cx, cy) center of fitted paraboloid in pixel coords.
     """
     h, w = height.shape
@@ -430,10 +567,10 @@ def fit_sphere_calibration(
     if zv.size < 6:
         raise ValueError("Too few valid pixels for sphere fit")
 
-    # Fit z = a*x² + b*y² + c*x + d*y + e
+    # Fit z = a*x² + b*y² + c*x + d*y + e via robust IRLS.
     # For a sphere a ≈ b, but we fit independently for robustness.
     A = np.column_stack([xv**2, yv**2, xv, yv, np.ones(len(xv))])
-    coeffs, _, _, _ = np.linalg.lstsq(A, zv, rcond=None)
+    coeffs, fit_weights, _res_std = _irls_fit(A, zv)
     a_x, a_y, b_x, b_y, const = coeffs
 
     # Average curvature (should be nearly equal for a sphere)
@@ -457,6 +594,15 @@ def fit_sphere_calibration(
     residual = (zv - z_fit) * abs(cal_factor) * 1000.0  # → µm
     residual_rms_um = float(np.sqrt(np.mean(residual ** 2)))
 
+    # Robust residual: inliers only (weight ≥ 0.5 → |r_std| ≤ ~0.293)
+    inlier_mask = fit_weights >= 0.5
+    if inlier_mask.any():
+        residual_rms_um_robust = float(np.sqrt(np.mean(residual[inlier_mask] ** 2)))
+    else:
+        residual_rms_um_robust = residual_rms_um
+
+    outlier_fraction = float(1.0 - fit_weights.mean())
+
     # Paraboloid center in pixel coords: x0 = -c/(2a), y0 = -d/(2b)
     cx = -b_x / (2.0 * a_x) if abs(a_x) > 1e-15 else w / 2.0
     cy = -b_y / (2.0 * a_y) if abs(a_y) > 1e-15 else h / 2.0
@@ -466,6 +612,8 @@ def fit_sphere_calibration(
         "cal_factor_um": float(cal_factor * 1000.0),
         "fitted_radius_mm": float(fitted_radius_mm),
         "residual_rms_um": residual_rms_um,
+        "residual_rms_um_robust": residual_rms_um_robust,
+        "outlier_fraction": outlier_fraction,
         "center_px": [float(cx), float(cy)],
         "curvature_x": float(a_x),
         "curvature_y": float(a_y),
@@ -754,6 +902,171 @@ def frankot_chellappa(dzdx: np.ndarray, dzdy: np.ndarray, mask: np.ndarray | Non
 
 
 DEFLECTOMETRY_ORIGINS = ("capture", "averaged", "subtracted")
+
+# ─── Multi-frequency phase unwrapping ───────────────────────────────────
+#
+# "capture_style" controls how many fringe periods a capture sequence
+# records. "fast" records a single period (legacy 16 frames — 2 orientations
+# × 8 phase shifts). "multi_freq" records len(periods) distinct periods
+# (default 3), coarsest to finest, yielding len(periods) * 16 frames, used
+# by ``cascade_unwrap`` to resolve 2π ambiguities that silently corrupt
+# single-frequency unwraps on steep slopes or discontinuities.
+CAPTURE_STYLES = ("fast", "multi_freq")
+DEFAULT_MULTI_FREQ_PERIODS = (3, 12, 48)  # coarsest → finest, cycles/screen
+DEFAULT_FAST_PERIOD = 16  # legacy single-freq fringe count
+# Pixels whose per-period phase predictions disagree by more than this
+# threshold are considered unreliable and dropped from the trusted mask.
+# Tuned empirically against synthetic ramps + real-world noisy captures.
+DEFAULT_CONSISTENCY_THRESHOLD = 0.7
+
+
+def cascade_unwrap(
+    wrapped_per_period: list[np.ndarray],
+    periods: list[int],
+) -> tuple[np.ndarray, np.ndarray]:
+    """Multi-frequency cascade unwrap (Sofast-style, Sandia OpenCSP).
+
+    Given wrapped phases captured at several fringe frequencies (periods),
+    cascade from the coarsest (no π ambiguity across the screen) to the
+    finest (accurate but ambiguous) to recover an absolute, unambiguous
+    screen position per pixel.
+
+    Units
+    -----
+    Unlike Sofast which works in [0, 1] screen-fraction units, this function
+    works in **radians** scaled so that the full screen spans
+    ``2π · periods[-1]``. Concretely, the output equals the unwrapped
+    absolute phase at the finest period (i.e. what a hypothetical
+    infinite-domain ``np.unwrap`` of the finest wrapped phase would produce
+    anchored at an absolute reference). The conversion to screen fraction
+    is ``x_frac = unwrapped / (2π · p_fine)``.
+
+    Degenerate single-period case
+    -----------------------------
+    With a single period, the cascade has no coarser reference — its
+    output is the wrapped phase lifted to ``[0, 2π)`` and scaled by
+    ``p_fine / p``. It does NOT perform spatial unwrapping. Callers that
+    want spatial unwrap for single-period captures should use
+    :func:`unwrap_phase` (np.unwrap) directly. The live pipeline only
+    invokes ``cascade_unwrap`` for ``capture_style="multi_freq"``.
+
+    Parameters
+    ----------
+    wrapped_per_period : list of (H, W) wrapped-phase arrays in [-π, π], one
+        per period. MUST be ordered coarsest → finest (i.e. periods[0] is the
+        smallest fringe count, periods[-1] is the largest).
+    periods : list of positive ints, same length as wrapped_per_period,
+        cycles per screen.
+
+    Returns
+    -------
+    unwrapped : (H, W) float64 — absolute screen position in radians,
+        scaled to the finest period (multiply by screen_width / (2π·p_fine)
+        to get pixel coordinates on the display).
+    consistency : (H, W) float64 in [0, 1] — per-pixel phase agreement
+        across periods. 1.0 = perfect agreement, 0.0 = complete disagreement.
+        For a single period the array is all 1.0 (no cross-check possible).
+
+    Raises
+    ------
+    ValueError
+        If inputs are empty, have mismatched lengths, shapes disagree, or
+        periods are not strictly ascending positive ints.
+
+    Algorithm (Sofast image_processing.py::unwrap_phase, adapted):
+        For each pixel, treating wrapped phases in fractional units:
+            w_i = wrapped_i / (2π · p_i)   # fraction of screen at period i
+            period 0 (coarsest): x_0 = w_0 mod 1
+            period i > 0:
+                f_i = 1 / p_i
+                A   = x_{i-1} - f_i/2
+                wa  = (A + f_i) mod f_i          # expected wrapped fraction
+                x_i = A + ((w_i - wa + f_i) mod f_i)
+        Final x_N is the unwrapped screen fraction; we return it scaled
+        back to radians at the finest period: unwrapped = x_N · 2π · p_N.
+
+    Consistency metric:
+        For each period i > 0, compute the wrapped-phase residual between
+        the refined estimate and the raw wrapped phase, taking the shorter
+        arc modulo f_i. Per-pixel agreement = 1 − 2·|residual|/f_i,
+        clamped to [0, 1]. Report the minimum across periods (worst case).
+    """
+    if not wrapped_per_period:
+        raise ValueError("wrapped_per_period must be non-empty")
+    if len(wrapped_per_period) != len(periods):
+        raise ValueError(
+            f"wrapped_per_period ({len(wrapped_per_period)}) and periods "
+            f"({len(periods)}) must have the same length"
+        )
+
+    # Validate periods: strictly ascending positive ints.
+    prev = 0
+    for p in periods:
+        if not isinstance(p, (int, np.integer)):
+            raise ValueError(f"periods must be ints, got {type(p).__name__}")
+        if p <= 0:
+            raise ValueError(f"periods must be positive, got {p}")
+        if p <= prev:
+            raise ValueError(
+                f"periods must be strictly ascending (coarsest → finest), "
+                f"got {list(periods)}"
+            )
+        prev = p
+
+    shape = wrapped_per_period[0].shape
+    for i, w in enumerate(wrapped_per_period):
+        if w.shape != shape:
+            raise ValueError(
+                f"wrapped_per_period[{i}].shape {w.shape} does not match "
+                f"wrapped_per_period[0].shape {shape}"
+            )
+
+    # Convert each wrapped phase (radians, [-π, π]) to screen-fraction in [0, 1).
+    #   fraction = (wrapped mod 2π) / (2π · p)
+    fractions = []
+    for w, p in zip(wrapped_per_period, periods):
+        wf = np.mod(np.asarray(w, dtype=np.float64), 2.0 * np.pi) / (2.0 * np.pi * float(p))
+        fractions.append(wf)
+
+    # Cascade.
+    x = np.copy(fractions[0])
+    agreements: list[np.ndarray] = []
+    for idx in range(1, len(periods)):
+        p = float(periods[idx])
+        f = 1.0 / p
+        w_i = fractions[idx]
+
+        # Prediction wa: coarse estimate x_{i-1} wrapped into [0, f) is what
+        # we would EXPECT the fine-period wrapped phase to read if the coarse
+        # estimate were perfect.
+        wa_pred = np.mod(x, f)
+
+        A = x - f / 2.0
+        # Refined position: snap to w_i inside the half-cycle centred on the
+        # coarse prediction. This is the Sofast formula.
+        x = A + np.mod(w_i - np.mod(A + f, f) + f, f)
+
+        # Consistency: shortest-arc distance between coarse prediction (wa_pred)
+        # and measured fine wrapped fraction (w_i), both in [0, f).
+        # Max shortest-arc is f/2 (antipodal across the period loop).
+        diff = np.abs(wa_pred - w_i)
+        diff = np.minimum(diff, f - diff)
+        # Normalize: 0 → 1 (perfect), f/2 → 0 (maximum disagreement).
+        agreement = np.clip(1.0 - 2.0 * diff / f, 0.0, 1.0)
+        agreements.append(agreement)
+
+    if agreements:
+        # Per-pixel minimum (worst period's agreement).
+        consistency = np.minimum.reduce(agreements)
+    else:
+        consistency = np.ones(shape, dtype=np.float64)
+
+    # Scale back to radians at the finest period so the output lives in
+    # the same frame as np.unwrap would produce.
+    p_fine = float(periods[-1])
+    unwrapped = x * (2.0 * np.pi * p_fine)
+
+    return unwrapped.astype(np.float64), consistency.astype(np.float64)
 
 
 def wrap_deflectometry_result(

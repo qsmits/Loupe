@@ -189,6 +189,10 @@ def _inject_synthetic_frames(client, width: int = 64, height: int = 64, freq: in
             f = generate_fringe_pattern(width, height, phase, freq, orientation)
             frames.append(np.stack([f, f, f], axis=-1))
     s.frames = frames
+    # Legacy 16-frame fixture = fast (single-period) capture style.
+    s.capture_style = "fast"
+    s.periods = (freq,)
+    s.freq = freq
 
 
 def test_compute_endpoint_returns_envelope_metadata(client):
@@ -219,7 +223,7 @@ def test_compute_endpoint_returns_envelope_metadata(client):
     assert isinstance(data["tuning"], dict)
     assert data["tuning"]["smooth_sigma"] == 0.5
     assert data["tuning"]["mask_threshold"] == 0.02
-    assert data["tuning"]["capture_style"] == "single_freq"
+    assert data["tuning"]["capture_style"] == "fast"
     assert isinstance(data["aperture_recipe"], dict)
     assert data["aperture_recipe"]["mask_threshold"] == 0.02
 

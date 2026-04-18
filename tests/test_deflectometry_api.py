@@ -167,6 +167,10 @@ def _inject_synthetic_frames(client, width: int = 64, height: int = 64, freq: in
             # Wrap in a 3-channel array to match real camera output
             frames.append(np.stack([frame, frame, frame], axis=-1))
     s.frames = frames
+    # Legacy 16-frame fixture = fast (single-period) capture.
+    s.capture_style = "fast"
+    s.periods = (freq,)
+    s.freq = freq
 
 
 def test_export_run_returns_structured_json(client):
