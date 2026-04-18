@@ -9,6 +9,7 @@ encoding for the visualization helper.
 from __future__ import annotations
 
 import base64
+import hashlib
 import uuid
 from datetime import datetime, timezone
 
@@ -1112,3 +1113,146 @@ def wrap_deflectometry_result(
             result["warnings"] = []
 
     return result
+
+
+# ---------------------------------------------------------------------------
+# CalibrationSession envelope
+# ---------------------------------------------------------------------------
+
+CALIBRATION_SESSION_SCHEMA_VERSION = 1
+
+
+def _compute_completeness(
+    display_response: dict | None,
+    corner_check: dict | None,
+    sphere_cal: dict | None,
+    reference_flat: dict | None,
+) -> dict:
+    return {
+        "display": display_response is not None,
+        "corner": corner_check is not None,
+        "sphere": sphere_cal is not None,
+        "reference": reference_flat is not None,
+    }
+
+
+def build_calibration_session(
+    *,
+    display_response: dict | None = None,
+    corner_check: dict | None = None,
+    sphere_cal: dict | None = None,
+    reference_flat: dict | None = None,
+    rig_fingerprint: str,
+    notes: str = "",
+    captured_at: str | None = None,
+) -> dict:
+    """Build a CalibrationSession envelope from the 4 cal-step results.
+
+    Each step is optional at build time — the caller may be partway through
+    the wizard. Completeness is checked separately via
+    :func:`is_calibration_session_valid`.
+
+    Fields carried:
+        - ``schema_version``
+        - ``id`` (hex uuid)
+        - ``captured_at`` (ISO-8601 UTC, defaults to now)
+        - ``rig_fingerprint`` (required; caller-supplied)
+        - ``display_response`` — from /deflectometry/calibrate-display, or None
+        - ``corner_check`` — from /deflectometry/check-display, or None
+        - ``sphere_cal`` — from /deflectometry/calibrate-sphere, or None
+        - ``reference_flat`` — small {captured_at, shape:[H, W]} dict, or None.
+          The ref phase arrays themselves stay on the live _Session since
+          they are orientation-specific 2D grids.
+        - ``notes`` — free-form text
+        - ``completeness`` — derived dict of which steps are present
+    """
+    if not rig_fingerprint:
+        raise ValueError("rig_fingerprint is required")
+
+    return {
+        "schema_version": CALIBRATION_SESSION_SCHEMA_VERSION,
+        "id": uuid.uuid4().hex,
+        "captured_at": captured_at or datetime.now(timezone.utc).isoformat(),
+        "rig_fingerprint": rig_fingerprint,
+        "display_response": display_response,
+        "corner_check": corner_check,
+        "sphere_cal": sphere_cal,
+        "reference_flat": reference_flat,
+        "notes": notes,
+        "completeness": _compute_completeness(
+            display_response, corner_check, sphere_cal, reference_flat,
+        ),
+    }
+
+
+def is_calibration_session_valid(
+    session: dict, require_reference: bool = False,
+) -> tuple[bool, list[str]]:
+    """Check whether a CalibrationSession has the minimum required calibrations.
+
+    Returns ``(is_valid, missing_steps)``. A valid session always requires
+    display response + corner check + sphere cal. Reference flat is optional
+    unless ``require_reference=True`` (for reference-subtracted measurements).
+    """
+    missing: list[str] = []
+    # Tolerate sessions that were built without the derived completeness dict
+    # — recompute from the raw fields.
+    completeness = session.get("completeness") or _compute_completeness(
+        session.get("display_response"),
+        session.get("corner_check"),
+        session.get("sphere_cal"),
+        session.get("reference_flat"),
+    )
+    if not completeness.get("display"):
+        missing.append("display")
+    if not completeness.get("corner"):
+        missing.append("corner")
+    if not completeness.get("sphere"):
+        missing.append("sphere")
+    if require_reference and not completeness.get("reference"):
+        missing.append("reference")
+    return (len(missing) == 0, missing)
+
+
+def _round_sig(value: float | None, sig: int = 4) -> float | None:
+    """Round to N significant figures, or return None unchanged.
+
+    Used to make the rig fingerprint tolerant of tiny float drift that can
+    creep in via config round-trips or display-driver reporting noise.
+    """
+    if value is None:
+        return None
+    v = float(value)
+    if v == 0.0 or not np.isfinite(v):
+        return 0.0 if v == 0.0 else v
+    import math as _math
+    digits = sig - int(_math.floor(_math.log10(abs(v)))) - 1
+    return round(v, digits)
+
+
+def compute_rig_fingerprint(
+    *,
+    camera_id: str | None,
+    display_model: str,
+    display_pixel_pitch_mm: float,
+    pixels_per_mm: float | None,
+    screen_distance_mm: float | None = None,
+) -> str:
+    """Deterministic SHA-256 (first 16 hex chars) of the rig inputs.
+
+    Two sessions with the same fingerprint can safely share a
+    CalibrationSession. Floats are rounded to 4 significant digits to
+    tolerate tiny config drift.
+    """
+    payload = {
+        "camera_id": camera_id or "",
+        "display_model": display_model or "",
+        "display_pixel_pitch_mm": _round_sig(display_pixel_pitch_mm, 4),
+        "pixels_per_mm": _round_sig(pixels_per_mm, 4),
+        "screen_distance_mm": _round_sig(screen_distance_mm, 4),
+    }
+    # Stable, order-independent key ordering.
+    import json as _json
+    serialized = _json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    digest = hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+    return digest[:16]

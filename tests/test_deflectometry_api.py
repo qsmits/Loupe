@@ -350,6 +350,68 @@ def test_profiles_delete_nonexistent(client):
     r = client.delete("/deflectometry/profiles/no-such-profile")
     assert r.status_code == 404
 
+
+def test_save_profile_accepts_clean_shape(client):
+    """Round-trip a profile with the post-fix shape: model is a human-readable
+    label and pixel_pitch_mm is the numeric pitch."""
+    profile = {
+        "name": "clean-shape",
+        "display": {"model": "iPad Air 1 (264 ppi)", "pixel_pitch_mm": 0.0962},
+        "capture": {"freq": 16, "averages": 3, "gamma": 2.2,
+                    "capture_style": "multi_freq"},
+        "processing": {"mask_threshold": 0.02, "smooth_sigma": 0.0},
+        "geometry": {"notes": ""},
+        "calibration": {"cal_factor": None, "sphere_diameter_mm": None},
+        "ui": {"default_tab": "height"},
+    }
+    r = client.post("/deflectometry/profiles", json=profile)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["display"]["model"] == "iPad Air 1 (264 ppi)"
+    assert body["display"]["pixel_pitch_mm"] == 0.0962
+    assert body["capture"]["averages"] == 3
+    assert body["capture"]["capture_style"] == "multi_freq"
+
+    # Round-trip via /profiles list.
+    r = client.get("/deflectometry/profiles")
+    assert r.status_code == 200
+    match = next(p for p in r.json() if p["name"] == "clean-shape")
+    assert match["display"]["model"] == "iPad Air 1 (264 ppi)"
+    assert match["display"]["pixel_pitch_mm"] == 0.0962
+    assert match["capture"]["averages"] == 3
+
+
+def test_save_profile_rejects_invalid_pitch(client):
+    """pixel_pitch_mm must be strictly positive — negative values must 422."""
+    profile = {
+        "name": "bad-pitch",
+        "display": {"model": "Custom", "pixel_pitch_mm": -1.0},
+        "capture": {"freq": 16, "averages": 3, "gamma": 2.2},
+        "processing": {"mask_threshold": 0.02, "smooth_sigma": 0.0},
+        "geometry": {"notes": ""},
+        "calibration": {"cal_factor": None, "sphere_diameter_mm": None},
+    }
+    r = client.post("/deflectometry/profiles", json=profile)
+    assert r.status_code == 422, r.text
+
+
+def test_save_profile_forward_compat_accepts_extras(client):
+    """Extra fields in a profile should be ignored, not rejected — lets older
+    clients send new fields (or vice versa) without a 422."""
+    profile = {
+        "name": "with-extras",
+        "display": {"model": "iPad Air 1 (264 ppi)", "pixel_pitch_mm": 0.0962,
+                    "notes": "harmless extra"},
+        "capture": {"freq": 16, "averages": 3, "gamma": 2.2,
+                    "capture_style": "multi_freq"},
+        "processing": {"mask_threshold": 0.02, "smooth_sigma": 0.0},
+        "geometry": {"notes": ""},
+        "calibration": {"cal_factor": None, "sphere_diameter_mm": None},
+        "unknown_top_level": {"foo": "bar"},
+    }
+    r = client.post("/deflectometry/profiles", json=profile)
+    assert r.status_code == 200, r.text
+
 def test_profiles_load_into_session(client):
     client.post("/deflectometry/start", json={})
     profile = {
@@ -440,6 +502,178 @@ def test_check_display_requires_ipad(client):
     r = client.post("/deflectometry/check-display")
     assert r.status_code == 400
     assert "iPad" in r.json()["detail"]
+
+
+class _RecordingFakeWS:
+    """Minimal WebSocket stub that records every outgoing message and
+    auto-acks pattern_id-bearing messages synchronously.
+
+    Matches the pattern used in tests/test_deflectometry_multifreq.py but
+    is bound to a specific session so it can resolve pending_acks.
+    """
+
+    def __init__(self, session):
+        self._session = session
+        self.sent: list[dict] = []
+
+    async def send_json(self, msg):
+        self.sent.append(msg)
+        pid = msg.get("pattern_id")
+        if pid is not None:
+            ev = self._session.pending_acks.get(int(pid))
+            if ev is not None:
+                ev.set()
+
+
+def test_capture_sequence_sends_lut_when_present(client):
+    """When s.inverse_lut is populated, capture-sequence must push a
+    {type: 'lut', inverse_lut: [...]} message BEFORE any pattern message."""
+    import numpy as np
+    client.post("/deflectometry/reset", json={})
+    client.post("/deflectometry/start", json={})
+
+    state = _get_deflectometry_state(client)
+    s = state["session"]
+    # Known LUT: identity for easy verification.
+    s.inverse_lut = np.arange(256, dtype=np.uint8)
+
+    ws = _RecordingFakeWS(s)
+    s.ws = ws
+
+    r = client.post(
+        "/deflectometry/capture-sequence",
+        json={"capture_style": "fast", "freq": 4, "averages": 1},
+    )
+    assert r.status_code == 200, r.text
+
+    # Find the first lut message and the first pattern message
+    lut_idx = next(
+        (i for i, m in enumerate(ws.sent) if m.get("type") == "lut"), None,
+    )
+    pattern_idx = next(
+        (i for i, m in enumerate(ws.sent) if m.get("type") == "pattern"), None,
+    )
+    assert lut_idx is not None, "Expected a {type: 'lut'} message"
+    assert pattern_idx is not None, "Expected at least one pattern message"
+    assert lut_idx < pattern_idx, "LUT must be sent before any pattern"
+
+    lut_msg = ws.sent[lut_idx]
+    assert isinstance(lut_msg["inverse_lut"], list)
+    assert len(lut_msg["inverse_lut"]) == 256
+    assert lut_msg["inverse_lut"][:5] == [0, 1, 2, 3, 4]
+
+
+def test_capture_sequence_sends_lut_clear_when_absent(client):
+    """With no inverse_lut set, capture-sequence sends {type: 'lut_clear'}."""
+    client.post("/deflectometry/reset", json={})
+    client.post("/deflectometry/start", json={})
+
+    state = _get_deflectometry_state(client)
+    s = state["session"]
+    s.inverse_lut = None
+
+    ws = _RecordingFakeWS(s)
+    s.ws = ws
+
+    r = client.post(
+        "/deflectometry/capture-sequence",
+        json={"capture_style": "fast", "freq": 4, "averages": 1},
+    )
+    assert r.status_code == 200, r.text
+
+    clear_msgs = [m for m in ws.sent if m.get("type") == "lut_clear"]
+    assert len(clear_msgs) >= 1, "Expected a lut_clear message"
+    # And no accidental lut messages.
+    assert not any(m.get("type") == "lut" for m in ws.sent)
+
+
+def test_calibrate_display_pushes_lut_to_ipad(client, monkeypatch):
+    """After /calibrate-display completes, the freshly-built LUT should be
+    pushed to the iPad via the WebSocket."""
+    import numpy as np
+    from backend import api_deflectometry as api_defl
+
+    client.post("/deflectometry/reset", json={})
+    client.post("/deflectometry/start", json={})
+
+    state = _get_deflectometry_state(client)
+    s = state["session"]
+
+    ws = _RecordingFakeWS(s)
+    s.ws = ws
+
+    # Stub build_response_lut so we don't depend on camera-returned values.
+    known_lut = (np.linspace(0, 255, 256)).astype(np.uint8)
+
+    def _fake_build(cmd, obs, n=256):
+        return known_lut, known_lut
+
+    monkeypatch.setattr(api_defl, "build_response_lut", _fake_build)
+
+    r = client.post("/deflectometry/calibrate-display")
+    assert r.status_code == 200, r.text
+
+    # The session now has the LUT populated …
+    assert s.inverse_lut is not None
+    np_lut = np.asarray(s.inverse_lut)
+    assert np_lut.shape == (256,)
+
+    # … and a 'lut' message was sent over the WebSocket.
+    lut_msgs = [m for m in ws.sent if m.get("type") == "lut"]
+    assert len(lut_msgs) >= 1, "Expected a lut message after calibrate-display"
+    assert len(lut_msgs[-1]["inverse_lut"]) == 256
+
+
+def test_envelope_records_display_linearization_lut(client):
+    """calibration_snapshot.display_linearization reflects LUT presence."""
+    import numpy as np
+    client.post("/deflectometry/reset", json={})
+    client.post("/deflectometry/start", json={})
+    _inject_synthetic_frames(client)
+
+    state = _get_deflectometry_state(client)
+    s = state["session"]
+    s.inverse_lut = np.arange(256, dtype=np.uint8)
+
+    r = client.post("/deflectometry/compute", json={"mask_threshold": 0.02})
+    assert r.status_code == 200, r.text
+    data = r.json()
+    assert data["calibration_snapshot"]["display_linearization"] == "lut"
+
+
+def test_envelope_records_display_linearization_gamma(client):
+    """With no LUT, display_linearization falls back to 'gamma'."""
+    client.post("/deflectometry/reset", json={})
+    client.post("/deflectometry/start", json={})
+    _inject_synthetic_frames(client)
+
+    state = _get_deflectometry_state(client)
+    s = state["session"]
+    s.inverse_lut = None
+
+    r = client.post("/deflectometry/compute", json={"mask_threshold": 0.02})
+    assert r.status_code == 200, r.text
+    data = r.json()
+    assert data["calibration_snapshot"]["display_linearization"] == "gamma"
+
+
+def test_status_reports_display_linearization(client):
+    """/status exposes display_linearization for the frontend."""
+    import numpy as np
+    client.post("/deflectometry/reset", json={})
+    client.post("/deflectometry/start", json={})
+
+    # Default: no LUT → gamma
+    s1 = client.get("/deflectometry/status").json()
+    assert s1["display_linearization"] == "gamma"
+
+    state = _get_deflectometry_state(client)
+    s = state["session"]
+    s.inverse_lut = np.arange(256, dtype=np.uint8)
+
+    s2 = client.get("/deflectometry/status").json()
+    assert s2["display_linearization"] == "lut"
+    assert s2["has_display_cal"] is True
 
 
 def test_compute_with_mask_polygons(client):

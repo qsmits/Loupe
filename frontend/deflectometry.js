@@ -32,6 +32,11 @@ const df = {
   captureStyle: "multi_freq",
   // Tracks which slope tab the user picked so we don't auto-jump
   activeTab: "height",
+  // Phase 3A Track E: wizard state (cleared when wizard closes)
+  wizardState: null,
+  wizardStep: 1,
+  // Summary of the currently bound CalibrationSession (from /status), or null
+  activeCalSession: null,
 };
 
 // Phase 2 Track 3: consistency threshold used by the backend for the
@@ -98,6 +103,12 @@ function buildWorkspace() {
           <span class="defl-badge" id="defl-badge-cal">Calibration: \u2014</span>
           <span class="defl-badge" id="defl-badge-display-cal">Display: \u2014</span>
         </div>
+        <!-- Phase 3A Track E: active cal session indicator -->
+        <div class="defl-cal-active-badge" id="defl-cal-active-badge" hidden>
+          <span class="defl-cal-check">\u2713</span>
+          <span id="defl-cal-active-label">Calibrated</span>
+          <span style="opacity:0.6;font-size:9px">\u25be</span>
+        </div>
         <div id="defl-display-check-result" style="font-size:11px;margin-top:4px" hidden></div>
         <div class="defl-setting-group" style="margin-top:6px;padding-top:8px;border-top:1px solid var(--border)">
           <div style="font-size:12px;font-weight:600;opacity:0.7">Setup</div>
@@ -118,6 +129,10 @@ function buildWorkspace() {
           <div style="display:flex;gap:4px;margin-top:6px">
             <button class="detect-btn" id="defl-btn-edit-mask" style="padding:4px 8px;font-size:11px">Edit Mask</button>
             <button class="detect-btn" id="defl-btn-clear-mask" style="padding:4px 8px;font-size:11px;opacity:0.6" disabled>Clear Mask</button>
+          </div>
+          <div class="defl-mask-hint" id="defl-mask-hint" hidden>
+            No aperture mask defined \u2014 detection uses the full modulation mask.
+            Use \u201cEdit Mask\u201d to restrict.
           </div>
         </div>
         <div class="defl-setting-group" style="margin-top:6px;padding-top:8px;border-top:1px solid var(--border)">
@@ -151,15 +166,18 @@ function buildWorkspace() {
           </label>
           <label>Display device
             <select id="defl-display-device">
-              <option value="0.0962">iPad Air 1 (264 ppi)</option>
-              <option value="0.0962">iPad Air 2 (264 ppi)</option>
-              <option value="0.0846">iPad Pro 11" (264 ppi)</option>
-              <option value="0.0846">iPad Pro 12.9" (264 ppi)</option>
-              <option value="custom">Custom\u2026</option>
+              <option value="ipad_air_1" data-pitch="0.0962">iPad Air 1 (264 ppi)</option>
+              <option value="ipad_air_2" data-pitch="0.0962">iPad Air 2 (264 ppi)</option>
+              <option value="ipad_pro_11" data-pitch="0.0846">iPad Pro 11" (264 ppi)</option>
+              <option value="ipad_pro_12_9" data-pitch="0.0846">iPad Pro 12.9" (264 ppi)</option>
+              <option value="custom" data-pitch="">Custom\u2026</option>
             </select>
           </label>
           <label id="defl-custom-pitch-label" hidden>Pixel pitch (mm)
             <input type="number" id="defl-custom-pitch" min="0.01" max="1" step="0.001" value="0.096" />
+          </label>
+          <label>Averages per phase step
+            <input type="number" id="defl-averages" min="1" max="10" step="1" value="3" style="width:65px" />
           </label>
           <label>Capture style
             <select id="defl-capture-style" style="font-size:11px">
@@ -186,6 +204,15 @@ function buildWorkspace() {
 
       <!-- Right: action bar + results -->
       <div class="defl-results-col">
+        <!-- Phase 3A Track E: CALIBRATION REQUIRED banner -->
+        <div class="defl-cal-required-banner" id="defl-cal-required-banner" hidden>
+          <div class="defl-cal-banner-text">
+            <span class="defl-cal-banner-title">Calibration required</span>
+            <span>Complete the guided calibration before capturing parts.</span>
+          </div>
+          <button id="defl-btn-start-wizard">Start calibration</button>
+          <button id="defl-btn-load-previous-cal">Load previous\u2026</button>
+        </div>
         <div class="defl-action-bar">
           <button class="detect-btn" id="defl-btn-capture" style="padding:6px 16px;font-size:13px;font-weight:600">Capture Part</button>
           <span class="defl-step-status" id="defl-status-capture" style="font-size:11px;opacity:0.7">\u2014</span>
@@ -401,6 +428,9 @@ function buildWorkspace() {
           </aside>
         </div>
       </div>
+
+      <!-- Phase 3A Track E: Calibration wizard modal host -->
+      <div id="defl-wizard-host"></div>
     </div>
   `;
 
@@ -435,15 +465,31 @@ async function saveProfile() {
   const name = prompt("Profile name:", document.getElementById("defl-profile-select")?.value || "");
   if (!name) return;
   const defaultTab = document.getElementById("defl-default-tab")?.value || "height";
+  // Display: store the option label as model ("iPad Air 1 (264 ppi)", "Custom…",
+  // ...) and the pitch from data-pitch for presets / custom input for Custom.
+  const deviceSel = document.getElementById("defl-display-device");
+  const selOpt = deviceSel?.selectedOptions?.[0];
+  const isCustom = (deviceSel?.value === "custom");
+  let displayModel = "";
+  if (selOpt) displayModel = selOpt.textContent.trim();
+  let pitch = 0.0962;
+  if (isCustom) {
+    const customPitchEl = document.getElementById("defl-custom-pitch");
+    const v = parseFloat(customPitchEl?.value);
+    if (Number.isFinite(v) && v > 0) pitch = v;
+  } else if (selOpt) {
+    const v = parseFloat(selOpt.dataset?.pitch);
+    if (Number.isFinite(v) && v > 0) pitch = v;
+  }
   const profile = {
     name,
     display: {
-      model: document.getElementById("defl-display-device")?.value || "",
-      pixel_pitch_mm: parseFloat(document.getElementById("defl-pixel-pitch")?.value) || 0.0962,
+      model: displayModel,
+      pixel_pitch_mm: pitch,
     },
     capture: {
       freq: getFreq(),
-      averages: parseInt(document.getElementById("defl-averages")?.value) || 3,
+      averages: getAverages(),
       gamma: getGamma(),
       capture_style: df.captureStyle === "fast" ? "fast" : "multi_freq",
     },
@@ -507,12 +553,42 @@ async function loadSelectedProfile() {
     applyCaptureStyleUI();
     const threshEl = document.getElementById("defl-mask-thresh");
     if (threshEl) threshEl.value = Math.round((p.processing?.mask_threshold ?? 0.02) * 100);
+    const maskValEl = document.getElementById("defl-mask-thresh-val");
+    if (maskValEl && threshEl) maskValEl.textContent = threshEl.value + "%";
     const smoothEl = document.getElementById("defl-smooth");
     if (smoothEl) smoothEl.value = p.processing?.smooth_sigma ?? 0;
-    const pitchEl = document.getElementById("defl-pixel-pitch");
-    if (pitchEl) pitchEl.value = p.display?.pixel_pitch_mm ?? 0.0962;
+    const smoothValEl = document.getElementById("defl-smooth-val");
+    if (smoothValEl && smoothEl) smoothValEl.textContent = smoothEl.value;
+    const averagesEl = document.getElementById("defl-averages");
+    if (averagesEl && p.capture?.averages != null) averagesEl.value = p.capture.averages;
+    // Display: match stored model (option label text). If no match, fall back
+    // to "Custom…" and populate the custom pitch input with pixel_pitch_mm.
     const deviceEl = document.getElementById("defl-display-device");
-    if (deviceEl) deviceEl.value = p.display?.model || "";
+    const customLabel = document.getElementById("defl-custom-pitch-label");
+    const customPitchEl = document.getElementById("defl-custom-pitch");
+    if (deviceEl) {
+      const storedModel = (p.display?.model || "").trim();
+      const storedPitch = parseFloat(p.display?.pixel_pitch_mm);
+      let matched = null;
+      if (storedModel) {
+        for (const opt of deviceEl.options) {
+          if (opt.textContent.trim() === storedModel) { matched = opt; break; }
+        }
+      }
+      if (matched) {
+        deviceEl.value = matched.value;
+        if (customLabel) customLabel.hidden = (matched.value !== "custom");
+        if (matched.value === "custom" && customPitchEl && Number.isFinite(storedPitch) && storedPitch > 0) {
+          customPitchEl.value = storedPitch;
+        }
+      } else {
+        deviceEl.value = "custom";
+        if (customLabel) customLabel.hidden = false;
+        if (customPitchEl && Number.isFinite(storedPitch) && storedPitch > 0) {
+          customPitchEl.value = storedPitch;
+        }
+      }
+    }
     const notesEl = document.getElementById("defl-geometry-notes");
     if (notesEl) notesEl.value = p.geometry?.notes || "";
     // UI: default tab. Old profiles without ui field default to "height".
@@ -597,6 +673,8 @@ async function editMask() {
           clearBtn.disabled = polygons.length === 0;
           clearBtn.style.opacity = polygons.length === 0 ? "0.6" : "1";
         }
+        // Phase 3A Track E: refresh aperture hint visibility
+        if (typeof applyCalGating === "function") applyCalGating();
       },
     });
     window.crossMode.source = 'deflectometry';
@@ -616,6 +694,7 @@ function clearMask() {
   drawDeflMaskOverlay();
   const clearBtn = document.getElementById("defl-btn-clear-mask");
   if (clearBtn) { clearBtn.disabled = true; clearBtn.style.opacity = "0.6"; }
+  applyCalGating();
 }
 
 function activateTab(tabId) {
@@ -719,6 +798,19 @@ function wireEvents() {
       applyTrustedFilterToDisplays();
     });
   }
+
+  // Phase 3A Track E: wizard + gating wires
+  $("defl-btn-start-wizard")?.addEventListener("click", () => openWizard());
+  $("defl-btn-load-previous-cal")?.addEventListener("click", () => openCalPicker());
+  $("defl-cal-active-badge")?.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    toggleCalBadgeMenu();
+  });
+  // Click outside to close badge menu
+  document.addEventListener("click", () => {
+    const menu = document.getElementById("defl-cal-active-menu");
+    if (menu) menu.remove();
+  });
 }
 
 // Reflect df.captureStyle into the settings panel + action bar.
@@ -755,6 +847,14 @@ function getGamma() {
 function getMaskThreshold() {
   const el = $("defl-mask-thresh");
   return el ? parseInt(el.value, 10) / 100 : 0.02;
+}
+
+function getAverages() {
+  const el = $("defl-averages");
+  let n = parseInt(el ? el.value : "3", 10);
+  if (!Number.isFinite(n) || n < 1) n = 1;
+  if (n > 10) n = 10;
+  return n;
 }
 
 function getSmoothSigma() {
@@ -887,6 +987,7 @@ async function captureReference() {
       body: JSON.stringify({
         freq: getFreq(),
         gamma: getGamma(),
+        averages: getAverages(),
         capture_style: style,
       }),
     });
@@ -919,6 +1020,7 @@ async function captureSequence() {
       body: JSON.stringify({
         freq: getFreq(),
         gamma: getGamma(),
+        averages: getAverages(),
         capture_style: style,
       }),
     });
@@ -1578,7 +1680,880 @@ async function refreshStatus() {
       const compStatus = $("defl-status-compute");
       if (compStatus) compStatus.textContent = "Done";
     }
+    // Phase 3A Track E: update cal-gating UI from status.active_cal_session
+    df.activeCalSession = d.active_cal_session || null;
+    applyCalGating();
   } catch { /* ignore */ }
+}
+
+// ────── Phase 3A Track E: cal gating, badge, mask hint ──────
+
+function _completenessOk(comp) {
+  if (!comp) return false;
+  return !!(comp.display && comp.corner && comp.sphere);
+}
+
+// Read current rig inputs (display model, pixel pitch, pixels/mm) from
+// the settings panel. Returns the params object suitable for
+// GET /deflectometry/rig-fingerprint.
+function _currentRigParams() {
+  const deviceSel = $("defl-display-device");
+  const selOpt = deviceSel?.selectedOptions?.[0];
+  let displayModel = "";
+  if (selOpt) displayModel = selOpt.textContent.trim();
+  let pitch = 0.0962;
+  if (deviceSel?.value === "custom") {
+    const v = parseFloat($("defl-custom-pitch")?.value);
+    if (Number.isFinite(v) && v > 0) pitch = v;
+  } else if (selOpt) {
+    const v = parseFloat(selOpt.dataset?.pitch);
+    if (Number.isFinite(v) && v > 0) pitch = v;
+  }
+  const ppm = state.calibration?.pixelsPerMm || null;
+  return {
+    display_model: displayModel,
+    pixel_pitch_mm: pitch,
+    pixels_per_mm: ppm,
+  };
+}
+
+function applyCalGating() {
+  const comp = df.activeCalSession?.completeness;
+  const valid = df.activeCalSession && _completenessOk(comp);
+  // Banner visibility
+  const banner = $("defl-cal-required-banner");
+  if (banner) banner.hidden = !!valid;
+  // Capture/reference/compute button gating
+  const captureBtn = $("defl-btn-capture");
+  const refBtn = $("defl-btn-ref");
+  for (const btn of [captureBtn, refBtn]) {
+    if (!btn) continue;
+    btn.disabled = !valid;
+    btn.title = valid ? "" : "Calibration required — complete the wizard first";
+    btn.style.opacity = valid ? "" : "0.5";
+  }
+  // Calibrated badge
+  const badge = $("defl-cal-active-badge");
+  const label = $("defl-cal-active-label");
+  if (badge && label) {
+    if (valid) {
+      badge.hidden = false;
+      const capturedAt = df.activeCalSession.captured_at;
+      label.textContent = "Calibrated " + _relativeTime(capturedAt);
+    } else {
+      badge.hidden = true;
+    }
+  }
+  // Aperture mask hint
+  const hint = $("defl-mask-hint");
+  if (hint) {
+    hint.hidden = !(valid && (!df.maskPolygons || df.maskPolygons.length === 0));
+  }
+}
+
+function _relativeTime(iso) {
+  if (!iso) return "";
+  const then = new Date(iso).getTime();
+  if (!Number.isFinite(then)) return "";
+  const delta = Date.now() - then;
+  if (delta < 60_000) return "just now";
+  const m = Math.round(delta / 60_000);
+  if (m < 60) return `${m} min ago`;
+  const h = Math.round(m / 60);
+  if (h < 48) return `${h} h ago`;
+  const d = Math.round(h / 24);
+  return `${d} days ago`;
+}
+
+function toggleCalBadgeMenu() {
+  const existing = document.getElementById("defl-cal-active-menu");
+  if (existing) { existing.remove(); return; }
+  const badge = $("defl-cal-active-badge");
+  if (!badge) return;
+  const menu = document.createElement("div");
+  menu.id = "defl-cal-active-menu";
+  menu.className = "defl-cal-active-menu";
+  menu.innerHTML = `
+    <button data-action="recal">Re-calibrate\u2026</button>
+    <button data-action="swap">Swap calibration\u2026</button>
+    <button data-action="details">View details</button>
+  `;
+  menu.addEventListener("click", (ev) => {
+    const action = ev.target?.dataset?.action;
+    menu.remove();
+    if (action === "recal") openWizard();
+    else if (action === "swap") openCalPicker();
+    else if (action === "details") showCalDetails();
+  });
+  badge.appendChild(menu);
+}
+
+async function showCalDetails() {
+  const s = df.activeCalSession;
+  if (!s) return;
+  try {
+    const r = await apiFetch(`/deflectometry/calibrations/${encodeURIComponent(s.id)}`);
+    if (!r.ok) { alert("Failed to load calibration details"); return; }
+    const full = await r.json();
+    const sc = full.sphere_cal || {};
+    const dr = full.display_response || {};
+    const cc = full.corner_check || {};
+    const lines = [
+      `ID: ${full.id}`,
+      `Captured: ${full.captured_at}`,
+      `Rig: ${full.rig_fingerprint}`,
+      `Notes: ${full.notes || "(none)"}`,
+      "",
+      `Display response: max deviation from gamma = ${dr.max_deviation_from_gamma ?? "?"}%`,
+      `Corner check: ${cc.corners_found ?? "?"}/4 corners, ${cc.status ?? "?"}`,
+      `Sphere cal: cal_factor = ${sc.cal_factor ?? "?"}, R = ${sc.fitted_radius_mm ?? "?"} mm`,
+      `Reference flat: ${full.reference_flat ? "captured" : "none"}`,
+    ];
+    alert(lines.join("\n"));
+  } catch (e) {
+    alert("Error: " + (e?.message || e));
+  }
+}
+
+// Load previous calibrations for the current rig and let the user pick one
+async function openCalPicker() {
+  const rigParams = _currentRigParams();
+  let fp = null;
+  try {
+    const qs = new URLSearchParams();
+    if (rigParams.display_model) qs.set("display_model", rigParams.display_model);
+    if (rigParams.pixel_pitch_mm) qs.set("pixel_pitch_mm", rigParams.pixel_pitch_mm);
+    if (rigParams.pixels_per_mm) qs.set("pixels_per_mm", rigParams.pixels_per_mm);
+    const fpr = await apiFetch(`/deflectometry/rig-fingerprint?${qs}`);
+    if (fpr.ok) {
+      const fpd = await fpr.json();
+      fp = fpd.rig_fingerprint;
+    }
+  } catch { /* ignore — will list all */ }
+
+  const params = fp ? `?rig_fingerprint=${encodeURIComponent(fp)}` : "";
+  let list = [];
+  try {
+    const r = await apiFetch(`/deflectometry/calibrations${params}`);
+    if (r.ok) list = await r.json();
+  } catch { /* ignore */ }
+
+  // If filtering yielded nothing, offer the unfiltered list as a fallback.
+  if ((!list || list.length === 0) && fp) {
+    try {
+      const r = await apiFetch("/deflectometry/calibrations");
+      if (r.ok) list = await r.json();
+    } catch { /* ignore */ }
+  }
+
+  if (!list || list.length === 0) {
+    alert("No saved calibrations found. Run the calibration wizard to create one.");
+    return;
+  }
+  _showCalPickerModal(list);
+}
+
+function _showCalPickerModal(list) {
+  const host = $("defl-wizard-host");
+  if (!host) return;
+  host.innerHTML = `
+    <div class="defl-wizard-overlay" id="defl-cal-picker-overlay">
+      <div class="defl-wizard-modal" style="width:540px">
+        <div class="defl-wizard-header">
+          <div class="defl-wizard-title">Load previous calibration</div>
+          <button class="defl-wizard-close" id="defl-cal-picker-close">\u00d7</button>
+        </div>
+        <div class="defl-wizard-body">
+          <div class="defl-wizard-explain">Pick a saved calibration to bind as the active session.</div>
+          <div class="defl-cal-picker-list" id="defl-cal-picker-list"></div>
+        </div>
+      </div>
+    </div>
+  `;
+  const ul = $("defl-cal-picker-list");
+  for (const item of list) {
+    const complete = _completenessOk(item.completeness);
+    const row = document.createElement("div");
+    row.className = "defl-cal-picker-item";
+    row.innerHTML = `
+      <span class="defl-cal-picker-id">${(item.id || "").slice(0, 8)}</span>
+      <span class="defl-cal-picker-date">${item.captured_at || "?"}</span>
+      <span class="defl-cal-picker-notes">${item.notes ? item.notes : (complete ? "" : "incomplete")}</span>
+    `;
+    if (!complete) {
+      row.style.opacity = "0.45";
+      row.title = "Incomplete — cannot be bound";
+    } else {
+      row.addEventListener("click", async () => {
+        try {
+          const r = await apiFetch(`/deflectometry/calibrations/bind/${encodeURIComponent(item.id)}`, {
+            method: "POST",
+          });
+          if (!r.ok) {
+            const err = await r.json().catch(() => ({}));
+            alert("Failed to bind: " + (err.detail || r.status));
+            return;
+          }
+          host.innerHTML = "";
+          refreshStatus();
+        } catch (e) {
+          alert("Error: " + (e?.message || e));
+        }
+      });
+    }
+    ul.appendChild(row);
+  }
+  $("defl-cal-picker-close")?.addEventListener("click", () => { host.innerHTML = ""; });
+}
+
+// ────── Phase 3A Track E: calibration wizard ──────
+
+function openWizard() {
+  df.wizardState = {
+    display_response: null,
+    corner_check: null,
+    sphere_cal: null,
+    reference_flat: null,
+    notes: "",
+  };
+  df.wizardStep = 1;
+  renderWizard();
+}
+
+function closeWizard() {
+  const host = $("defl-wizard-host");
+  if (host) host.innerHTML = "";
+  df.wizardState = null;
+  df.wizardStep = 1;
+}
+
+const WIZARD_STEPS = 5;  // 4 data steps + 1 review
+
+function renderWizard() {
+  const host = $("defl-wizard-host");
+  if (!host) return;
+  const step = df.wizardStep;
+  const progress = Math.round(((step - 1) / (WIZARD_STEPS - 1)) * 100);
+  const title = {
+    1: "Display response calibration",
+    2: "Corner check",
+    3: "Sphere calibration",
+    4: "Reference flat (optional)",
+    5: "Review & save",
+  }[step] || "Calibration";
+
+  host.innerHTML = `
+    <div class="defl-wizard-overlay" id="defl-wizard-overlay">
+      <div class="defl-wizard-modal">
+        <div class="defl-wizard-header">
+          <div class="defl-wizard-title">Calibration wizard</div>
+          <div class="defl-wizard-step-label">Step ${step} of ${WIZARD_STEPS}</div>
+          <button class="defl-wizard-close" id="defl-wizard-btn-close">\u00d7</button>
+        </div>
+        <div class="defl-wizard-progress"><div class="defl-wizard-progress-bar" style="width:${progress}%"></div></div>
+        <div class="defl-wizard-body" id="defl-wizard-body">
+          <div class="defl-wizard-step-title">${title}</div>
+          <div id="defl-wizard-step-content"></div>
+        </div>
+        <div class="defl-wizard-footer">
+          <button id="defl-wizard-back" ${step === 1 ? "disabled" : ""}>Back</button>
+          <div class="defl-wizard-spacer"></div>
+          <button id="defl-wizard-skip" hidden>Skip</button>
+          <button id="defl-wizard-next" class="primary" disabled>Next</button>
+        </div>
+      </div>
+    </div>
+  `;
+
+  $("defl-wizard-btn-close")?.addEventListener("click", () => closeWizard());
+  $("defl-wizard-back")?.addEventListener("click", () => {
+    if (df.wizardStep > 1) { df.wizardStep -= 1; renderWizard(); }
+  });
+
+  renderWizardStep(step);
+}
+
+function renderWizardStep(step) {
+  const content = $("defl-wizard-step-content");
+  if (!content) return;
+  if (step === 1) return renderWizardStep1(content);
+  if (step === 2) return renderWizardStep2(content);
+  if (step === 3) return renderWizardStep3(content);
+  if (step === 4) return renderWizardStep4(content);
+  if (step === 5) return renderWizardStep5(content);
+}
+
+function _wizardNext(label, handler, opts = {}) {
+  const btn = $("defl-wizard-next");
+  if (!btn) return;
+  btn.disabled = !!opts.disabled;
+  btn.textContent = label || "Next";
+  btn.onclick = handler;
+}
+
+function _wizardSkip(label, handler) {
+  const btn = $("defl-wizard-skip");
+  if (!btn) return;
+  if (!label) { btn.hidden = true; btn.onclick = null; return; }
+  btn.hidden = false;
+  btn.textContent = label;
+  btn.onclick = handler;
+}
+
+// ── Step 1: Display response calibration ──
+function renderWizardStep1(container) {
+  const prev = df.wizardState.display_response;
+  container.innerHTML = `
+    <div class="defl-wizard-explain">
+      The iPad\u2019s pixel-to-light response is not perfectly gamma 2.2. This step
+      measures the response across 12 grayscale steps and builds a
+      linearization LUT that the iPad applies during fringe display.
+    </div>
+    <div class="defl-wizard-controls">
+      <button class="defl-wizard-big-btn" id="defl-w1-start">${prev ? "Re-run" : "Start"}</button>
+    </div>
+    <div class="defl-wizard-result" id="defl-w1-result" style="display:none"></div>
+  `;
+  if (prev) _renderStep1Result(prev);
+  _wizardNext("Next", () => { df.wizardStep = 2; renderWizard(); }, { disabled: !prev });
+  _wizardSkip(null);
+
+  $("defl-w1-start").addEventListener("click", async () => {
+    const btn = $("defl-w1-start");
+    const resEl = $("defl-w1-result");
+    btn.disabled = true;
+    btn.textContent = "Calibrating\u2026 (12 steps, ~15s)";
+    resEl.style.display = "block";
+    resEl.className = "defl-wizard-result";
+    resEl.textContent = "Sweeping grayscale steps\u2026";
+    try {
+      const r = await apiFetch("/deflectometry/calibrate-display", { method: "POST" });
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({}));
+        resEl.className = "defl-wizard-result err";
+        resEl.textContent = "Failed: " + (err.detail || r.status);
+        btn.disabled = false;
+        btn.textContent = prev ? "Re-run" : "Start";
+        return;
+      }
+      const data = await r.json();
+      df.wizardState.display_response = data;
+      _renderStep1Result(data);
+      _wizardNext("Next", () => { df.wizardStep = 2; renderWizard(); }, { disabled: false });
+      btn.disabled = false;
+      btn.textContent = "Re-run";
+    } catch (e) {
+      resEl.className = "defl-wizard-result err";
+      resEl.textContent = "Error: " + (e?.message || e);
+      btn.disabled = false;
+      btn.textContent = prev ? "Re-run" : "Start";
+    }
+  });
+}
+
+function _renderStep1Result(data) {
+  const el = $("defl-w1-result");
+  if (!el) return;
+  el.style.display = "block";
+  el.className = "defl-wizard-result ok";
+  el.textContent =
+    `\u2713 Display LUT built (${data.n_steps || 12} steps)\n` +
+    `Max deviation from gamma 2.2: ${data.max_deviation_from_gamma}%`;
+}
+
+// ── Step 2: Corner check ──
+function renderWizardStep2(container) {
+  const prev = df.wizardState.corner_check;
+  container.innerHTML = `
+    <div class="defl-wizard-explain">
+      Four corner markers will be projected. We detect them in the camera and
+      check that the display is visible, square, and covering enough of the field.
+    </div>
+    <div class="defl-wizard-controls">
+      <button class="defl-wizard-big-btn" id="defl-w2-start">${prev ? "Re-run" : "Start"}</button>
+    </div>
+    <div class="defl-wizard-result" id="defl-w2-result" style="display:none"></div>
+  `;
+  if (prev) _renderStep2Result(prev);
+  _wizardNext("Next", () => { df.wizardStep = 3; renderWizard(); }, { disabled: !prev });
+  _wizardSkip(null);
+
+  $("defl-w2-start").addEventListener("click", async () => {
+    const btn = $("defl-w2-start");
+    const resEl = $("defl-w2-result");
+    btn.disabled = true;
+    btn.textContent = "Checking\u2026";
+    resEl.style.display = "block";
+    resEl.className = "defl-wizard-result";
+    resEl.textContent = "Projecting corner markers\u2026";
+    try {
+      const r = await apiFetch("/deflectometry/check-display", { method: "POST" });
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({}));
+        resEl.className = "defl-wizard-result err";
+        resEl.textContent = "Failed: " + (err.detail || r.status);
+        btn.disabled = false;
+        btn.textContent = prev ? "Re-run" : "Start";
+        return;
+      }
+      const data = await r.json();
+      df.wizardState.corner_check = data;
+      _renderStep2Result(data);
+      _wizardNext("Next", () => { df.wizardStep = 3; renderWizard(); }, { disabled: false });
+      btn.disabled = false;
+      btn.textContent = "Re-run";
+    } catch (e) {
+      resEl.className = "defl-wizard-result err";
+      resEl.textContent = "Error: " + (e?.message || e);
+      btn.disabled = false;
+      btn.textContent = prev ? "Re-run" : "Start";
+    }
+  });
+}
+
+function _renderStep2Result(data) {
+  const el = $("defl-w2-result");
+  if (!el) return;
+  el.style.display = "block";
+  const statusClass = data.status === "good" ? "ok" : (data.status === "poor" ? "err" : "warn");
+  el.className = "defl-wizard-result " + statusClass;
+  const lines = [];
+  const icon = data.status === "good" ? "\u2713" : (data.status === "poor" ? "\u2717" : "\u26a0");
+  lines.push(`${icon} Status: ${data.status || "unknown"}`);
+  lines.push(`Corners found: ${data.corners_found ?? "?"}/4`);
+  if (Number.isFinite(data.rotation_deg)) lines.push(`Rotation: ${data.rotation_deg.toFixed(2)}\u00b0`);
+  if (Number.isFinite(data.coverage_fraction)) lines.push(`Coverage: ${(data.coverage_fraction * 100).toFixed(0)}%`);
+  if (Array.isArray(data.warnings) && data.warnings.length) {
+    lines.push("");
+    for (const w of data.warnings) lines.push("\u2022 " + w);
+  }
+  el.textContent = lines.join("\n");
+}
+
+// ── Step 3: Sphere calibration ──
+function renderWizardStep3(container) {
+  const prev = df.wizardState.sphere_cal;
+  const curDiam = $("defl-sphere-diam")?.value || "25.0";
+  const curStyle = df.captureStyle === "fast" ? "fast" : "multi_freq";
+  container.innerHTML = `
+    <div class="defl-wizard-explain">
+      Place a sphere of known diameter in the mask area. We capture a measurement,
+      fit a paraboloid, and derive the phase-radian \u2192 mm scale factor.
+      Multi-frequency capture is more reliable for this step.
+    </div>
+    <div class="defl-wizard-controls">
+      <label>Sphere diameter (mm)
+        <input type="number" id="defl-w3-diam" min="0.1" max="500" step="0.1" value="${curDiam}" />
+      </label>
+      <label>Capture style
+        <select id="defl-w3-style">
+          <option value="multi_freq" ${curStyle === "multi_freq" ? "selected" : ""}>Multi-frequency (~24s, recommended)</option>
+          <option value="fast" ${curStyle === "fast" ? "selected" : ""}>Fast (~8s)</option>
+        </select>
+      </label>
+      <button class="defl-wizard-big-btn" id="defl-w3-start">${prev ? "Re-run" : "Capture sphere"}</button>
+      <div style="font-size:11px;opacity:0.55" id="defl-w3-progress"></div>
+    </div>
+    <div class="defl-wizard-result" id="defl-w3-result" style="display:none"></div>
+  `;
+  if (prev) _renderStep3Result(prev);
+  _wizardNext("Next", () => { df.wizardStep = 4; renderWizard(); }, { disabled: !prev });
+  _wizardSkip(null);
+
+  $("defl-w3-start").addEventListener("click", () => _runSphereCal());
+}
+
+async function _runSphereCal() {
+  const btn = $("defl-w3-start");
+  const progEl = $("defl-w3-progress");
+  const resEl = $("defl-w3-result");
+  const diamEl = $("defl-w3-diam");
+  const styleEl = $("defl-w3-style");
+
+  const diam = parseFloat(diamEl?.value);
+  if (!Number.isFinite(diam) || diam <= 0) {
+    resEl.style.display = "block";
+    resEl.className = "defl-wizard-result err";
+    resEl.textContent = "Enter a valid sphere diameter.";
+    return;
+  }
+  const style = styleEl?.value === "fast" ? "fast" : "multi_freq";
+  // pixels/mm — required for cal-sphere. Pull from the main microscope cal.
+  const ppm = state.calibration?.pixelsPerMm;
+  if (!ppm || ppm <= 0) {
+    resEl.style.display = "block";
+    resEl.className = "defl-wizard-result err";
+    resEl.textContent = "Camera pixels/mm calibration is required. Calibrate the microscope first.";
+    return;
+  }
+
+  btn.disabled = true;
+  btn.textContent = "Running\u2026";
+  resEl.style.display = "none";
+  const setProg = (t) => { if (progEl) progEl.textContent = t; };
+  try {
+    // 1) Capture
+    setProg("1/3 Capturing fringes\u2026");
+    const captureR = await apiFetch("/deflectometry/capture-sequence", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        freq: getFreq(),
+        gamma: getGamma(),
+        averages: getAverages(),
+        capture_style: style,
+      }),
+    });
+    if (!captureR.ok) {
+      const msg = await captureR.text();
+      resEl.style.display = "block";
+      resEl.className = "defl-wizard-result err";
+      resEl.textContent = "Capture failed: " + msg;
+      btn.disabled = false; btn.textContent = "Capture sphere";
+      setProg("");
+      return;
+    }
+
+    // 2) Compute
+    setProg("2/3 Computing phases\u2026");
+    const payload = { mask_threshold: getMaskThreshold(), smooth_sigma: getSmoothSigma() };
+    if (df.maskPolygons.length > 0) {
+      payload.mask_polygons = df.maskPolygons.map(p => ({
+        vertices: p.vertices.map(v => [v.x, v.y]),
+        include: p.include,
+      }));
+    }
+    const computeR = await apiFetch("/deflectometry/compute", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!computeR.ok) {
+      const msg = await computeR.text();
+      resEl.style.display = "block";
+      resEl.className = "defl-wizard-result err";
+      resEl.textContent = "Compute failed: " + msg;
+      btn.disabled = false; btn.textContent = "Capture sphere";
+      setProg("");
+      return;
+    }
+    const computeData = await computeR.json();
+    df.lastResult = computeData;
+
+    // 3) Sphere cal
+    setProg("3/3 Fitting sphere\u2026");
+    const sphereR = await apiFetch("/deflectometry/calibrate-sphere", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sphere_diameter_mm: diam, px_per_mm: ppm }),
+    });
+    if (!sphereR.ok) {
+      const msg = await sphereR.text();
+      resEl.style.display = "block";
+      resEl.className = "defl-wizard-result err";
+      resEl.textContent = "Sphere fit failed: " + msg;
+      btn.disabled = false; btn.textContent = "Capture sphere";
+      setProg("");
+      return;
+    }
+    const sphereData = await sphereR.json();
+    // Persist the diameter alongside the result so Review can show it.
+    sphereData.sphere_diameter_mm = diam;
+    sphereData.capture_style = style;
+    df.wizardState.sphere_cal = sphereData;
+
+    setProg("");
+    _renderStep3Result(sphereData);
+    _wizardNext("Next", () => { df.wizardStep = 4; renderWizard(); }, { disabled: false });
+    btn.disabled = false; btn.textContent = "Re-run";
+  } catch (e) {
+    resEl.style.display = "block";
+    resEl.className = "defl-wizard-result err";
+    resEl.textContent = "Error: " + (e?.message || e);
+    btn.disabled = false; btn.textContent = "Capture sphere";
+    setProg("");
+  }
+}
+
+function _renderStep3Result(data) {
+  const el = $("defl-w3-result");
+  if (!el) return;
+  el.style.display = "block";
+  const nominal = data.sphere_diameter_mm ? (data.sphere_diameter_mm / 2.0) : null;
+  const fitted = Number(data.fitted_radius_mm);
+  let cls = "ok";
+  let warn = "";
+  if (nominal && Number.isFinite(fitted)) {
+    const dev = Math.abs(fitted - nominal) / nominal;
+    if (dev > 0.10) {
+      cls = "warn";
+      warn = `\n\u26a0 Fitted radius differs from input by ${(dev * 100).toFixed(0)}% — check mask and re-run.`;
+    }
+  }
+  el.className = "defl-wizard-result " + cls;
+  const lines = [
+    "\u2713 Sphere fit complete",
+    `cal_factor    : ${Number(data.cal_factor).toExponential(4)}`,
+    `cal_factor_\u00b5m : ${Number(data.cal_factor_um).toFixed(4)} \u00b5m/rad`,
+    `fitted R      : ${fitted.toFixed(2)} mm${nominal ? ` (nominal ${nominal.toFixed(2)} mm)` : ""}`,
+    `residual RMS  : ${Number(data.residual_rms_um).toFixed(3)} \u00b5m`,
+    `outlier frac  : ${(Number(data.outlier_fraction) * 100).toFixed(1)}%`,
+  ];
+  el.textContent = lines.join("\n") + warn;
+}
+
+// ── Step 4: Reference flat (optional) ──
+function renderWizardStep4(container) {
+  const prev = df.wizardState.reference_flat;
+  const curStyle = df.wizardState.sphere_cal?.capture_style || df.captureStyle;
+  container.innerHTML = `
+    <div class="defl-wizard-explain">
+      Optionally capture a reference flat to subtract from subsequent
+      measurements. This removes systematic errors at the cost of needing a
+      well-characterized reference part. You can skip this step.
+    </div>
+    <div class="defl-wizard-controls">
+      <button class="defl-wizard-big-btn" id="defl-w4-start">${prev ? "Re-run" : "Capture reference now"}</button>
+    </div>
+    <div class="defl-wizard-result" id="defl-w4-result" style="display:none"></div>
+  `;
+  if (prev) _renderStep4Result(prev);
+  _wizardNext("Next", () => { df.wizardStep = 5; renderWizard(); }, { disabled: false });
+  _wizardSkip("Skip", () => {
+    df.wizardState.reference_flat = null;
+    df.wizardStep = 5; renderWizard();
+  });
+
+  $("defl-w4-start").addEventListener("click", async () => {
+    const btn = $("defl-w4-start");
+    const resEl = $("defl-w4-result");
+    btn.disabled = true;
+    btn.textContent = "Capturing\u2026";
+    resEl.style.display = "block";
+    resEl.className = "defl-wizard-result";
+    resEl.textContent = "Capturing reference fringes\u2026";
+    try {
+      const r = await apiFetch("/deflectometry/capture-reference", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          freq: getFreq(),
+          gamma: getGamma(),
+          averages: getAverages(),
+          capture_style: curStyle,
+        }),
+      });
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({}));
+        resEl.className = "defl-wizard-result err";
+        resEl.textContent = "Failed: " + (err.detail || r.status);
+        btn.disabled = false;
+        btn.textContent = "Capture reference now";
+        return;
+      }
+      const data = await r.json();
+      // Store only small metadata — the big phase arrays stay on _Session.
+      const meta = {
+        captured_at: new Date().toISOString(),
+        capture_style: data.capture_style,
+        periods: data.periods,
+      };
+      df.wizardState.reference_flat = meta;
+      _renderStep4Result(meta);
+      btn.disabled = false;
+      btn.textContent = "Re-run";
+    } catch (e) {
+      resEl.className = "defl-wizard-result err";
+      resEl.textContent = "Error: " + (e?.message || e);
+      btn.disabled = false;
+      btn.textContent = "Capture reference now";
+    }
+  });
+}
+
+function _renderStep4Result(data) {
+  const el = $("defl-w4-result");
+  if (!el) return;
+  el.style.display = "block";
+  el.className = "defl-wizard-result ok";
+  el.textContent =
+    `\u2713 Reference flat captured\n` +
+    `captured_at : ${data.captured_at}\n` +
+    `style       : ${data.capture_style}\n` +
+    (Array.isArray(data.periods) ? `periods     : ${data.periods.join(", ")}` : "");
+}
+
+// ── Step 5: Review & save ──
+function renderWizardStep5(container) {
+  const w = df.wizardState;
+  const items = [
+    {
+      key: "display_response",
+      title: "Display response",
+      detail: w.display_response
+        ? `max deviation ${w.display_response.max_deviation_from_gamma}% (${w.display_response.n_steps || 12} steps)`
+        : "not captured",
+    },
+    {
+      key: "corner_check",
+      title: "Corner check",
+      detail: w.corner_check
+        ? `status: ${w.corner_check.status} — ${w.corner_check.corners_found ?? 0}/4 corners`
+        : "not captured",
+    },
+    {
+      key: "sphere_cal",
+      title: "Sphere calibration",
+      detail: w.sphere_cal
+        ? `cal_factor ${Number(w.sphere_cal.cal_factor).toExponential(3)}, R ${Number(w.sphere_cal.fitted_radius_mm).toFixed(2)} mm`
+        : "not captured",
+    },
+    {
+      key: "reference_flat",
+      title: "Reference flat (optional)",
+      detail: w.reference_flat
+        ? `captured ${w.reference_flat.captured_at}`
+        : "skipped",
+    },
+  ];
+  const itemsHtml = items.map(it => {
+    const has = !!w[it.key];
+    const cls = has ? "ok" : (it.key === "reference_flat" ? "skip" : "skip");
+    const icon = has ? "\u2713" : (it.key === "reference_flat" ? "\u2013" : "\u2717");
+    return `
+      <div class="defl-wizard-review-item ${cls}">
+        <span class="defl-wizard-review-icon">${icon}</span>
+        <div class="defl-wizard-review-body">
+          <div class="defl-wizard-review-title">${it.title}</div>
+          <div class="defl-wizard-review-detail">${it.detail}</div>
+        </div>
+      </div>
+    `;
+  }).join("");
+
+  const requiredOk = !!(w.display_response && w.corner_check && w.sphere_cal);
+
+  container.innerHTML = `
+    <div class="defl-wizard-explain">
+      Review the captured steps. The three required steps (display, corner,
+      sphere) must be present; the reference flat is optional.
+    </div>
+    <div class="defl-wizard-review">${itemsHtml}</div>
+    <label style="display:flex;flex-direction:column;gap:4px;margin-top:6px;font-size:12px">
+      Notes (optional)
+      <textarea id="defl-w5-notes" placeholder="Date, operator, sphere serial, \u2026">${w.notes || ""}</textarea>
+    </label>
+    <div class="defl-wizard-result" id="defl-w5-result" style="display:none"></div>
+  `;
+
+  _wizardSkip(null);
+  _wizardNext("Save & activate", saveWizardSession, { disabled: !requiredOk });
+  if (!requiredOk) {
+    const btn = $("defl-wizard-next");
+    if (btn) btn.title = "Complete steps 1\u20133 before saving.";
+  }
+}
+
+async function saveWizardSession() {
+  const w = df.wizardState;
+  const resEl = $("defl-w5-result");
+  const nextBtn = $("defl-wizard-next");
+  const backBtn = $("defl-wizard-back");
+  const notes = $("defl-w5-notes")?.value || "";
+  w.notes = notes;
+
+  if (nextBtn) { nextBtn.disabled = true; nextBtn.textContent = "Saving\u2026"; }
+  if (backBtn) backBtn.disabled = true;
+  if (resEl) {
+    resEl.style.display = "block";
+    resEl.className = "defl-wizard-result";
+    resEl.textContent = "Building rig fingerprint\u2026";
+  }
+
+  try {
+    // 1) rig fingerprint
+    const params = _currentRigParams();
+    const qs = new URLSearchParams();
+    qs.set("display_model", params.display_model || "");
+    qs.set("pixel_pitch_mm", String(params.pixel_pitch_mm || 0.0962));
+    if (params.pixels_per_mm) qs.set("pixels_per_mm", String(params.pixels_per_mm));
+    const fpr = await apiFetch(`/deflectometry/rig-fingerprint?${qs}`);
+    if (!fpr.ok) {
+      const err = await fpr.json().catch(() => ({}));
+      resEl.className = "defl-wizard-result err";
+      resEl.textContent = "Rig fingerprint failed: " + (err.detail || fpr.status);
+      if (nextBtn) { nextBtn.disabled = false; nextBtn.textContent = "Save & activate"; }
+      if (backBtn) backBtn.disabled = false;
+      return;
+    }
+    const fpd = await fpr.json();
+
+    // 2) save session
+    resEl.textContent = "Saving CalibrationSession\u2026";
+    const saveR = await apiFetch("/deflectometry/calibrations", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        rig_fingerprint: fpd.rig_fingerprint,
+        display_response: w.display_response,
+        corner_check: w.corner_check,
+        sphere_cal: w.sphere_cal,
+        reference_flat: w.reference_flat,
+        notes: w.notes || "",
+      }),
+    });
+    if (!saveR.ok) {
+      const err = await saveR.json().catch(() => ({}));
+      resEl.className = "defl-wizard-result err";
+      resEl.textContent = "Save failed: " + (err.detail || saveR.status);
+      if (nextBtn) { nextBtn.disabled = false; nextBtn.textContent = "Save & activate"; }
+      if (backBtn) backBtn.disabled = false;
+      return;
+    }
+    const saved = await saveR.json();
+
+    // 3) bind
+    resEl.textContent = "Binding as active session\u2026";
+    const bindR = await apiFetch(`/deflectometry/calibrations/bind/${encodeURIComponent(saved.id)}`, {
+      method: "POST",
+    });
+    if (!bindR.ok) {
+      const err = await bindR.json().catch(() => ({}));
+      resEl.className = "defl-wizard-result err";
+      resEl.textContent = "Bind failed: " + (err.detail || bindR.status);
+      if (nextBtn) { nextBtn.disabled = false; nextBtn.textContent = "Save & activate"; }
+      if (backBtn) backBtn.disabled = false;
+      return;
+    }
+
+    resEl.className = "defl-wizard-result ok";
+    resEl.textContent = "\u2713 Calibration saved and active.";
+    closeWizard();
+    _showToast("Calibration saved and active");
+    refreshStatus();
+  } catch (e) {
+    if (resEl) {
+      resEl.className = "defl-wizard-result err";
+      resEl.textContent = "Error: " + (e?.message || e);
+    }
+    if (nextBtn) { nextBtn.disabled = false; nextBtn.textContent = "Save & activate"; }
+    if (backBtn) backBtn.disabled = false;
+  }
+}
+
+function _showToast(msg) {
+  let t = document.getElementById("defl-toast");
+  if (t) t.remove();
+  t = document.createElement("div");
+  t.id = "defl-toast";
+  t.textContent = msg;
+  t.style.cssText = `
+    position:fixed;bottom:24px;left:50%;transform:translateX(-50%);
+    background:#1e40af;color:#fff;padding:8px 16px;border-radius:4px;
+    font-size:13px;z-index:10000;box-shadow:0 4px 14px rgba(0,0,0,0.4);
+  `;
+  document.body.appendChild(t);
+  setTimeout(() => { t?.remove(); }, 2600);
 }
 
 function startPolling() {

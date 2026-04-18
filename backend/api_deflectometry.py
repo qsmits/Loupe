@@ -32,10 +32,13 @@ from fastapi import (
 )
 from pydantic import BaseModel, Field
 
+from . import calibration_store
 from .cameras.base import BaseCamera
 from .vision.mask_utils import rasterize_polygon_mask
 from .vision.deflectometry import (
+    build_calibration_session,
     compute_modulation,
+    compute_rig_fingerprint,
     compute_wrapped_phase,
     create_modulation_mask,
     build_response_lut,
@@ -43,6 +46,7 @@ from .vision.deflectometry import (
     find_optimal_smooth_sigma,
     fit_sphere_calibration,
     frankot_chellappa,
+    is_calibration_session_valid,
     phase_stats,
     pseudocolor_png_b64,
     diverging_png_b64,
@@ -149,6 +153,10 @@ class _Session:
         self.cal_factor: Optional[float] = None  # phase-rad → mm
         self.freq: int = 16  # fringe frequency used during last fast capture
         self.inverse_lut: Optional[np.ndarray] = None  # 256-entry uint8 LUT
+        # Bound CalibrationSession (disk-persisted envelope). Set via the
+        # /deflectometry/calibrations/bind/{id} endpoint after the wizard
+        # completes. None = no cal session bound to this live session.
+        self.active_cal_session_id: Optional[str] = None
         # Serializes capture-sequence so two concurrent runs can't interleave
         self.lock: asyncio.Lock = asyncio.Lock()
 
@@ -246,7 +254,7 @@ class ExportRunBody(BaseModel):
 
 class ProfileDisplay(BaseModel):
     model: str = ""
-    pixel_pitch_mm: float = 0.0962
+    pixel_pitch_mm: float = Field(default=0.0962, gt=0)
 
 class ProfileCapture(BaseModel):
     freq: int = 16
@@ -287,6 +295,15 @@ class LoadProfileBody(BaseModel):
     name: str
 
 
+class SaveCalibrationBody(BaseModel):
+    rig_fingerprint: str
+    display_response: dict | None = None
+    corner_check: dict | None = None
+    sphere_cal: dict | None = None
+    reference_flat: dict | None = None
+    notes: str = ""
+
+
 def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
     router = APIRouter()
     # Single-active-session container; using a dict so nested functions can
@@ -313,6 +330,24 @@ def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
             "ipad_connected": False,
         }
 
+    def _current_cal_session_summary(s: _Session | None) -> dict | None:
+        """Load the currently-bound CalibrationSession and reduce to summary.
+
+        Returns None if no session is bound, or if the bound id is no longer
+        on disk (e.g. it was deleted out from under the live session).
+        """
+        if s is None or s.active_cal_session_id is None:
+            return None
+        loaded = calibration_store.load_calibration_session(s.active_cal_session_id)
+        if loaded is None:
+            return None
+        return {
+            "id": loaded.get("id"),
+            "captured_at": loaded.get("captured_at"),
+            "completeness": loaded.get("completeness"),
+            "rig_fingerprint": loaded.get("rig_fingerprint"),
+        }
+
     @router.get("/deflectometry/status", dependencies=[Depends(_reject_hosted)])
     async def deflectometry_status():
         s = _current()
@@ -324,7 +359,9 @@ def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
                 "has_result": False,
                 "has_flat_field": False,
                 "has_display_cal": False,
+                "display_linearization": "gamma",
                 "last_result": None,
+                "active_cal_session": None,
             }
         return {
             "session_id": s.id,
@@ -333,9 +370,13 @@ def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
             "has_result": s.last_result is not None,
             "has_flat_field": s.flat_white is not None and s.flat_black is not None,
             "has_display_cal": s.inverse_lut is not None,
+            "display_linearization": (
+                "lut" if s.inverse_lut is not None else "gamma"
+            ),
             "has_reference": s.ref_phase_x is not None,
             "cal_factor": s.cal_factor,
             "last_result": s.last_result,
+            "active_cal_session": _current_cal_session_summary(s),
         }
 
     @router.post("/deflectometry/flat-field", dependencies=[Depends(_reject_hosted)])
@@ -536,6 +577,9 @@ def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
         phases = [k * math.pi / 4.0 for k in range(8)]
 
         async with s.lock:
+            # Sync LUT (or lut_clear) to the iPad so the reference capture
+            # uses the same display-linearization path as subsequent runs.
+            await _sync_lut_to_ipad(s)
             ref_frames: list[np.ndarray] = []
             pid = 0
             for period in periods:
@@ -625,6 +669,35 @@ def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
         # Small settle delay for the LCD to stabilize before camera capture
         await asyncio.sleep(settle_s)
 
+    # Reserved pattern_id used for LUT sync messages (both "lut" push and
+    # "lut_clear"). Distinct from the per-frame pattern counter so ack
+    # routing can't collide with a capture frame.
+    _LUT_PATTERN_ID = 7000
+
+    async def _sync_lut_to_ipad(s: _Session, timeout_s: float = 2.0) -> None:
+        """Push the current inverse LUT (or lut_clear) to the iPad.
+
+        If ``s.inverse_lut`` is populated, sends {"type": "lut", "inverse_lut": [...]}
+        and awaits ack. Otherwise sends {"type": "lut_clear"} so a previously
+        configured LUT on the iPad is discarded.
+
+        Safe to call without an iPad attached — silently no-ops.
+        """
+        if s.ws is None:
+            return
+        if s.inverse_lut is not None:
+            lut = np.asarray(s.inverse_lut).astype(int).tolist()
+            payload = {
+                "type": "lut",
+                "pattern_id": _LUT_PATTERN_ID,
+                "inverse_lut": lut,
+            }
+        else:
+            payload = {"type": "lut_clear", "pattern_id": _LUT_PATTERN_ID}
+        # Use a short settle time — the iPad just stores the LUT, there's
+        # nothing to stabilize on screen.
+        await _push_and_wait(s, payload, timeout_s=timeout_s, settle_s=0.0)
+
     @router.post("/deflectometry/capture-sequence", dependencies=[Depends(_reject_hosted)])
     async def deflectometry_capture_sequence(body: CaptureBody):
         # Validate body before checking session / ws state so invalid input
@@ -655,6 +728,10 @@ def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
             s.capture_style = body.capture_style
             s.periods = tuple(periods)
             s.freq = int(periods[-1])  # finest period, for auto-smooth / legacy
+            # Sync the calibrated display LUT (or lut_clear) to the iPad
+            # before the capture loop so every pattern is rendered through
+            # the correct response-linearization path.
+            await _sync_lut_to_ipad(s)
             pid = 0
             for period in periods:
                 for orientation in ("x", "y"):
@@ -809,6 +886,9 @@ def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
             "has_flat_field": s.flat_white is not None,
             "has_reference": s.ref_phase_x is not None,
             "has_display_lut": s.inverse_lut is not None,
+            "display_linearization": (
+                "lut" if s.inverse_lut is not None else "gamma"
+            ),
             "freq": s.freq,
         }
         geometry = {
@@ -1083,6 +1163,16 @@ def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
         fwd, inv = build_response_lut(commanded.astype(np.float64), obs_arr)
         s.inverse_lut = inv
 
+        # Belt-and-suspenders: push the freshly-measured LUT to the iPad
+        # immediately so subsequent captures use it even if the caller
+        # skips capture-sequence's own sync step.
+        try:
+            await _sync_lut_to_ipad(s)
+        except HTTPException:
+            # iPad dropped or ack timed out — the LUT is still persisted
+            # server-side and will be resent on the next capture call.
+            pass
+
         return {
             "status": "ok",
             "n_steps": n_steps,
@@ -1291,6 +1381,120 @@ def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
             s.cal_factor = match["calibration"]["cal_factor"]
         save_config({"deflectometry_active_profile": body.name})
         return match
+
+    # -------------------------------------------------------------------
+    # CalibrationSession endpoints — Phase 3A Track A
+    # -------------------------------------------------------------------
+
+    @router.get("/deflectometry/calibrations", dependencies=[Depends(_reject_hosted)])
+    def list_calibrations(rig_fingerprint: str | None = None):
+        """List saved CalibrationSession summaries, newest first.
+
+        Optional query param ``rig_fingerprint`` filters to sessions whose
+        fingerprint matches.
+        """
+        return calibration_store.list_calibration_sessions(rig_fingerprint)
+
+    @router.get("/deflectometry/calibrations/latest", dependencies=[Depends(_reject_hosted)])
+    def latest_calibration(rig_fingerprint: str):
+        """Return the newest complete-enough session for this rig, or 404."""
+        session = calibration_store.latest_for_rig(rig_fingerprint)
+        if session is None:
+            raise HTTPException(404, detail="No complete CalibrationSession for this rig")
+        return session
+
+    @router.get("/deflectometry/calibrations/{session_id}", dependencies=[Depends(_reject_hosted)])
+    def get_calibration(session_id: str):
+        """Return the full CalibrationSession dict by id, or 404."""
+        session = calibration_store.load_calibration_session(session_id)
+        if session is None:
+            raise HTTPException(404, detail=f"CalibrationSession {session_id!r} not found")
+        return session
+
+    @router.post("/deflectometry/calibrations", dependencies=[Depends(_reject_hosted)])
+    def save_calibration(body: SaveCalibrationBody):
+        """Build + persist a CalibrationSession from the supplied step results."""
+        session = build_calibration_session(
+            display_response=body.display_response,
+            corner_check=body.corner_check,
+            sphere_cal=body.sphere_cal,
+            reference_flat=body.reference_flat,
+            rig_fingerprint=body.rig_fingerprint,
+            notes=body.notes,
+        )
+        calibration_store.save_calibration_session(session)
+        return session
+
+    @router.delete("/deflectometry/calibrations/{session_id}", dependencies=[Depends(_reject_hosted)])
+    def delete_calibration(session_id: str):
+        """Delete a CalibrationSession by id. 404 if missing."""
+        removed = calibration_store.delete_calibration_session(session_id)
+        if not removed:
+            raise HTTPException(404, detail=f"CalibrationSession {session_id!r} not found")
+        # If the deleted session was bound to the live session, unbind it.
+        s = _current()
+        if s is not None and s.active_cal_session_id == session_id:
+            s.active_cal_session_id = None
+        return {"status": "deleted", "id": session_id}
+
+    @router.get("/deflectometry/rig-fingerprint", dependencies=[Depends(_reject_hosted)])
+    def get_current_rig_fingerprint(
+        display_model: str = "",
+        pixel_pitch_mm: float = 0.0962,
+        pixels_per_mm: float | None = None,
+        screen_distance_mm: float | None = None,
+    ):
+        """Return a rig fingerprint for the caller's current rig inputs.
+
+        Includes the active camera device_id if available; callers do not
+        need to pass it.
+        """
+        try:
+            info = camera.get_info() or {}
+            camera_id = info.get("device_id") or info.get("serial")
+        except Exception:
+            camera_id = None
+        fp = compute_rig_fingerprint(
+            camera_id=camera_id,
+            display_model=display_model,
+            display_pixel_pitch_mm=pixel_pitch_mm,
+            pixels_per_mm=pixels_per_mm,
+            screen_distance_mm=screen_distance_mm,
+        )
+        return {"rig_fingerprint": fp}
+
+    @router.post("/deflectometry/calibrations/bind/{session_id}", dependencies=[Depends(_reject_hosted)])
+    def bind_calibration_to_session(session_id: str):
+        """Bind a saved CalibrationSession to the current live _Session.
+
+        Creates a live session on the fly if none exists (the wizard may
+        run before /start was ever called). Returns the bound session
+        summary (same shape as status.active_cal_session).
+        """
+        session = calibration_store.load_calibration_session(session_id)
+        if session is None:
+            raise HTTPException(404, detail=f"CalibrationSession {session_id!r} not found")
+        is_valid, missing = is_calibration_session_valid(session)
+        if not is_valid:
+            raise HTTPException(
+                400,
+                detail=(
+                    f"CalibrationSession {session_id!r} is incomplete; "
+                    f"missing: {', '.join(missing)}"
+                ),
+            )
+        s = _current()
+        if s is None:
+            sid = uuid.uuid4().hex
+            s = _Session(sid)
+            state["session"] = s
+        s.active_cal_session_id = session_id
+        return {
+            "id": session.get("id"),
+            "captured_at": session.get("captured_at"),
+            "completeness": session.get("completeness"),
+            "rig_fingerprint": session.get("rig_fingerprint"),
+        }
 
     @router.websocket("/deflectometry/ws")
     async def deflectometry_ws(websocket: WebSocket):
