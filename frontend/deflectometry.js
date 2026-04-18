@@ -71,14 +71,38 @@ function formatStats(stats, calFactor) {
   return `PV:   ${pv} rad\nRMS:  ${rms} rad\nMean: ${mean} rad`;
 }
 
-// Slope stats stay in radians regardless of cal_factor (per Phase 1 spec —
-// height-cal does not legitimize slope-as-µm-per-pixel until Phase 4).
-function formatSlopeStats(stats) {
+// Phase 4 Wave 3: when slope_method === "geometric", slopes live in mm/mm
+// (dimensionless gradient); display as mrad (×1000). Phase_proxy keeps rad.
+function formatSlopeStats(stats, slopeMethod) {
   if (!stats) return "\u2014";
+  if (slopeMethod === "geometric") {
+    const k = 1000;
+    const pv = Number.isFinite(stats.pv) ? (stats.pv * k).toFixed(3) : "\u2014";
+    const rms = Number.isFinite(stats.rms) ? (stats.rms * k).toFixed(3) : "\u2014";
+    const mean = Number.isFinite(stats.mean) ? (stats.mean * k).toFixed(3) : "\u2014";
+    return `PV:   ${pv} mrad\nRMS:  ${rms} mrad\nMean: ${mean} mrad`;
+  }
   const pv = Number.isFinite(stats.pv) ? stats.pv.toFixed(3) : "\u2014";
   const rms = Number.isFinite(stats.rms) ? stats.rms.toFixed(3) : "\u2014";
   const mean = Number.isFinite(stats.mean) ? stats.mean.toFixed(3) : "\u2014";
   return `PV:   ${pv} rad\nRMS:  ${rms} rad\nMean: ${mean} rad`;
+}
+
+// Phase 4 Wave 3: Height-tab stats for geometric mode. Takes paraboloid_fit
+// (PV/RMS in mm) and uncertainty_um (±µm). Returns null if paraboloid_fit
+// is missing — caller falls back to the legacy formatStats.
+function formatHeightStatsGeometric(paraboloidFit, uncertaintyUm) {
+  if (!paraboloidFit) return null;
+  const pv_um = Number.isFinite(paraboloidFit.pv_mm) ? paraboloidFit.pv_mm * 1000 : NaN;
+  const rms_um = Number.isFinite(paraboloidFit.rms_mm) ? paraboloidFit.rms_mm * 1000 : NaN;
+  const pvU = uncertaintyUm?.pv_uncertainty_um;
+  const rmsU = uncertaintyUm?.rms_uncertainty_um;
+  const fmt = (v, u, d = 2) => {
+    const vStr = Number.isFinite(v) ? v.toFixed(d) : "\u2014";
+    if (!Number.isFinite(u)) return vStr + " \u00b5m";
+    return `${vStr} \u00b1 ${u.toFixed(d)} \u00b5m`;
+  };
+  return `PV:   ${fmt(pv_um, pvU)}\nRMS:  ${fmt(rms_um, rmsU)}`;
 }
 
 function buildWorkspace() {
@@ -166,16 +190,21 @@ function buildWorkspace() {
           </label>
           <label>Display device
             <select id="defl-display-device">
-              <option value="ipad_air_1" data-pitch="0.0962">iPad Air 1 (264 ppi)</option>
-              <option value="ipad_air_2" data-pitch="0.0962">iPad Air 2 (264 ppi)</option>
-              <option value="ipad_pro_11" data-pitch="0.0846">iPad Pro 11" (264 ppi)</option>
-              <option value="ipad_pro_12_9" data-pitch="0.0846">iPad Pro 12.9" (264 ppi)</option>
-              <option value="custom" data-pitch="">Custom\u2026</option>
+              <option value="ipad_air_1" data-pitch="0.0962" data-width-mm="197.12" data-height-mm="147.84">iPad Air 1 (264 ppi)</option>
+              <option value="ipad_air_2" data-pitch="0.0962" data-width-mm="197.12" data-height-mm="147.84">iPad Air 2 (264 ppi)</option>
+              <option value="ipad_pro_11" data-pitch="0.0846" data-width-mm="202.0" data-height-mm="141.1">iPad Pro 11" (264 ppi)</option>
+              <option value="ipad_pro_12_9" data-pitch="0.0846" data-width-mm="262.8" data-height-mm="196.6">iPad Pro 12.9" (264 ppi)</option>
+              <option value="custom" data-pitch="" data-width-mm="" data-height-mm="">Custom\u2026</option>
             </select>
           </label>
           <label id="defl-custom-pitch-label" hidden>Pixel pitch (mm)
             <input type="number" id="defl-custom-pitch" min="0.01" max="1" step="0.001" value="0.096" />
           </label>
+          <!-- Phase 3B Wave 2: saved screen shape indicator -->
+          <div class="defl-screen-shape-row" id="defl-screen-shape-row" hidden>
+            <div class="defl-screen-shape-label" id="defl-screen-shape-label">Screen shape: \u2014</div>
+            <button class="detect-btn" id="defl-btn-open-screen-shape" title="Open the ball-calibration wizard step">Recalibrate</button>
+          </div>
           <label>Averages per phase step
             <input type="number" id="defl-averages" min="1" max="10" step="1" value="3" style="width:65px" />
           </label>
@@ -199,6 +228,25 @@ function buildWorkspace() {
           </label>
           <label style="font-size:11px;opacity:0.7;margin-top:6px">Geometry Notes</label>
           <textarea id="defl-geometry-notes" rows="2" style="width:100%;font-size:11px;resize:vertical;background:var(--bg-secondary);color:var(--text-primary);border:1px solid var(--border);border-radius:3px;padding:4px" placeholder="Distance, fixture, lens, mirror..."></textarea>
+          <!-- Phase 4 Wave 3: advanced compute options (developer-tuning) -->
+          <details class="defl-advanced-compute" style="margin-top:6px;border-top:1px solid var(--border);padding-top:6px">
+            <summary style="cursor:pointer;font-size:11px;opacity:0.65">Advanced compute options</summary>
+            <div style="display:flex;flex-direction:column;gap:6px;margin-top:6px">
+              <label style="font-size:11px">Slope solver
+                <select id="defl-slope-solver" style="font-size:11px">
+                  <option value="auto" selected>Auto (geometric when calibrated)</option>
+                  <option value="geometric">Force geometric</option>
+                  <option value="phase_proxy">Force phase-proxy</option>
+                </select>
+              </label>
+              <label style="font-size:11px">Screen distance override (mm)
+                <input type="number" id="defl-screen-distance-override" min="1" max="5000" step="1" placeholder="(default 250)" style="font-size:11px;width:90px" />
+              </label>
+              <div style="font-size:10px;opacity:0.55">
+                Leave at defaults unless you are intentionally tuning the solver.
+              </div>
+            </div>
+          </details>
         </div>
       </div>
 
@@ -212,6 +260,14 @@ function buildWorkspace() {
           </div>
           <button id="defl-btn-start-wizard">Start calibration</button>
           <button id="defl-btn-load-previous-cal">Load previous\u2026</button>
+        </div>
+        <!-- Phase 4 Wave 3: slope-method indicator badge -->
+        <div class="defl-slope-method-row" id="defl-slope-method-row" hidden>
+          <button class="defl-slope-method-badge" id="defl-slope-method-badge" type="button">
+            <span class="defl-sm-title" id="defl-sm-title">\u2014</span>
+            <span class="defl-sm-uncert" id="defl-sm-uncert" hidden></span>
+            <span class="defl-sm-chevron" aria-hidden="true">\u24d8</span>
+          </button>
         </div>
         <div class="defl-action-bar">
           <button class="detect-btn" id="defl-btn-capture" style="padding:6px 16px;font-size:13px;font-weight:600">Capture Part</button>
@@ -249,6 +305,12 @@ function buildWorkspace() {
                   <span>Uncalibrated &mdash; phase-radian proxy. Run Sphere Calibration to convert to physical units.</span>
                   <button id="defl-uncal-dismiss" title="Dismiss">&times;</button>
                 </div>
+                <!-- Phase 4 Wave 3: geometric-mode affirmation (replaces uncal banner when cal is complete) -->
+                <div id="defl-geo-banner" class="defl-geo-banner" hidden>
+                  <span id="defl-geo-banner-text">Geometric height</span>
+                </div>
+                <!-- Phase 4 Wave 3: compact Height stats block (±µm error bars in geometric mode) -->
+                <pre id="defl-height-stats" class="defl-height-stats" hidden>\u2014</pre>
                 <div class="defl-height-views">
                   <div class="defl-height-view-3d">
                     <div class="defl-height-label">3D Surface <span id="defl-height-unit-3d" class="defl-unit-tag"></span></div>
@@ -276,7 +338,7 @@ function buildWorkspace() {
             <div class="defl-tab-panel" id="defl-panel-x_slope" hidden>
               <div class="defl-empty-state" id="defl-x_slope-empty">Compute results first.</div>
               <div id="defl-x_slope-content" hidden class="defl-single-view">
-                <div class="defl-single-label">X Slope (phase-radians)</div>
+                <div class="defl-single-label">X Slope <span class="defl-unit-tag" id="defl-x-slope-unit">(phase-radians)</span></div>
                 <div class="defl-single-img-host">
                   <img id="defl-phase-x-img" />
                 </div>
@@ -288,7 +350,7 @@ function buildWorkspace() {
             <div class="defl-tab-panel" id="defl-panel-y_slope" hidden>
               <div class="defl-empty-state" id="defl-y_slope-empty">Compute results first.</div>
               <div id="defl-y_slope-content" hidden class="defl-single-view">
-                <div class="defl-single-label">Y Slope (phase-radians)</div>
+                <div class="defl-single-label">Y Slope <span class="defl-unit-tag" id="defl-y-slope-unit">(phase-radians)</span></div>
                 <div class="defl-single-img-host">
                   <img id="defl-phase-y-img" />
                 </div>
@@ -300,7 +362,7 @@ function buildWorkspace() {
             <div class="defl-tab-panel" id="defl-panel-slope_mag" hidden>
               <div class="defl-empty-state" id="defl-slope_mag-empty">Compute results first.</div>
               <div id="defl-slope_mag-content" hidden class="defl-single-view">
-                <div class="defl-single-label">Slope Magnitude (phase-radians)</div>
+                <div class="defl-single-label">Slope Magnitude <span class="defl-unit-tag" id="defl-slope-mag-unit">(phase-radians)</span></div>
                 <div class="defl-single-img-host">
                   <img id="defl-slope-mag-img" />
                 </div>
@@ -421,6 +483,11 @@ function buildWorkspace() {
               <span class="defl-trusted-hint" id="defl-trusted-hint" hidden>—</span>
             </label>
             <div class="defl-quality-rows" id="defl-q-rows"></div>
+            <!-- Phase 4 Wave 3: dismissible phase-proxy note -->
+            <div class="defl-phase-proxy-note" id="defl-phase-proxy-note" hidden>
+              <span>Running in phase-proxy mode. Complete calibration to unlock \u00b5m-scale measurements with quoted uncertainty.</span>
+              <button id="defl-phase-proxy-note-dismiss" title="Dismiss">&times;</button>
+            </div>
             <details id="defl-q-warnings-details" class="defl-quality-warnings">
               <summary id="defl-q-warnings-summary">No warnings</summary>
               <ul id="defl-q-warnings-list"></ul>
@@ -779,6 +846,18 @@ function wireEvents() {
     df.uncalDismissed = true;
   });
 
+  // Phase 4 Wave 3: slope-method badge → details modal
+  $("defl-slope-method-badge")?.addEventListener("click", () => {
+    showSlopeMethodDetails();
+  });
+
+  // Phase 4 Wave 3: phase-proxy note dismiss
+  $("defl-phase-proxy-note-dismiss")?.addEventListener("click", () => {
+    const b = $("defl-phase-proxy-note");
+    if (b) b.hidden = true;
+    df.phaseProxyNoteDismissed = true;
+  });
+
   // Capture style toggle (multi_freq | fast). Drives UI visibility + state.
   const captureStyleEl = $("defl-capture-style");
   if (captureStyleEl) {
@@ -802,6 +881,8 @@ function wireEvents() {
   // Phase 3A Track E: wizard + gating wires
   $("defl-btn-start-wizard")?.addEventListener("click", () => openWizard());
   $("defl-btn-load-previous-cal")?.addEventListener("click", () => openCalPicker());
+  // Phase 3B Wave 2: jump into wizard screen-shape step
+  $("defl-btn-open-screen-shape")?.addEventListener("click", () => openWizard({ startStep: 5 }));
   $("defl-cal-active-badge")?.addEventListener("click", (ev) => {
     ev.stopPropagation();
     toggleCalBadgeMenu();
@@ -1052,6 +1133,18 @@ async function compute() {
         include: p.include,
       }));
     }
+    // Phase 4 Wave 3: advanced solver options (Auto/geometric/phase_proxy +
+    // optional screen-distance override). Auto (null) is the default.
+    const solverSel = $("defl-slope-solver");
+    const solver = solverSel?.value || "auto";
+    if (solver === "geometric" || solver === "phase_proxy") {
+      payload.slope_method = solver;
+    }
+    const sdOvr = $("defl-screen-distance-override");
+    const sdVal = sdOvr ? parseFloat(sdOvr.value) : NaN;
+    if (Number.isFinite(sdVal) && sdVal > 0) payload.screen_distance_mm = sdVal;
+    const ppm = state.calibration?.pixelsPerMm;
+    if (ppm && ppm > 0) payload.pixels_per_mm = ppm;
     const r = await apiFetch("/deflectometry/compute", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -1179,6 +1272,15 @@ async function resetSession() {
   // Hide quality sidebar
   const qs = $("defl-quality-sidebar");
   if (qs) qs.hidden = true;
+  // Phase 4 Wave 3: hide slope-method badge + affirmation/proxy banners
+  const smRow = $("defl-slope-method-row");
+  if (smRow) smRow.hidden = true;
+  const geoBan = $("defl-geo-banner");
+  if (geoBan) geoBan.hidden = true;
+  const ppNote = $("defl-phase-proxy-note");
+  if (ppNote) ppNote.hidden = true;
+  const heightStats = $("defl-height-stats");
+  if (heightStats) { heightStats.hidden = true; heightStats.textContent = "\u2014"; }
 }
 
 async function exportRun() {
@@ -1218,6 +1320,11 @@ function renderPhaseResult(result) {
   df.lastResult = result;
 
   const cal = result.cal_factor || null;
+  // Phase 4 Wave 3 fields. Gracefully degrade when missing.
+  const slopeMethod = result.slope_method || null;
+  const paraboloidFit = result.paraboloid_fit || null;
+  const uncertaintyUm = result.uncertainty_um || null;
+  const isGeometric = slopeMethod === "geometric";
 
   // Per-axis slope panels
   if (result.phase_x_png_b64) {
@@ -1237,11 +1344,21 @@ function renderPhaseResult(result) {
     showSlopePanelContent("curl");
   }
 
-  // Slope stats stay in radians (per Phase 1 spec — no silent rad→µm).
-  $("defl-phase-x-stats").textContent = formatSlopeStats(result.stats_x);
-  $("defl-phase-y-stats").textContent = formatSlopeStats(result.stats_y);
-  $("defl-slope-mag-stats").textContent = formatSlopeStats(result.stats_slope_mag);
-  $("defl-curl-stats").textContent = formatSlopeStats(result.stats_curl);
+  // Slope stats — mrad in geometric mode, rad in phase-proxy (legacy).
+  $("defl-phase-x-stats").textContent = formatSlopeStats(result.stats_x, slopeMethod);
+  $("defl-phase-y-stats").textContent = formatSlopeStats(result.stats_y, slopeMethod);
+  $("defl-slope-mag-stats").textContent = formatSlopeStats(result.stats_slope_mag, slopeMethod);
+  // Curl stays in phase-units regardless of slope_method (diagnostic-only).
+  $("defl-curl-stats").textContent = formatSlopeStats(result.stats_curl, null);
+
+  // Slope tab unit tags (phase-radians vs mrad)
+  const slopeUnitTag = isGeometric ? "(mrad)" : "(phase-rad — uncalibrated slope proxy)";
+  const xUnit = $("defl-x-slope-unit");
+  const yUnit = $("defl-y-slope-unit");
+  const smUnit = $("defl-slope-mag-unit");
+  if (xUnit) xUnit.textContent = slopeUnitTag;
+  if (yUnit) yUnit.textContent = slopeUnitTag;
+  if (smUnit) smUnit.textContent = slopeUnitTag;
 
   // Show Height empty-state cleared (3D/2D will populate when load3dSurface runs)
   const he = $("defl-height-empty");
@@ -1249,24 +1366,197 @@ function renderPhaseResult(result) {
   if (he) he.hidden = true;
   if (hc) hc.hidden = false;
 
-  // Uncalibrated banner on Height tab
+  // Phase 4 Wave 3: Height banners — affirmation in geometric mode,
+  // dismissible "uncalibrated" only in phase_proxy mode.
   const uncalBanner = $("defl-uncal-banner");
-  if (uncalBanner) {
-    if (!cal && !df.uncalDismissed) {
-      uncalBanner.hidden = false;
+  const geoBanner = $("defl-geo-banner");
+  const geoText = $("defl-geo-banner-text");
+  if (isGeometric) {
+    if (uncalBanner) uncalBanner.hidden = true;
+    if (geoBanner && geoText) {
+      const rmsU = uncertaintyUm?.rms_uncertainty_um;
+      const pvU = uncertaintyUm?.pv_uncertainty_um;
+      const parts = ["Geometric height"];
+      if (Number.isFinite(rmsU)) parts.push(`\u00b1${rmsU.toFixed(2)} \u00b5m RMS`);
+      if (Number.isFinite(pvU)) parts.push(`\u00b1${pvU.toFixed(2)} \u00b5m PV`);
+      geoText.textContent = parts.join(" \u2014 ").replace("Geometric height \u2014 ", "Geometric height: ");
+      geoBanner.hidden = false;
+    }
+  } else {
+    if (geoBanner) geoBanner.hidden = true;
+    if (uncalBanner) {
+      // Legacy: show for truly uncalibrated phase_proxy results, honoring dismiss.
+      if (!cal && !df.uncalDismissed) uncalBanner.hidden = false;
+      else uncalBanner.hidden = true;
+    }
+  }
+
+  // Phase 4 Wave 3: top-of-results slope-method indicator badge
+  renderSlopeMethodBadge(slopeMethod, uncertaintyUm);
+
+  // Phase 4 Wave 3: compact Height stats block with ±µm error bars (geometric)
+  const heightStats = $("defl-height-stats");
+  if (heightStats) {
+    if (isGeometric) {
+      const txt = formatHeightStatsGeometric(paraboloidFit, uncertaintyUm);
+      if (txt) {
+        heightStats.textContent = txt;
+        heightStats.hidden = false;
+      } else {
+        heightStats.hidden = true;
+      }
     } else {
-      uncalBanner.hidden = true;
+      heightStats.hidden = true;
     }
   }
 
   // Per-axis warnings (filtered from quality.warnings)
   renderAxisWarnings(result.quality);
 
-  // Quality sidebar
-  renderQualitySidebar(result.quality);
+  // Quality sidebar — now aware of geometric-mode extras.
+  renderQualitySidebar(result.quality, slopeMethod, paraboloidFit, uncertaintyUm);
 
   // Curl tab: unwrap-jump-risk headline badge
   renderJumpRiskBadge(result.quality);
+}
+
+// Phase 4 Wave 3: slope-method details modal. Pulls status + screen-shape
+// to explain why the current solver path was chosen.
+async function showSlopeMethodDetails() {
+  const host = $("defl-wizard-host");
+  if (!host) return;
+  // Show a lightweight loading modal first.
+  host.innerHTML = `
+    <div class="defl-wizard-overlay" id="defl-sm-details-overlay">
+      <div class="defl-wizard-modal" style="width:520px">
+        <div class="defl-wizard-header">
+          <div class="defl-wizard-title">Slope solver status</div>
+          <button class="defl-wizard-close" id="defl-sm-details-close">\u00d7</button>
+        </div>
+        <div class="defl-wizard-body" id="defl-sm-details-body">
+          <div style="font-size:12px;opacity:0.6">Loading\u2026</div>
+        </div>
+      </div>
+    </div>
+  `;
+  $("defl-sm-details-close")?.addEventListener("click", () => { host.innerHTML = ""; });
+  const body = $("defl-sm-details-body");
+  try {
+    const [statusR, shapeR] = await Promise.all([
+      apiFetch("/deflectometry/status"),
+      apiFetch("/deflectometry/screen-shape"),
+    ]);
+    const status = statusR.ok ? await statusR.json() : {};
+    let shape = null;
+    try { shape = shapeR.ok ? await shapeR.json() : null; } catch { shape = null; }
+    const active = status.active_cal_session || null;
+    const comp = active?.completeness || {};
+    const result = df.lastResult || {};
+    const slopeMethod = result.slope_method || (result.tuning && result.tuning.slope_method) || null;
+    const calSnap = result.calibration_snapshot || {};
+    const tuning = result.tuning || {};
+    const uu = result.uncertainty_um || null;
+    const isGeo = slopeMethod === "geometric";
+    const check = (b) => b ? "\u2713" : "\u2717";
+    const screenDist = (result.geometry && result.geometry.screen_distance_mm)
+      ?? calSnap.estimated_screen_distance_mm
+      ?? null;
+    const shapeLoaded = !!shape;
+    let uncertLines = "";
+    if (uu && isGeo) {
+      const comps = uu.components_um || {};
+      uncertLines = `
+        <div class="defl-sm-details-row" style="margin-top:10px">
+          <div style="font-weight:600;font-size:12px;margin-bottom:4px">Uncertainty breakdown (RMS)</div>
+          <div style="font-size:11px;opacity:0.85">
+            <div>Total: \u00b1${Number(uu.rms_uncertainty_um).toFixed(3)} \u00b5m RMS / \u00b1${Number(uu.pv_uncertainty_um).toFixed(3)} \u00b5m PV</div>
+            ${Number.isFinite(comps.fit) ? `<div>&nbsp;\u2022 fit residual: ${comps.fit.toFixed(3)} \u00b5m</div>` : ""}
+            ${Number.isFinite(comps.cal_factor_rms) ? `<div>&nbsp;\u2022 cal-factor: ${comps.cal_factor_rms.toFixed(3)} \u00b5m</div>` : ""}
+            ${Number.isFinite(comps.pose) ? `<div>&nbsp;\u2022 pose: ${comps.pose.toFixed(3)} \u00b5m</div>` : ""}
+          </div>
+        </div>
+      `;
+    }
+    body.innerHTML = `
+      <div class="defl-sm-details-badge ${isGeo ? "defl-sm-geo" : "defl-sm-proxy"}" style="margin-bottom:10px">
+        ${isGeo ? "Geometric slope solver" : "Phase-proxy fallback"}
+      </div>
+      <div style="font-size:11px;opacity:0.7;margin-bottom:10px">
+        ${isGeo
+          ? "Height in \u00b5m, slopes in mm/mm \u2014 derived from the full reflection geometry."
+          : "Height in phase-rad (uncalibrated proxy). Complete calibration to enable the geometric solver."}
+      </div>
+      <div class="defl-sm-details-section">
+        <div style="font-weight:600;font-size:12px;margin-bottom:4px">Calibration status</div>
+        <div style="font-size:11px;line-height:1.6">
+          <div>${check(!!comp.display)} Display response${comp.display ? " calibrated" : " missing"}</div>
+          <div>${check(!!comp.corner)} Corner check${comp.corner ? " passed" : " missing"}</div>
+          <div>${check(!!comp.sphere)} Sphere calibration${comp.sphere ? " fitted" : " missing"}</div>
+          <div>${check(shapeLoaded)} Screen shape${shapeLoaded ? " saved" : " not saved (flat default in use)"}</div>
+          <div>${check(!!calSnap.geometry_complete)} Geometry complete (per envelope)</div>
+        </div>
+      </div>
+      <div class="defl-sm-details-section" style="margin-top:10px">
+        <div style="font-weight:600;font-size:12px;margin-bottom:4px">Current compute parameters</div>
+        <div style="font-size:11px;line-height:1.6">
+          <div>slope_method: <code>${slopeMethod || "\u2014"}</code> (tuning.slope_method: <code>${tuning.slope_method || "\u2014"}</code>)</div>
+          <div>screen_distance_mm: <code>${screenDist != null ? Number(screenDist).toFixed(2) : "\u2014"}</code></div>
+          <div>pixels_per_mm: <code>${state.calibration?.pixelsPerMm != null ? Number(state.calibration.pixelsPerMm).toFixed(3) : "\u2014"}</code></div>
+        </div>
+      </div>
+      ${uncertLines}
+      ${!isGeo ? `
+        <div style="margin-top:12px;font-size:11px;opacity:0.7">
+          To unlock geometric mode, complete the calibration wizard (display, corner,
+          sphere) and save a screen shape via the ball calibration flow.
+        </div>
+      ` : ""}
+    `;
+  } catch (e) {
+    body.innerHTML = `<div style="font-size:12px;color:#f87171">Error: ${e?.message || e}</div>`;
+  }
+}
+
+// Phase 4 Wave 3: slope-method indicator badge (prominent, above tab bar).
+function renderSlopeMethodBadge(slopeMethod, uncertaintyUm) {
+  const row = $("defl-slope-method-row");
+  const badge = $("defl-slope-method-badge");
+  const title = $("defl-sm-title");
+  const uncert = $("defl-sm-uncert");
+  if (!row || !badge || !title || !uncert) return;
+  if (!slopeMethod) {
+    row.hidden = true;
+    return;
+  }
+  row.hidden = false;
+  if (slopeMethod === "geometric") {
+    badge.className = "defl-slope-method-badge defl-sm-geo";
+    title.textContent = "Geometric slope solver";
+    const rmsU = uncertaintyUm?.rms_uncertainty_um;
+    if (Number.isFinite(rmsU)) {
+      uncert.hidden = false;
+      uncert.textContent = `\u00b1${rmsU.toFixed(2)} \u00b5m RMS`;
+      // Full breakdown in title tooltip
+      const comps = uncertaintyUm?.components_um || {};
+      const bits = [];
+      if (Number.isFinite(comps.fit)) bits.push(`fit: ${comps.fit.toFixed(2)} \u00b5m`);
+      if (Number.isFinite(comps.cal_factor_rms)) bits.push(`cal: ${comps.cal_factor_rms.toFixed(2)} \u00b5m`);
+      if (Number.isFinite(comps.pose)) bits.push(`pose: ${comps.pose.toFixed(2)} \u00b5m`);
+      badge.title = bits.length
+        ? `Uncertainty breakdown (RMS): ${bits.join(", ")}. Click for details.`
+        : "Height in µm, slopes in mm/mm — derived from the full reflection geometry. Click for details.";
+    } else {
+      uncert.hidden = true;
+      uncert.textContent = "";
+      badge.title = "Height in µm, slopes in mm/mm — derived from the full reflection geometry. Click for details.";
+    }
+  } else {
+    badge.className = "defl-slope-method-badge defl-sm-proxy";
+    title.textContent = "Phase-proxy fallback";
+    uncert.hidden = true;
+    uncert.textContent = "";
+    badge.title = "Height in phase-rad (uncalibrated proxy). Run full calibration to enable the geometric slope solver. Click for details.";
+  }
 }
 
 function renderAxisWarnings(quality) {
@@ -1398,10 +1688,12 @@ function recomputeStatsWithTrustedMask(envelope, useTrusted) {
   // these tabs get trusted-only stats too.
 
   // Update DOM text blocks (preserve original "—" format on NaN).
+  // Phase 4 Wave 3: respect slope_method when formatting.
+  const sm = df.lastResult?.slope_method || null;
   const pre = (id, s) => {
     const el = $(id);
     if (!el) return;
-    el.textContent = formatSlopeStats(s);
+    el.textContent = formatSlopeStats(s, sm);
   };
   pre("defl-phase-x-stats", statsPhaseX);
   pre("defl-phase-y-stats", statsPhaseY);
@@ -1577,7 +1869,7 @@ function renderJumpRiskBadge(quality) {
   caption.textContent = captions[risk] || "";
 }
 
-function renderQualitySidebar(quality) {
+function renderQualitySidebar(quality, slopeMethod, paraboloidFit, uncertaintyUm) {
   const sidebar = $("defl-quality-sidebar");
   if (!sidebar) return;
   if (!quality) { sidebar.hidden = true; return; }
@@ -1620,6 +1912,26 @@ function renderQualitySidebar(quality) {
     const clippedCls = (clipped > 5) ? "warn" : "";
     const curlCls = (curlRms > 0.05) ? "warn" : "";
     const imbCls = (modImb !== null && modImb > 20) ? "warn" : "";
+    // Phase 4 Wave 3: extra rows for geometric mode (paraboloid fit + ±µm).
+    let geoRows = "";
+    if (slopeMethod === "geometric" && paraboloidFit) {
+      const resid = paraboloidFit.residual_rms_mm;
+      const outFrac = paraboloidFit.outlier_fraction;
+      const outPct = Number.isFinite(outFrac) ? outFrac * 100 : NaN;
+      const outCls = (Number.isFinite(outPct) && outPct > 5) ? "warn" : "";
+      geoRows += `
+        <div class="defl-q-row"><span>Paraboloid fit residual</span><span>${fmt(resid, 3)} <span class="defl-q-unit">mm RMS</span></span></div>
+        <div class="defl-q-row ${outCls}"><span>Paraboloid outliers</span><span>${Number.isFinite(outPct) ? outPct.toFixed(1) + "%" : "\u2014"}</span></div>
+      `;
+    }
+    if (slopeMethod === "geometric" && uncertaintyUm) {
+      const pvU = uncertaintyUm.pv_uncertainty_um;
+      const rmsU = uncertaintyUm.rms_uncertainty_um;
+      geoRows += `
+        <div class="defl-q-row"><span>Uncertainty (RMS)</span><span>\u00b1${Number.isFinite(rmsU) ? rmsU.toFixed(2) : "\u2014"} <span class="defl-q-unit">\u00b5m</span></span></div>
+        <div class="defl-q-row"><span>Uncertainty (PV)</span><span>\u00b1${Number.isFinite(pvU) ? pvU.toFixed(2) : "\u2014"} <span class="defl-q-unit">\u00b5m</span></span></div>
+      `;
+    }
     rows.innerHTML = `
       <div class="defl-q-row ${covCls}"><span>Modulation coverage</span><span>${fmt(cov, 1, "%")}</span></div>
       <div class="defl-q-row"><span>Mod X / Y median</span><span>${fmt(modX, 1)} / ${fmt(modY, 1)}</span></div>
@@ -1627,7 +1939,18 @@ function renderQualitySidebar(quality) {
       <div class="defl-q-row ${clippedCls}"><span>Clipped pixels</span><span>${fmt(clipped, 1, "%")}</span></div>
       <div class="defl-q-row"><span>Mask valid</span><span>${Number.isFinite(maskValid) ? (maskValid * 100).toFixed(1) + "%" : "\u2014"}</span></div>
       <div class="defl-q-row ${curlCls}"><span>Curl RMS</span><span>${fmt(curlRms, 4)} <span class="defl-q-unit">phase-units</span></span></div>
+      ${geoRows}
     `;
+  }
+
+  // Phase 4 Wave 3: phase-proxy dismissible note (one-time per session)
+  const phaseProxyNote = $("defl-phase-proxy-note");
+  if (phaseProxyNote) {
+    if (slopeMethod === "phase_proxy" && !df.phaseProxyNoteDismissed) {
+      phaseProxyNote.hidden = false;
+    } else {
+      phaseProxyNote.hidden = true;
+    }
   }
 
   // Warnings collapsible
@@ -1739,7 +2062,13 @@ function applyCalGating() {
     if (valid) {
       badge.hidden = false;
       const capturedAt = df.activeCalSession.captured_at;
-      label.textContent = "Calibrated " + _relativeTime(capturedAt);
+      // Phase 3B Wave 2: also note screen-shape completeness in the label.
+      // Uses a dimmer "screen ✗" to signal optional-but-missing.
+      const hasShape = !!comp?.screen_shape;
+      const shapeFlag = hasShape
+        ? ` \u2022 screen \u2713`
+        : ` \u2022 <span style="opacity:0.55">screen \u2717</span>`;
+      label.innerHTML = "Calibrated " + _relativeTime(capturedAt) + shapeFlag;
     } else {
       badge.hidden = true;
     }
@@ -1749,6 +2078,34 @@ function applyCalGating() {
   if (hint) {
     hint.hidden = !(valid && (!df.maskPolygons || df.maskPolygons.length === 0));
   }
+}
+
+// Phase 3B Wave 2: show the saved screen shape (if any) under the Display
+// device selector, with a button to jump straight to the wizard's screen
+// shape step.
+async function refreshScreenShapeIndicator() {
+  const row = $("defl-screen-shape-row");
+  const label = $("defl-screen-shape-label");
+  if (!row || !label) return;
+  try {
+    const r = await apiFetch("/deflectometry/screen-shape");
+    if (!r.ok) { row.hidden = true; return; }
+    const shape = await r.json();  // null if unset
+    if (!shape) {
+      label.textContent = "Screen shape: Rectangular2D (default)";
+      row.hidden = false;
+      return;
+    }
+    if (shape.kind === "distorted_2d") {
+      const rms = Number(shape.residual_rms_mm);
+      const ctrl = Array.isArray(shape.control_uv) ? shape.control_uv.length : 0;
+      const rmsStr = Number.isFinite(rms) ? ` (RMS ${rms.toFixed(3)} mm, ${ctrl} ctrl pts)` : "";
+      label.textContent = `Screen shape: Distorted2D${rmsStr}`;
+    } else {
+      label.textContent = "Screen shape: Rectangular2D";
+    }
+    row.hidden = false;
+  } catch { row.hidden = true; }
 }
 
 function _relativeTime(iso) {
@@ -1908,16 +2265,25 @@ function _showCalPickerModal(list) {
 
 // ────── Phase 3A Track E: calibration wizard ──────
 
-function openWizard() {
+function openWizard(opts = {}) {
   df.wizardState = {
     display_response: null,
     corner_check: null,
     sphere_cal: null,
     reference_flat: null,
+    // Phase 3B Wave 2: screen shape cal state
+    ball_samples: [],
+    last_detected_ball: null,   // {envelope_id, center_px, radius_px, preview_png_b64}
+    screen_shape: null,         // populated after a successful solve
+    fit_diagnostics: null,
+    screen_shape_warnings: [],
     notes: "",
   };
-  df.wizardStep = 1;
+  df.wizardStep = Number.isInteger(opts.startStep) ? opts.startStep : 1;
   renderWizard();
+  // Always refresh the sample list from the backend on open — the live
+  // _Session is the source of truth even if we don't expect samples yet.
+  _refreshBallSamples().catch(() => {});
 }
 
 function closeWizard() {
@@ -1927,7 +2293,7 @@ function closeWizard() {
   df.wizardStep = 1;
 }
 
-const WIZARD_STEPS = 5;  // 4 data steps + 1 review
+const WIZARD_STEPS = 6;  // 4 data + 1 optional screen-shape + 1 review
 
 function renderWizard() {
   const host = $("defl-wizard-host");
@@ -1939,7 +2305,8 @@ function renderWizard() {
     2: "Corner check",
     3: "Sphere calibration",
     4: "Reference flat (optional)",
-    5: "Review & save",
+    5: "Screen shape (optional)",
+    6: "Review & save",
   }[step] || "Calibration";
 
   host.innerHTML = `
@@ -1981,6 +2348,7 @@ function renderWizardStep(step) {
   if (step === 3) return renderWizardStep3(content);
   if (step === 4) return renderWizardStep4(content);
   if (step === 5) return renderWizardStep5(content);
+  if (step === 6) return renderWizardStep6(content);
 }
 
 function _wizardNext(label, handler, opts = {}) {
@@ -2383,9 +2751,656 @@ function _renderStep4Result(data) {
     (Array.isArray(data.periods) ? `periods     : ${data.periods.join(", ")}` : "");
 }
 
-// ── Step 5: Review & save ──
+// ── Step 5: Screen shape (ball calibration, optional) ──
+// G20 ball inventory the user has on the bench. 20 mm is a practical default.
+const BALL_DIAMETERS_MM = [10, 15, 20, 25, 30, 40];
+
 function renderWizardStep5(container) {
   const w = df.wizardState;
+  const samples = w.ball_samples || [];
+  const curStyle = w.sphere_cal?.capture_style || df.captureStyle || "multi_freq";
+  const nSamples = samples.length;
+  const canSolve = nSamples >= 4;
+  const canBow = nSamples >= 6;
+
+  container.innerHTML = `
+    <div class="defl-wizard-explain">
+      Calibrate the iPad\u2019s 3D pose and optional panel-bow shape using G20 balls
+      on the specimen fixture. Place a ball, capture, detect it, confirm \u2014 repeat
+      with different sizes/positions. More balls = better calibration. 4+ balls
+      recommended; 6+ enables panel-bow fit.
+    </div>
+
+    <div class="defl-wizard-controls defl-ball-capture-controls">
+      <label>Ball diameter (mm)
+        <select id="defl-w5-diam">
+          ${BALL_DIAMETERS_MM.map(d => `<option value="${d}" ${d === 20 ? "selected" : ""}>${d}</option>`).join("")}
+        </select>
+      </label>
+      <label>Capture style
+        <select id="defl-w5-style">
+          <option value="multi_freq" ${curStyle === "multi_freq" ? "selected" : ""}>Multi-frequency (~24s, recommended)</option>
+          <option value="fast" ${curStyle === "fast" ? "selected" : ""}>Fast (~8s)</option>
+        </select>
+      </label>
+      <label>World X (mm)
+        <input type="number" id="defl-w5-posx" step="0.1" value="0" style="width:70px" />
+      </label>
+      <label>World Y (mm)
+        <input type="number" id="defl-w5-posy" step="0.1" value="0" style="width:70px" />
+      </label>
+      <label>World Z (mm)
+        <input type="number" id="defl-w5-posz" step="0.1" value="0" style="width:70px" />
+      </label>
+      <label>Label
+        <input type="text" id="defl-w5-label" placeholder="e.g. center / NW / ..." style="width:130px" />
+      </label>
+      <button class="defl-wizard-big-btn" id="defl-w5-capture">Capture ball</button>
+      <div style="font-size:11px;opacity:0.55" id="defl-w5-progress"></div>
+    </div>
+
+    <!-- Detection preview + confirm-or-override -->
+    <div id="defl-w5-detect-panel" class="defl-ball-detect-panel" style="display:none">
+      <div class="defl-ball-detect-preview">
+        <img id="defl-w5-detect-preview" alt="detected ball preview" />
+      </div>
+      <div class="defl-ball-detect-fields">
+        <div style="font-weight:600;font-size:12px;margin-bottom:4px">Detected ball</div>
+        <label>Center X (px)
+          <input type="number" id="defl-w5-detect-cx" step="0.5" />
+        </label>
+        <label>Center Y (px)
+          <input type="number" id="defl-w5-detect-cy" step="0.5" />
+        </label>
+        <label>Radius (px)
+          <input type="number" id="defl-w5-detect-r" step="0.5" min="1" />
+        </label>
+        <label>Score
+          <input type="text" id="defl-w5-detect-score" readonly style="opacity:0.6" />
+        </label>
+        <div style="display:flex;gap:6px;margin-top:6px">
+          <button class="defl-wizard-big-btn" id="defl-w5-add-sample" style="flex:1">Add to calibration</button>
+          <button class="detect-btn" id="defl-w5-redetect" title="Re-run auto-detection with current values as hints">Re-detect</button>
+          <button class="detect-btn" id="defl-w5-discard" title="Discard this capture">Discard</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="defl-wizard-result" id="defl-w5-result" style="display:none"></div>
+
+    <div id="defl-w5-samples-block">
+      <div style="display:flex;align-items:baseline;gap:8px;margin-top:10px">
+        <div style="font-size:12px;font-weight:600">Ball samples</div>
+        <div style="font-size:11px;opacity:0.6" id="defl-w5-samples-count">${nSamples} collected \u2014 ${canBow ? "panel-bow fit enabled" : (canSolve ? "pose-only fit" : "need " + (4 - nSamples) + " more for minimum solve")}</div>
+      </div>
+      <div class="defl-ball-sample-list" id="defl-w5-sample-list"></div>
+    </div>
+
+    <div style="margin-top:14px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+      <label style="font-size:11px">Estimated screen distance (mm)
+        <input type="number" id="defl-w5-dist" min="1" max="5000" step="5" value="250" />
+      </label>
+      <label style="font-size:11px">Screen orientation
+        <select id="defl-w5-orient">
+          <option value="facing_down" selected>iPad above, screen facing down (180\u00b0 X)</option>
+          <option value="facing_up">iPad above, screen facing up (identity)</option>
+        </select>
+      </label>
+      <button class="defl-wizard-big-btn" id="defl-w5-solve" ${canSolve ? "" : "disabled"} style="margin-left:auto">
+        Solve screen shape from ${nSamples} samples
+      </button>
+    </div>
+
+    <div id="defl-w5-diagnostics" class="defl-fit-diagnostics" style="display:none"></div>
+    <div id="defl-w5-heatmap-host" class="defl-screen-shape-heatmap" style="display:none"></div>
+  `;
+
+  _renderBallSampleList();
+
+  if (w.screen_shape && w.fit_diagnostics) {
+    _renderFitDiagnostics(w.fit_diagnostics, w.screen_shape_warnings || []);
+    _renderPanelBowHeatmap(w.screen_shape);
+  } else {
+    // If we have a saved shape on disk (from a previous session), preview it
+    // so the user can see what they had before.
+    apiFetch("/deflectometry/screen-shape").then(r => r.ok ? r.json() : null)
+      .then(shape => {
+        if (!shape || df.wizardStep !== 5) return;
+        if (df.wizardState.screen_shape) return;  // user already solved
+        _renderPanelBowHeatmap(shape);
+      }).catch(() => {});
+  }
+
+  // Always allow navigation: this step is optional.
+  _wizardNext("Next", () => { df.wizardStep = 6; renderWizard(); }, { disabled: false });
+  _wizardSkip("Skip", () => {
+    df.wizardState.screen_shape = null;
+    df.wizardState.fit_diagnostics = null;
+    df.wizardStep = 6;
+    renderWizard();
+  });
+
+  $("defl-w5-capture")?.addEventListener("click", _captureBallForCal);
+  $("defl-w5-redetect")?.addEventListener("click", _redetectBall);
+  $("defl-w5-discard")?.addEventListener("click", () => {
+    df.wizardState.last_detected_ball = null;
+    const p = $("defl-w5-detect-panel");
+    if (p) p.style.display = "none";
+  });
+  $("defl-w5-add-sample")?.addEventListener("click", _addBallSample);
+  $("defl-w5-solve")?.addEventListener("click", _solveScreenShape);
+
+  if (w.last_detected_ball) _showBallDetectPanel(w.last_detected_ball);
+}
+
+async function _refreshBallSamples() {
+  try {
+    const r = await apiFetch("/deflectometry/ball-cal-samples");
+    if (!r.ok) return;
+    const d = await r.json();
+    if (df.wizardState) df.wizardState.ball_samples = d.samples || [];
+    _renderBallSampleList();
+  } catch { /* ignore */ }
+}
+
+function _renderBallSampleList() {
+  const host = $("defl-w5-sample-list");
+  if (!host) return;
+  const samples = df.wizardState?.ball_samples || [];
+  if (samples.length === 0) {
+    host.innerHTML = `<div class="defl-ball-sample-empty">No samples yet. Capture a ball above.</div>`;
+  } else {
+    host.innerHTML = samples.map((s, i) => {
+      const pos = s.ball_position_world_mm || [0, 0, 0];
+      const label = s.label ? `<span class="defl-ball-sample-label">${_escapeHtml(s.label)}</span>` : "";
+      return `
+        <div class="defl-ball-sample-tile" data-index="${i}">
+          <div class="defl-ball-sample-meta">
+            <div><strong>#${i + 1}</strong> \u2014 \u2205 ${s.ball_diameter_mm.toFixed(1)} mm</div>
+            <div style="font-size:10px;opacity:0.7">
+              center (${s.ball_center_px[0].toFixed(0)}, ${s.ball_center_px[1].toFixed(0)}) px \u2022
+              r ${s.ball_radius_px.toFixed(1)} px
+            </div>
+            <div style="font-size:10px;opacity:0.55">
+              world (${pos[0].toFixed(1)}, ${pos[1].toFixed(1)}, ${pos[2].toFixed(1)}) mm ${label}
+            </div>
+          </div>
+          <button class="defl-ball-sample-remove" data-index="${i}" title="Remove this sample">\u00d7</button>
+        </div>
+      `;
+    }).join("");
+    host.querySelectorAll(".defl-ball-sample-remove").forEach(btn => {
+      btn.addEventListener("click", async (ev) => {
+        const idx = parseInt(ev.currentTarget.dataset.index, 10);
+        if (!Number.isInteger(idx)) return;
+        try {
+          const r = await apiFetch(`/deflectometry/ball-cal-samples/${idx}`, { method: "DELETE" });
+          if (!r.ok) {
+            const err = await r.json().catch(() => ({}));
+            alert("Failed to remove: " + (err.detail || r.status));
+            return;
+          }
+        } catch (e) {
+          alert("Error: " + (e?.message || e));
+          return;
+        }
+        await _refreshBallSamples();
+        if (df.wizardStep === 5) renderWizardStep5($("defl-wizard-step-content"));
+      });
+    });
+  }
+  const counter = $("defl-w5-samples-count");
+  if (counter) {
+    const n = samples.length;
+    const canSolve = n >= 4;
+    const canBow = n >= 6;
+    counter.textContent = `${n} collected \u2014 ${canBow ? "panel-bow fit enabled" : (canSolve ? "pose-only fit" : "need " + Math.max(0, 4 - n) + " more for minimum solve")}`;
+  }
+  const solveBtn = $("defl-w5-solve");
+  if (solveBtn) {
+    const n = samples.length;
+    solveBtn.disabled = n < 4;
+    solveBtn.textContent = `Solve screen shape from ${n} samples`;
+  }
+}
+
+function _escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+  }[c]));
+}
+
+async function _captureBallForCal() {
+  const btn = $("defl-w5-capture");
+  const progEl = $("defl-w5-progress");
+  const resEl = $("defl-w5-result");
+  const setProg = (t) => { if (progEl) progEl.textContent = t; };
+  const setErr = (msg) => {
+    if (!resEl) return;
+    resEl.style.display = "block";
+    resEl.className = "defl-wizard-result err";
+    resEl.textContent = msg;
+  };
+
+  const diamEl = $("defl-w5-diam");
+  const styleEl = $("defl-w5-style");
+  const style = styleEl?.value === "fast" ? "fast" : "multi_freq";
+
+  btn.disabled = true;
+  btn.textContent = "Capturing\u2026";
+  resEl.style.display = "none";
+  const detectPanel = $("defl-w5-detect-panel");
+  if (detectPanel) detectPanel.style.display = "none";
+
+  try {
+    setProg("1/3 Capturing fringes\u2026");
+    const captureR = await apiFetch("/deflectometry/capture-sequence", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        freq: getFreq(), gamma: getGamma(), averages: getAverages(),
+        capture_style: style,
+      }),
+    });
+    if (!captureR.ok) { setErr("Capture failed: " + await captureR.text()); return; }
+
+    setProg("2/3 Computing phases\u2026");
+    const payload = { mask_threshold: getMaskThreshold(), smooth_sigma: getSmoothSigma() };
+    if (df.maskPolygons && df.maskPolygons.length > 0) {
+      payload.mask_polygons = df.maskPolygons.map(p => ({
+        vertices: p.vertices.map(v => [v.x, v.y]),
+        include: p.include,
+      }));
+    }
+    const computeR = await apiFetch("/deflectometry/compute", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!computeR.ok) { setErr("Compute failed: " + await computeR.text()); return; }
+    const computeData = await computeR.json();
+    const envelopeId = computeData.id;
+    if (!envelopeId) { setErr("Compute returned no envelope id"); return; }
+
+    setProg("3/3 Detecting ball\u2026");
+    const detectR = await apiFetch("/deflectometry/detect-ball", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ envelope_id: envelopeId }),
+    });
+    if (!detectR.ok) {
+      const err = await detectR.json().catch(() => ({}));
+      setErr("Ball detection failed: " + (err.detail || detectR.status)
+        + "\nCheck the ball is visible and in focus, then retry.");
+      return;
+    }
+    const detectData = await detectR.json();
+    const info = {
+      envelope_id: envelopeId,
+      center_px: detectData.center_px,
+      radius_px: detectData.radius_px,
+      score: detectData.score,
+      preview_png_b64: detectData.preview_png_b64,
+      // Stash at capture-time so the sample is not affected by later UI edits.
+      ball_diameter_mm: parseFloat(diamEl?.value || "20"),
+      world_pos: [
+        parseFloat($("defl-w5-posx")?.value || "0"),
+        parseFloat($("defl-w5-posy")?.value || "0"),
+        parseFloat($("defl-w5-posz")?.value || "0"),
+      ],
+      label: $("defl-w5-label")?.value || "",
+    };
+    df.wizardState.last_detected_ball = info;
+    setProg("");
+    _showBallDetectPanel(info);
+  } catch (e) {
+    setErr("Error: " + (e?.message || e));
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Capture ball";
+    setProg("");
+  }
+}
+
+function _showBallDetectPanel(info) {
+  const panel = $("defl-w5-detect-panel");
+  if (!panel) return;
+  panel.style.display = "";
+  const img = $("defl-w5-detect-preview");
+  if (img) img.src = "data:image/png;base64," + info.preview_png_b64;
+  const cxEl = $("defl-w5-detect-cx");
+  const cyEl = $("defl-w5-detect-cy");
+  const rEl = $("defl-w5-detect-r");
+  const sEl = $("defl-w5-detect-score");
+  if (cxEl) cxEl.value = Number(info.center_px[0]).toFixed(1);
+  if (cyEl) cyEl.value = Number(info.center_px[1]).toFixed(1);
+  if (rEl) rEl.value = Number(info.radius_px).toFixed(1);
+  if (sEl) sEl.value = Number.isFinite(info.score) ? info.score.toFixed(3) : "\u2014";
+}
+
+async function _redetectBall() {
+  const info = df.wizardState?.last_detected_ball;
+  if (!info) return;
+  const cx = parseFloat($("defl-w5-detect-cx")?.value);
+  const cy = parseFloat($("defl-w5-detect-cy")?.value);
+  const r = parseFloat($("defl-w5-detect-r")?.value);
+  const body = { envelope_id: info.envelope_id };
+  if (Number.isFinite(cx) && Number.isFinite(cy)) body.center_hint_px = [cx, cy];
+  if (Number.isFinite(r) && r > 0) body.radius_hint_px = r;
+  const btn = $("defl-w5-redetect");
+  if (btn) { btn.disabled = true; btn.textContent = "\u2026"; }
+  try {
+    const r2 = await apiFetch("/deflectometry/detect-ball", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!r2.ok) {
+      const err = await r2.json().catch(() => ({}));
+      alert("Re-detect failed: " + (err.detail || r2.status));
+      return;
+    }
+    const d = await r2.json();
+    info.center_px = d.center_px;
+    info.radius_px = d.radius_px;
+    info.score = d.score;
+    info.preview_png_b64 = d.preview_png_b64;
+    _showBallDetectPanel(info);
+  } catch (e) {
+    alert("Error: " + (e?.message || e));
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = "Re-detect"; }
+  }
+}
+
+async function _addBallSample() {
+  const info = df.wizardState?.last_detected_ball;
+  if (!info) return;
+  const cx = parseFloat($("defl-w5-detect-cx")?.value);
+  const cy = parseFloat($("defl-w5-detect-cy")?.value);
+  const rad = parseFloat($("defl-w5-detect-r")?.value);
+  if (![cx, cy, rad].every(Number.isFinite) || rad <= 0) {
+    alert("Invalid center/radius values.");
+    return;
+  }
+  const btn = $("defl-w5-add-sample");
+  if (btn) { btn.disabled = true; btn.textContent = "Adding\u2026"; }
+  try {
+    const r = await apiFetch("/deflectometry/add-ball-cal-sample", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        envelope_id: info.envelope_id,
+        ball_diameter_mm: info.ball_diameter_mm,
+        ball_center_px: [cx, cy],
+        ball_radius_px: rad,
+        ball_position_world_mm: info.world_pos,
+        label: info.label || "",
+      }),
+    });
+    if (!r.ok) {
+      const err = await r.json().catch(() => ({}));
+      alert("Failed to add sample: " + (err.detail || r.status));
+      return;
+    }
+    const d = await r.json();
+    df.wizardState.ball_samples = d.samples || [];
+    df.wizardState.last_detected_ball = null;
+    const panel = $("defl-w5-detect-panel");
+    if (panel) panel.style.display = "none";
+    if (df.wizardStep === 5) renderWizardStep5($("defl-wizard-step-content"));
+  } catch (e) {
+    alert("Error: " + (e?.message || e));
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = "Add to calibration"; }
+  }
+}
+
+function _buildScreenShapeRequest() {
+  const params = _currentRigParams();
+  const ppm = params.pixels_per_mm;
+  if (!ppm || ppm <= 0) {
+    return { error: "Camera pixels/mm calibration required. Calibrate the microscope first." };
+  }
+  // Preset options carry display width/height (mm) as data attrs. Custom mode
+  // falls back to a sensible iPad Air default; the user can switch to a
+  // preset to correct it.
+  const deviceSel = $("defl-display-device");
+  const selOpt = deviceSel?.selectedOptions?.[0];
+  let widthMm = parseFloat(selOpt?.dataset?.widthMm);
+  let heightMm = parseFloat(selOpt?.dataset?.heightMm);
+  if (!Number.isFinite(widthMm) || !Number.isFinite(heightMm) || widthMm <= 0 || heightMm <= 0) {
+    widthMm = 197.12;
+    heightMm = 147.84;
+  }
+  const distance = parseFloat($("defl-w5-dist")?.value);
+  if (!Number.isFinite(distance) || distance <= 0) {
+    return { error: "Enter a valid estimated screen distance (mm)." };
+  }
+  const orient = $("defl-w5-orient")?.value || "facing_down";
+  // Pose.from_dict expects {rotation_matrix: 3x3, translation: [x,y,z]}.
+  // 180° about X: [[1,0,0],[0,-1,0],[0,0,-1]]
+  const flipX = [
+    [1, 0, 0],
+    [0, -1, 0],
+    [0, 0, -1],
+  ];
+  const identity = [
+    [1, 0, 0],
+    [0, 1, 0],
+    [0, 0, 1],
+  ];
+  const rotationMatrix = (orient === "facing_down") ? flipX : identity;
+
+  return {
+    camera_model: {
+      mode: "telecentric",
+      px_size_mm: 1.0 / ppm,
+    },
+    camera_pose: { rotation_matrix: identity, translation: [0.0, 0.0, 0.0] },
+    screen_width_mm: widthMm,
+    screen_height_mm: heightMm,
+    estimated_screen_distance_mm: distance,
+    estimated_screen_rotation: {
+      rotation_matrix: rotationMatrix,
+      translation: [0.0, 0.0, distance],
+    },
+  };
+}
+
+async function _solveScreenShape() {
+  const btn = $("defl-w5-solve");
+  const resEl = $("defl-w5-result");
+  const diagHost = $("defl-w5-diagnostics");
+  const heatHost = $("defl-w5-heatmap-host");
+  const setErr = (msg) => {
+    if (!resEl) return;
+    resEl.style.display = "block";
+    resEl.className = "defl-wizard-result err";
+    resEl.textContent = msg;
+  };
+
+  const req = _buildScreenShapeRequest();
+  if (req.error) { setErr(req.error); return; }
+
+  btn.disabled = true;
+  btn.textContent = "Solving\u2026";
+  resEl.style.display = "none";
+  if (diagHost) diagHost.style.display = "none";
+  if (heatHost) heatHost.style.display = "none";
+
+  try {
+    const r = await apiFetch("/deflectometry/calibrate-screen-shape", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(req),
+    });
+    if (!r.ok) {
+      const err = await r.json().catch(() => ({}));
+      setErr("Solve failed: " + (err.detail || r.status));
+      return;
+    }
+    const data = await r.json();
+    df.wizardState.screen_shape = data.shape || null;
+    df.wizardState.fit_diagnostics = data.fit_diagnostics || null;
+    df.wizardState.screen_shape_warnings = data.warnings || [];
+    _renderFitDiagnostics(data.fit_diagnostics, data.warnings || []);
+    _renderPanelBowHeatmap(data.shape);
+    refreshScreenShapeIndicator().catch(() => {});
+  } catch (e) {
+    setErr("Error: " + (e?.message || e));
+  } finally {
+    btn.disabled = false;
+    const n = df.wizardState?.ball_samples?.length ?? 0;
+    btn.textContent = `Solve screen shape from ${n} samples`;
+  }
+}
+
+function _renderFitDiagnostics(diag, warnings) {
+  const host = $("defl-w5-diagnostics");
+  if (!host || !diag) return;
+  host.style.display = "";
+  const rows = [];
+  const push = (label, value) => rows.push(
+    `<div class="defl-fit-diag-row"><span>${label}</span><span>${value}</span></div>`
+  );
+  if (Number.isFinite(diag.pose_rms_mm)) push("Pose RMS", `${diag.pose_rms_mm.toFixed(4)} mm`);
+  if (Number.isFinite(diag.residual_rms_mm)) push("Residual RMS", `${diag.residual_rms_mm.toFixed(4)} mm`);
+  if (Number.isFinite(diag.control_points)) push("Control points", String(diag.control_points));
+  if (Number.isFinite(diag.coverage_fraction)) push("Coverage", `${(diag.coverage_fraction * 100).toFixed(1)}%`);
+  if (typeof diag.stage2_enabled === "boolean") push("Stage 2 (panel bow)", diag.stage2_enabled ? "\u2713 enabled" : "\u2013 skipped");
+  if (Number.isFinite(diag.num_samples)) push("Samples used", String(diag.num_samples));
+
+  const warnHtml = (warnings && warnings.length)
+    ? `<div class="defl-fit-diag-warnings">${warnings.map(w => `<div>\u26a0 ${_escapeHtml(w)}</div>`).join("")}</div>`
+    : "";
+  host.innerHTML = `
+    <div class="defl-fit-diag-title">Fit diagnostics</div>
+    <div class="defl-fit-diag-grid">${rows.join("")}</div>
+    ${warnHtml}
+  `;
+}
+
+// 64×64 heatmap of z-deviation (panel bow) from a saved shape dict.
+// For Rectangular2D: flat, nothing to show. For Distorted2D: inverse-distance
+// interpolation of z-component from the control points — fast to compute
+// client-side and good enough for a preview.
+function _renderPanelBowHeatmap(shapeDict) {
+  const host = $("defl-w5-heatmap-host");
+  if (!host || !shapeDict) return;
+  host.style.display = "";
+
+  const N = 64;
+  const wMm = shapeDict.width_mm || 1;
+  const hMm = shapeDict.height_mm || 1;
+
+  const zGrid = new Float64Array(N * N);
+  let zMin = Infinity, zMax = -Infinity;
+  let rms2 = 0, nValid = 0;
+
+  if (shapeDict.kind === "distorted_2d"
+      && Array.isArray(shapeDict.control_uv)
+      && Array.isArray(shapeDict.control_xyz_mm)) {
+    const ctrlUv = shapeDict.control_uv;
+    const ctrlXyz = shapeDict.control_xyz_mm;
+    for (let j = 0; j < N; j++) {
+      const v = j / (N - 1);
+      for (let i = 0; i < N; i++) {
+        const u = i / (N - 1);
+        let sumW = 0, sumZ = 0;
+        for (let k = 0; k < ctrlUv.length; k++) {
+          const du = ctrlUv[k][0] - u;
+          const dv = ctrlUv[k][1] - v;
+          const d2 = du * du + dv * dv + 1e-9;
+          const wgt = 1.0 / d2;
+          sumW += wgt;
+          sumZ += wgt * (ctrlXyz[k][2] || 0);
+        }
+        const z = sumW > 0 ? (sumZ / sumW) : 0;
+        zGrid[j * N + i] = z;
+        if (z < zMin) zMin = z;
+        if (z > zMax) zMax = z;
+        rms2 += z * z;
+        nValid++;
+      }
+    }
+  } else {
+    zMin = 0; zMax = 0; rms2 = 0; nValid = N * N;
+  }
+
+  const rms = nValid > 0 ? Math.sqrt(rms2 / nValid) : 0;
+  const absMax = Math.max(Math.abs(zMin), Math.abs(zMax), 1e-6);
+
+  const colorFor = (t) => {
+    if (!Number.isFinite(t)) return [200, 200, 200];
+    t = Math.max(-1, Math.min(1, t));
+    if (t >= 0) {
+      const f = t;
+      return [255, Math.round(255 * (1 - f)), Math.round(255 * (1 - f))];
+    }
+    const f = -t;
+    return [Math.round(255 * (1 - f)), Math.round(255 * (1 - f)), 255];
+  };
+
+  const resRms = df.wizardState?.fit_diagnostics?.residual_rms_mm;
+  const subtitle = (shapeDict.kind === "distorted_2d")
+    ? `max bow ${zMax.toFixed(3)} mm, min ${zMin.toFixed(3)} mm, RMS ${rms.toFixed(3)} mm${Number.isFinite(resRms) ? `, residual ${Number(resRms).toFixed(3)} mm` : ""}`
+    : `Flat panel (Rectangular2D) \u2014 no bow to visualize.`;
+
+  host.innerHTML = `
+    <div class="defl-heatmap-title">iPad flatness deviation (mm)</div>
+    <div class="defl-heatmap-subtitle">${subtitle}</div>
+    <div class="defl-heatmap-body">
+      <canvas id="defl-w5-heatmap-canvas" width="${N}" height="${N}"
+              style="width:320px;height:${Math.round(320 * (hMm / wMm))}px;image-rendering:pixelated;border:1px solid #2a2a2a"></canvas>
+      <div class="defl-heatmap-cb" id="defl-w5-heatmap-cb"></div>
+    </div>
+  `;
+
+  const canvas = $("defl-w5-heatmap-canvas");
+  if (canvas) {
+    const ctx = canvas.getContext("2d");
+    const img = ctx.createImageData(N, N);
+    for (let j = 0; j < N; j++) {
+      for (let i = 0; i < N; i++) {
+        const z = zGrid[j * N + i];
+        const t = z / absMax;
+        const [r, g, b] = colorFor(t);
+        const k = (j * N + i) * 4;
+        img.data[k] = r;
+        img.data[k + 1] = g;
+        img.data[k + 2] = b;
+        img.data[k + 3] = 255;
+      }
+    }
+    ctx.putImageData(img, 0, 0);
+  }
+
+  const cb = $("defl-w5-heatmap-cb");
+  if (cb) {
+    cb.innerHTML = `
+      <div class="defl-heatmap-cb-strip"></div>
+      <div class="defl-heatmap-cb-labels">
+        <span>+${absMax.toFixed(3)} mm</span>
+        <span>0</span>
+        <span>\u2212${absMax.toFixed(3)} mm</span>
+      </div>
+    `;
+  }
+}
+
+// ── Step 6: Review & save ──
+function renderWizardStep6(container) {
+  const w = df.wizardState;
+  const shapeDetail = (() => {
+    if (!w.screen_shape) return "skipped";
+    const kind = w.screen_shape.kind === "distorted_2d" ? "Distorted2D" : "Rectangular2D";
+    const rms = w.fit_diagnostics?.residual_rms_mm;
+    const n = w.ball_samples?.length ?? 0;
+    const parts = [`${kind} (${n} ${n === 1 ? "ball" : "balls"})`];
+    if (Number.isFinite(rms)) parts.push(`residual ${Number(rms).toFixed(3)} mm`);
+    return parts.join(", ");
+  })();
   const items = [
     {
       key: "display_response",
@@ -2415,11 +3430,17 @@ function renderWizardStep5(container) {
         ? `captured ${w.reference_flat.captured_at}`
         : "skipped",
     },
+    {
+      key: "screen_shape",
+      title: "Screen shape (optional)",
+      detail: shapeDetail,
+      optional: true,
+    },
   ];
   const itemsHtml = items.map(it => {
     const has = !!w[it.key];
-    const cls = has ? "ok" : (it.key === "reference_flat" ? "skip" : "skip");
-    const icon = has ? "\u2713" : (it.key === "reference_flat" ? "\u2013" : "\u2717");
+    const cls = has ? "ok" : (it.optional ? "skip" : "skip");
+    const icon = has ? "\u2713" : (it.optional ? "\u2013" : "\u2717");
     return `
       <div class="defl-wizard-review-item ${cls}">
         <span class="defl-wizard-review-icon">${icon}</span>
@@ -2499,6 +3520,7 @@ async function saveWizardSession() {
         corner_check: w.corner_check,
         sphere_cal: w.sphere_cal,
         reference_flat: w.reference_flat,
+        screen_shape: w.screen_shape,
         notes: w.notes || "",
       }),
     });
@@ -2854,6 +3876,8 @@ async function runDiagnostics() {
 export function initDeflectometry() {
   buildWorkspace();
   loadProfileList();
+  // Phase 3B Wave 2: surface any saved screen shape in the settings panel.
+  refreshScreenShapeIndicator().catch(() => {});
 
   const observer = new MutationObserver(() => {
     const root = $("mode-deflectometry");

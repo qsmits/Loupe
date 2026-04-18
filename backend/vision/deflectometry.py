@@ -1127,12 +1127,14 @@ def _compute_completeness(
     corner_check: dict | None,
     sphere_cal: dict | None,
     reference_flat: dict | None,
+    screen_shape: dict | None = None,
 ) -> dict:
     return {
         "display": display_response is not None,
         "corner": corner_check is not None,
         "sphere": sphere_cal is not None,
         "reference": reference_flat is not None,
+        "screen_shape": screen_shape is not None,
     }
 
 
@@ -1142,6 +1144,7 @@ def build_calibration_session(
     corner_check: dict | None = None,
     sphere_cal: dict | None = None,
     reference_flat: dict | None = None,
+    screen_shape: dict | None = None,
     rig_fingerprint: str,
     notes: str = "",
     captured_at: str | None = None,
@@ -1163,6 +1166,10 @@ def build_calibration_session(
         - ``reference_flat`` — small {captured_at, shape:[H, W]} dict, or None.
           The ref phase arrays themselves stay on the live _Session since
           they are orientation-specific 2D grids.
+        - ``screen_shape`` — serialized ScreenShape dict (see
+          :mod:`backend.vision.screen_shape`), or None. Optional: the session
+          remains "valid" without it; the completeness dict surfaces it so
+          the UI can show whether screen-shape cal has been done.
         - ``notes`` — free-form text
         - ``completeness`` — derived dict of which steps are present
     """
@@ -1178,9 +1185,11 @@ def build_calibration_session(
         "corner_check": corner_check,
         "sphere_cal": sphere_cal,
         "reference_flat": reference_flat,
+        "screen_shape": screen_shape,
         "notes": notes,
         "completeness": _compute_completeness(
             display_response, corner_check, sphere_cal, reference_flat,
+            screen_shape,
         ),
     }
 
@@ -1202,6 +1211,7 @@ def is_calibration_session_valid(
         session.get("corner_check"),
         session.get("sphere_cal"),
         session.get("reference_flat"),
+        session.get("screen_shape"),
     )
     if not completeness.get("display"):
         missing.append("display")

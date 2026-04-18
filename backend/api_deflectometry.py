@@ -61,6 +61,12 @@ from .vision.deflectometry import (
     DEFAULT_CONSISTENCY_THRESHOLD,
     DEFAULT_MULTI_FREQ_PERIODS,
 )
+from .vision.deflectometry_compute import (
+    compute_geometric_slopes,
+    fit_paraboloid_with_uncertainty,
+    propagate_uncertainty_to_um,
+    resolve_geometry_inputs,
+)
 
 
 _ENVELOPE_CACHE_CAP = 20
@@ -71,6 +77,9 @@ _ENVELOPE_RESPONSE_FIELDS = (
     "id", "origin", "source_ids", "captured_at",
     "calibration_snapshot", "geometry", "tuning",
     "aperture_recipe", "warnings",
+    # Phase 4 Wave 3 additions — small scalar/dict metadata; the heavy
+    # ``surface_hits_world_grid`` stays off the compute response.
+    "slope_method", "paraboloid_fit", "uncertainty_um",
 )
 
 
@@ -157,6 +166,10 @@ class _Session:
         # /deflectometry/calibrations/bind/{id} endpoint after the wizard
         # completes. None = no cal session bound to this live session.
         self.active_cal_session_id: Optional[str] = None
+        # Phase 3B Wave 2: stashed ball-calibration samples pending solve.
+        # Each entry is a dict matching the BallSampleBody shape plus the
+        # grids resolved from the referenced envelope at add-time.
+        self.ball_samples: list[dict] = []
         # Serializes capture-sequence so two concurrent runs can't interleave
         self.lock: asyncio.Lock = asyncio.Lock()
 
@@ -210,6 +223,15 @@ class ComputeBody(BaseModel):
     mask_threshold: float = Field(default=0.02, ge=0.0, le=0.5)
     smooth_sigma: float = Field(default=0.0, ge=0.0, le=10.0)
     mask_polygons: list[MaskPolygon] | None = None
+    # Phase 4 Wave 3: slope-solver selector. None → auto (geometric if
+    # available, phase_proxy otherwise). Explicit values force the branch.
+    slope_method: str | None = None
+    # Phase 4 Wave 3: optional lateral calibration hint (px/mm) for the
+    # paraboloid fit. When None, resolved from the bound CalibrationSession
+    # or defaults to 1.0 (treating pixels as the mm unit).
+    pixels_per_mm: float | None = Field(default=None, gt=0)
+    # Phase 4 Wave 3: optional explicit screen distance hint (mm).
+    screen_distance_mm: float | None = Field(default=None, gt=0)
 
 
 class CaptureBody(BaseModel):
@@ -301,7 +323,57 @@ class SaveCalibrationBody(BaseModel):
     corner_check: dict | None = None
     sphere_cal: dict | None = None
     reference_flat: dict | None = None
+    screen_shape: dict | None = None
     notes: str = ""
+
+
+class ScreenShapeBody(BaseModel):
+    """Accepts a serialized ScreenShape dict. Self-describing via ``kind``.
+
+    ``model_config = {"extra": "allow"}`` so callers may include any
+    kind-specific fields (control_uv, control_xyz_mm, residual_rms_mm,
+    calibrated_at, schema_version, ...) without having to enumerate them.
+    Validation of the shape itself happens in ``ScreenShape.from_dict``.
+    """
+    model_config = {"extra": "allow"}
+    kind: str
+    width_mm: float
+    height_mm: float
+
+
+# ---------------------------------------------------------------------------
+# Phase 3B Wave 2: ball calibration request models
+# ---------------------------------------------------------------------------
+
+
+class DetectBallBody(BaseModel):
+    envelope_id: str
+    center_hint_px: tuple[float, float] | None = None
+    radius_hint_px: float | None = None
+    min_radius_px: int = Field(default=30, ge=5, le=2000)
+    max_radius_px: int = Field(default=400, ge=10, le=4000)
+
+
+class BallSampleBody(BaseModel):
+    envelope_id: str
+    ball_diameter_mm: float = Field(gt=0)
+    ball_center_px: tuple[float, float]
+    ball_radius_px: float = Field(gt=0)
+    ball_position_world_mm: tuple[float, float, float] | None = None
+    label: str = ""
+
+
+class CalibrateScreenShapeBody(BaseModel):
+    camera_model: dict
+    camera_pose: dict
+    screen_width_mm: float = Field(gt=0)
+    screen_height_mm: float = Field(gt=0)
+    estimated_screen_distance_mm: float = Field(gt=0)
+    estimated_screen_rotation: dict | None = None
+    stage2_min_control_points: int = Field(default=25, ge=4, le=10000)
+    stage2_grid_size: int = Field(default=16, ge=4, le=128)
+    modulation_floor: float = Field(default=0.02, ge=0.0, le=1.0)
+    consistency_floor: float = Field(default=0.6, ge=0.0, le=1.0)
 
 
 def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
@@ -788,6 +860,18 @@ def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
                     f"(have {len(s.frames)}, capture_style={s.capture_style})"
                 ),
             )
+        # Validate slope_method up-front — either None (auto), "geometric",
+        # or "phase_proxy".
+        if body.slope_method is not None and body.slope_method not in (
+            "geometric", "phase_proxy",
+        ):
+            raise HTTPException(
+                422,
+                detail=(
+                    "slope_method must be 'geometric', 'phase_proxy', or None "
+                    f"(auto), got {body.slope_method!r}"
+                ),
+            )
 
         (
             unw_x, unw_y, frames_x, frames_y,
@@ -828,14 +912,110 @@ def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
 
         mask_valid_frac = float(mask.sum()) / float(mask.size) if mask.size > 0 else 0.0
 
-        # Slope magnitude and curl residual
-        slope_mag = compute_slope_magnitude(unw_x, unw_y, mask=mask)
-        curl = compute_curl_residual(unw_x, unw_y, mask=mask)
-
-        # Quality summary
-        quality = compute_quality_summary(
-            unw_x, unw_y, mask, mod_x, mod_y, frames_x, frames_y,
+        # ── Phase 4 Wave 3: pick the slope-solver branch ────────────────
+        geom = resolve_geometry_inputs(
+            s,
+            pixels_per_mm=body.pixels_per_mm,
+            screen_distance_mm=body.screen_distance_mm,
         )
+        if body.slope_method == "geometric":
+            use_geometric = bool(geom["geometry_complete"])
+            if not use_geometric:
+                raise HTTPException(
+                    400,
+                    detail=(
+                        "slope_method='geometric' requested but geometry is "
+                        "incomplete — bind a CalibrationSession with sphere_cal "
+                        "and provide pixels_per_mm."
+                    ),
+                )
+        elif body.slope_method == "phase_proxy":
+            use_geometric = False
+        else:
+            # Auto-select: use geometric if available.
+            use_geometric = bool(geom["geometry_complete"])
+
+        paraboloid_fit: dict | None = None
+        uncertainty_um: dict | None = None
+        surface_hits_world: np.ndarray | None = None
+
+        # Frequency used for phase→screen-uv normalization in the
+        # geometric path. For multi_freq the cascade output scales to the
+        # finest period; for fast it's s.freq.
+        finest_freq = float(
+            s.periods[-1] if s.capture_style == "multi_freq" else s.freq
+        )
+
+        if use_geometric:
+            try:
+                slope_x_grid, slope_y_grid, surface_hits_world, geom_valid = (
+                    compute_geometric_slopes(
+                        phase_x=unw_x,
+                        phase_y=unw_y,
+                        trusted_mask=mask,
+                        camera_model=geom["camera_model"],
+                        camera_pose=geom["camera_pose"],
+                        screen_shape=geom["screen_shape"],
+                        screen_pose=geom["screen_pose"],
+                        surface_plane_point=geom["surface_plane"]["point"],
+                        surface_plane_normal=geom["surface_plane"]["normal"],
+                        freq=finest_freq,
+                    )
+                )
+            except Exception as exc:  # defensive: bad geometry → fall back
+                slope_x_grid = unw_x
+                slope_y_grid = unw_y
+                slope_method = "phase_proxy"
+                use_geometric = False
+                # Re-run with the legacy path below; record the reason so
+                # ``quality.warnings`` surfaces it after the summary is built.
+                fallback_reason = f"geometric path failed: {exc}"
+            else:
+                slope_method = "geometric"
+                # Intersect trusted mask with the chain-valid mask so
+                # downstream slope/curl/quality reflect only good pixels.
+                mask = mask & geom_valid
+                fallback_reason = None
+        else:
+            slope_x_grid = unw_x
+            slope_y_grid = unw_y
+            slope_method = "phase_proxy"
+            fallback_reason = None
+
+        # Slope magnitude and curl residual (on whichever slopes we picked)
+        slope_mag = compute_slope_magnitude(slope_x_grid, slope_y_grid, mask=mask)
+        curl = compute_curl_residual(slope_x_grid, slope_y_grid, mask=mask)
+
+        # Quality summary (always uses current slope fields — same shape)
+        quality = compute_quality_summary(
+            slope_x_grid, slope_y_grid, mask, mod_x, mod_y, frames_x, frames_y,
+        )
+        if fallback_reason:
+            quality.setdefault("warnings", []).append(fallback_reason)
+
+        # Paraboloid fit + uncertainty (geometric path only).
+        if slope_method == "geometric":
+            ppm_fit = geom["pixels_per_mm"] or body.pixels_per_mm or 1.0
+            try:
+                paraboloid_fit = fit_paraboloid_with_uncertainty(
+                    slope_x_grid=slope_x_grid,
+                    slope_y_grid=slope_y_grid,
+                    mask=mask,
+                    pixels_per_mm=float(ppm_fit),
+                )
+            except ValueError as exc:
+                paraboloid_fit = None
+                quality.setdefault("warnings", []).append(
+                    f"paraboloid fit failed: {exc}"
+                )
+            if paraboloid_fit is not None:
+                # No sphere_cal uncertainty wired yet — pass None for now.
+                # Wave-2 will persist a per-cal uncertainty.
+                uncertainty_um = propagate_uncertainty_to_um(
+                    paraboloid_fit,
+                    cal_factor_uncertainty=None,
+                    geometric_pose_uncertainty=None,
+                )
 
         # ── Unwrap-jump risk indicator ──────────────────────────────────
         if s.capture_style == "multi_freq":
@@ -891,20 +1071,38 @@ def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
             ),
             "freq": s.freq,
         }
-        geometry = {
-            "screen_pose": None,
-            "camera_pose": None,
-            "surface_pose": None,
-            "screen_distance_mm": None,
-            "surface_distance_mm": None,
-        }
+        # Report geometry from the Phase-4 resolver so the envelope carries
+        # the same view the slope solver used. When the geometry is
+        # incomplete we leave these fields null to preserve the Phase-0
+        # envelope contract — callers shouldn't see placeholder poses
+        # leak through the wire as if they were real cal data.
+        if geom["geometry_complete"]:
+            geometry = {
+                "screen_pose": geom["screen_pose"].as_dict(),
+                "camera_pose": geom["camera_pose"].as_dict(),
+                "surface_pose": None,  # not yet modelled as SE(3)
+                "screen_distance_mm": geom.get("screen_distance_mm"),
+                "surface_distance_mm": geom.get("surface_distance_mm"),
+            }
+        else:
+            geometry = {
+                "screen_pose": None,
+                "camera_pose": None,
+                "surface_pose": None,
+                "screen_distance_mm": None,
+                "surface_distance_mm": None,
+            }
         tuning = {
             "freq": s.freq,
             "smooth_sigma": body.smooth_sigma,
             "mask_threshold": body.mask_threshold,
             "capture_style": style_tag,
             "periods": list(s.periods),
+            "slope_method": slope_method,
         }
+        # Augment the calibration snapshot with a geometry-complete flag so
+        # the UI/exports can tell the branch taken.
+        calibration_snapshot["geometry_complete"] = bool(geom["geometry_complete"])
         aperture_recipe = {
             "mask_threshold": body.mask_threshold,
             "polygons": (
@@ -918,10 +1116,9 @@ def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
         envelope["phase_y_grid"] = unw_y
         envelope["modulation_x_grid"] = mod_x
         envelope["modulation_y_grid"] = mod_y
-        # Phase 0 stub: geometric slope solver ships in Phase 4. For now
-        # slopes alias the unwrapped phases so the envelope schema is stable.
-        envelope["slope_x_grid"] = unw_x
-        envelope["slope_y_grid"] = unw_y
+        # Phase 4 Wave 3: slope grids now honor the selected solver.
+        envelope["slope_x_grid"] = slope_x_grid
+        envelope["slope_y_grid"] = slope_y_grid
         envelope["trusted_mask_grid"] = mask
         envelope["display_phase_x_grid"] = unw_x
         envelope["display_phase_y_grid"] = unw_y
@@ -930,6 +1127,12 @@ def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
         envelope["phase_x_grid_per_period"] = list(wraps_x_per_period)
         envelope["phase_y_grid_per_period"] = list(wraps_y_per_period)
         envelope["periods_used"] = list(s.periods)
+        # ── Phase 4 Wave 3 additions ────────────────────────────────────
+        envelope["slope_method"] = slope_method
+        envelope["paraboloid_fit"] = paraboloid_fit
+        envelope["uncertainty_um"] = uncertainty_um
+        if surface_hits_world is not None:
+            envelope["surface_hits_world_grid"] = surface_hits_world
 
         wrap_deflectometry_result(
             envelope,
@@ -944,9 +1147,11 @@ def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
         s.cache_envelope(envelope)
 
         # Additive: surface envelope metadata on the response without
-        # ballooning it with the numeric grids.
+        # ballooning it with the numeric grids. Use .get so newer fields
+        # that only exist in some branches (paraboloid_fit, uncertainty_um)
+        # default to None rather than raising.
         for field in _ENVELOPE_RESPONSE_FIELDS:
-            result[field] = envelope[field]
+            result[field] = envelope.get(field)
         return result
 
     @router.get("/deflectometry/result/{result_id}", dependencies=[Depends(_reject_hosted)])
@@ -1419,6 +1624,7 @@ def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
             corner_check=body.corner_check,
             sphere_cal=body.sphere_cal,
             reference_flat=body.reference_flat,
+            screen_shape=body.screen_shape,
             rig_fingerprint=body.rig_fingerprint,
             notes=body.notes,
         )
@@ -1494,6 +1700,292 @@ def make_deflectometry_router(camera: BaseCamera) -> APIRouter:
             "captured_at": session.get("captured_at"),
             "completeness": session.get("completeness"),
             "rig_fingerprint": session.get("rig_fingerprint"),
+        }
+
+    # -------------------------------------------------------------------
+    # ScreenShape endpoints — Phase 3B+4 Wave 1 Track B
+    # -------------------------------------------------------------------
+
+    @router.get("/deflectometry/screen-shape", dependencies=[Depends(_reject_hosted)])
+    def get_screen_shape():
+        """Return the active ScreenShape as a dict, or None if unset."""
+        from . import screen_shape_store
+        shape = screen_shape_store.load_screen_shape()
+        if shape is None:
+            return None
+        return shape.as_dict()
+
+    @router.post("/deflectometry/screen-shape", dependencies=[Depends(_reject_hosted)])
+    def save_screen_shape_endpoint(body: ScreenShapeBody):
+        """Persist a new ScreenShape. Replaces any existing active shape."""
+        from . import screen_shape_store
+        from .vision.screen_shape import ScreenShape
+        try:
+            shape = ScreenShape.from_dict(body.model_dump())
+        except ValueError as e:
+            raise HTTPException(400, detail=str(e))
+        except Exception as e:
+            raise HTTPException(400, detail=f"invalid screen shape: {e}")
+        path = screen_shape_store.save_screen_shape(shape)
+        return {"status": "ok", "path": path, "shape": shape.as_dict()}
+
+    @router.delete("/deflectometry/screen-shape", dependencies=[Depends(_reject_hosted)])
+    def delete_screen_shape_endpoint():
+        """Remove the active ScreenShape (revert to flat default)."""
+        from . import screen_shape_store
+        removed = screen_shape_store.delete_screen_shape()
+        return {"status": "deleted" if removed else "absent"}
+
+    # -------------------------------------------------------------------
+    # Ball calibration endpoints — Phase 3B Wave 2
+    # -------------------------------------------------------------------
+
+    def _lookup_envelope(s: _Session, envelope_id: str) -> dict:
+        env = s._envelope_cache.get(envelope_id)
+        if env is None:
+            raise HTTPException(
+                404,
+                detail=(
+                    f"Envelope {envelope_id!r} not found in session cache "
+                    "(run /deflectometry/compute first, or the cache has "
+                    "rolled over)."
+                ),
+            )
+        return env
+
+    @router.post(
+        "/deflectometry/detect-ball", dependencies=[Depends(_reject_hosted)]
+    )
+    def detect_ball(body: DetectBallBody):
+        """Run Hough-circle detection on the envelope's modulation map.
+
+        Uses ``min(modulation_x, modulation_y)`` so both orientations must
+        be strong where a pixel passes. Returns the top candidate plus a
+        base64 PNG overlay for the wizard's confirmation step.
+        """
+        from .vision.ball_detection import (
+            detect_ball_in_modulation,
+            render_ball_overlay_png_b64,
+        )
+
+        s = _current()
+        if s is None:
+            raise HTTPException(400, detail="No active deflectometry session")
+        env = _lookup_envelope(s, body.envelope_id)
+        mod_x = np.asarray(env.get("modulation_x_grid"), dtype=np.float64)
+        mod_y = np.asarray(env.get("modulation_y_grid"), dtype=np.float64)
+        if mod_x.size == 0 or mod_y.size == 0 or mod_x.shape != mod_y.shape:
+            raise HTTPException(
+                400,
+                detail="Envelope missing modulation grids or shape mismatch",
+            )
+        modulation = np.minimum(mod_x, mod_y)
+
+        try:
+            (cu, cv), radius, score = detect_ball_in_modulation(
+                modulation,
+                center_hint_px=body.center_hint_px,
+                radius_hint_px=body.radius_hint_px,
+                min_radius_px=body.min_radius_px,
+                max_radius_px=body.max_radius_px,
+            )
+        except ValueError as e:
+            raise HTTPException(400, detail=str(e))
+
+        preview_b64 = render_ball_overlay_png_b64(modulation, (cu, cv), radius)
+        return {
+            "center_px": [cu, cv],
+            "radius_px": radius,
+            "score": score,
+            "preview_png_b64": preview_b64,
+        }
+
+    @router.post(
+        "/deflectometry/add-ball-cal-sample",
+        dependencies=[Depends(_reject_hosted)],
+    )
+    def add_ball_cal_sample(body: BallSampleBody):
+        """Stash a ball sample with the envelope's grids, ready for solve."""
+        s = _current()
+        if s is None:
+            raise HTTPException(400, detail="No active deflectometry session")
+        env = _lookup_envelope(s, body.envelope_id)
+
+        # Extract arrays; tolerate missing grids (consistency may be absent
+        # on fast-mode captures — the solver treats it as all-ones).
+        try:
+            phase_x = np.asarray(env["phase_x_grid"], dtype=np.float64)
+            phase_y = np.asarray(env["phase_y_grid"], dtype=np.float64)
+        except KeyError:
+            raise HTTPException(
+                400,
+                detail=(
+                    f"Envelope {body.envelope_id!r} missing phase grids"
+                ),
+            )
+
+        periods = env.get("periods_used") or env.get("tuning", {}).get("periods")
+        if not periods:
+            raise HTTPException(
+                400,
+                detail="Envelope missing periods_used (cannot compute screen uv)",
+            )
+        period_fine = float(periods[-1])
+
+        sample = {
+            "envelope_id": body.envelope_id,
+            "ball_diameter_mm": float(body.ball_diameter_mm),
+            "ball_center_px": tuple(body.ball_center_px),
+            "ball_radius_px": float(body.ball_radius_px),
+            "ball_position_world_mm": (
+                tuple(body.ball_position_world_mm)
+                if body.ball_position_world_mm is not None
+                else (0.0, 0.0, 0.0)
+            ),
+            "label": body.label,
+            "phase_x_grid": phase_x,
+            "phase_y_grid": phase_y,
+            "modulation_grid": np.minimum(
+                np.asarray(env.get("modulation_x_grid", np.ones_like(phase_x)),
+                           dtype=np.float64),
+                np.asarray(env.get("modulation_y_grid", np.ones_like(phase_y)),
+                           dtype=np.float64),
+            ),
+            "phase_consistency_grid": np.asarray(
+                env.get("phase_consistency_grid", np.ones_like(phase_x)),
+                dtype=np.float64,
+            ),
+            "period_fine": period_fine,
+        }
+        s.ball_samples.append(sample)
+        return {
+            "count": len(s.ball_samples),
+            "samples": _ball_sample_summaries(s),
+        }
+
+    def _ball_sample_summaries(s: _Session) -> list[dict]:
+        """JSON-safe summary list (no giant grids)."""
+        out = []
+        for i, sample in enumerate(s.ball_samples):
+            out.append({
+                "index": i,
+                "envelope_id": sample["envelope_id"],
+                "ball_diameter_mm": sample["ball_diameter_mm"],
+                "ball_center_px": list(sample["ball_center_px"]),
+                "ball_radius_px": sample["ball_radius_px"],
+                "ball_position_world_mm": list(sample["ball_position_world_mm"]),
+                "label": sample.get("label", ""),
+            })
+        return out
+
+    @router.get(
+        "/deflectometry/ball-cal-samples",
+        dependencies=[Depends(_reject_hosted)],
+    )
+    def list_ball_cal_samples():
+        s = _current()
+        if s is None:
+            return {"count": 0, "samples": []}
+        return {
+            "count": len(s.ball_samples),
+            "samples": _ball_sample_summaries(s),
+        }
+
+    @router.delete(
+        "/deflectometry/ball-cal-samples/{index}",
+        dependencies=[Depends(_reject_hosted)],
+    )
+    def delete_ball_cal_sample(index: int):
+        s = _current()
+        if s is None or not s.ball_samples:
+            raise HTTPException(404, detail="No ball samples to remove")
+        if index < 0 or index >= len(s.ball_samples):
+            raise HTTPException(
+                404, detail=f"Ball sample index {index} out of range"
+            )
+        removed = s.ball_samples.pop(index)
+        return {
+            "status": "deleted",
+            "removed_envelope_id": removed["envelope_id"],
+            "count": len(s.ball_samples),
+        }
+
+    @router.post(
+        "/deflectometry/calibrate-screen-shape",
+        dependencies=[Depends(_reject_hosted)],
+    )
+    def calibrate_screen_shape(body: CalibrateScreenShapeBody):
+        """Run the Stage-1 + Stage-2 ball calibration solve.
+
+        On success: saves the resulting ScreenShape via
+        :func:`backend.screen_shape_store.save_screen_shape` and returns the
+        serialized shape plus diagnostics. Does NOT bind to any active
+        CalibrationSession — that is a separate wizard step.
+        """
+        from .vision.deflectometry_geometry import CameraModel, Pose
+        from .vision.screen_shape_solver import solve_screen_shape
+        from . import screen_shape_store
+
+        s = _current()
+        if s is None:
+            raise HTTPException(400, detail="No active deflectometry session")
+        if not s.ball_samples:
+            raise HTTPException(400, detail="No ball samples stashed; add at least one.")
+
+        # Build CameraModel from the request dict.
+        try:
+            cam = CameraModel(**body.camera_model)
+        except (TypeError, ValueError) as e:
+            raise HTTPException(400, detail=f"invalid camera_model: {e}")
+        try:
+            cam_pose = Pose.from_dict(body.camera_pose)
+        except Exception as e:
+            raise HTTPException(400, detail=f"invalid camera_pose: {e}")
+
+        if body.estimated_screen_rotation is not None:
+            try:
+                initial_pose = Pose.from_dict(body.estimated_screen_rotation)
+            except Exception as e:
+                raise HTTPException(
+                    400, detail=f"invalid estimated_screen_rotation: {e}"
+                )
+            # Override translation z if estimated_screen_distance_mm was also
+            # supplied (the rotation contains its own translation, but the
+            # "distance" field is more common in simple cases — prefer the
+            # explicit rotation pose as-is).
+        else:
+            # Default: no rotation, camera-looks-at-screen translation along z.
+            initial_pose = Pose(
+                rotation=__import__(
+                    "scipy.spatial.transform", fromlist=["Rotation"]
+                ).Rotation.identity(),
+                translation=np.array(
+                    [0.0, 0.0, float(body.estimated_screen_distance_mm)]
+                ),
+            )
+
+        try:
+            shape, diag = solve_screen_shape(
+                s.ball_samples,
+                camera_model=cam,
+                camera_pose=cam_pose,
+                screen_width_mm=body.screen_width_mm,
+                screen_height_mm=body.screen_height_mm,
+                initial_screen_pose=initial_pose,
+                stage2_min_control_points=body.stage2_min_control_points,
+                stage2_grid_size=body.stage2_grid_size,
+                modulation_floor=body.modulation_floor,
+                consistency_floor=body.consistency_floor,
+            )
+        except ValueError as e:
+            raise HTTPException(400, detail=str(e))
+
+        path = screen_shape_store.save_screen_shape(shape)
+        return {
+            "shape": shape.as_dict(),
+            "fit_diagnostics": diag,
+            "path": path,
+            "warnings": diag.get("warnings", []),
         }
 
     @router.websocket("/deflectometry/ws")

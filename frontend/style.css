@@ -2925,6 +2925,216 @@ body.no-camera .camera-section { display: none; }
   font-style: italic;
 }
 
+/* ── Phase 3B Wave 2: ball calibration wizard step ────────── */
+
+.defl-screen-shape-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+  padding: 4px 6px;
+  background: #0d0d0d;
+  border: 1px solid #2a2a2a;
+  border-radius: 3px;
+  font-size: 11px;
+}
+.defl-screen-shape-label {
+  flex: 1;
+  opacity: 0.85;
+}
+
+.defl-ball-capture-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 8px;
+}
+.defl-ball-capture-controls label {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 11px;
+}
+
+.defl-ball-detect-panel {
+  display: flex;
+  gap: 12px;
+  margin-top: 10px;
+  padding: 10px;
+  background: #0d0d0d;
+  border: 1px solid rgba(59, 130, 246, 0.35);
+  border-radius: 4px;
+}
+.defl-ball-detect-preview {
+  flex: 0 0 260px;
+  max-width: 260px;
+}
+.defl-ball-detect-preview img {
+  width: 100%;
+  height: auto;
+  border: 1px solid #2a2a2a;
+  border-radius: 3px;
+  display: block;
+  image-rendering: pixelated;
+}
+.defl-ball-detect-fields {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 11px;
+  min-width: 0;
+}
+.defl-ball-detect-fields label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+}
+.defl-ball-detect-fields input[type="number"],
+.defl-ball-detect-fields input[type="text"] {
+  width: 110px;
+  margin-left: auto;
+}
+
+.defl-ball-sample-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 6px;
+  margin-top: 6px;
+  max-height: 180px;
+  overflow-y: auto;
+}
+.defl-ball-sample-empty {
+  padding: 10px;
+  font-size: 11px;
+  opacity: 0.55;
+  text-align: center;
+  background: #0d0d0d;
+  border: 1px dashed #2a2a2a;
+  border-radius: 3px;
+  grid-column: 1 / -1;
+}
+.defl-ball-sample-tile {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  background: #0d0d0d;
+  border: 1px solid #2a2a2a;
+  border-radius: 3px;
+  font-size: 11px;
+}
+.defl-ball-sample-meta {
+  flex: 1;
+  min-width: 0;
+  line-height: 1.35;
+}
+.defl-ball-sample-label {
+  display: inline-block;
+  padding: 0 4px;
+  background: rgba(59, 130, 246, 0.18);
+  border-radius: 2px;
+  font-size: 10px;
+}
+.defl-ball-sample-remove {
+  width: 20px;
+  height: 20px;
+  border: 1px solid #2a2a2a;
+  background: transparent;
+  color: #e5e7eb;
+  border-radius: 2px;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0.6;
+}
+.defl-ball-sample-remove:hover {
+  opacity: 1;
+  color: #ef4444;
+  border-color: #ef4444;
+}
+
+.defl-fit-diagnostics {
+  margin-top: 12px;
+  padding: 10px;
+  background: #0d0d0d;
+  border: 1px solid #2a2a2a;
+  border-radius: 4px;
+}
+.defl-fit-diag-title {
+  font-size: 12px;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+.defl-fit-diag-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 4px 12px;
+  font-size: 11px;
+  font-family: ui-monospace, Menlo, monospace;
+}
+.defl-fit-diag-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 1px 0;
+}
+.defl-fit-diag-row > span:first-child { opacity: 0.65; }
+.defl-fit-diag-warnings {
+  margin-top: 8px;
+  padding: 6px 8px;
+  background: rgba(251, 191, 36, 0.08);
+  border: 1px solid rgba(251, 191, 36, 0.35);
+  border-radius: 3px;
+  font-size: 11px;
+  color: #fbbf24;
+}
+.defl-fit-diag-warnings > div + div { margin-top: 2px; }
+
+.defl-screen-shape-heatmap {
+  margin-top: 12px;
+  padding: 10px;
+  background: #0d0d0d;
+  border: 1px solid #2a2a2a;
+  border-radius: 4px;
+}
+.defl-heatmap-title {
+  font-size: 12px;
+  font-weight: 600;
+}
+.defl-heatmap-subtitle {
+  font-size: 11px;
+  opacity: 0.65;
+  margin-bottom: 8px;
+  font-family: ui-monospace, Menlo, monospace;
+}
+.defl-heatmap-body {
+  display: flex;
+  gap: 12px;
+  align-items: stretch;
+}
+.defl-heatmap-cb {
+  display: flex;
+  gap: 4px;
+  align-items: stretch;
+  font-size: 10px;
+  font-family: ui-monospace, Menlo, monospace;
+}
+.defl-heatmap-cb-strip {
+  width: 14px;
+  border: 1px solid #2a2a2a;
+  background: linear-gradient(to top, #2563eb, #ffffff 50%, #dc2626);
+  border-radius: 2px;
+}
+.defl-heatmap-cb-labels {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 2px 0;
+  opacity: 0.85;
+}
+
 /* ── Fringe Analysis workspace ───────────────────────────── */
 
 .fringe-workspace {
@@ -3495,3 +3705,128 @@ body.no-camera .camera-section { display: none; }
   font-size: 11px;
   margin-left: 4px;
 }
+
+/* ── Phase 4 Wave 3: slope-method badge + geometric banner ───── */
+.defl-slope-method-row {
+  display: flex;
+  align-items: center;
+  margin-bottom: 6px;
+  flex-shrink: 0;
+}
+.defl-slope-method-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 12px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  border: 1px solid transparent;
+  cursor: pointer;
+  background: #1a1a1a;
+  color: #e5e5e5;
+  transition: background 120ms;
+}
+.defl-slope-method-badge:hover {
+  filter: brightness(1.15);
+}
+.defl-slope-method-badge.defl-sm-geo {
+  background: rgba(34, 197, 94, 0.14);
+  border-color: rgba(34, 197, 94, 0.55);
+  color: #86efac;
+}
+.defl-slope-method-badge.defl-sm-proxy {
+  background: rgba(251, 191, 36, 0.12);
+  border-color: rgba(251, 191, 36, 0.55);
+  color: #fbbf24;
+}
+.defl-slope-method-badge .defl-sm-uncert {
+  font-weight: 500;
+  font-size: 11px;
+  opacity: 0.85;
+  padding-left: 8px;
+  border-left: 1px solid rgba(255, 255, 255, 0.12);
+}
+.defl-slope-method-badge .defl-sm-chevron {
+  opacity: 0.55;
+  font-size: 13px;
+}
+
+/* Height tab: geometric-mode affirmation banner (replaces uncal in geo mode) */
+.defl-geo-banner {
+  padding: 6px 10px;
+  border-radius: 3px;
+  background: rgba(34, 197, 94, 0.10);
+  border: 1px solid rgba(34, 197, 94, 0.35);
+  color: #86efac;
+  font-size: 11px;
+  font-weight: 500;
+  flex-shrink: 0;
+}
+
+/* Height tab: compact stats block with ± error bars (monospace alignment) */
+.defl-height-stats {
+  margin: 0;
+  padding: 6px 10px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 3px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.55;
+  color: #e5e5e5;
+  white-space: pre;
+  flex-shrink: 0;
+}
+
+/* Phase-proxy dismissible note inside the quality sidebar */
+.defl-phase-proxy-note {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 6px 8px;
+  margin-top: 8px;
+  border-radius: 3px;
+  background: rgba(251, 191, 36, 0.08);
+  border: 1px solid rgba(251, 191, 36, 0.30);
+  color: #fbbf24;
+  font-size: 11px;
+  line-height: 1.4;
+}
+.defl-phase-proxy-note button {
+  background: transparent;
+  border: none;
+  color: #fbbf24;
+  font-size: 15px;
+  cursor: pointer;
+  padding: 0 2px;
+  line-height: 1;
+}
+.defl-phase-proxy-note button:hover { color: #fff; }
+
+/* Slope-method details modal (reuses .defl-wizard-* frame) */
+.defl-sm-details-badge {
+  display: inline-block;
+  padding: 4px 10px;
+  border-radius: 3px;
+  font-weight: 600;
+  font-size: 12px;
+  border: 1px solid transparent;
+}
+.defl-sm-details-badge.defl-sm-geo {
+  background: rgba(34, 197, 94, 0.14);
+  border-color: rgba(34, 197, 94, 0.55);
+  color: #86efac;
+}
+.defl-sm-details-badge.defl-sm-proxy {
+  background: rgba(251, 191, 36, 0.12);
+  border-color: rgba(251, 191, 36, 0.55);
+  color: #fbbf24;
+}
+.defl-sm-details-section {
+  padding: 6px 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+.defl-sm-details-section:first-of-type { border-top: 0; }
+

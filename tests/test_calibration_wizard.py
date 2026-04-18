@@ -103,6 +103,7 @@ def test_wizard_end_to_end_builds_valid_session(cal_client: TestClient):
     saved = save_r.json()
     assert saved["completeness"] == {
         "display": True, "corner": True, "sphere": True, "reference": True,
+        "screen_shape": False,
     }
     assert saved["notes"] == "bench test run"
     assert saved["rig_fingerprint"] == fp

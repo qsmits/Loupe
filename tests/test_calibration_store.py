@@ -42,6 +42,7 @@ def test_build_calibration_session_minimum_valid():
     assert session["rig_fingerprint"] == "deadbeefcafebabe"
     assert session["completeness"] == {
         "display": True, "corner": True, "sphere": True, "reference": False,
+        "screen_shape": False,
     }
     is_valid, missing = is_calibration_session_valid(session)
     assert is_valid is True
