@@ -136,13 +136,14 @@ def test_list_cameras_returns_list(client, monkeypatch):
     monkeypatch.setattr("backend.cameras.opencv.list_opencv_cameras", lambda: [
         {"id": "opencv-0", "vendor": "Webcam", "label": "Webcam 1"},
     ])
-    r = client.get("/cameras")
+    r = client.get("/cameras?include_webcams=true")
     assert r.status_code == 200
     data = r.json()
-    assert isinstance(data, list)
-    assert len(data) >= 1
-    assert "id" in data[0]
-    assert "label" in data[0]
+    assert data["status"] == "ok"
+    cameras = data["cameras"]
+    assert len(cameras) >= 1
+    assert "id" in cameras[0]
+    assert "label" in cameras[0]
 
 
 def test_select_camera_opencv_nonexistent_rejected(client):

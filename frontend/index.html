@@ -311,6 +311,9 @@
       <div class="dropdown camera-panel" id="dropdown-camera" hidden>
         <div class="camera-panel-header">
           <select id="camera-select-top" class="camera-select-dropdown"></select>
+          <button class="dropdown-item" id="btn-refresh-cameras" title="Refresh Aravis/GigE/USB3 Vision discovery">Refresh cameras</button>
+          <button class="dropdown-item" id="btn-reconnect-camera" title="Close and reopen the currently selected hardware camera">Reconnect current</button>
+          <button class="dropdown-item" id="btn-scan-webcams" title="Probe webcams (may prompt phone/Continuity Camera)">Scan webcams</button>
           <div class="camera-info-line">
             <span id="camera-res-display">—</span> ·
             <select id="pixel-format-top" class="pixel-format-dropdown">
@@ -319,6 +322,7 @@
               <option value="Mono8">Mono8</option>
             </select>
           </div>
+          <div class="camera-info-line camera-stats-line" id="camera-stats-line" title="Live acquisition stats">—</div>
         </div>
         <div class="camera-panel-section">
           <div class="detect-row">
@@ -385,6 +389,7 @@
       <button id="btn-analyze-gear" class="top-btn microscope-only" title="Analyze gear tooth widths (PoC)">Gear</button>
       <button id="btn-freeze" class="top-btn freeze-btn freeze-live microscope-only">❄ Live</button>
       <button id="btn-load" class="top-btn icon-btn microscope-only" title="Load image">📁</button>
+      <button id="btn-save-image" class="top-btn icon-btn microscope-only" title="Save current image">📷</button>
       <button id="btn-save-session" class="top-btn icon-btn microscope-only" title="Save session">💾</button>
       <button id="btn-settings" class="top-btn icon-btn" title="Settings">⚙</button>
       <button id="btn-help" class="top-btn icon-btn" title="Help &amp; shortcuts (?)">?</button>

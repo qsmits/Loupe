@@ -608,10 +608,16 @@ export async function loadCameraInfo() {
       el("roi-info").textContent = "Full frame";
     }
 
-    if (d.no_camera === true && !state._noCamera) {
-      state._noCamera = true;
-      document.body.classList.add("no-camera");
-      showStatus("No camera — image only");
+    if (d.no_camera === true) {
+      if (!state._noCamera) {
+        state._noCamera = true;
+        document.body.classList.add("no-camera");
+        showStatus("No camera — image only");
+      }
+      updateDropOverlay();
+    } else if (state._noCamera) {
+      state._noCamera = false;
+      document.body.classList.remove("no-camera");
       updateDropOverlay();
     }
   } catch { /* camera unavailable */ }
@@ -654,16 +660,129 @@ export async function checkStartupWarning() {
   }
 }
 
-export async function loadCameraList() {
+let _cameraStatsTimer = null;
+
+async function refreshCameraStats() {
+  const el = document.getElementById("camera-stats-line");
+  if (!el) return;
+  const panel = document.getElementById("dropdown-camera");
+  if (!panel || panel.hidden) {
+    stopCameraStatsPolling();
+    return;
+  }
+  try {
+    const r = await apiFetch("/camera/stats");
+    if (!r.ok) {
+      el.textContent = "stats unavailable";
+      el.classList.remove("warn");
+      return;
+    }
+    const s = await r.json();
+    if (s.no_camera) {
+      el.textContent = "no camera";
+      el.classList.remove("warn");
+      return;
+    }
+    const fps = s.fps ?? 0;
+    const target = s.target_fps;
+    const parts = [`${fps.toFixed(1)} fps`];
+    if (typeof target === "number") parts[0] += ` (target ${target.toFixed(0)})`;
+    // Aravis stream counters are exposed under their canonical names. Frame-
+    // level: n_completed_buffers / n_failures / n_underruns. GigE packet-level:
+    // n_missing_packets / n_resent_packets / n_resend_requests.
+    if (typeof s.n_completed_buffers === "number") {
+      parts.push(`buf ${s.n_completed_buffers}`);
+    }
+    const frameDrops =
+      (s.transient_failures ?? 0) +
+      (s.reader_dropped_frames ?? 0) +
+      (s.n_failures ?? 0) +
+      (s.n_underruns ?? 0);
+    if (frameDrops > 0) parts.push(`drops ${frameDrops}`);
+    if (typeof s.n_missing_packets === "number" && s.n_missing_packets > 0) {
+      parts.push(`miss ${s.n_missing_packets}`);
+    }
+    if (typeof s.n_resend_requests === "number" && s.n_resend_requests > 0) {
+      parts.push(`resend ${s.n_resend_requests}`);
+    }
+    if (typeof s.packet_size === "number") {
+      parts.push(`pkt ${s.packet_size}`);
+    }
+    el.textContent = parts.join(" · ");
+    // Highlight when frame production lags significantly behind target.
+    el.classList.toggle(
+      "warn",
+      typeof target === "number" && fps < target * 0.7,
+    );
+  } catch {
+    el.textContent = "stats unavailable";
+    el.classList.remove("warn");
+  }
+}
+
+export function startCameraStatsPolling() {
+  if (_cameraStatsTimer) return;
+  refreshCameraStats();  // immediate first sample
+  _cameraStatsTimer = setInterval(refreshCameraStats, 1000);
+}
+
+export function stopCameraStatsPolling() {
+  if (_cameraStatsTimer) {
+    clearInterval(_cameraStatsTimer);
+    _cameraStatsTimer = null;
+  }
+}
+
+function renderCameraSelectPlaceholder(text) {
+  for (const target of [
+    document.getElementById("camera-select"),
+    document.getElementById("camera-select-top"),
+  ]) {
+    if (!target) continue;
+    target.innerHTML = "";
+    const opt = document.createElement("option");
+    opt.value = "";
+    opt.disabled = true;
+    opt.selected = true;
+    opt.textContent = text;
+    target.appendChild(opt);
+    target.disabled = true;
+  }
+}
+
+export async function loadCameraList({ includeWebcams = false, refresh = false } = {}) {
   const sel = document.getElementById("camera-select");
   const selTop = document.getElementById("camera-select-top");
+  if (includeWebcams) state.includeWebcams = true;
+  const scanWebcams = state.includeWebcams === true;
+  // Aravis discovery does a UDP broadcast and waits for replies; show a
+  // "discovering" state immediately so the dropdown isn't stuck on its
+  // previous contents while the request is in-flight.
+  renderCameraSelectPlaceholder("Discovering cameras…");
   try {
+    const params = new URLSearchParams();
+    if (scanWebcams) params.set("include_webcams", "true");
+    if (refresh) params.set("refresh", "true");
+    const qs = params.toString();
     const [camerasResp, infoResp] = await Promise.all([
-      apiFetch("/cameras"),
+      apiFetch(`/cameras${qs ? `?${qs}` : ""}`),
       apiFetch("/camera/info"),
     ]);
-    const cameras = await camerasResp.json();
+    const camerasPayload = await camerasResp.json();
     const info = await infoResp.json();
+    const cameras = camerasPayload?.cameras ?? [];
+    if (camerasPayload?.status === "timeout" && cameras.length === 0) {
+      renderCameraSelectPlaceholder(
+        "Camera discovery timed out — reopen menu to retry"
+      );
+      return;
+    }
+    if (camerasPayload?.status === "error" && cameras.length === 0) {
+      renderCameraSelectPlaceholder(
+        camerasPayload.error || "Camera discovery failed"
+      );
+      return;
+    }
     const activeDeviceId = state.browserCamera?.deviceId;
     const currentId = state.browserCamera?.active
       ? (activeDeviceId ? `browser-cam-${activeDeviceId}` : "browser-cam")
@@ -716,15 +835,16 @@ export async function loadCameraList() {
       }
       target.disabled = false;
     }
-  } catch {
-    for (const target of [sel, selTop]) {
-      if (!target) continue;
-      target.innerHTML = "";
-      const opt = document.createElement("option");
-      opt.textContent = "Unavailable";
-      target.appendChild(opt);
-      target.disabled = true;
+    const scanBtn = document.getElementById("btn-scan-webcams");
+    if (scanBtn) {
+      scanBtn.textContent = scanWebcams ? "Rescan webcams" : "Scan webcams";
     }
+    const refreshBtn = document.getElementById("btn-refresh-cameras");
+    if (refreshBtn) {
+      refreshBtn.textContent = "Refresh cameras";
+    }
+  } catch {
+    renderCameraSelectPlaceholder("Unavailable");
   }
 }
 

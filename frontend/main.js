@@ -4,7 +4,8 @@ import { canvas, ctx, img, showStatus, redraw, resizeCanvas } from './render.js'
 import { renderSidebar, loadCameraInfo, loadUiConfig, loadTolerances,
          updateCalibrationButton, checkStartupWarning, updateFreezeUI,
          loadCameraList, renderInspectionTable, updateTemplateDisplay,
-         updateDxfControlsVisibility, initGlobalVisToggle } from './sidebar.js';
+         updateDxfControlsVisibility, initGlobalVisToggle,
+         startCameraStatsPolling, stopCameraStatsPolling } from './sidebar.js';
 import { deleteAnnotation, addAnnotation, elevateSelected, clearDetections, clearMeasurements, clearDxfOverlay, clearAll } from './annotations.js';
 import { assembleTemplate, downloadTemplate, readTemplateFile } from './template.js';
 import { setTool } from './tools.js';
@@ -45,6 +46,7 @@ function closeAllDropdowns() {
     const el = document.getElementById(id);
     if (el) el.classList.remove("open");
   });
+  stopCameraStatsPolling();
   // Close strip flyouts
   ["strip-flyout-measure","strip-flyout-setup"].forEach(id => {
     const el = document.getElementById(id);
@@ -102,9 +104,14 @@ document.getElementById("btn-menu-note")?.addEventListener("click", e => {
 });
 document.getElementById("btn-menu-camera").addEventListener("click", e => {
   e.stopPropagation();
+  const dropdown = document.getElementById("dropdown-camera");
+  const willOpen = dropdown?.hidden !== false;
   toggleDropdown("btn-menu-camera", "dropdown-camera");
-  loadCameraInfo();
-  loadCameraList();
+  if (willOpen) {
+    loadCameraInfo();
+    loadCameraList();
+    startCameraStatsPolling();
+  }
 });
 document.getElementById("btn-menu-fringe-settings")?.addEventListener("click", e => {
   e.stopPropagation();
@@ -436,6 +443,60 @@ document.getElementById("btn-set-origin").addEventListener("click", () => {
 
 // ── Session save button ───────────────────────────────────────────────────────
 document.getElementById("btn-save-session").addEventListener("click", saveSession);
+
+// ── Save image button ───────────────────────────────────────────────────────────
+document.getElementById("btn-save-image")?.addEventListener("click", async () => {
+  try {
+    const resp = await apiFetch("/camera/capture");
+    if (!resp.ok) {
+      const err = await resp.text();
+      showStatus(`Save failed: ${err}`);
+      return;
+    }
+    const blob = await resp.blob();
+    // Try to extract filename from Content-Disposition, fall back to timestamp
+    const disp = resp.headers.get("Content-Disposition") || "";
+    const match = /filename="([^"]+)"/.exec(disp);
+    const ts = new Date().toISOString().replace(/[:.]/g, "-");
+    const filename = match ? match[1] : `microscope_${ts}.jpg`;
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    showStatus(`Saved ${filename}`);
+  } catch (e) {
+    showStatus(`Save failed: ${e.message || e}`);
+  }
+});
+
+// ── Scan webcams button ──────────────────────────────────────────────────────────
+document.getElementById("btn-refresh-cameras")?.addEventListener("click", async () => {
+  const btn = document.getElementById("btn-refresh-cameras");
+  if (btn) { btn.disabled = true; btn.textContent = "Refreshing…"; }
+  try {
+    await loadCameraList({ refresh: true });
+    showStatus("Camera list refreshed");
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = "Refresh cameras";
+    }
+  }
+});
+
+document.getElementById("btn-scan-webcams")?.addEventListener("click", async () => {
+  const btn = document.getElementById("btn-scan-webcams");
+  if (btn) { btn.disabled = true; btn.textContent = "Scanning…"; }
+  try {
+    await loadCameraList({ includeWebcams: true });
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+});
 
 // ── Session load file input ────────���──────────────────────────────────────────
 document.getElementById("btn-load-session")?.addEventListener("click", () => {
@@ -1051,8 +1112,7 @@ document.getElementById("pixel-format-top")?.addEventListener("change", async e 
 });
 
 // Camera select (top bar)
-document.getElementById("camera-select-top")?.addEventListener("change", async e => {
-  const camera_id = e.target.value;
+async function switchHardwareCamera(camera_id) {
   if (!camera_id) return;
 
   if (camera_id === "browser-cam" || camera_id.startsWith("browser-cam-")) {
@@ -1065,7 +1125,7 @@ document.getElementById("camera-select-top")?.addEventListener("change", async e
   // Switching away from browser camera — stop it first
   if (isBrowserCameraActive()) stopBrowserCamera();
 
-  e.target.disabled = true;
+  showStatus("Switching camera…");
   try {
     const r = await apiFetch("/camera/select", {
       method: "POST",
@@ -1079,11 +1139,39 @@ document.getElementById("camera-select-top")?.addEventListener("change", async e
     img.src = "/stream?" + Date.now();
     await loadCameraInfo();
     await loadCameraList();
+    showStatus("Camera switched");
   } catch (err) {
     console.error("Camera switch failed:", err);
+    showStatus(`Camera switch failed: ${err.message || err}`);
     await loadCameraList();
   }
-  e.target.disabled = false;
+}
+
+document.getElementById("camera-select-top")?.addEventListener("change", async e => {
+  e.target.disabled = true;
+  try {
+    await switchHardwareCamera(e.target.value);
+  } finally {
+    e.target.disabled = false;
+  }
+});
+
+document.getElementById("btn-reconnect-camera")?.addEventListener("click", async () => {
+  const btn = document.getElementById("btn-reconnect-camera");
+  const id = state._cameraInfo?.device_id;
+  if (!id || id === "n/a" || state._cameraInfo?.no_camera) {
+    showStatus("No hardware camera is currently selected");
+    return;
+  }
+  if (btn) { btn.disabled = true; btn.textContent = "Reconnecting…"; }
+  try {
+    await switchHardwareCamera(id);
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = "Reconnect current";
+    }
+  }
 });
 
 // ROI Set from view

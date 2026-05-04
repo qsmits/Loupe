@@ -1,4 +1,5 @@
 import asyncio
+import collections
 import logging
 import threading
 import time
@@ -32,6 +33,10 @@ class CameraReader(BaseCamera):
         self._latest: np.ndarray | None = None
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
+        # Rolling timestamps of successful frames for FPS calculation.
+        self._frame_times: collections.deque[float] = collections.deque(maxlen=60)
+        self._dropped_frames = 0  # transient None returns from get_frame()
+        self._read_errors = 0  # exceptions from get_frame()
 
     # ── BaseCamera interface ────────────────────────────────────────────────
 
@@ -171,14 +176,30 @@ class CameraReader(BaseCamera):
                         "Reader thread did not stop within 5 s; aborting camera switch."
                     )
             old_camera = self._camera
+            # Drop the cached frame so the UI doesn't keep displaying the
+            # previous camera's last image when the new camera fails to start
+            # streaming. Combined with the stats panel, this makes a silent
+            # acquisition failure visible.
+            with self._lock:
+                self._latest = None
+            self._frame_times.clear()
+            self._dropped_frames = 0
+            self._read_errors = 0
             try:
                 # Close old camera FIRST to release the USB/GigE device,
                 # then open the new one. Necessary because USB cameras can't
                 # have two handles open on the same device simultaneously.
-                old_camera.close()
+                try:
+                    old_camera.close()
+                except Exception as e:
+                    _log.warning("Old camera close failed during switch: %s", e)
                 new_camera.open()
                 self._camera = new_camera
             except Exception as switch_err:
+                try:
+                    new_camera.close()
+                except Exception:
+                    pass
                 # new_camera.open() failed; try to reopen the old camera
                 try:
                     old_camera.open()
@@ -262,12 +283,45 @@ class CameraReader(BaseCamera):
             t0 = time.monotonic()
             try:
                 frame = self._camera.get_frame()
-                with self._lock:
-                    self._latest = frame
+                if frame is None:
+                    # Cameras that signal transient acquisition failures by
+                    # returning None (e.g. AravisCamera on partial frames or
+                    # pop timeouts). Counted in stats; not logged per-frame.
+                    self._dropped_frames += 1
+                else:
+                    with self._lock:
+                        self._latest = frame
+                    self._frame_times.append(time.monotonic())
             except Exception as e:
+                self._read_errors += 1
                 _log.warning("get_frame() error: %s", e)
             elapsed = time.monotonic() - t0
             time.sleep(max(0.0, self._interval - elapsed))
+
+    def get_stats(self) -> dict[str, object]:
+        # Compute FPS from frames captured in the last second of wall clock.
+        now = time.monotonic()
+        with self._lock:
+            recent = [t for t in self._frame_times if now - t <= 1.0]
+            window_count = len(recent)
+            window_span = (now - recent[0]) if len(recent) >= 2 else 0.0
+        if window_span > 0:
+            fps = (window_count - 1) / window_span
+        elif window_count >= 1:
+            fps = float(window_count)  # less than 1 s of data; treat as count/sec
+        else:
+            fps = 0.0
+        stats: dict[str, object] = {
+            "fps": round(fps, 2),
+            "reader_dropped_frames": self._dropped_frames,
+            "reader_read_errors": self._read_errors,
+            "target_fps": round(1.0 / self._interval, 2),
+        }
+        try:
+            stats.update(self._camera.get_stats() or {})
+        except Exception as e:
+            stats["camera_stats_error"] = str(e)
+        return stats
 
 
 async def mjpeg_generator(camera: BaseCamera, fps: int = 30):

@@ -119,6 +119,22 @@ def make_camera_router(camera: BaseCamera, frame_store: SessionFrameStore, start
         cv2.imwrite(str(path), frame)
         return {"filename": filename}
 
+    @router.get("/camera/capture")
+    async def capture_download():
+        if camera.is_null:
+            raise HTTPException(503, detail="No camera")
+        frame = camera.get_frame()
+        ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 95])
+        if not ok:
+            raise HTTPException(status_code=500, detail="Failed to encode frame")
+        ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"microscope_{ts}.jpg"
+        return Response(
+            content=buf.tobytes(),
+            media_type="image/jpeg",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+
     @router.post("/load-image")
     async def load_image(session_id: str = Depends(get_session_id_dep), file: UploadFile = File(...)):
         data = await file.read(MAX_UPLOAD_BYTES + 1)
@@ -184,11 +200,30 @@ def make_camera_router(camera: BaseCamera, frame_store: SessionFrameStore, start
         info["no_camera"] = camera.is_null
         return info
 
+    @router.get("/camera/stats")
+    async def camera_stats():
+        # Lightweight diagnostic endpoint, polled by the camera-info panel.
+        # Returns FPS, dropped/error counters, and (for Aravis cameras) the
+        # underlying stream statistics including resend-request counts.
+        if camera.is_null:
+            return {"no_camera": True}
+        return await asyncio.to_thread(camera.get_stats)
+
     @router.put("/camera/exposure")
-    async def set_exposure(body: ExposureBody):
+    async def set_exposure(body: ExposureBody, request: Request):
         if camera.is_null:
             raise HTTPException(503, detail="No camera")
-        camera.set_exposure(body.value)
+        try:
+            await asyncio.to_thread(camera.set_exposure, body.value)
+        except Exception as e:
+            # Camera firmware can transiently reject writes (e.g. access-denied
+            # at frame integration boundaries). The aravis driver retries once
+            # internally; if it still fails, surface the error to the UI rather
+            # than 500ing the whole request.
+            raise HTTPException(
+                502,
+                detail=safe_error_detail(request, e, "Exposure adjustment rejected"),
+            )
         return {"ok": True}
 
     @router.put("/camera/gain")
@@ -234,19 +269,45 @@ def make_camera_router(camera: BaseCamera, frame_store: SessionFrameStore, start
         return {"ok": True}
 
     @router.get("/cameras")
-    async def list_cameras():
-        if camera.is_null:
-            return []
+    async def list_cameras(
+        request: Request,
+        include_webcams: bool = Query(default=False),
+        refresh: bool = Query(default=False),
+    ):
+        # Aravis discovery does a UDP broadcast and waits for replies, which
+        # can stall the request when something on the bus misbehaves. Cap it
+        # so the UI can render a "timed out" state instead of hanging.
         from .cameras.aravis import list_aravis_cameras
         from .cameras.opencv import list_opencv_cameras
-        aravis = await asyncio.to_thread(list_aravis_cameras)
-        opencv = await asyncio.to_thread(list_opencv_cameras)
-        return aravis + opencv
+        status = "ok"
+        try:
+            aravis_call = (
+                (lambda: list_aravis_cameras(refresh_attempts=3))
+                if refresh else list_aravis_cameras
+            )
+            aravis = await asyncio.wait_for(
+                asyncio.to_thread(aravis_call),
+                timeout=12.0 if refresh else 8.0,
+            )
+        except asyncio.TimeoutError:
+            aravis = []
+            status = "timeout"
+        except Exception as e:
+            aravis = []
+            status = "error"
+            aravis_error = safe_error_detail(request, e, "Camera discovery failed")
+        else:
+            aravis_error = None
+        opencv = await asyncio.to_thread(list_opencv_cameras) if include_webcams else []
+        result = {"status": status, "cameras": aravis + opencv}
+        if aravis_error is not None:
+            result["error"] = aravis_error
+        return result
 
     @router.post("/camera/select")
     async def select_camera(body: CameraSelectBody, request: Request):
-        if camera.is_null:
-            raise HTTPException(503, detail="No camera")
+        if not hasattr(camera, "switch_camera"):
+            raise HTTPException(503, detail="Camera switching is not available")
         try:
             if body.camera_id.startswith("opencv-"):
                 from .cameras.opencv import OpenCVCamera
@@ -258,7 +319,7 @@ def make_camera_router(camera: BaseCamera, frame_store: SessionFrameStore, start
             await asyncio.to_thread(camera.switch_camera, new_cam)
         except Exception as e:
             raise HTTPException(400, detail=safe_error_detail(request, e, "Camera switch failed"))
-        await asyncio.to_thread(save_config, {"camera_id": body.camera_id})
+        await asyncio.to_thread(save_config, {"camera_id": body.camera_id, "no_camera": False})
         return {"ok": True}
 
     @router.put("/camera/gamma")

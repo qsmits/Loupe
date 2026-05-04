@@ -20,7 +20,9 @@ def test_camera_info_returns_no_camera_flag(null_client):
 def test_cameras_list_returns_empty(null_client):
     r = null_client.get("/cameras")
     assert r.status_code == 200
-    assert r.json() == []
+    data = r.json()
+    assert data["status"] == "ok"
+    assert isinstance(data["cameras"], list)
 
 
 def test_set_exposure_returns_503(null_client):
@@ -49,9 +51,21 @@ def test_wb_ratio_returns_503(null_client):
     assert r.status_code == 503
 
 
-def test_camera_select_returns_503(null_client):
-    r = null_client.post("/camera/select", json={"camera_id": "some-id"})
-    assert r.status_code == 503
+def test_camera_select_from_no_camera_can_recover(null_client, monkeypatch):
+    """A startup NullCamera fallback must not require a server restart.
+
+    Selecting a hardware camera should live-swap the CameraReader away from
+    NullCamera and clear the persisted no_camera flag.
+    """
+    from tests.conftest import FakeCamera
+
+    monkeypatch.setattr("backend.cameras.opencv.OpenCVCamera", lambda index: FakeCamera())
+    r = null_client.post("/camera/select", json={"camera_id": "opencv-0"})
+    assert r.status_code == 200
+
+    info = null_client.get("/camera/info")
+    assert info.status_code == 200
+    assert info.json()["no_camera"] is False
 
 
 def test_snapshot_returns_503(null_client):

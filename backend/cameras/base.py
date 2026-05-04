@@ -60,6 +60,10 @@ class BaseCamera(ABC):
     def reset_roi(self) -> None:
         """Reset ROI to full sensor. No-op if unsupported."""
 
+    def get_stats(self) -> dict[str, object]:
+        """Return diagnostic stats (FPS, dropped frames, etc.). Default: empty."""
+        return {}
+
     @property
     def is_null(self) -> bool:
         """Return True if this is a NullCamera (no hardware). Default False."""

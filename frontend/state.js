@@ -30,6 +30,7 @@ export const state = {
   dxfRotateMode: false,
   dxfRotateOrigin: null, // { pivotX, pivotY, startAngleRad, annAngleStart }
   showDeviations: false,
+  includeWebcams: false,
   tolerances: { warn: 0.10, fail: 0.25 },
   featureTolerances: {},
   featureModes: {},        // { [handle]: "punch" | "die" } — default is "die"
