@@ -38,6 +38,35 @@ def test_detect_circles_finds_circle():
     assert abs(c["radius"] - 80) < 15
 
 
+def faint_circle_frame(val=45):
+    """640×480 black frame with a very low-contrast gray circle.
+    Invisible to the default Canny thresholds; only recoverable at high sensitivity."""
+    frame = np.zeros((480, 640, 3), dtype=np.uint8)
+    cv2.circle(frame, (320, 240), 80, (val, val, val), 3)
+    return frame
+
+
+def test_detect_circles_high_sensitivity_recovers_faint_circle():
+    frame = faint_circle_frame(45)
+    found = detect_circles(frame, sensitivity=100, min_radius=60, max_radius=100)
+    assert len(found) >= 1
+    c = found[0]
+    assert abs(c["x"] - 320) < 15
+    assert abs(c["y"] - 240) < 15
+
+
+def test_detect_circles_low_sensitivity_misses_faint_circle():
+    frame = faint_circle_frame(45)
+    assert detect_circles(frame, sensitivity=1, min_radius=60, max_radius=100) == []
+
+
+def test_detect_circles_default_sensitivity_reproduces_legacy_thresholds():
+    # sensitivity=30 must map to the historical fixed (50,150)/(20,80) Canny pair,
+    # so a strong circle is still found exactly as before this control was wired up.
+    frame = white_circle_frame()
+    assert len(detect_circles(frame, sensitivity=30, min_radius=60, max_radius=100)) >= 1
+
+
 def test_detect_circles_empty_frame():
     frame = np.zeros((480, 640, 3), dtype=np.uint8)
     circles = detect_circles(

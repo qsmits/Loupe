@@ -195,7 +195,7 @@ export function initDetectHandlers() {
   const btnCircles = document.getElementById("btn-run-circles");
   btnCircles.addEventListener("click", withBusy(btnCircles, "Detecting circles", async () => {
     await ensureFrozen();
-    const p2   = parseInt(document.getElementById("hough-p2").value);
+    const sensitivity = parseInt(document.getElementById("hough-p2").value);
     const minR = parseInt(document.getElementById("circle-min-r").value);
     const maxR = parseInt(document.getElementById("circle-max-r").value);
     const subpixel = document.getElementById("detect-subpixel")?.checked
@@ -203,7 +203,7 @@ export function initDetectHandlers() {
     const resp = await apiFetch("/detect-circles", {
       method: "POST",
       headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({ dp:1.2, min_dist:50, param1:100, param2:p2, min_radius:minR, max_radius:maxR, subpixel, surface_mode: state.surfaceMode }),
+      body: JSON.stringify({ min_radius:minR, max_radius:maxR, sensitivity, subpixel, surface_mode: state.surfaceMode }),
     });
     if (!resp.ok) { alert(await resp.text()); return; }
     const circles = await resp.json();

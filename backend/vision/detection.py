@@ -39,6 +39,21 @@ _ARC_PARTIAL_NMS_CENTER_PX = 20
 _ARC_PARTIAL_NMS_R_RATIO   = 0.20
 
 
+def _circle_canny_thresholds(sensitivity: int) -> tuple[tuple[int, int], tuple[int, int]]:
+    """
+    Map a 1–100 detection *sensitivity* to (tight, loose) Canny threshold pairs
+    for the contour-based circle detector. Higher sensitivity → lower thresholds
+    → fainter/lower-contrast edges accepted (and more false positives).
+
+    sensitivity=30 reproduces the historical fixed thresholds exactly:
+    tight=(50,150), loose=(20,80). This keeps default detection behaviour stable.
+    """
+    low = max(5.0, min(150.0, 50.0 + (30 - sensitivity)))
+    tight = (int(round(low)), int(min(255, round(3.0 * low))))
+    loose = (int(round(0.4 * low)), int(round(1.6 * low)))
+    return tight, loose
+
+
 def preprocess(frame: np.ndarray, smoothing: int = 1, surface_mode: str = "edm") -> np.ndarray:
     """
     Convert to grayscale, boost local contrast with CLAHE, then apply
@@ -130,6 +145,7 @@ def detect_circles(
     param2: int = 50,
     min_radius: int = 8,
     max_radius: int = 500,
+    sensitivity: int = 30,
     subpixel: str = "none",
     surface_mode: str = "edm",
 ) -> list[dict]:
@@ -137,7 +153,9 @@ def detect_circles(
     Contour-based circle detection.
     Closed contours are accepted by circularity score + radius consistency.
     Open contours are fitted with algebraic least-squares and accepted by arc coverage.
-    Two Canny passes (tight + loose) improve recall in poorly lit images.
+    Two Canny passes (tight + loose) improve recall in poorly lit images; their
+    thresholds are driven by `sensitivity` (1–100, higher = fainter edges accepted;
+    30 reproduces the historical fixed thresholds). See `_circle_canny_thresholds`.
     Returns list of {"x": int, "y": int, "radius": int}.
     The legacy Hough parameters (dp, min_dist, param1, param2) are accepted for API
     compatibility but are not used.
@@ -204,10 +222,11 @@ def detect_circles(
             if enc_r >= _LARGE_R_THRESHOLD:
                 _try_contour(cnt)
 
-    _run_on_edges(cv2.Canny(gray, 50, 150))
+    (tight_lo, tight_hi), (loose_lo, loose_hi) = _circle_canny_thresholds(sensitivity)
+    _run_on_edges(cv2.Canny(gray, tight_lo, tight_hi))
 
     # Loose pass for faint edges; limited to small circles to avoid large false positives.
-    loose_edges = cv2.Canny(gray, 20, 80)
+    loose_edges = cv2.Canny(gray, loose_lo, loose_hi)
     edges_s = cv2.morphologyEx(loose_edges, cv2.MORPH_CLOSE, k_small)
     for cnt in cv2.findContours(edges_s, cv2.RETR_LIST, cv2.CHAIN_APPROX_NONE)[0]:
         _, enc_r = cv2.minEnclosingCircle(cnt)

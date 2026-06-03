@@ -19,6 +19,7 @@ class CircleParams(BaseModel):
     param2: int = Field(default=50, ge=1, le=500)
     min_radius: int = Field(default=10, ge=1, le=5000)
     max_radius: int = Field(default=500, ge=1, le=5000)
+    sensitivity: int = Field(default=30, ge=1, le=100)
     subpixel: str = Field(default="none", max_length=20)
     surface_mode: str = Field(default="edm", pattern=r"^(edm|lathe|print)$")
 
@@ -140,6 +141,7 @@ def make_detection_router(frame_store: SessionFrameStore) -> APIRouter:
         circles = detection.detect_circles(
             frame, params.dp, params.min_dist, params.param1,
             params.param2, params.min_radius, params.max_radius,
+            sensitivity=params.sensitivity,
             subpixel=params.subpixel, surface_mode=params.surface_mode,
         )
         return circles
