@@ -2,7 +2,7 @@
 import math
 import numpy as np
 import pytest
-from backend.vision.alignment import extract_dxf_circles, align_circles
+from backend.vision.alignment import extract_dxf_circles, align_circles, _score_transform
 
 
 def test_extract_dxf_circles_ignores_non_circles():
@@ -23,6 +23,29 @@ def test_extract_dxf_circles_empty():
 def test_extract_dxf_circles_no_circles():
     entities = [{"type": "line", "x1": 0, "y1": 0, "x2": 1, "y2": 1}]
     assert extract_dxf_circles(entities) == []
+
+
+def test_score_transform_never_matches_one_detection_twice():
+    # Two DXF circles both land near the SINGLE detected circle under the
+    # identity transform (mapping is mx=dx, my=-dy). A detection must not be
+    # counted as an inlier for more than one DXF circle.
+    detected = [(100.0, 100.0, 10.0)]
+    dxf = [(100.0, -100.0, 10.0), (103.0, -103.0, 10.0)]  # → (100,100) and (103,103)
+    inliers = _score_transform(dxf, detected, 0.0, 0.0, 0.0)
+    matched_detections = [j for _, j in inliers]
+    assert len(matched_detections) == len(set(matched_detections)), \
+        "a detected circle was claimed by more than one DXF circle"
+    assert len(inliers) <= len(detected)
+
+
+def test_score_transform_assigns_distinct_detections_one_to_one():
+    # Two DXF circles, two distinct detections — each DXF circle should match
+    # its own nearest detection, giving two inliers with distinct indices.
+    detected = [(100.0, 100.0, 10.0), (200.0, 100.0, 10.0)]
+    dxf = [(100.0, -100.0, 10.0), (200.0, -100.0, 10.0)]  # → (100,100) and (200,100)
+    inliers = _score_transform(dxf, detected, 0.0, 0.0, 0.0)
+    assert len(inliers) == 2
+    assert {j for _, j in inliers} == {0, 1}
 
 
 def test_align_circles_pure_translation():

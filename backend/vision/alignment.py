@@ -47,16 +47,23 @@ def _score_transform(dxf_px, detected_px, tx, ty, angle):
     """
     cos_a, sin_a = math.cos(angle), math.sin(angle)
     inliers = []
+    used: set[int] = set()  # detected circles already claimed — enforce one-to-one
     for i, (dx, dy, dr) in enumerate(dxf_px):
         mx = dx * cos_a - dy * sin_a + tx
         my = -(dx * sin_a + dy * cos_a) + ty  # Y-flip: DXF Y-up → canvas Y-down
+        threshold = max(10.0, 0.15 * dr)
+        best_j, best_d = -1, threshold
         for j, (ex, ey, er) in enumerate(detected_px):
+            if j in used:
+                continue
             if abs(dr - er) / (max(dr, er) + 1e-6) > 0.3:
                 continue
-            threshold = max(10.0, 0.15 * dr)
-            if math.hypot(mx - ex, my - ey) < threshold:
-                inliers.append((i, j))
-                break
+            d = math.hypot(mx - ex, my - ey)
+            if d < best_d:  # nearest unused detection within threshold
+                best_d, best_j = d, j
+        if best_j >= 0:
+            inliers.append((i, best_j))
+            used.add(best_j)
     return inliers
 
 
