@@ -5,6 +5,7 @@ import { addAnnotation } from './annotations.js';
 import { renderSidebar, updateDxfControlsVisibility, updateFreezeUI, renderInspectionTable } from './sidebar.js';
 import { exportInspectionCsv, exportInspectionPdf } from './session.js';
 import { serverSubpixelMethod } from './subpixel-js.js';
+import { ensureFrozen } from './detect.js';
 
 // ── Shared alignment helper ───────────────────────────────────────────────
 
