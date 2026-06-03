@@ -155,6 +155,19 @@ def test_detect_lines_contour_finds_rectangle_edges():
     assert len(detect_lines_contour(frame, min_edge_density=0)) >= 4
 
 
+def test_detect_lines_contour_subpixel_returns_fractional_endpoints():
+    """With subpixel on, refined endpoints must reach the output as floats rather
+    than being rounded back to integer pixels (which silently negated the feature)."""
+    from backend.vision.detection import detect_lines_contour
+    frame = np.zeros((480, 640, 3), dtype=np.uint8)
+    cv2.line(frame, (100, 120), (520, 360), (255, 255, 255), 3)  # diagonal edge
+    lines = detect_lines_contour(frame, subpixel="parabola", min_edge_density=0)
+    assert len(lines) >= 1
+    coords = [v for seg in lines for v in (seg["x1"], seg["y1"], seg["x2"], seg["y2"])]
+    assert any(abs(c - round(c)) > 1e-6 for c in coords), \
+        "subpixel line endpoints were rounded to integers"
+
+
 def test_detect_lines_contour_empty_frame():
     from backend.vision.detection import detect_lines_contour
     assert detect_lines_contour(np.zeros((480,640,3),dtype=np.uint8)) == []

@@ -443,8 +443,11 @@ def detect_lines_contour(
                             cv2.DIST_L2, 0, 0.01, 0.01).flatten()
                         t = (seg_pts[:, 0] - x0) * vx + (seg_pts[:, 1] - y0) * vy
                         t_min_idx, t_max_idx = int(np.argmin(t)), int(np.argmax(t))
-                        x1, y1 = int(round(seg_pts[t_min_idx][0])), int(round(seg_pts[t_min_idx][1]))
-                        x2, y2 = int(round(seg_pts[t_max_idx][0])), int(round(seg_pts[t_max_idx][1]))
+                        # Keep sub-pixel precision: do NOT round refined endpoints
+                        # back to integer pixels (the density walk below int-casts
+                        # its own sample coords, so this stays safe).
+                        x1, y1 = float(seg_pts[t_min_idx][0]), float(seg_pts[t_min_idx][1])
+                        x2, y2 = float(seg_pts[t_max_idx][0]), float(seg_pts[t_max_idx][1])
                     else:
                         x1, y1 = int(pts[i][0]), int(pts[i][1])
                         x2, y2 = int(pts[i+1][0]), int(pts[i+1][1])
@@ -491,7 +494,10 @@ def detect_lines_contour(
         if not suppressed:
             kept.append((length, x1, y1, x2, y2, angle))
 
-    return [{"x1":x1,"y1":y1,"x2":x2,"y2":y2,"length":round(length,1)}
+    # round() leaves the integer (non-subpixel) endpoints as ints and trims the
+    # refined sub-pixel floats to 2 decimals.
+    return [{"x1":round(x1,2),"y1":round(y1,2),"x2":round(x2,2),"y2":round(y2,2),
+             "length":round(length,1)}
             for length, x1, y1, x2, y2, _ in kept]
 
 
