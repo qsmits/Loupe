@@ -280,6 +280,7 @@ def make_camera_router(camera: BaseCamera, frame_store: SessionFrameStore, start
         from .cameras.aravis import list_aravis_cameras
         from .cameras.opencv import list_opencv_cameras
         status = "ok"
+        aravis_error = None
         try:
             aravis_call = (
                 (lambda: list_aravis_cameras(refresh_attempts=3))
@@ -296,10 +297,21 @@ def make_camera_router(camera: BaseCamera, frame_store: SessionFrameStore, start
             aravis = []
             status = "error"
             aravis_error = safe_error_detail(request, e, "Camera discovery failed")
-        else:
-            aravis_error = None
+
+        # dc1394 enumeration (fast — no network I/O)
+        dc1394_cams: list[dict] = []
+        try:
+            from .cameras.dc1394 import list_dc1394_cameras
+            dc1394_cams = await asyncio.to_thread(list_dc1394_cameras)
+        except ImportError:
+            pass  # library not installed — silently skip
+        except Exception as e:
+            log_dc = __import__("logging").getLogger(__name__)
+            log_dc.debug("dc1394 enumeration error: %s", e)
+
         opencv = await asyncio.to_thread(list_opencv_cameras) if include_webcams else []
-        result = {"status": status, "cameras": aravis + opencv}
+        # Order: Aravis (GigE/USB3Vision) first, dc1394 second, webcams last
+        result = {"status": status, "cameras": aravis + dc1394_cams + opencv}
         if aravis_error is not None:
             result["error"] = aravis_error
         return result
@@ -309,7 +321,11 @@ def make_camera_router(camera: BaseCamera, frame_store: SessionFrameStore, start
         if not hasattr(camera, "switch_camera"):
             raise HTTPException(503, detail="Camera switching is not available")
         try:
-            if body.camera_id.startswith("opencv-"):
+            if body.camera_id.startswith("dc1394-"):
+                from .cameras.dc1394 import Dc1394Camera
+                guid_hex = body.camera_id[len("dc1394-"):]
+                new_cam = Dc1394Camera(guid=int(guid_hex, 16))
+            elif body.camera_id.startswith("opencv-"):
                 from .cameras.opencv import OpenCVCamera
                 idx = int(body.camera_id.split("-", 1)[1])
                 new_cam = OpenCVCamera(index=idx)

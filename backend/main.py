@@ -13,6 +13,11 @@ from .cameras.base import BaseCamera
 from .cameras.aravis import AravisCamera, ARAVIS_AVAILABLE, list_aravis_cameras
 from .cameras.null import NullCamera
 from .cameras.opencv import OpenCVCamera
+try:
+    from .cameras.dc1394 import Dc1394Camera, list_dc1394_cameras
+    DC1394_AVAILABLE = True
+except ImportError:
+    DC1394_AVAILABLE = False
 from .session_store import SessionFrameStore
 from .stream import CameraReader
 from .api import make_router, router as ui_router
@@ -49,32 +54,89 @@ def create_app(camera: BaseCamera | None = None, no_camera: bool = False) -> Fas
     elif camera is None:
         camera_id = cfg.get("camera_id")
 
-        if not ARAVIS_AVAILABLE:
-            log.warning("Aravis not found — falling back to OpenCV camera (index 1)")
-            camera = OpenCVCamera(index=1)
-        elif camera_id is None:
-            camera = AravisCamera(device_id=None)
-        else:
-            try:
-                available = list_aravis_cameras()
-            except Exception as e:
-                log.warning("Failed to enumerate Aravis cameras: %s. Treating as no cameras available.", e)
-                available = []
-            ids = [c["id"] for c in available]
-            if camera_id in ids:
-                camera = AravisCamera(device_id=camera_id)
-            elif available:
-                fallback_id = available[0]["id"]
-                startup_warning = f"Camera '{camera_id}' not found. Using '{fallback_id}'."
-                log.warning(startup_warning)
-                camera = AravisCamera(device_id=fallback_id)
+        # Route explicitly requested camera IDs by prefix
+        if camera_id is not None and camera_id.startswith("dc1394-"):
+            if DC1394_AVAILABLE:
+                guid_hex = camera_id[len("dc1394-"):]
+                try:
+                    camera = Dc1394Camera(guid=int(guid_hex, 16))
+                except Exception as e:
+                    startup_warning = f"Failed to create Dc1394Camera for '{camera_id}': {e}. Falling back."
+                    log.warning(startup_warning)
+                    camera = None  # fall through to auto-discovery below
             else:
-                startup_warning = (
-                    f"Camera '{camera_id}' not found and no cameras available. "
-                    "Using OpenCV fallback."
-                )
+                startup_warning = f"Camera '{camera_id}' requested but dc1394 backend unavailable."
                 log.warning(startup_warning)
-                camera = OpenCVCamera(index=1)
+                camera = None
+
+        if camera is None and camera_id is not None and camera_id.startswith("opencv-"):
+            idx = 1
+            try:
+                idx = int(camera_id.split("-", 1)[1])
+            except (IndexError, ValueError):
+                pass
+            camera = OpenCVCamera(index=idx)
+
+        if camera is None:
+            # Auto-discover: Aravis first, then dc1394, then OpenCV
+            if not ARAVIS_AVAILABLE:
+                log.warning("Aravis not found — trying dc1394 / OpenCV fallback")
+                if DC1394_AVAILABLE:
+                    try:
+                        dc1394_cams = list_dc1394_cameras()
+                    except Exception as e:
+                        log.warning("dc1394 enumeration failed: %s", e)
+                        dc1394_cams = []
+                    if dc1394_cams:
+                        guid_hex = dc1394_cams[0]["id"][len("dc1394-"):]
+                        camera = Dc1394Camera(guid=int(guid_hex, 16))
+                    else:
+                        camera = OpenCVCamera(index=1)
+                else:
+                    camera = OpenCVCamera(index=1)
+            elif camera_id is None:
+                # No explicit ID: prefer Aravis, fall back to dc1394 if none found
+                try:
+                    aravis_cams = list_aravis_cameras()
+                except Exception:
+                    aravis_cams = []
+                if aravis_cams:
+                    camera = AravisCamera(device_id=None)
+                elif DC1394_AVAILABLE:
+                    try:
+                        dc1394_cams = list_dc1394_cameras()
+                    except Exception:
+                        dc1394_cams = []
+                    if dc1394_cams:
+                        log.info("No Aravis cameras found; trying first dc1394 camera")
+                        guid_hex = dc1394_cams[0]["id"][len("dc1394-"):]
+                        camera = Dc1394Camera(guid=int(guid_hex, 16))
+                    else:
+                        camera = AravisCamera(device_id=None)  # will fail gracefully
+                else:
+                    camera = AravisCamera(device_id=None)
+            else:
+                # Explicit non-dc1394 / non-opencv camera_id: Aravis lookup
+                try:
+                    available = list_aravis_cameras()
+                except Exception as e:
+                    log.warning("Failed to enumerate Aravis cameras: %s. Treating as no cameras available.", e)
+                    available = []
+                ids = [c["id"] for c in available]
+                if camera_id in ids:
+                    camera = AravisCamera(device_id=camera_id)
+                elif available:
+                    fallback_id = available[0]["id"]
+                    startup_warning = f"Camera '{camera_id}' not found. Using '{fallback_id}'."
+                    log.warning(startup_warning)
+                    camera = AravisCamera(device_id=fallback_id)
+                else:
+                    startup_warning = (
+                        f"Camera '{camera_id}' not found and no cameras available. "
+                        "Using OpenCV fallback."
+                    )
+                    log.warning(startup_warning)
+                    camera = OpenCVCamera(index=1)
 
     reader = CameraReader(camera)
 

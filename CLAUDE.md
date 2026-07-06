@@ -31,11 +31,16 @@ NO_CAMERA=1 .venv/bin/python -m uvicorn backend.main:app --host 0.0.0.0 --port 8
 ### Camera Selection (main.py lifespan)
 Priority order at startup:
 1. `NO_CAMERA` env var or `config.json` `no_camera: true` → `NullCamera` (stub, returns blank frames)
-2. Aravis (GObject Introspection) available → `AravisCamera` (GigE/USB3 Vision; uses `device_id` from config or first found)
-3. Fallback → `OpenCVCamera` (index 1)
-4. If open fails → `NullCamera` fallback with startup warning
+2. `camera_id` starts with `"dc1394-"` → `Dc1394Camera` (legacy PGR IIDC/USB3 via libdc1394 ctypes)
+3. `camera_id` starts with `"opencv-"` → `OpenCVCamera`
+4. Aravis (GObject Introspection) available → `AravisCamera` (GigE/USB3 Vision; uses `device_id` from config or first found)
+5. No Aravis + dc1394 available → first `Dc1394Camera`
+6. Fallback → `OpenCVCamera` (index 1)
+7. If open fails → `NullCamera` fallback with startup warning
 
 **Baumer cameras require Aravis (GI), not neoapi or OpenCV.** The env var `GST_PLUGIN_PATH=/opt/homebrew/opt/aravis/lib/gstreamer-1.0` must be set (handled by `server.sh`).
+
+**Legacy Point Grey USB3 cameras** (Grasshopper3 GS3-U3, Flea3 FL3-U3) are supported via a custom-patched `libdc1394` build at `/Users/qsmits/.local/libdc1394-usb/`. These cameras use the pre-USB3-Vision PGR Protocol and don't work with Aravis or Spinnaker 4.x on macOS. **Requires running the server with sudo** (`sudo ./server.sh start`) because macOS's IOKit blocks userspace USB interface claims for vendor-specific class devices. The library path can be overridden with the `DC1394_LIB_PATH` env var. Continuous streaming uses the multi-shot-255 re-arm trick (re-armed every 5 s by a background thread) because the standard IIDC iso_enable register does not engage free-run on this firmware.
 
 ### Backend Modules
 - `backend/cameras/` — `BaseCamera` abstract class + `AravisCamera`, `OpenCVCamera`, `NullCamera` implementations. `CameraReader` in `stream.py` wraps any camera in a background thread (solves macOS AVFoundation thread-safety).
