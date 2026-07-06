@@ -1,6 +1,6 @@
 import { apiFetch } from './api.js';
 import { state, pushUndo } from './state.js';
-import { redraw, canvas, img, showStatus } from './render.js';
+import { redraw, canvas, img, showStatus, renderExportCanvas } from './render.js';
 import { addAnnotation } from './annotations.js';
 import { renderSidebar, updateDxfControlsVisibility, updateFreezeUI, renderInspectionTable } from './sidebar.js';
 import { exportInspectionCsv, exportInspectionPdf } from './session.js';
@@ -475,15 +475,21 @@ export function initDxfHandlers() {
         profile_mm: r.profile_mm ?? null,
       }));
 
-      // Capture inspection frame
+      // Capture inspection frame at native image resolution
       try {
-        const offscreen = document.createElement("canvas");
-        offscreen.width = canvas.width;
-        offscreen.height = canvas.height;
-        const octx = offscreen.getContext("2d");
-        octx.drawImage(img, 0, 0, offscreen.width, offscreen.height);
-        octx.drawImage(canvas, 0, 0);
-        state.inspectionFrame = offscreen.toDataURL("image/jpeg", 0.85);
+        const exportCanvas = renderExportCanvas();
+        if (exportCanvas) {
+          state.inspectionFrame = exportCanvas.toDataURL("image/jpeg", 0.85);
+        } else {
+          // No frozen background — composite the live stream under the overlay
+          const offscreen = document.createElement("canvas");
+          offscreen.width = canvas.width;
+          offscreen.height = canvas.height;
+          const octx = offscreen.getContext("2d");
+          octx.drawImage(img, 0, 0, offscreen.width, offscreen.height);
+          octx.drawImage(canvas, 0, 0);
+          state.inspectionFrame = offscreen.toDataURL("image/jpeg", 0.85);
+        }
       } catch (_) { state.inspectionFrame = null; }
 
       const matched = results.filter(r => r.matched).length;

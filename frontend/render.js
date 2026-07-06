@@ -1,14 +1,21 @@
 import { state, _deviationHitBoxes, _labelHitBoxes } from './state.js';
 import { fitCircleAlgebraic, fitLine, polygonArea } from './math.js';
-import { viewport, imageWidth, imageHeight, setImageSize } from './viewport.js';
+import { viewport, imageWidth, imageHeight, setImageSize, fitToWindow } from './viewport.js';
 import { measurementLabel as _measurementLabel, getLineEndpoints, lineAngleDeg } from './format.js';
 export { getLineEndpoints, lineAngleDeg } from './format.js';
 import { isCrossModeActive } from './cross-mode.js';
 
 // ── Shared primitives (used by sub-modules via import from render.js) ────────
 
+// Extra stroke/font multiplier used only while rendering a full-resolution
+// export (see renderExportCanvas). 1 during normal on-screen rendering.
+let _strokeScale = 1;
+// True while renderExportCanvas re-renders the scene; suppresses screen-space
+// HUD elements (reticle, zoom badge, minimap) that don't belong in an export.
+let _exporting = false;
+
 /** Pixel width compensated for zoom — keeps screen size constant */
-export function pw(px) { return px / viewport.zoom; }
+export function pw(px) { return px * _strokeScale / viewport.zoom; }
 
 // ── DOM refs ──────────────────────────────────────────────────────────────────
 export const img       = document.getElementById("stream-img");
@@ -200,6 +207,56 @@ export function resizeCanvas() {
   canvas.height = Math.round(displayH);
   if (!imageWidth) setImageSize(canvas.width, canvas.height);
   redraw();
+}
+
+// ── Full-resolution export rendering ──────────────────────────────────────────
+/**
+ * Re-render the frozen scene at native image resolution for export.
+ *
+ * Returns an offscreen canvas of imageWidth × imageHeight containing the
+ * frozen background plus all annotations — full frame, no letterbox bars,
+ * no zoom crop. Returns null when there is no frozen background (callers
+ * keep their live-mode compositing paths).
+ *
+ * Strokes and fonts are scaled so the export matches the legibility of the
+ * on-screen fit-to-window view. The on-screen canvas and viewport are
+ * restored synchronously before returning, so nothing visibly changes.
+ */
+export function renderExportCanvas() {
+  if (!state.frozenBackground || !(imageWidth > 0) || !(imageHeight > 0)) return null;
+
+  const savedW = canvas.width;
+  const savedH = canvas.height;
+  const savedZoom = viewport.zoom;
+  const savedPanX = viewport.panX;
+  const savedPanY = viewport.panY;
+  // Fit zoom of the CURRENT on-screen canvas — scaling strokes/fonts by its
+  // inverse makes the export look like the on-screen fit view.
+  const screenFitZoom = Math.min(savedW / imageWidth, savedH / imageHeight);
+
+  try {
+    canvas.width = imageWidth;
+    canvas.height = imageHeight;
+    fitToWindow(imageWidth, imageHeight);  // exactly zoom=1, pan=(0,0)
+    _strokeScale = screenFitZoom > 0 ? Math.max(1, 1 / screenFitZoom) : 1;
+    _exporting = true;
+    redraw();
+
+    const out = document.createElement("canvas");
+    out.width = imageWidth;
+    out.height = imageHeight;
+    out.getContext("2d").drawImage(canvas, 0, 0);
+    return out;
+  } finally {
+    _exporting = false;
+    _strokeScale = 1;
+    viewport.zoom = savedZoom;
+    viewport.panX = savedPanX;
+    viewport.panY = savedPanY;
+    canvas.width = savedW;
+    canvas.height = savedH;
+    resizeCanvas();  // recomputes canvas dims from the DOM and redraws
+  }
 }
 
 // DXF draw function references for the annotation dispatcher
@@ -520,6 +577,10 @@ export function redraw() {
 
   ctx.restore();
   // ── End viewport transform ──
+
+  // Screen-space HUD elements don't belong in a full-resolution export
+  // (the minimap's fit-zoom guard uses CSS size, so it WOULD paint here).
+  if (_exporting) return;
 
   // ── HUD (screen-space, not affected by zoom/pan) ──
   drawReticle();

@@ -1,7 +1,7 @@
 import { apiFetch } from './api.js';
 import { isCrossModeActive } from './cross-mode.js';
 import { state, TRANSIENT_TYPES, DETECTION_TYPES } from './state.js';
-import { redraw, canvas, img, showStatus } from './render.js';
+import { redraw, canvas, img, showStatus, renderExportCanvas } from './render.js';
 import { renderSidebar, renderInspectionTable } from './sidebar.js';
 import { addAnnotation } from './annotations.js';
 import { polygonArea } from './math.js';
@@ -19,10 +19,14 @@ const _mctx = () => ({
 
 // ── Annotated export ───────────────────────────────────────────────────────
 export function exportAnnotatedImage() {
-  let sourceCanvas;
+  let sourceCanvas = null;
   if (state.frozen) {
-    // canvas already has frozen background + annotations painted on it
-    sourceCanvas = canvas;
+    // Re-render at native image resolution: full frame, no letterbox bars,
+    // no zoom crop, regardless of the current viewport.
+    sourceCanvas = renderExportCanvas();
+    // No frozen background (shouldn't happen while frozen) — fall back to
+    // the on-screen canvas as-is.
+    if (!sourceCanvas) sourceCanvas = canvas;
   } else {
     // live mode: composite the stream img under the annotation overlay
     sourceCanvas = document.createElement("canvas");
@@ -206,22 +210,14 @@ export function exportInspectionPdf() {
 
   let yPos = margin + 18;
 
-  // ── Annotated image (capture current canvas with annotations) ──
+  // ── Annotated image (full-resolution re-render with annotations) ──
   try {
-    const canvas = document.getElementById("overlay-canvas");
-    const imgEl = document.getElementById("stream-img");
-    if (canvas && state.frozenBackground) {
-      // Composite: frozen background + canvas overlay (has all annotations)
-      const offscreen = document.createElement("canvas");
-      offscreen.width = canvas.width;
-      offscreen.height = canvas.height;
-      const octx = offscreen.getContext("2d");
-      octx.drawImage(state.frozenBackground, 0, 0, offscreen.width, offscreen.height);
-      octx.drawImage(canvas, 0, 0);
-      const dataUrl = offscreen.toDataURL("image/jpeg", 0.90);
+    const exportCanvas = renderExportCanvas();
+    if (exportCanvas) {
+      const dataUrl = exportCanvas.toDataURL("image/jpeg", 0.90);
 
-      // Preserve aspect ratio
-      const imgAspect = offscreen.width / offscreen.height;
+      // Preserve aspect ratio (exportCanvas is native image-sized)
+      const imgAspect = exportCanvas.width / exportCanvas.height;
       const maxImgW = pageW - margin * 2;
       const maxImgH = pageH * 0.50;
       let imgW, imgH;
