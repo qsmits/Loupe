@@ -441,7 +441,9 @@ body.no-camera #stream-img {
   color: rgba(255, 255, 255, 0.75);
 }
 #drop-overlay.visible  { display: flex; }
+/* An active file drag always shows the hint, even over a frozen image */
 #drop-overlay.drag-active {
+  display: flex;
   background: rgba(10,132,255,.18);
   border-color: var(--accent-hover);
 }
