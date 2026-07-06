@@ -5,6 +5,7 @@
 import { state, _deviationHitBoxes, _labelHitBoxes } from './state.js';
 import { viewport, imageWidth, imageHeight } from './viewport.js';
 import { ctx, canvas, pw, drawLabel } from './render.js';
+import { dxfCtmOps, applyCtmOps, dxfToCanvasPure } from './dxf-transform.js';
 
 function _deviationColor(r) {
   const magnitude = Math.abs(r.perp_dev_mm ?? r.radius_dev_mm ?? 0);
@@ -46,7 +47,7 @@ function _drawFeatureNumber(x, y, num, color) {
 }
 
 export function drawDxfOverlay(ann) {
-  const { entities, offsetX, offsetY, scale, flipH = false, flipV = false, angle: annAngle = 0 } = ann;
+  const { entities, flipH = false, flipV = false } = ann;
   const originAngle = state.origin?.angle ?? 0;
 
   // Build set of handles being actively point-picked for highlighting
@@ -68,14 +69,11 @@ export function drawDxfOverlay(ann) {
   // high-scale overlays like gears (scale = ppm ≈ 457 at watch magnification)
   // force the stroke params to 1/(scale·zoom) which underflows Canvas 2D's
   // dash/line-width rendering at zoom > ~2 and makes the overlay vanish.
-  const applyDxfCtm = () => {
-    ctx.translate(offsetX, offsetY);
-    if (originAngle) ctx.rotate(originAngle);
-    ctx.scale(scale, -scale);   // DXF Y-up → canvas Y-down
-    if (flipH) ctx.scale(-1, 1);
-    if (flipV) ctx.scale(1, -1);
-    if (annAngle) ctx.rotate(-annAngle * Math.PI / 180);
-  };
+  // The op order lives in dxf-transform.js::dxfCtmOps, which is unit-tested
+  // to agree exactly with dxfToCanvas (and thus with the backend's
+  // dxf_to_image_px, the authority used by inspection and alignment).
+  const ctmOps = dxfCtmOps(ann, originAngle);
+  const applyDxfCtm = () => applyCtmOps(ctx, ctmOps);
 
   for (const en of entities) {
     const isPicked = pickHandles.has(en.handle);
@@ -147,26 +145,7 @@ export function drawDxfOverlay(ann) {
 }
 
 export function dxfToCanvas(x, y, ann) {
-  const { offsetX, offsetY, scale, flipH = false, flipV = false, angle: annAngle = 0 } = ann;
-  const originAngle = state.origin?.angle ?? 0;
-
-  const xf = flipH ? -x : x;
-  const yf = flipV ? -y : y;
-
-  const cosA = Math.cos(annAngle * Math.PI / 180);
-  const sinA = Math.sin(annAngle * Math.PI / 180);
-  const xr = xf * cosA - yf * sinA;
-  const yr = xf * sinA + yf * cosA;
-
-  let cx = xr * scale;
-  let cy = -yr * scale;
-
-  if (originAngle) {
-    const cos2 = Math.cos(originAngle), sin2 = Math.sin(originAngle);
-    [cx, cy] = [cx * cos2 - cy * sin2, cx * sin2 + cy * cos2];
-  }
-
-  return { x: offsetX + cx, y: offsetY + cy };
+  return dxfToCanvasPure(x, y, ann, state.origin?.angle ?? 0);
 }
 
 export function drawGuidedResults(ann) {

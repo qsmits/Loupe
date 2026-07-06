@@ -523,11 +523,12 @@ export function initMouseHandlers() {
         if (Math.hypot(dx, dy) >= 1e-6) {
           const nowRad = Math.atan2(dy, dx);
           let deltaDeg = (nowRad - o.startAngleRad) * 180 / Math.PI;
-          // Canvas Y is down, so CW drag on screen → positive deltaDeg,
-          // and the overlay's annAngle convention is DXF-frame degrees
-          // (rendered via `rotate(-annAngle)` after the Y-flip), which
-          // makes CW on screen correspond to increasing annAngle.
-          let next = o.annAngleStart + deltaDeg;
+          // Canvas Y is down, so CW drag on screen → positive deltaDeg.
+          // The overlay's annAngle convention is DXF-math degrees (rendered
+          // as rotate(+annAngle) before the Y-flip, matching the backend's
+          // dxf_to_image_px), so increasing annAngle turns the overlay CCW
+          // on screen — subtract deltaDeg so the overlay follows the mouse.
+          let next = o.annAngleStart - deltaDeg;
           if (e.shiftKey) next = Math.round(next * 2) / 2; // snap to 0.5°
           ann.angle = ((next % 360) + 360) % 360;
           // Keep the nudge-button display in sync if it exists.

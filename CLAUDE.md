@@ -67,7 +67,7 @@ Priority order at startup:
 - `frontend/session.js` — Save/load sessions (v2 format with inspection results), CSV/PDF/DXF export, auto-save to localStorage.
 - `frontend/sidebar.js` — Sidebar rendering, inspection result table, camera controls, tolerance config.
 - `frontend/math.js` — Geometric helpers: `fitCircle`, `fitCircleAlgebraic`, `fitLine`, `polygonArea`, `distPointToSegment`.
-- `frontend/calibration.js` — Calibration dialog flow.
+- Calibration flow lives in `tools.js` (`handleToolClick` calibrate branch) + `annotations.js` (`applyCalibration`, `recalibrateFromAnnotation`); pure scale math in `math.js::calibrationPixelsPerMm`.
 
 ### Key Features
 - **14 measurement tools**: Select, Distance, Angle, Circle, Fit Arc, Arc Measure, Center Dist, Para Dist, Perp Dist, Area, Pt-Circle Dist, Line Intersect, Slot Distance, Pan.
@@ -93,14 +93,14 @@ Priority order at startup:
 3. **Image-sampling frame** — used by any code that does `cx + r·cos θ, cy + r·sin θ` to sample an image along a circle (`analyze_gear`, `gear_phase._sample_circle`). This is numerically the image frame, but the parameterization matches DXF-math angles, so it's a trap: same formula, opposite handedness.
 
 **The Y-flip lives in exactly two places — and nowhere else:**
-- `frontend/render-dxf.js::dxfToCanvas` — `cy = -yr * scale`
+- `frontend/dxf-transform.js::dxfToCanvasPure` — `cy = -yr * scale` (re-exported as `render-dxf.js::dxfToCanvas`; `applyDxfCtm` builds its canvas transform from the same module, so the two cannot drift)
 - `backend/vision/line_arc_matching.py::dxf_to_image_px` — `my = -(cx·sinφ + cy·cosφ) + ty`
 
 Both take DXF-math coords and emit image/canvas coords. `inspect_features`, the DXF overlay renderer, and any alignment code that uses these helpers are in agreement.
 
 **The trap:** if you write new code that rasterizes a DXF-generated polygon into an image buffer, or samples an image in a DXF-math-looking parameterization, you must Y-flip (or negate your rotation result) to stay consistent with (1) and (2). Rules of thumb:
 
-- A DXF rotation `φ` (math-CCW) displays in the canvas as a **visual CW rotation** by `φ`. Equivalently: visual angle `= -dxf angle`.
+- A DXF rotation `φ` (math-CCW) displays in the canvas as a **visual CCW rotation** by `φ`. Equivalently: visual angle `= -dxf angle`.
 - `analyze_gear` returns tooth angles in the **image frame** (already canvas-visual). You can plot them directly as `cx + r·cos α, cy + r·sin α`. You **cannot** feed them to `/generate-gear-dxf` as `rotation_deg` without negating — the DXF generator will rotate math-CCW and then the renderer will Y-flip, putting the tooth at visual angle `-α`.
 - If you rasterize a synth DXF polygon to a mask for DFT/template matching (like `gear_phase.py` does), **Y-flip when you rasterize** — otherwise your algorithm operates in a frame the renderer doesn't use, and the rotation you compute will be mirrored by 2× the true angle when it reaches the canvas. This is an **incredibly recurring bug** in this codebase. See `gear_phase.estimate_gear_phase` docstring "Frame note" for the cautionary tale.
 - Gears are mirror-symmetric about each tooth axis, which masks Y-flip sign bugs for a single tooth but not across rotations — the mismatch manifests as "works after a manual nudge within one pitch" instead of obviously failing.
