@@ -1,4 +1,4 @@
-import { state, pushUndo, DETECTION_TYPES } from './state.js';
+import { state, pushUndo, DETECTION_TYPES, OVERLAY_TYPES, pruneOrphanGroupEntries } from './state.js';
 import { cascadeDeleteConstraints } from './constraints.js';
 import { canvas, showStatus, redraw } from './render.js';
 import { renderSidebar, updateCameraInfo, updateCalibrationButton, renderInspectionTable } from './sidebar.js';
@@ -31,12 +31,13 @@ export function addAnnotation(data, { skipUndo = false } = {}) {
 }
 
 export function deleteAnnotation(id) {
-  pushUndo();
   const ann = state.annotations.find(a => a.id === id);
-  if (!ann) return;
+  if (!ann) return;  // checked BEFORE pushUndo so a missing id leaves no phantom undo step
+  pushUndo();
   _cleanupAnnotation(ann);
   state.annotations = state.annotations.filter(a => a.id !== id);
   cascadeDeleteConstraints(id);
+  pruneOrphanGroupEntries();
   state.selected.delete(id);
   if (state.pendingCenterCircle && state.pendingCenterCircle.id === id) state.pendingCenterCircle = null;
   renderSidebar();
@@ -52,6 +53,7 @@ export function deleteSelected() {
     cascadeDeleteConstraints(id);
     state.annotations = state.annotations.filter(a => a.id !== id);
   }
+  pruneOrphanGroupEntries();
   state.selected = new Set();
   renderSidebar();
   redraw();
@@ -117,6 +119,11 @@ export function elevateAnnotation(id) {
   elevated.id = state.nextId++;
   elevated.name = "";
   state.annotations.push(elevated);
+  // Carry group membership over to the new id (avoids an orphaned entry)
+  if (state.measurementGroups[id] !== undefined) {
+    state.measurementGroups[elevated.id] = state.measurementGroups[id];
+    delete state.measurementGroups[id];
+  }
   return elevated.id;
 }
 
@@ -206,6 +213,7 @@ export function mergeSelectedLines() {
   const removeIds = new Set(lineAnns.map(a => a.id));
   state.annotations = state.annotations.filter(a => !removeIds.has(a.id));
   state.annotations.push(merged);
+  pruneOrphanGroupEntries();
   state.selected = new Set([merged.id]);
 
   renderSidebar();
@@ -214,14 +222,15 @@ export function mergeSelectedLines() {
 }
 
 // ── Clear operations ─────────────────────────────────────────────────────────
-
-const OVERLAY_TYPES = new Set(["edges-overlay", "preprocessed-overlay"]);
+// OVERLAY_TYPES (edges/preprocessed live-image overlays) comes from state.js —
+// the same set gates undo-snapshot exclusion there.
 
 export function clearDetections() {
   pushUndo();
   state.annotations = state.annotations.filter(a =>
     !DETECTION_TYPES.has(a.type) && !OVERLAY_TYPES.has(a.type)
   );
+  pruneOrphanGroupEntries();
   state.selected = new Set();
   renderSidebar();
   redraw();
@@ -232,6 +241,7 @@ export function clearMeasurements() {
   pushUndo();
   const KEEP = new Set([...DETECTION_TYPES, ...OVERLAY_TYPES, "calibration", "origin", "dxf-overlay", "comment"]);
   state.annotations = state.annotations.filter(a => KEEP.has(a.type));
+  pruneOrphanGroupEntries();
   state.selected = new Set();
   renderSidebar();
   redraw();
@@ -264,6 +274,7 @@ export function clearAll() {
   state.annotations = state.annotations.filter(a =>
     a.type === "calibration" || a.type === "origin"
   );
+  pruneOrphanGroupEntries();
   state.inspectionResults = [];
   state.inspectionFrame = null;
   state.dxfFilename = null;

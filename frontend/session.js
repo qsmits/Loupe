@@ -547,6 +547,11 @@ export function loadSession(raw) {
 // ── Auto-save ────────────────────────────────────────────────────────────────
 const AUTOSAVE_KEY = "microscope-autosave";
 
+// Warn the user at most once per failure streak (autoSave runs every 30 s —
+// without the flag the warning would flash on every tick). A later successful
+// autosave resets the flag, so a NEW failure after recovery warns again.
+let _autoSaveWarned = false;
+
 export function autoSave() {
   if (isCrossModeActive()) return;
   if (!state._dirty) return;
@@ -572,8 +577,13 @@ export function autoSave() {
   try {
     localStorage.setItem(AUTOSAVE_KEY, JSON.stringify(session));
     state._dirty = false;
+    _autoSaveWarned = false;
   } catch (e) {
     console.warn("Auto-save failed:", e.message);
+    if (!_autoSaveWarned) {
+      _autoSaveWarned = true;
+      showStatus("⚠ Auto-save failed — storage full? Use manual Save");
+    }
   }
 }
 

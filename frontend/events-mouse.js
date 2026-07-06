@@ -1,6 +1,6 @@
 // ── Canvas mouse events ──────────────────────────────────────────────────────
 import { apiFetch } from './api.js';
-import { state, _deviationHitBoxes, _labelHitBoxes, pushUndo, TRANSIENT_TYPES } from './state.js';
+import { state, _deviationHitBoxes, _labelHitBoxes, pushUndo, takeSnapshot, TRANSIENT_TYPES } from './state.js';
 import { canvas, ctx, img, showStatus, redraw, resizeCanvas,
          drawOrigin, dxfToCanvas } from './render.js';
 import { renderSidebar, renderInspectionTable } from './sidebar.js';
@@ -75,6 +75,26 @@ function _updateSubpixelPreview(pt, altKey = false) {
   }, 40);
 }
 
+// ── Drag undo bookkeeping ─────────────────────────────────────────────────────
+// Drags mutate state on every mousemove, so the undo snapshot must be taken
+// when the drag ACQUIRES its target on mousedown — snapshotting on mouseup
+// (the old behavior) captured the post-drag state, making the drag a no-op to
+// undo. The snapshot is pushed on mouseup only if a mousemove actually
+// mutated something (state._dragMoved), so a click-without-drag never spams
+// the undo stack.
+function _beginDragUndo() {
+  state._dragUndoSnapshot = takeSnapshot();
+  state._dragMoved = false;
+}
+
+function _commitDragUndo() {
+  if (state._dragUndoSnapshot && state._dragMoved) {
+    pushUndo(state._dragUndoSnapshot);  // pre-drag state; also sets _dirty
+  }
+  state._dragUndoSnapshot = null;
+  state._dragMoved = false;
+}
+
 async function onMouseDown(e) {
   if (e.button !== 0 && e.button !== 1) return;
   document.getElementById("label-tooltip")?.setAttribute("hidden", "");
@@ -128,6 +148,7 @@ async function onMouseDown(e) {
     const ann = state.annotations.find(a => a.type === "dxf-overlay");
     if (ann) {
       const pt = canvasPoint(e);
+      _beginDragUndo();
       state.dxfDragOrigin = {
         mouseX: pt.x, mouseY: pt.y,
         annOffsetX: ann.offsetX, annOffsetY: ann.offsetY,
@@ -148,7 +169,7 @@ async function onMouseDown(e) {
       // Ignore clicks right on top of the pivot — angle is undefined and
       // the user almost certainly didn't mean to start a rotation there.
       if (Math.hypot(dx, dy) < 4) return;
-      pushUndo();
+      _beginDragUndo();
       state.dxfRotateOrigin = {
         pivotX: pivot.x, pivotY: pivot.y,
         startAngleRad: Math.atan2(dy, dx),
@@ -226,6 +247,7 @@ async function onMouseDown(e) {
   if (state.tool === "select" && !e.shiftKey) {
     const hitBadge = hitTestConstraintBadge(pt);
     if (hitBadge) {
+      _beginDragUndo();
       state._badgeDrag = { constraintId: hitBadge.id, startX: pt.x, startY: pt.y,
                            origX: hitBadge.contactPoint.x, origY: hitBadge.contactPoint.y };
       canvas.style.cursor = "grabbing";
@@ -255,6 +277,7 @@ async function onMouseDown(e) {
           const result = dxfAnn?.guidedResults?.find(r => r.handle === box.handle);
           if (result) {
             const offset = result.labelOffset || { dx: 0, dy: 0 };
+            _beginDragUndo();
             state._labelDrag = { handle: box.handle, startX: pt.x, startY: pt.y,
                                  origDx: offset.dx, origDy: offset.dy };
             return;
@@ -265,6 +288,7 @@ async function onMouseDown(e) {
           const ann = state.annotations.find(a => a.id === box.annId);
           if (ann) {
             const offset = ann.labelOffset || { dx: 0, dy: 0 };
+            _beginDragUndo();
             state._labelDrag = { annId: box.annId, startX: pt.x, startY: pt.y,
                                  origDx: offset.dx, origDy: offset.dy };
             // Comments: clicking the label selects the annotation too.
@@ -339,6 +363,10 @@ async function onMouseDown(e) {
       }
     }
     handleSelectDown(pt, e);
+    // handleSelectDown only acquires the drag target (no annotation mutation
+    // yet — that happens in handleDrag on mousemove), so capturing the
+    // snapshot right after it still predates every drag mutation.
+    if (state.dragState) _beginDragUndo();
     return;
   }
   await handleToolClick(pt, e);
@@ -356,19 +384,23 @@ function onMouseUp() {
     return;
   }
   if (state._badgeDrag) {
+    _commitDragUndo();
     state._badgeDrag = null;
     canvas.style.cursor = "";
     return;
   }
   if (state._labelDrag) {
+    _commitDragUndo();
     state._labelDrag = null;
     return;
   }
   if (state.dxfDragMode) {
+    _commitDragUndo();
     state.dxfDragOrigin = null;
     return;
   }
   if (state.dxfRotateMode) {
+    _commitDragUndo();
     state.dxfRotateOrigin = null;
     return;
   }
@@ -392,7 +424,10 @@ function onMouseUp() {
     redraw();
     return;
   }
-  if (state.dragState !== null) pushUndo();
+  // Annotation/handle drag (select tool): push the PRE-drag snapshot captured
+  // on mousedown, and only if a mousemove actually mutated something — a
+  // click-without-drag discards the snapshot instead of spamming the stack.
+  _commitDragUndo();
   state.dragState = null;
 }
 
@@ -508,6 +543,7 @@ export function initMouseHandlers() {
     if (state.dxfDragMode && state.dxfDragOrigin) {
       const ann = state.annotations.find(a => a.type === "dxf-overlay");
       if (ann) {
+        state._dragMoved = true;
         ann.offsetX = state.dxfDragOrigin.annOffsetX + (pt.x - state.dxfDragOrigin.mouseX);
         ann.offsetY = state.dxfDragOrigin.annOffsetY + (pt.y - state.dxfDragOrigin.mouseY);
         redraw();
@@ -530,6 +566,7 @@ export function initMouseHandlers() {
           // on screen — subtract deltaDeg so the overlay follows the mouse.
           let next = o.annAngleStart - deltaDeg;
           if (e.shiftKey) next = Math.round(next * 2) / 2; // snap to 0.5°
+          state._dragMoved = true;
           ann.angle = ((next % 360) + 360) % 360;
           // Keep the nudge-button display in sync if it exists.
           const disp = document.getElementById("dxf-angle-display");
@@ -556,6 +593,7 @@ export function initMouseHandlers() {
     if (state._badgeDrag) {
       const c = state.constraints.find(c => c.id === state._badgeDrag.constraintId);
       if (c) {
+        state._dragMoved = true;
         c.contactPoint = {
           x: state._badgeDrag.origX + (pt.x - state._badgeDrag.startX),
           y: state._badgeDrag.origY + (pt.y - state._badgeDrag.startY),
@@ -572,10 +610,10 @@ export function initMouseHandlers() {
       if (state._labelDrag.handle) {
         const dxfAnn = state.annotations.find(a => a.type === "dxf-overlay");
         const result = dxfAnn?.guidedResults?.find(r => r.handle === state._labelDrag.handle);
-        if (result) result.labelOffset = newOffset;
+        if (result) { result.labelOffset = newOffset; state._dragMoved = true; }
       } else if (state._labelDrag.annId) {
         const ann = state.annotations.find(a => a.id === state._labelDrag.annId);
-        if (ann) ann.labelOffset = newOffset;
+        if (ann) { ann.labelOffset = newOffset; state._dragMoved = true; }
       }
       redraw();
       return;
@@ -608,7 +646,7 @@ export function initMouseHandlers() {
       redraw();
       return;
     }
-    if (state.dragState) { handleDrag(pt); return; }
+    if (state.dragState) { state._dragMoved = true; handleDrag(pt); return; }
 
     // Label tooltip on hover (hit boxes are in image space)
     const tooltip = document.getElementById("label-tooltip");
@@ -771,6 +809,7 @@ export function initMouseHandlers() {
         items.push({
           label: currentMode === "die" ? "Set as Punch" : "Set as Die",
           action: () => {
+            pushUndo();  // featureModes is snapshotted; also marks the session dirty for autosave
             state.featureModes[hitResult.handle] = currentMode === "die" ? "punch" : "die";
             renderInspectionTable();
             redraw();
@@ -804,6 +843,7 @@ export function initMouseHandlers() {
           {
             label: currentMode === "die" ? `Set as Punch (${groupHandles.length} seg)` : `Set as Die (${groupHandles.length} seg)`,
             action: () => {
+              pushUndo();  // featureModes is snapshotted; also marks the session dirty for autosave
               const newMode = currentMode === "die" ? "punch" : "die";
               for (const h of groupHandles) state.featureModes[h] = newMode;
               if (dxfEntity.parent_handle) state.featureModes[dxfEntity.parent_handle] = newMode;
@@ -865,6 +905,7 @@ export function initMouseHandlers() {
         items.push({ label: "Group selected…", action: () => {
           const name = prompt("Group name:", "Feature");
           if (!name) return;
+          pushUndo();  // measurementGroups is snapshotted; also marks dirty for autosave
           for (const id of state.selected) {
             state.measurementGroups[id] = name;
           }
@@ -902,6 +943,7 @@ export function initMouseHandlers() {
       const groupedSelected = [...state.selected].filter(id => state.measurementGroups[id]);
       if (groupedSelected.length > 0) {
         items.push({ label: "Ungroup", action: () => {
+          pushUndo();  // measurementGroups is snapshotted; also marks dirty for autosave
           for (const id of groupedSelected) {
             delete state.measurementGroups[id];
           }

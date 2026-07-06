@@ -1,7 +1,7 @@
 // ── Undo / Redo / Keyboard shortcuts ─────────────────────────────────────────
-import { state, undoStack, redoStack, takeSnapshot } from './state.js';
+import { state, undoStack, redoStack, takeSnapshot, mergeRestoredAnnotations } from './state.js';
 import { canvas, showStatus, redraw, resizeCanvas } from './render.js';
-import { renderSidebar } from './sidebar.js';
+import { renderSidebar, renderInspectionTable } from './sidebar.js';
 import { deleteSelected, elevateSelected } from './annotations.js';
 import { setTool, promptArcFitChoice, finalizeArcFit, finalizeArea, finalizeSpline, finalizeFitLine, nudgeSelected } from './tools.js';
 import { exitDxfAlignMode } from './dxf.js';
@@ -12,36 +12,36 @@ import { _finalizePickInspection } from './events-inspection.js';
 import { getActiveMode } from './modes.js';
 import { nudgeReticleRotation, setReticleRotation } from './reticle.js';
 
-export function undo() {
-  if (!undoStack.length) return;
-  redoStack.push(takeSnapshot());
-  const snap = JSON.parse(undoStack.pop());
-  state.annotations = snap.annotations;
+// Shared restore logic for undo/redo. Snapshots exclude the live-image
+// overlays (edges/preprocessed) — mergeRestoredAnnotations re-attaches the
+// ones currently on screen so an overlay survives undo of unrelated edits
+// and a dead (serialized-to-{}) overlay is never resurrected.
+function _restoreSnapshot(snap) {
+  state.annotations = mergeRestoredAnnotations(snap.annotations, state.annotations);
   state.calibration = snap.calibration;
   state.origin = snap.origin;
   state.constraints = snap.constraints ?? [];
+  state.featureModes = snap.featureModes ?? {};
+  state.featureNames = snap.featureNames ?? {};
+  state.measurementGroups = snap.measurementGroups ?? {};
   state.selected = new Set(
     [...state.selected].filter(id => state.annotations.some(a => a.id === id))
   );
   state._dirty = true;
   state._savedManually = false;
-  renderSidebar(); redraw();
+  renderSidebar(); renderInspectionTable(); redraw();
+}
+
+export function undo() {
+  if (!undoStack.length) return;
+  redoStack.push(takeSnapshot());
+  _restoreSnapshot(JSON.parse(undoStack.pop()));
 }
 
 export function redo() {
   if (!redoStack.length) return;
   undoStack.push(takeSnapshot());
-  const snap = JSON.parse(redoStack.pop());
-  state.annotations = snap.annotations;
-  state.calibration = snap.calibration;
-  state.origin = snap.origin;
-  state.constraints = snap.constraints ?? [];
-  state.selected = new Set(
-    [...state.selected].filter(id => state.annotations.some(a => a.id === id))
-  );
-  state._dirty = true;
-  state._savedManually = false;
-  renderSidebar(); redraw();
+  _restoreSnapshot(JSON.parse(redoStack.pop()));
 }
 
 let _spacebarPrevTool = null;  // non-null while spacebar is held

@@ -59,6 +59,8 @@ export const state = {
   _panStart: null,
   _flashExpiry: 0,
   _labelDrag: null,         // { handle, startX, startY, origDx, origDy }
+  _dragUndoSnapshot: null,  // takeSnapshot() captured at drag start (mousedown)
+  _dragMoved: false,        // set by mousemove drag paths; gates the undo push on mouseup
   _templateLoaded: false,
   _templateName: null,
   _subpixelSnapTarget: null, // { x, y } — live preview of where sub-pixel snap would place a point
@@ -103,18 +105,56 @@ export const UNDO_LIMIT = 50;
 export const _deviationHitBoxes = [];  // populated by drawDeviations, read by main.js
 export const _labelHitBoxes = [];     // populated by drawGuidedResults, used for drag + tooltip
 
+// Overlay annotations that carry a LIVE HTMLImageElement (detect.js stores
+// `{ type: "edges-overlay", image: <Image> }`). An Image serializes to `{}`,
+// so these must NEVER enter a JSON snapshot — a restored `{}` image bricks
+// every redraw via ctx.drawImage. They are excluded from snapshots and
+// re-attached after undo/redo by mergeRestoredAnnotations() below.
+// NOTE: deliberately narrower than TRANSIENT_TYPES — dxf-overlay and the
+// detected-* types are plain JSON and have working undo flows (DXF align/
+// rotate, elevate, clear detections) that rely on being snapshotted.
+export const OVERLAY_TYPES = new Set(["edges-overlay", "preprocessed-overlay"]);
+
 export function takeSnapshot() {
   return JSON.stringify({
-    annotations: state.annotations,
+    annotations: state.annotations.filter(a => !OVERLAY_TYPES.has(a.type)),
     calibration: state.calibration,
     origin: state.origin,
     constraints: state.constraints,
+    featureModes: state.featureModes,
+    featureNames: state.featureNames,
+    measurementGroups: state.measurementGroups,
   });
 }
 
-export function pushUndo() {
+// Recombine a restored snapshot's annotations with the overlays that are
+// currently alive on screen. Pure — used by undo()/redo(). Restored overlays
+// (dead: image === {}) are dropped; live overlays keep their identity and
+// stay at the end of the array, matching detect.js insertion order (overlays
+// are drawn last, on top).
+export function mergeRestoredAnnotations(restoredAnnotations, currentAnnotations) {
+  return [
+    ...restoredAnnotations.filter(a => !OVERLAY_TYPES.has(a.type)),
+    ...currentAnnotations.filter(a => OVERLAY_TYPES.has(a.type)),
+  ];
+}
+
+// Drop measurementGroups entries whose annotation no longer exists (object
+// keys are strings; annotation ids are numbers). Called after any bulk or
+// single annotation removal so autosaved sessions don't accumulate orphans.
+export function pruneOrphanGroupEntries() {
+  const ids = new Set(state.annotations.map(a => String(a.id)));
+  for (const key of Object.keys(state.measurementGroups)) {
+    if (!ids.has(key)) delete state.measurementGroups[key];
+  }
+}
+
+// pushUndo(snapshot): the optional argument is a snapshot captured BEFORE a
+// mutation began (e.g. on mousedown, before a drag mutates state on every
+// mousemove). Default (no argument) snapshots the current state.
+export function pushUndo(snapshot = null) {
   if (undoStack.length >= UNDO_LIMIT) undoStack.shift();
-  undoStack.push(takeSnapshot());
+  undoStack.push(snapshot ?? takeSnapshot());
   redoStack.length = 0;
   state._dirty = true;
   state._savedManually = false;

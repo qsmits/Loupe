@@ -1,5 +1,5 @@
 import { apiFetch } from './api.js';
-import { state, DETECTION_TYPES, camBounds } from './state.js';
+import { state, DETECTION_TYPES, camBounds, pushUndo } from './state.js';
 import { redraw, resizeCanvas, showStatus, getStatus, canvas, listEl } from './render.js';
 import { constraintsForAnnotation, CONSTRAINT_ICONS, CONSTRAINT_LABELS } from './constraints.js';
 import { measurementLabel } from './format.js';
@@ -82,6 +82,7 @@ function _createMeasurementRow(ann, number) {
   visBtn.title = ann.hidden ? "Show on canvas" : "Hide on canvas";
   visBtn.addEventListener("click", e => {
     e.stopPropagation();
+    pushUndo();  // ann.hidden is snapshotted; also marks the session dirty for autosave
     ann.hidden = !ann.hidden;
     renderSidebar();
     redraw();
@@ -126,7 +127,19 @@ function _createMeasurementRow(ann, number) {
     row.appendChild(chipContainer);
   }
   nameInput.value = ann.name || "";
-  nameInput.addEventListener("input", e => { ann.name = e.target.value; });
+  // Rename undo granularity: ONE undo entry per editing session (focus →
+  // blur), pushed on the first keystroke — the snapshot is taken before
+  // `ann.name` is assigned, so it captures the pre-rename state. Every
+  // keystroke marks the session dirty so autosave picks up renames even
+  // after an autosave tick cleared _dirty mid-edit.
+  let renameUndoPushed = false;
+  nameInput.addEventListener("focus", () => { renameUndoPushed = false; });
+  nameInput.addEventListener("input", e => {
+    if (!renameUndoPushed) { pushUndo(); renameUndoPushed = true; }
+    ann.name = e.target.value;
+    state._dirty = true;
+    state._savedManually = false;
+  });
   nameInput.addEventListener("click", e => { e.stopPropagation(); });
   row.addEventListener("click", () => {
     const wasSelected = state.selected.has(ann.id);
@@ -211,6 +224,7 @@ export function renderSidebar() {
       input.addEventListener("blur", () => {
         const newName = input.value.trim();
         if (newName && newName !== groupName) {
+          pushUndo();  // measurementGroups is snapshotted; also marks dirty for autosave
           for (const m of members) {
             state.measurementGroups[m.id] = newName;
           }
@@ -1031,13 +1045,23 @@ export function renderInspectionTable() {
       input.style.cssText = "width:80px; font-size:10px; padding:0 2px; background:var(--surface-3); color:var(--text); border:1px solid var(--border);";
       input.addEventListener("blur", () => {
         const val = input.value.trim();
-        if (val && val !== defaultName) state.featureNames[groupKey] = val;
-        else delete state.featureNames[groupKey];
+        const next = (val && val !== defaultName) ? val : undefined;
+        if (next !== state.featureNames[groupKey]) {
+          pushUndo();  // featureNames is snapshotted; also marks dirty for autosave
+          if (next !== undefined) state.featureNames[groupKey] = next;
+          else delete state.featureNames[groupKey];
+        }
         renderInspectionTable();
       });
       input.addEventListener("keydown", ev => {
         if (ev.key === "Enter") input.blur();
-        if (ev.key === "Escape") { delete state.featureNames[groupKey]; renderInspectionTable(); }
+        if (ev.key === "Escape") {
+          if (groupKey in state.featureNames) {
+            pushUndo();  // Escape resets a custom name to the default — a real mutation
+            delete state.featureNames[groupKey];
+          }
+          renderInspectionTable();
+        }
       });
       labelSpan.replaceWith(input);
       input.focus();
