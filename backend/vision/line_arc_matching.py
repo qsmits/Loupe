@@ -34,9 +34,14 @@ def angle_diff_deg(a1, a2):
 
 
 def match_lines(dxf_lines, detected_lines, ppm, tx=0.0, ty=0.0, angle_deg=0.0,
-                flip_h=False, flip_v=False, max_dist_px=50.0):
+                flip_h=False, flip_v=False, max_dist_px=50.0,
+                max_angle_error_deg=15.0):
     """
     Match DXF LINE entities to detected line segments.
+
+    Candidates whose direction differs from the DXF line by more than
+    max_angle_error_deg (mod 180, folded to [0,90]) are rejected — a segment
+    crossing the DXF midpoint at ~90 deg must not win on perp distance alone.
 
     Returns list of dicts, one per DXF line:
       {"handle", "matched": bool,
@@ -70,6 +75,8 @@ def match_lines(dxf_lines, detected_lines, ppm, tx=0.0, ty=0.0, angle_deg=0.0,
                 continue
             det_angle = math.degrees(math.atan2(dl["y2"]-dl["y1"], dl["x2"]-dl["x1"])) % 180
             angle_err = angle_diff_deg(dxf_angle, det_angle)
+            if angle_err > max_angle_error_deg:
+                continue
             if perp < best_dist:
                 best_dist = perp
                 best = (dl, perp, angle_err)

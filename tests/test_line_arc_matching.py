@@ -70,3 +70,29 @@ def test_match_lines_skips_non_line_types():
     entities = [{"type": "circle", "cx": 0, "cy": 0, "radius": 5, "handle": "X"}]
     results = match_lines(entities, [], ppm=10.0, tx=0, ty=0, angle_deg=0)
     assert results == []
+
+
+def test_match_lines_prefers_parallel_over_perpendicular():
+    """A perpendicular segment through the DXF midpoint (perp=0) must not win
+    over a parallel segment 0.3mm away."""
+    dxf_lines = [{"type": "line", "x1": 0.0, "y1": 0.0, "x2": 10.0, "y2": 0.0, "handle": "A1"}]
+    # DXF line maps to image (0,0)-(100,0) with ppm=10; midpoint (50,0)
+    detected = [
+        {"x1": 50, "y1": -20, "x2": 50, "y2": 20, "length": 40.0},   # perpendicular, perp=0
+        {"x1": 0, "y1": 3, "x2": 100, "y2": 3, "length": 100.0},     # parallel, 3px = 0.3mm away
+    ]
+    results = match_lines(dxf_lines, detected, ppm=10.0, tx=0, ty=0, angle_deg=0)
+    assert len(results) == 1
+    r = results[0]
+    assert r["matched"] is True
+    assert r["perp_dev_mm"] == pytest.approx(0.3, abs=0.01)
+    assert r["angle_error_deg"] == pytest.approx(0.0, abs=0.5)
+
+
+def test_match_lines_perpendicular_only_candidate_is_unmatched():
+    """With only a perpendicular candidate, the DXF line must stay unmatched."""
+    dxf_lines = [{"type": "line", "x1": 0.0, "y1": 0.0, "x2": 10.0, "y2": 0.0, "handle": "A1"}]
+    detected = [{"x1": 50, "y1": -20, "x2": 50, "y2": 20, "length": 40.0}]
+    results = match_lines(dxf_lines, detected, ppm=10.0, tx=0, ty=0, angle_deg=0)
+    assert results[0]["matched"] is False
+    assert results[0]["perp_dev_mm"] is None

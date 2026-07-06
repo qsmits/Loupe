@@ -286,36 +286,52 @@ def _inspect_arc_circle(entity, edge_xy, ppm, tx, ty, angle_rad,
     # For partial arcs, apply angular bounds
     etype = entity.get("type", "")
     if etype in ("arc", "polyline_arc"):
-        # Get angular bounds from entity
         start_deg = entity.get("start_angle", 0.0)
         end_deg = entity.get("end_angle", 360.0)
 
-        # Angular margin proportional to corridor width
-        ang_margin = corridor_px / r_px  # radians
+        # DXF arcs sweep CCW (y-up frame) from start to end
+        sweep_deg = (end_deg - start_deg) % 360.0
+        if sweep_deg < 1e-9:
+            sweep_deg = 360.0  # start == end (e.g. 0..360) means a full circle
 
-        # Compute angles of edge points relative to center
-        angles = np.arctan2(dy, dx)  # radians, [-pi, pi]
-
-        # Normalize start/end to radians
-        start_rad = math.radians(start_deg)
-        end_rad = math.radians(end_deg)
-
-        # Expand angular range by margin
-        start_rad -= ang_margin
-        end_rad += ang_margin
-
-        # Check if point angle is within [start_rad, end_rad] (handling wraparound)
-        # Normalize angles to [0, 2pi)
-        angles_norm = angles % (2 * math.pi)
-        start_norm = start_rad % (2 * math.pi)
-        end_norm = end_rad % (2 * math.pi)
-
-        if start_norm <= end_norm:
-            angle_mask = (angles_norm >= start_norm) & (angles_norm <= end_norm)
+        if sweep_deg >= 360.0 - 1e-9:
+            # Full-span arc: no angular restriction
+            mask = radial_mask
         else:
-            angle_mask = (angles_norm >= start_norm) | (angles_norm <= end_norm)
+            # Raw DXF angles live in the y-up, un-rotated frame while the edge
+            # points live in the image frame. Project three points on the
+            # nominal arc (start, mid-sweep, end) through the alignment
+            # transform and derive the image-frame sector from those — this
+            # handles rotation, flips, and the y-flip direction reversal.
+            r_mm = entity["radius"]
 
-        mask = radial_mask & angle_mask
+            def _arc_pt_angle(deg):
+                a = math.radians(deg)
+                px, py = dxf_to_image_px(entity["cx"] + r_mm * math.cos(a),
+                                         entity["cy"] + r_mm * math.sin(a),
+                                         ppm, tx, ty, angle_rad, flip_h, flip_v)
+                return math.atan2(py - cy_px, px - cx_px)
+
+            a_start = _arc_pt_angle(start_deg)
+            a_mid = _arc_pt_angle(start_deg + sweep_deg / 2.0)
+            a_end = _arc_pt_angle(end_deg)
+
+            two_pi = 2 * math.pi
+            span = (a_end - a_start) % two_pi
+            if (a_mid - a_start) % two_pi > span:
+                # Image-frame sweep runs CW from start; walk CCW from end instead
+                a_start, a_end = a_end, a_start
+                span = (a_end - a_start) % two_pi
+
+            # Angular margin proportional to corridor width
+            ang_margin = corridor_px / r_px  # radians
+
+            # Image-frame angles of edge points relative to center
+            angles = np.arctan2(dy, dx)  # radians, [-pi, pi]
+            rel = (angles - (a_start - ang_margin)) % two_pi
+            angle_mask = rel <= span + 2 * ang_margin
+
+            mask = radial_mask & angle_mask
     else:
         # Full circle: no angular restriction
         mask = radial_mask
@@ -386,8 +402,10 @@ def _inspect_arc_circle(entity, edge_xy, ppm, tx, ty, angle_rad,
     center_dev_mm = center_dev_px / ppm
     radius_dev_mm = radius_dev_px / ppm
 
-    # Combined deviation for pass/fail (use the larger of the two)
-    max_dev_mm = max(center_dev_mm, radius_dev_mm)
+    # Combined deviation for pass/fail (use the larger of the two).
+    # radius_dev_mm is signed (negative = undersize) — gate on magnitude,
+    # but keep the signed value in the reported field.
+    max_dev_mm = max(center_dev_mm, abs(radius_dev_mm))
     pf = _pass_fail(max_dev_mm, tol_warn, tol_fail)
 
     fit_type = "circle" if etype == "circle" else "arc"
@@ -631,7 +649,8 @@ def fit_manual_points(
         center_dev_mm = center_dev_px / pixels_per_mm
         radius_dev_mm = radius_dev_px / pixels_per_mm
 
-        max_dev_mm = max(center_dev_mm, radius_dev_mm)
+        # Gate on magnitude so undersize (negative) deviations also fail
+        max_dev_mm = max(center_dev_mm, abs(radius_dev_mm))
         pf = _pass_fail(max_dev_mm, tol_w, tol_f)
 
         fit_type = "circle" if etype == "circle" else "arc"

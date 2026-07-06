@@ -310,6 +310,178 @@ def _draw_horizontal_line(frame, y, x1, x2, color=255, thickness=2):
     return frame
 
 
+def _draw_arc(frame, cx, cy, r, start_deg, end_deg, color=255, thickness=2):
+    """Draw a partial arc (image-frame angles, y-down) on a dark frame."""
+    frame = frame.copy()
+    cv2.ellipse(frame, (cx, cy), (r, r), 0, start_deg, end_deg,
+                (color, color, color), thickness)
+    return frame
+
+
+class TestUndersizeRadiusGate:
+    """An undersized circle must fail inspection — negative radius deviation
+    must not be discarded by the max(center_dev, radius_dev) gate."""
+
+    def test_corridor_undersize_circle_fails(self):
+        """Circle 0.5mm undersize, centered on nominal, tol ±0.1/0.25 -> fail."""
+        frame = _make_blank_frame(color=0)
+        # ppm=10: nominal radius 8mm -> 80px; filled disc of 75px -> single
+        # boundary edge 5px inside nominal -> -0.5mm deviation
+        frame = _draw_circle(frame, cx=300, cy=240, r=75, thickness=-1)
+
+        entity = {
+            "handle": "U1",
+            "type": "circle",
+            "parent_handle": None,
+            "cx": 0, "cy": 0,
+            "radius": 8.0,
+        }
+
+        results = inspect_features(
+            frame, [entity],
+            pixels_per_mm=10.0,
+            tx=300, ty=240,
+            angle_deg=0.0,
+            corridor_px=10,
+            canny_low=30, canny_high=100,
+            tolerance_warn=0.1,
+            tolerance_fail=0.25,
+        )
+
+        r = results[0]
+        assert r["matched"] is True
+        # Reported deviation stays signed (frontend displays the sign)
+        assert r["radius_dev_mm"] == pytest.approx(-0.5, abs=0.15)
+        assert r["pass_fail"] == "fail"
+
+    def test_manual_points_undersize_circle_fails(self):
+        """Manual point fit 0.5mm undersize, centered on nominal -> fail."""
+        entity = {
+            "handle": "U2",
+            "type": "circle",
+            "parent_handle": None,
+            "cx": 0, "cy": 0,
+            "radius": 8.0,
+        }
+
+        # Points on a 75px circle centered exactly on the nominal (300, 240)
+        angles = np.linspace(0, 2 * math.pi, 20, endpoint=False)
+        points = [[300 + 75 * math.cos(a), 240 + 75 * math.sin(a)] for a in angles]
+
+        result = fit_manual_points(
+            entity, points,
+            pixels_per_mm=10.0,
+            tx=300, ty=240,
+            tolerance_warn=0.1,
+            tolerance_fail=0.25,
+        )
+
+        assert result["matched"] is True
+        assert result["radius_dev_mm"] == pytest.approx(-0.5, abs=0.01)
+        assert result["pass_fail"] == "fail"
+
+
+class TestPartialArcCorridorFrame:
+    """The angular corridor mask must be built in the image frame via the
+    alignment transform, not from raw DXF angles (y-up, un-rotated)."""
+
+    def test_rotated_arc_selects_correct_sector(self):
+        """DXF arc 0-90deg with angle_deg=90: the transformed arc lands at
+        image angles 180-270deg; the corridor must select that sector."""
+        frame = _make_blank_frame(color=0)
+        frame = _draw_arc(frame, cx=300, cy=240, r=80, start_deg=180, end_deg=270)
+
+        entity = {
+            "handle": "AR1",
+            "type": "arc",
+            "parent_handle": None,
+            "cx": 0, "cy": 0,
+            "radius": 80.0,
+            "start_angle": 0.0,
+            "end_angle": 90.0,
+        }
+
+        results = inspect_features(
+            frame, [entity],
+            pixels_per_mm=1.0,
+            tx=300, ty=240,
+            angle_deg=90.0,
+            corridor_px=10,
+            canny_low=30, canny_high=100,
+        )
+
+        r = results[0]
+        assert r["matched"] is True, r["reason"]
+        # Generous thresholds for edge jitter / partial-arc fit bias — the
+        # decisive check is matched: a wrong-frame corridor collects 0 points.
+        assert r["center_dev_mm"] < 5.0
+        assert abs(r["radius_dev_mm"]) < 5.0
+
+    def test_flipped_arc_selects_correct_sector(self):
+        """DXF arc 0-90deg with flip_h: the transformed arc lands at image
+        angles 180-270deg; the corridor must select that sector."""
+        frame = _make_blank_frame(color=0)
+        frame = _draw_arc(frame, cx=300, cy=240, r=80, start_deg=180, end_deg=270)
+
+        entity = {
+            "handle": "AR2",
+            "type": "arc",
+            "parent_handle": None,
+            "cx": 0, "cy": 0,
+            "radius": 80.0,
+            "start_angle": 0.0,
+            "end_angle": 90.0,
+        }
+
+        results = inspect_features(
+            frame, [entity],
+            pixels_per_mm=1.0,
+            tx=300, ty=240,
+            angle_deg=0.0,
+            flip_h=True,
+            corridor_px=10,
+            canny_low=30, canny_high=100,
+        )
+
+        r = results[0]
+        assert r["matched"] is True, r["reason"]
+        assert r["center_dev_mm"] < 5.0
+        assert abs(r["radius_dev_mm"]) < 5.0
+
+    def test_full_span_arc_keeps_all_angles(self):
+        """A 0-360deg arc entity must not collapse the corridor to a sliver
+        around angle 0 — edge points at all angles must be retained."""
+        frame = _make_blank_frame(color=0)
+        frame = _draw_circle(frame, cx=300, cy=240, r=80)
+
+        entity = {
+            "handle": "AR3",
+            "type": "arc",
+            "parent_handle": None,
+            "cx": 0, "cy": 0,
+            "radius": 80.0,
+            "start_angle": 0.0,
+            "end_angle": 360.0,
+        }
+
+        results = inspect_features(
+            frame, [entity],
+            pixels_per_mm=1.0,
+            tx=300, ty=240,
+            angle_deg=0.0,
+            corridor_px=10,
+            canny_low=30, canny_high=100,
+        )
+
+        r = results[0]
+        assert r["matched"] is True, r["reason"]
+        # Full circle is ~500px circumference with two Canny contours; a
+        # sliver mask would leave only a few dozen points.
+        assert r["edge_point_count"] > 400
+        assert r["center_dev_mm"] < 3.0
+        assert abs(r["radius_dev_mm"]) < 3.0
+
+
 class TestTruePosition:
     def test_circle_has_tp_dev_mm(self):
         """Circle inspection results should include tp_dev_mm = 2 * center_dev_mm."""
