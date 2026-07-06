@@ -8,7 +8,7 @@ import { polygonArea } from './math.js';
 /**
  * Return display-ready {a, b} endpoints for a line-like annotation.
  * @param {object} ann  - annotation object
- * @param {object} ctx  - { canvasWidth, imageHeight } (only needed for detected-line)
+ * @param {object} ctx  - { imageWidth, imageHeight } (only needed for detected-line)
  */
 export function getLineEndpoints(ann, ctx = {}) {
   if (ann.type === "distance" || ann.type === "perp-dist" ||
@@ -19,12 +19,33 @@ export function getLineEndpoints(ann, ctx = {}) {
     return { a: { x: ann.x1, y: ann.y1 }, b: { x: ann.x2, y: ann.y2 } };
   }
   if (ann.type === "detected-line") {
-    const sx = (ctx.canvasWidth || 1)  / ann.frameWidth;
-    const sy = (ctx.imageHeight || 1) / ann.frameHeight;
+    const sx = ann.frameWidth  ? (ctx.imageWidth  || ann.frameWidth)  / ann.frameWidth  : 1;
+    const sy = ann.frameHeight ? (ctx.imageHeight || ann.frameHeight) / ann.frameHeight : 1;
     return { a: { x: ann.x1 * sx, y: ann.y1 * sy },
              b: { x: ann.x2 * sx, y: ann.y2 * sy } };
   }
   return null;
+}
+
+/**
+ * Projects rawPt onto the ray from a in the direction perpendicular (perp=true)
+ * or parallel (perp=false) to refAnn. Returns the snapped endpoint { x, y }.
+ * @param {object} ctx - forwarded to getLineEndpoints
+ */
+export function projectConstrained(rawPt, a, refAnn, perp, ctx = {}) {
+  const ep = getLineEndpoints(refAnn, ctx);
+  if (!ep) return rawPt;
+  const rdx = ep.b.x - ep.a.x, rdy = ep.b.y - ep.a.y;
+  const len = Math.hypot(rdx, rdy);
+  if (len < 1e-10) return rawPt;
+  // unit parallel vector of reference line
+  const px = rdx / len, py = rdy / len;
+  // unit direction we want to constrain b along:
+  // if perp=true → use the perpendicular (-py, px); if false → use parallel (px, py)
+  const ux = perp ? -py : px;
+  const uy = perp ? px  : py;
+  const t = (rawPt.x - a.x) * ux + (rawPt.y - a.y) * uy;
+  return { x: a.x + t * ux, y: a.y + t * uy };
 }
 
 /**
@@ -41,7 +62,7 @@ export function lineAngleDeg(ann, ctx = {}) {
 /**
  * Format an annotation into a human-readable measurement label string.
  * @param {object} ann - annotation object
- * @param {object} ctx - { calibration, annotations, origin, imageWidth, imageHeight, canvasWidth, canvasHeight }
+ * @param {object} ctx - { calibration, annotations, origin, imageWidth, imageHeight }
  */
 export function measurementLabel(ann, ctx) {
   const cal = ctx.calibration && ctx.calibration.pixelsPerMm > 0 ? ctx.calibration : null;
@@ -207,8 +228,8 @@ export function measurementLabel(ann, ctx) {
     if (circle.type === "circle") {
       cx = circle.cx; cy = circle.cy; r = circle.r;
     } else {
-      const sx = ctx.canvasWidth / circle.frameWidth;
-      const sy = ctx.canvasHeight / circle.frameHeight;
+      const sx = circle.frameWidth  ? (ctx.imageWidth  || circle.frameWidth)  / circle.frameWidth  : 1;
+      const sy = circle.frameHeight ? (ctx.imageHeight || circle.frameHeight) / circle.frameHeight : 1;
       cx = circle.x * sx; cy = circle.y * sy; r = circle.radius * sx;
     }
     const dist = Math.hypot(ann.px - cx, ann.py - cy);
@@ -237,9 +258,9 @@ export function measurementLabel(ann, ctx) {
     const t = ((epB.a.x - epA.a.x) * dy_b - (epB.a.y - epA.a.y) * dx_b) / denom;
     const ix = epA.a.x + t * dx_a;
     const iy = epA.a.y + t * dy_a;
-    const margin = Math.max(ctx.canvasWidth, ctx.canvasHeight);
-    const offScreen = ix < -margin || ix > ctx.canvasWidth + margin ||
-                      iy < -margin || iy > ctx.canvasHeight + margin;
+    const margin = Math.max(ctx.imageWidth, ctx.imageHeight);
+    const offScreen = ix < -margin || ix > ctx.imageWidth + margin ||
+                      iy < -margin || iy > ctx.imageHeight + margin;
     const cal2 = ctx.calibration;
     const org = ctx.origin;
     if (org) {

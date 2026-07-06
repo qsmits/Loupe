@@ -243,12 +243,15 @@ document.getElementById("btn-freeze").addEventListener("click", async () => {
     state._subpixelSnapTarget = null;
     const gradChk = document.getElementById("btn-gradient-overlay");
     if (gradChk) gradChk.checked = false;
-    // Restore fit-to-window zoom (not zoom=1, which would show a 1:1 crop
-    // when camera resolution exceeds display size)
-    const rect = canvas.getBoundingClientRect();
-    fitToWindow(rect.width, rect.height);
     updateFreezeUI();
     resizeCanvas();
+    // Restore fit-to-window zoom (not zoom=1, which would show a 1:1 crop
+    // when camera resolution exceeds display size). Measure the canvas after
+    // resizeCanvas — leaving frozen mode changes its shape back to the
+    // stream letterbox.
+    const rect = canvas.getBoundingClientRect();
+    fitToWindow(rect.width, rect.height);
+    redraw();
   } else {
     await doFreeze();
   }
@@ -273,9 +276,6 @@ document.getElementById("file-input").addEventListener("change", async e => {
     const { width, height } = await r.json();
     state.frozenSize = { w: width, h: height };
     setImageSize(width, height);
-    viewport.zoom = 1;
-    viewport.panX = 0;
-    viewport.panY = 0;
 
     const url = URL.createObjectURL(file);
     const loadedImg = new Image();
@@ -288,6 +288,9 @@ document.getElementById("file-input").addEventListener("change", async e => {
       cacheImageData(loadedImg, width, height);
       updateFreezeUI();
       resizeCanvas();
+      const rect = canvas.getBoundingClientRect();
+      fitToWindow(rect.width, rect.height);
+      redraw();
       showStatus("Loaded image");
     };
     loadedImg.src = url;
@@ -393,9 +396,6 @@ viewerEl.addEventListener("drop", async e => {
     const { width, height } = await r.json();
     state.frozenSize = { w: width, h: height };
     setImageSize(width, height);
-    viewport.zoom = 1;
-    viewport.panX = 0;
-    viewport.panY = 0;
 
     const url = URL.createObjectURL(file);
     const loadedImg = new Image();
@@ -408,6 +408,9 @@ viewerEl.addEventListener("drop", async e => {
       cacheImageData(loadedImg, width, height);
       updateFreezeUI();
       resizeCanvas();
+      const rect = canvas.getBoundingClientRect();
+      fitToWindow(rect.width, rect.height);
+      redraw();
       showStatus("Loaded image");
     };
     loadedImg.src = url;

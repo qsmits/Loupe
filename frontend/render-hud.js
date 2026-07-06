@@ -4,7 +4,10 @@
  */
 import { state } from './state.js';
 import { viewport, imageWidth, imageHeight } from './viewport.js';
-import { ctx, canvas, pw, drawHandle } from './render.js';
+import { ctx, canvas, pw, drawHandle, drawLine } from './render.js';
+import { drawAreaPreview, drawSplinePreview } from './render-annotations.js';
+import { fitCircle } from './math.js';
+import { projectConstrained } from './format.js';
 import { CONSTRAINT_ICONS } from './constraints.js';
 
 // Tools that trigger the loupe (any tool that places measurement points)
@@ -38,10 +41,11 @@ export function drawGrid() {
   ctx.lineWidth = pw(0.5);
   ctx.setLineDash([]);
 
-  const x0 = viewport.panX;
-  const y0 = viewport.panY;
-  const x1 = x0 + (canvas.clientWidth / viewport.zoom);
-  const y1 = y0 + (canvas.clientHeight / viewport.zoom);
+  // Draw the grid only over the image — the frozen canvas can extend past it.
+  const x0 = Math.max(viewport.panX, 0);
+  const y0 = Math.max(viewport.panY, 0);
+  const x1 = Math.min(viewport.panX + (canvas.clientWidth / viewport.zoom), imageWidth || Infinity);
+  const y1 = Math.min(viewport.panY + (canvas.clientHeight / viewport.zoom), imageHeight || Infinity);
 
   const startX = Math.floor(x0 / spacingPx) * spacingPx;
   const startY = Math.floor(y0 / spacingPx) * spacingPx;
@@ -97,10 +101,18 @@ export function drawMinimap() {
   const visibleW = canvas.clientWidth / viewport.zoom;
   const visibleH = canvas.clientHeight / viewport.zoom;
 
-  const rectX = x + (viewport.panX / imageWidth) * w;
-  const rectY = y + (viewport.panY / imageHeight) * h;
-  const rectW = (visibleW / imageWidth) * w;
-  const rectH = (visibleH / imageHeight) * h;
+  // Intersect the visible region with the image bounds — the frozen canvas
+  // can extend past the image (letterbox), and the viewport rect must not
+  // paint outside the thumbnail.
+  const ix0 = Math.max(0, viewport.panX);
+  const iy0 = Math.max(0, viewport.panY);
+  const ix1 = Math.min(imageWidth, viewport.panX + visibleW);
+  const iy1 = Math.min(imageHeight, viewport.panY + visibleH);
+
+  const rectX = x + (ix0 / imageWidth) * w;
+  const rectY = y + (iy0 / imageHeight) * h;
+  const rectW = (Math.max(0, ix1 - ix0) / imageWidth) * w;
+  const rectH = (Math.max(0, iy1 - iy0) / imageHeight) * h;
 
   ctx.strokeStyle = "#60a5fa";
   ctx.lineWidth = 1.5 * dpr;
@@ -115,6 +127,95 @@ export function drawMinimap() {
 
 export function drawPendingPoints() {
   state.pendingPoints.forEach(pt => drawHandle(pt, "#fb923c"));
+}
+
+/**
+ * In-progress tool preview (rubber band, circle/arc fit, constrained perp/para
+ * band, area polygon, spline). State-driven so it survives any redraw — the
+ * debounced sub-pixel snap callback in particular used to erase it.
+ * Called from redraw() inside the viewport transform (image space).
+ */
+export function drawToolPreview() {
+  if (!state._previewCursor) return;
+  const cur = state._previewCursor;
+
+  // Generic rubber band + circle/arc-measure previews
+  if (state.pendingPoints.length > 0 && state.tool !== "select"
+      && state.tool !== "arc-fit"
+      && state.tool !== "perp-dist"
+      && state.tool !== "para-dist"
+      && state.tool !== "area"
+      && state.tool !== "spline") {
+    const last = state.pendingPoints[state.pendingPoints.length - 1];
+    if (state.tool === "circle" && state.pendingPoints.length === 2) {
+      try {
+        const preview = fitCircle(state.pendingPoints[0], state.pendingPoints[1], cur);
+        ctx.beginPath();
+        ctx.arc(preview.cx, preview.cy, preview.r, 0, Math.PI * 2);
+        ctx.strokeStyle = "rgba(251,146,60,0.6)";
+        ctx.lineWidth = pw(1.5);
+        ctx.setLineDash([pw(5), pw(4)]);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      } catch {
+        // collinear — no preview
+      }
+    } else if (state.tool === "arc-measure" && state.pendingPoints.length === 2) {
+      // In sequential mode pendingPoints = [p1, p2] and the mouse is p3.
+      // In ends-first mode pendingPoints = [end1, end2] and the mouse is the mid point.
+      let p1, p2, p3;
+      if (state.arcMeasureMode === "ends-first") {
+        [p1, p2, p3] = [state.pendingPoints[0], cur, state.pendingPoints[1]];
+      } else {
+        [p1, p2, p3] = [state.pendingPoints[0], state.pendingPoints[1], cur];
+      }
+      const ax = p2.x - p1.x, ay = p2.y - p1.y;
+      const bx = p3.x - p1.x, by = p3.y - p1.y;
+      const D = 2 * (ax * by - ay * bx);
+      if (Math.abs(D) >= 1e-6) {
+        const ux = (by * (ax*ax + ay*ay) - ay * (bx*bx + by*by)) / D;
+        const uy = (ax * (bx*bx + by*by) - bx * (ax*ax + ay*ay)) / D;
+        const pcx = p1.x + ux, pcy = p1.y + uy;
+        const pr  = Math.hypot(ux, uy);
+        const pa1 = Math.atan2(p1.y - pcy, p1.x - pcx);
+        const pa2 = Math.atan2(p2.y - pcy, p2.x - pcx);
+        const pa3 = Math.atan2(p3.y - pcy, p3.x - pcx);
+        // Draw the arc from p1 to p3 in the direction that passes through p2.
+        const twoPi = 2 * Math.PI;
+        const norm = x => ((x % twoPi) + twoPi) % twoPi;
+        const ccw13 = norm(pa3 - pa1);
+        const ccw12 = norm(pa2 - pa1);
+        const ccw    = ccw12 < ccw13;  // CCW sweep passes through p2?
+        ctx.beginPath();
+        ctx.arc(pcx, pcy, pr, pa1, pa3, !ccw);
+        ctx.strokeStyle = "rgba(191,90,242,0.6)";
+        ctx.lineWidth = pw(1.5);
+        ctx.setLineDash([pw(5), pw(4)]);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+    } else {
+      drawLine(last, cur, "rgba(251,146,60,0.5)", 1);
+    }
+  }
+
+  // Constrained rubber-band for perp-dist and para-dist
+  if ((state.tool === "perp-dist" || state.tool === "para-dist")
+      && state.pendingPoints.length === 1 && state.pendingRefLine) {
+    const b = projectConstrained(cur, state.pendingPoints[0], state.pendingRefLine,
+                                 state.tool === "perp-dist", { imageWidth, imageHeight });
+    drawLine(state.pendingPoints[0], b, "rgba(251,146,60,0.5)", 1);
+  }
+
+  // Area polygon preview
+  if (state.tool === "area" && state.pendingPoints.length >= 1) {
+    drawAreaPreview(state.pendingPoints, cur);
+  }
+
+  // Spline preview
+  if (state.tool === "spline" && state.pendingPoints.length >= 1) {
+    drawSplinePreview(state.pendingPoints, cur);
+  }
 }
 
 /**

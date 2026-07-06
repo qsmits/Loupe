@@ -156,6 +156,39 @@ describe('fitToWindow', () => {
     fitToWindow(800, 600);
     assert.equal(viewport.zoom, 1, 'zoom should not change when imageWidth=0');
   });
+
+  it('yields pan (0,0) when canvas aspect matches image aspect', () => {
+    resetViewport(2592, 1944);  // 4:3 image
+    fitToWindow(800, 600);      // 4:3 canvas
+    assert.equal(viewport.panX, 0);
+    assert.equal(viewport.panY, 0);
+  });
+
+  it('centers the letterboxed X axis (portrait image in landscape canvas)', () => {
+    resetViewport(1000, 2000);
+    fitToWindow(800, 600);
+    // zoom = 600/2000 = 0.3; visibleW = 800/0.3 > 1000 → negative panX
+    const visibleW = 800 / viewport.zoom;
+    assert.ok(Math.abs(viewport.panX - (1000 - visibleW) / 2) < 1e-9,
+      `panX should center: expected ${(1000 - visibleW) / 2}, got ${viewport.panX}`);
+    assert.ok(Math.abs(viewport.panY) < 1e-9, `panY should be 0, got ${viewport.panY}`);
+    // Image center renders at canvas center
+    const c = imageToScreen(500, 1000);
+    assert.ok(Math.abs(c.x - 400) < 1e-6, `center x: expected 400, got ${c.x}`);
+    assert.ok(Math.abs(c.y - 300) < 1e-6, `center y: expected 300, got ${c.y}`);
+  });
+
+  it('centers the letterboxed Y axis (wide image in squarer canvas)', () => {
+    resetViewport(2000, 1000);
+    fitToWindow(800, 600);
+    // zoom = 800/2000 = 0.4; visibleH = 600/0.4 = 1500 > 1000 → negative panY
+    assert.ok(Math.abs(viewport.panX) < 1e-9, `panX should be 0, got ${viewport.panX}`);
+    assert.ok(Math.abs(viewport.panY - (1000 - 1500) / 2) < 1e-9,
+      `panY should center: expected -250, got ${viewport.panY}`);
+    const c = imageToScreen(1000, 500);
+    assert.ok(Math.abs(c.x - 400) < 1e-6, `center x: expected 400, got ${c.x}`);
+    assert.ok(Math.abs(c.y - 300) < 1e-6, `center y: expected 300, got ${c.y}`);
+  });
 });
 
 // ── Coordinate stability across freeze/unfreeze ──────────────────────────────
@@ -240,6 +273,18 @@ describe('zoomOneToOne', () => {
     assert.ok(Math.abs(center.x - 400) < 1e-9);
     assert.ok(Math.abs(center.y - 300) < 1e-9);
   });
+
+  it('centers a small image in a larger canvas (negative pan)', () => {
+    setImageSize(400, 300);
+    zoomOneToOne(800, 600);
+    assert.equal(viewport.zoom, 1.0);
+    // Pan should center: (400-800)/2 = -200, (300-600)/2 = -150
+    assert.ok(Math.abs(viewport.panX - (-200)) < 1e-9, `panX: expected -200, got ${viewport.panX}`);
+    assert.ok(Math.abs(viewport.panY - (-150)) < 1e-9, `panY: expected -150, got ${viewport.panY}`);
+    const c = imageToScreen(200, 150);
+    assert.ok(Math.abs(c.x - 400) < 1e-9);
+    assert.ok(Math.abs(c.y - 300) < 1e-9);
+  });
 });
 
 // ── clampPan ─────────────────────────────────────────────────────────────────
@@ -263,5 +308,38 @@ describe('clampPan', () => {
     clampPan(800, 600);
     assert.ok(viewport.panX < 2592, `panX should be clamped, got ${viewport.panX}`);
     assert.ok(viewport.panY < 1944, `panY should be clamped, got ${viewport.panY}`);
+  });
+
+  it('keeps the ±10% margin clamp on zoomed-in axes', () => {
+    setImageSize(2592, 1944);
+    viewport.zoom = 2;
+    viewport.panX = -9999;
+    viewport.panY = 9999;
+    clampPan(800, 600);
+    const visibleW = 800 / 2, visibleH = 600 / 2;
+    assert.equal(viewport.panX, -visibleW * 0.1);
+    assert.equal(viewport.panY, 1944 - visibleH * 0.9);
+  });
+
+  it('locks a letterboxed axis to centered', () => {
+    setImageSize(1000, 2000);
+    fitToWindow(800, 600);   // zoom = 0.3, visibleW = 800/0.3 > 1000
+    viewport.panX = 0;       // simulate a left-aligned pan
+    clampPan(800, 600);
+    const visibleW = 800 / viewport.zoom;
+    assert.ok(Math.abs(viewport.panX - (1000 - visibleW) / 2) < 1e-9,
+      `panX should recenter: expected ${(1000 - visibleW) / 2}, got ${viewport.panX}`);
+  });
+
+  it('recenters both axes when zoomed below fit (defect #8)', () => {
+    setImageSize(2592, 1944);
+    viewport.zoom = 0.2;     // below fit zoom (~0.309): whole image visible
+    viewport.panX = 0;
+    viewport.panY = 0;
+    clampPan(800, 600);
+    assert.ok(Math.abs(viewport.panX - (2592 - 800 / 0.2) / 2) < 1e-9,
+      `panX: expected ${(2592 - 800 / 0.2) / 2}, got ${viewport.panX}`);
+    assert.ok(Math.abs(viewport.panY - (1944 - 600 / 0.2) / 2) < 1e-9,
+      `panY: expected ${(1944 - 600 / 0.2) / 2}, got ${viewport.panY}`);
   });
 });

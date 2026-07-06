@@ -2,16 +2,15 @@
 import { apiFetch } from './api.js';
 import { state, _deviationHitBoxes, _labelHitBoxes, pushUndo, TRANSIENT_TYPES } from './state.js';
 import { canvas, ctx, img, showStatus, redraw, resizeCanvas,
-         drawLine, drawOrigin, drawAreaPreview, drawSplinePreview, dxfToCanvas } from './render.js';
+         drawOrigin, dxfToCanvas } from './render.js';
 import { renderSidebar, renderInspectionTable } from './sidebar.js';
 import { addAnnotation, deleteSelected, elevateSelected, isDetection,
          mergeSelectedLines, clearDetections, clearMeasurements,
          clearDxfOverlay, clearAll } from './annotations.js';
 import { setTool, handleToolClick, handleSelectDown, handleDrag,
          canvasPoint, snapPoint, collectDxfSnapPoints,
-         projectConstrained, hitTestDxfEntity, findSnapLine,
+         hitTestDxfEntity, findSnapLine,
          promptArcFitChoice, finalizeArcFit, finalizeArea, finalizeSpline, finalizeFitLine } from './tools.js';
-import { fitCircle } from './math.js';
 import { isCrossModeActive } from './cross-mode.js';
 import { exitDxfAlignMode, openFeatureTolPopover } from './dxf.js';
 import { viewport, screenToImage, clampPan, fitToWindow, zoomOneToOne,
@@ -74,14 +73,6 @@ function _updateSubpixelPreview(pt, altKey = false) {
       }
     } catch { /* ignore network errors */ }
   }, 40);
-}
-
-/** Run a drawing callback inside the viewport transform (for preview overlays after redraw) */
-function withViewport(fn) {
-  ctx.save();
-  ctx.scale(viewport.zoom, viewport.zoom);
-  ctx.translate(-viewport.panX, -viewport.panY);
-  try { fn(); } finally { ctx.restore(); }
 }
 
 async function onMouseDown(e) {
@@ -461,6 +452,7 @@ export function initMouseHandlers() {
     const pt = canvasPoint(e);
     const rawPt = pt;
     state.mousePos = pt;
+    state._previewCursor = null;  // re-set below when a tool preview is active
     lensCalMouseMove(pt);
     tiltCalMouseMove(pt);
     _updateSubpixelPreview(pt, e.altKey);
@@ -660,9 +652,26 @@ export function initMouseHandlers() {
       }
     }
 
-    if (state.tool !== "select" && state.tool !== "calibrate" && state.tool !== "center-dist") {
+    // Snap + in-progress tool preview. Painting happens in drawToolPreview()
+    // inside redraw() (state-driven), so the preview survives redraws
+    // triggered elsewhere — the debounced sub-pixel snap callback used to
+    // erase it the moment the mouse stopped.
+    const wantsPreview =
+      (state.pendingPoints.length > 0 && state.tool !== "select"
+        && state.tool !== "arc-fit"
+        && state.tool !== "perp-dist"
+        && state.tool !== "para-dist"
+        && state.tool !== "area"
+        && state.tool !== "spline")
+      || ((state.tool === "perp-dist" || state.tool === "para-dist")
+          && state.pendingPoints.length === 1 && state.pendingRefLine)
+      || ((state.tool === "area" || state.tool === "spline")
+          && state.pendingPoints.length >= 1);
+    if (wantsPreview ||
+        (state.tool !== "select" && state.tool !== "calibrate" && state.tool !== "center-dist")) {
       const { pt: snappedPt, snapped } = snapPoint(rawPt, e.altKey);
       state.snapTarget = (snapped && !e.altKey) ? snappedPt : null;
+      if (wantsPreview) state._previewCursor = snappedPt;
       // Angle tool: highlight the line that would be captured on click.
       if (state.tool === "angle") {
         const hover = findSnapLine(pt);
@@ -672,103 +681,6 @@ export function initMouseHandlers() {
         state.hoverRefLine = null;
       }
       redraw();
-    }
-    if (state.pendingPoints.length > 0 && state.tool !== "select"
-        && state.tool !== "arc-fit"
-        && state.tool !== "perp-dist"
-        && state.tool !== "para-dist"
-        && state.tool !== "area"
-        && state.tool !== "spline") {
-      const { pt: snappedPt, snapped } = snapPoint(rawPt, e.altKey);
-      state.snapTarget = (snapped && !e.altKey) ? snappedPt : null;
-      redraw();
-      const last = state.pendingPoints[state.pendingPoints.length - 1];
-      withViewport(() => {
-        const pw = px => px / viewport.zoom;
-        if (state.tool === "circle" && state.pendingPoints.length === 2) {
-          try {
-            const preview = fitCircle(state.pendingPoints[0], state.pendingPoints[1], snappedPt);
-            ctx.beginPath();
-            ctx.arc(preview.cx, preview.cy, preview.r, 0, Math.PI * 2);
-            ctx.strokeStyle = "rgba(251,146,60,0.6)";
-            ctx.lineWidth = pw(1.5);
-            ctx.setLineDash([pw(5), pw(4)]);
-            ctx.stroke();
-            ctx.setLineDash([]);
-          } catch {
-            // collinear — no preview
-          }
-        } else if (state.tool === "arc-measure" && state.pendingPoints.length === 2) {
-          // In sequential mode pendingPoints = [p1, p2] and the mouse is p3.
-          // In ends-first mode pendingPoints = [end1, end2] and the mouse is the mid point.
-          let p1, p2, p3;
-          if (state.arcMeasureMode === "ends-first") {
-            [p1, p2, p3] = [state.pendingPoints[0], snappedPt, state.pendingPoints[1]];
-          } else {
-            [p1, p2, p3] = [state.pendingPoints[0], state.pendingPoints[1], snappedPt];
-          }
-          const ax = p2.x - p1.x, ay = p2.y - p1.y;
-          const bx = p3.x - p1.x, by = p3.y - p1.y;
-          const D = 2 * (ax * by - ay * bx);
-          if (Math.abs(D) >= 1e-6) {
-            const ux = (by * (ax*ax + ay*ay) - ay * (bx*bx + by*by)) / D;
-            const uy = (ax * (bx*bx + by*by) - bx * (ax*ax + ay*ay)) / D;
-            const pcx = p1.x + ux, pcy = p1.y + uy;
-            const pr  = Math.hypot(ux, uy);
-            const pa1 = Math.atan2(p1.y - pcy, p1.x - pcx);
-            const pa2 = Math.atan2(p2.y - pcy, p2.x - pcx);
-            const pa3 = Math.atan2(p3.y - pcy, p3.x - pcx);
-            // Draw the arc from p1 to p3 in the direction that passes through p2.
-            const twoPi = 2 * Math.PI;
-            const norm = x => ((x % twoPi) + twoPi) % twoPi;
-            const ccw13 = norm(pa3 - pa1);
-            const ccw12 = norm(pa2 - pa1);
-            const ccw    = ccw12 < ccw13;  // CCW sweep passes through p2?
-            ctx.beginPath();
-            ctx.arc(pcx, pcy, pr, pa1, pa3, !ccw);
-            ctx.strokeStyle = "rgba(191,90,242,0.6)";
-            ctx.lineWidth = pw(1.5);
-            ctx.setLineDash([pw(5), pw(4)]);
-            ctx.stroke();
-            ctx.setLineDash([]);
-          }
-        } else {
-          drawLine(last, snappedPt, "rgba(251,146,60,0.5)", 1);
-        }
-      });
-    }
-
-    // Constrained rubber-band for perp-dist and para-dist
-    if ((state.tool === "perp-dist" || state.tool === "para-dist")
-        && state.pendingPoints.length === 1 && state.pendingRefLine) {
-      const { pt: snappedPt, snapped } = snapPoint(rawPt, e.altKey);
-      state.snapTarget = (snapped && !e.altKey) ? snappedPt : null;
-      redraw();
-      withViewport(() => {
-        const b = projectConstrained(snappedPt, state.pendingPoints[0], state.pendingRefLine,
-                                     state.tool === "perp-dist");
-        drawLine(state.pendingPoints[0], b, "rgba(251,146,60,0.5)", 1);
-      });
-    }
-
-    // Area polygon preview
-    if (state.tool === "area" && state.pendingPoints.length >= 1) {
-      const { pt: snappedPt, snapped } = snapPoint(rawPt, e.altKey);
-      state.snapTarget = (snapped && !e.altKey) ? snappedPt : null;
-      redraw();
-      withViewport(() => {
-        drawAreaPreview(state.pendingPoints, snappedPt);
-      });
-    }
-
-    // Spline preview
-    if (state.tool === "spline" && state.pendingPoints.length >= 1) {
-      const { pt: snappedPt, snapped } = snapPoint(rawPt, e.altKey);
-      state.snapTarget = (snapped && !e.altKey) ? snappedPt : null;
-      redraw();
-      withViewport(() => {
-        drawSplinePreview(state.pendingPoints, snappedPt);
-      });
     }
 
     // Coordinate readout HUD
@@ -1151,15 +1063,10 @@ export function initMouseHandlers() {
     const maxZoom = Math.max(10, oneToOneZoom * 4);
     viewport.zoom = Math.max(minZoom, Math.min(maxZoom, viewport.zoom * factor));
 
-    // Adjust pan so image point stays under cursor
+    // Adjust pan so image point stays under cursor. At fit-to-window zoom,
+    // clampPan recenters both axes (visible extent covers the whole image).
     viewport.panX = imgPt.x - screenX / viewport.zoom;
     viewport.panY = imgPt.y - screenY / viewport.zoom;
-
-    // At minimum zoom (fit-to-window), reset pan to origin
-    if (viewport.zoom <= minZoom + 0.001) {
-      viewport.panX = 0;
-      viewport.panY = 0;
-    }
 
     clampPan(rect.width, rect.height);
     resizeCanvas();

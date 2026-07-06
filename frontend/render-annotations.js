@@ -317,8 +317,8 @@ export function drawPtCircleDist(ann, sel) {
   if (circle.type === "circle") {
     cx = circle.cx; cy = circle.cy; r = circle.r;
   } else {
-    const sx = canvas.width / circle.frameWidth;
-    const sy = canvas.height / circle.frameHeight;
+    const sx = circle.frameWidth ? imageWidth / circle.frameWidth : 1;
+    const sy = circle.frameHeight ? imageHeight / circle.frameHeight : 1;
     cx = circle.x * sx; cy = circle.y * sy; r = circle.radius * sx;
   }
   const dist = Math.hypot(ann.px - cx, ann.py - cy);
@@ -340,7 +340,7 @@ export function drawIntersect(ann, sel) {
   const annB = state.annotations.find(a => a.id === ann.lineBId);
   if (!annA || !annB) return;
 
-  const _fctx = { canvasWidth: canvas.width, canvasHeight: canvas.height, imageHeight };
+  const _fctx = { imageWidth, imageHeight };
   const epA = getLineEndpoints(annA, _fctx);
   const epB = getLineEndpoints(annB, _fctx);
 
@@ -358,9 +358,9 @@ export function drawIntersect(ann, sel) {
   const ix = epA.a.x + t * dx_a;
   const iy = epA.a.y + t * dy_a;
 
-  const margin = Math.max(canvas.width, canvas.height);
-  if (ix < -margin || ix > canvas.width + margin ||
-      iy < -margin || iy > canvas.height + margin) return;
+  const margin = Math.max(imageWidth, imageHeight);
+  if (ix < -margin || ix > imageWidth + margin ||
+      iy < -margin || iy > imageHeight + margin) return;
 
   const color = sel ? "#60a5fa" : "#f97316";
   const ARM = 8;
@@ -378,7 +378,7 @@ export function drawSlotDist(ann, sel) {
   const annB = state.annotations.find(a => a.id === ann.lineBId);
   if (!annA || !annB) return;
 
-  const _fctx = { canvasWidth: canvas.width, canvasHeight: canvas.height, imageHeight };
+  const _fctx = { imageWidth, imageHeight };
   const epA = getLineEndpoints(annA, _fctx);
   const epB = getLineEndpoints(annB, _fctx);
 
@@ -734,7 +734,7 @@ export function drawAnnotations(redrawFn, dxfFns) {
   // Angle tool: highlight the line under the cursor (captured on click) and
   // the already-picked first line, so the user knows what they're selecting.
   const _highlightLine = (ann, color) => {
-    const ep = getLineEndpoints(ann);
+    const ep = getLineEndpoints(ann, { imageWidth, imageHeight });
     if (!ep) return;
     ctx.save();
     ctx.strokeStyle = color;

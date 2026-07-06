@@ -6,8 +6,8 @@
 
 import { apiFetch } from './api.js';
 import { state } from './state.js';
-import { img, showStatus, resizeCanvas } from './render.js';
-import { setImageSize, viewport } from './viewport.js';
+import { img, showStatus, resizeCanvas, canvas, redraw } from './render.js';
+import { setImageSize, fitToWindow } from './viewport.js';
 import { cacheImageData } from './subpixel-js.js';
 import { updateFreezeUI } from './sidebar.js';
 
@@ -264,15 +264,15 @@ async function useAsImage() {
 
     state.frozenSize = { w: width, h: height };
     setImageSize(width, height);
-    viewport.zoom = 1;
-    viewport.panX = 0;
-    viewport.panY = 0;
     state.frozenBackground = loadedImg;
     img.style.opacity = "0";
     state.frozen = true;
     cacheImageData(loadedImg, width, height);
     updateFreezeUI();
     resizeCanvas();
+    const rect = canvas.getBoundingClientRect();
+    fitToWindow(rect.width, rect.height);
+    redraw();
     showStatus("Panorama loaded as working image (" + width + "x" + height + ")");
     closeDialog();
   } catch (err) {

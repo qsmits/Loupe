@@ -474,10 +474,12 @@ export async function loadCameraInfo() {
     // coordinate shift that occurs when doFreeze sets imageWidth/imageHeight.
     if (d.width > 0 && d.height > 0 && (d.width !== imageWidth || d.height !== imageHeight)) {
       setImageSize(d.width, d.height);
-      // Fit viewport so the full camera frame is visible, then redraw.
+      // Resize the canvas first (its shape can change), then fit the viewport
+      // so the full camera frame is visible, then redraw.
+      resizeCanvas();
       const rect = canvas.getBoundingClientRect();
       if (rect.width > 0) fitToWindow(rect.width, rect.height);
-      resizeCanvas();
+      redraw();
     }
     // Cache camera info for ROI "Set from view"
     state._cameraInfo = d;

@@ -8,8 +8,8 @@
 
 import { apiFetch } from './api.js';
 import { state } from './state.js';
-import { img, showStatus, resizeCanvas } from './render.js';
-import { setImageSize, viewport } from './viewport.js';
+import { img, showStatus, resizeCanvas, canvas as mainCanvas, redraw } from './render.js';
+import { setImageSize, fitToWindow } from './viewport.js';
 import { cacheImageData } from './subpixel-js.js';
 import { updateFreezeUI } from './sidebar.js';
 import { openZstack3dView } from './zstack-3d.js';
@@ -1396,15 +1396,15 @@ async function useCompositeAsWorkingImage() {
 
     state.frozenSize = { w: width, h: height };
     setImageSize(width, height);
-    viewport.zoom = 1;
-    viewport.panX = 0;
-    viewport.panY = 0;
     state.frozenBackground = loadedImg;
     img.style.opacity = "0";
     state.frozen = true;
     cacheImageData(loadedImg, width, height);
     updateFreezeUI();
     resizeCanvas();
+    const rect = mainCanvas.getBoundingClientRect();
+    fitToWindow(rect.width, rect.height);
+    redraw();
     showStatus("Composite loaded as working image");
     closeDialog();
   } catch (err) {

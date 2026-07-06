@@ -102,8 +102,9 @@ export function hitTestAnnotation(ann, pt) {
     const annA = state.annotations.find(a => a.id === ann.lineAId);
     const annB = state.annotations.find(a => a.id === ann.lineBId);
     if (!annA || !annB) return false;
-    const epA = getLineEndpoints(annA);
-    const epB = getLineEndpoints(annB);
+    const _fctx = { imageWidth, imageHeight };
+    const epA = getLineEndpoints(annA, _fctx);
+    const epB = getLineEndpoints(annB, _fctx);
     const midA = {
       x: (epA.a.x + epA.b.x) / 2,
       y: (epA.a.y + epA.b.y) / 2,
@@ -119,9 +120,10 @@ export function hitTestAnnotation(ann, pt) {
     const annA = state.annotations.find(a => a.id === ann.lineAId);
     const annB = state.annotations.find(a => a.id === ann.lineBId);
     if (!annA || !annB) return false;
-    const epA = getLineEndpoints(annA);
-    const epB = getLineEndpoints(annB);
-    const dA = lineAngleDeg(annA), dB = lineAngleDeg(annB);
+    const _fctx = { imageWidth, imageHeight };
+    const epA = getLineEndpoints(annA, _fctx);
+    const epB = getLineEndpoints(annB, _fctx);
+    const dA = lineAngleDeg(annA, _fctx), dB = lineAngleDeg(annB, _fctx);
     let diff = Math.abs(dA - dB) % 180;
     if (diff > 90) diff = 180 - diff;
     if (diff < 1) return false;
@@ -132,8 +134,8 @@ export function hitTestAnnotation(ann, pt) {
     const t = ((epB.a.x - epA.a.x) * dy_b - (epB.a.y - epA.a.y) * dx_b) / denom;
     const ix = epA.a.x + t * dx_a;
     const iy = epA.a.y + t * dy_a;
-    const margin = Math.max(canvas.width, canvas.height);
-    if (ix < -margin || ix > canvas.width + margin || iy < -margin || iy > canvas.height + margin) return false;
+    const margin = Math.max(imageWidth, imageHeight);
+    if (ix < -margin || ix > imageWidth + margin || iy < -margin || iy > imageHeight + margin) return false;
     return Math.hypot(pt.x - ix, pt.y - iy) < 8 / z;
   }
   if (ann.type === "pt-circle-dist") {
@@ -144,8 +146,8 @@ export function hitTestAnnotation(ann, pt) {
     if (circle.type === "circle") {
       cx = circle.cx; cy = circle.cy; r = circle.r;
     } else {
-      const sx = canvas.width / circle.frameWidth;
-      const sy = canvas.height / circle.frameHeight;
+      const sx = circle.frameWidth ? imageWidth / circle.frameWidth : 1;
+      const sy = circle.frameHeight ? imageHeight / circle.frameHeight : 1;
       cx = circle.x * sx; cy = circle.y * sy; r = circle.radius * sx;
     }
     const dist = Math.hypot(ann.px - cx, ann.py - cy);

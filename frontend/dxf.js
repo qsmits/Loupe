@@ -6,6 +6,7 @@ import { renderSidebar, updateDxfControlsVisibility, updateFreezeUI, renderInspe
 import { exportInspectionCsv, exportInspectionPdf } from './session.js';
 import { serverSubpixelMethod } from './subpixel-js.js';
 import { ensureFrozen } from './detect.js';
+import { imageWidth, imageHeight } from './viewport.js';
 
 // ── Shared alignment helper ───────────────────────────────────────────────
 
@@ -53,9 +54,9 @@ function getDetectedCirclesForAlignment() {
   return state.annotations
     .filter(a => a.type === "detected-circle")
     .map(a => ({
-      x: a.x * (canvas.width / a.frameWidth),
-      y: a.y * (canvas.height / a.frameHeight),
-      radius: a.radius * (canvas.width / a.frameWidth),
+      x: a.x * (imageWidth / a.frameWidth),
+      y: a.y * (imageHeight / a.frameHeight),
+      radius: a.radius * (imageWidth / a.frameWidth),
     }));
 }
 
@@ -125,8 +126,8 @@ export function initDxfHandlers() {
       addAnnotation({
         type: "dxf-overlay",
         entities,
-        offsetX: canvas.width / 2,
-        offsetY: canvas.height / 2,
+        offsetX: (imageWidth || canvas.width) / 2,
+        offsetY: (imageHeight || canvas.height) / 2,
         scale,
         angle: 0,
         scaleManual: false,
@@ -285,8 +286,8 @@ export function initDxfHandlers() {
       if (detectResp.ok) {
         const detected = await detectResp.json();
         if (detected.length > 0) {
-          const fw = state.frozenSize?.w || canvas.width;
-          const fh = state.frozenSize?.h || canvas.height;
+          const fw = state.frozenSize?.w || imageWidth || canvas.width;
+          const fh = state.frozenSize?.h || imageHeight || canvas.height;
           pushUndo();
           state.annotations = state.annotations.filter(a => a.type !== "detected-circle");
           detected.forEach(c => addAnnotation({

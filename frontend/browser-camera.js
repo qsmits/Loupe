@@ -1,7 +1,7 @@
 import { state } from './state.js';
 import { apiFetch } from './api.js';
-import { setImageSize } from './viewport.js';
-import { img, showStatus, resizeCanvas } from './render.js';
+import { setImageSize, imageWidth, imageHeight, fitToWindow } from './viewport.js';
+import { img, showStatus, resizeCanvas, canvas, redraw } from './render.js';
 import { updateDropOverlay } from './sidebar.js';
 
 const videoEl = document.getElementById("browser-cam-video");
@@ -46,8 +46,14 @@ export async function startBrowserCamera(deviceId = null) {
     videoEl.hidden = false;
     img.style.display = "none";
     document.body.classList.remove("no-camera");
+    const dimsChanged = videoEl.videoWidth !== imageWidth || videoEl.videoHeight !== imageHeight;
     setImageSize(videoEl.videoWidth, videoEl.videoHeight);
     resizeCanvas();
+    if (dimsChanged) {
+      const rect = canvas.getBoundingClientRect();
+      fitToWindow(rect.width, rect.height);
+      redraw();
+    }
     const label = stream.getVideoTracks()[0]?.label || "Browser camera";
     showStatus(`${label} active`);
     updateDropOverlay();

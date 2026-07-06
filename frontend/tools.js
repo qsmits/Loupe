@@ -45,6 +45,7 @@ export function setTool(name) {
   state.pendingCircleRef = null;
   state.hoverRefLine = null;
   state.snapTarget = null;
+  state._previewCursor = null;
   // Exit any modal modes that would intercept clicks
   if (state.dxfAlignMode) {
     state.dxfAlignMode = false;
@@ -209,7 +210,7 @@ export function findSnapLine(pt) {
   for (let i = state.annotations.length - 1; i >= 0; i--) {
     const ann = state.annotations[i];
     if (ann.type === "parallelism") continue;
-    const ep = getLineEndpoints(ann);
+    const ep = getLineEndpoints(ann, { imageWidth, imageHeight });
     if (!ep) continue;
     if (distPointToSegment(pt, ep.a, ep.b) < 10 / viewport.zoom) return ann;
   }
@@ -306,8 +307,8 @@ export async function handleToolClick(rawPt, e = {}) {
             if (circle.type === "circle") {
               cx = circle.cx; cy = circle.cy; r = circle.r;
             } else {
-              const sx = canvas.width / circle.frameWidth;
-              const sy = canvas.height / circle.frameHeight;
+              const sx = imageWidth / circle.frameWidth;
+              const sy = imageHeight / circle.frameHeight;
               cx = circle.x * sx; cy = circle.y * sy; r = circle.radius * sx;
             }
             if (circle.type !== "circle") {
@@ -682,23 +683,8 @@ export function snapToCircle(pt) {
   return best;
 }
 
-// Projects rawPt onto the ray from a in the direction perpendicular (perp=true)
-// or parallel (perp=false) to refAnn. Returns the snapped endpoint { x, y }.
-export function projectConstrained(rawPt, a, refAnn, perp) {
-  const ep = getLineEndpoints(refAnn);
-  if (!ep) return rawPt;
-  const rdx = ep.b.x - ep.a.x, rdy = ep.b.y - ep.a.y;
-  const len = Math.hypot(rdx, rdy);
-  if (len < 1e-10) return rawPt;
-  // unit parallel vector of reference line
-  const px = rdx / len, py = rdy / len;
-  // unit direction we want to constrain b along:
-  // if perp=true → use the perpendicular (-py, px); if false → use parallel (px, py)
-  const ux = perp ? -py : px;
-  const uy = perp ? px  : py;
-  const t = (rawPt.x - a.x) * ux + (rawPt.y - a.y) * uy;
-  return { x: a.x + t * ux, y: a.y + t * uy };
-}
+// projectConstrained moved to format.js (pure) so render-hud.js can draw the
+// perp/para preview without importing tools.js.
 
 export function handleDrag(pt) {
   if (!state.dragState) return;
@@ -954,8 +940,8 @@ export function finalizeFitLine() {
 // projected click points by default; the user can drag the radius handle to
 // move the arc in/out along the angle bisector.
 function _angleFromLines(annA, annB, clickA, clickB) {
-  const epA = getLineEndpoints(annA);
-  const epB = getLineEndpoints(annB);
+  const epA = getLineEndpoints(annA, { imageWidth, imageHeight });
+  const epB = getLineEndpoints(annB, { imageWidth, imageHeight });
   if (!epA || !epB) return null;
 
   const dx_a = epA.b.x - epA.a.x, dy_a = epA.b.y - epA.a.y;

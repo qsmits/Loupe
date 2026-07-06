@@ -32,12 +32,14 @@ export function imageToScreen(x, y) { return imageToScreenPure(x, y, viewport); 
 /** Screen-space → image-space (for mouse events) */
 export function screenToImage(x, y) { return screenToImagePure(x, y, viewport); }
 
-/** Reset viewport to fit the full image in the canvas */
+/** Reset viewport to fit the full image in the canvas, centered on both axes.
+ * When canvas aspect ≠ image aspect the letterboxed axis gets a negative pan
+ * (equal margins on both sides); with matching aspects this is exactly (0,0). */
 export function fitToWindow(canvasWidth, canvasHeight) {
   if (imageWidth === 0 || imageHeight === 0) return;
   viewport.zoom = Math.min(canvasWidth / imageWidth, canvasHeight / imageHeight);
-  viewport.panX = 0;
-  viewport.panY = 0;
+  viewport.panX = (imageWidth - canvasWidth / viewport.zoom) / 2;
+  viewport.panY = (imageHeight - canvasHeight / viewport.zoom) / 2;
 }
 
 /** Set zoom to show 1:1 pixels, centered */
@@ -46,17 +48,27 @@ export function zoomOneToOne(canvasCssWidth, canvasCssHeight) {
   viewport.zoom = 1.0;
   const visibleW = canvasCssWidth;
   const visibleH = canvasCssHeight;
-  viewport.panX = Math.max(0, (imageWidth - visibleW) / 2);
-  viewport.panY = Math.max(0, (imageHeight - visibleH) / 2);
+  viewport.panX = (imageWidth - visibleW) / 2;
+  viewport.panY = (imageHeight - visibleH) / 2;
 }
 
-/** Clamp pan so the image doesn't scroll completely off-screen */
+/** Clamp pan so the image doesn't scroll completely off-screen.
+ * Axes where the visible extent covers the whole image are locked centered;
+ * zoomed-in axes keep a ±10% margin of scroll past the image edge. */
 export function clampPan(canvasCssWidth, canvasCssHeight) {
   const margin = 0.1;
   const visibleW = canvasCssWidth / viewport.zoom;
   const visibleH = canvasCssHeight / viewport.zoom;
-  const maxPanX = imageWidth - visibleW * (1 - margin);
-  const maxPanY = imageHeight - visibleH * (1 - margin);
-  viewport.panX = Math.max(-visibleW * margin, Math.min(maxPanX, viewport.panX));
-  viewport.panY = Math.max(-visibleH * margin, Math.min(maxPanY, viewport.panY));
+  if (visibleW >= imageWidth) {
+    viewport.panX = (imageWidth - visibleW) / 2;
+  } else {
+    const maxPanX = imageWidth - visibleW * (1 - margin);
+    viewport.panX = Math.max(-visibleW * margin, Math.min(maxPanX, viewport.panX));
+  }
+  if (visibleH >= imageHeight) {
+    viewport.panY = (imageHeight - visibleH) / 2;
+  } else {
+    const maxPanY = imageHeight - visibleH * (1 - margin);
+    viewport.panY = Math.max(-visibleH * margin, Math.min(maxPanY, viewport.panY));
+  }
 }

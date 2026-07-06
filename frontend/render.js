@@ -131,7 +131,7 @@ export function drawMeasurementLabel(ann, text, defaultX, defaultY, refX, refY) 
 import { drawAnnotations } from './render-annotations.js';
 import { drawDxfOverlay, dxfToCanvas, drawGuidedResults, drawDeviations,
          drawEdgesOverlay, drawPreprocessedOverlay, deviationColor } from './render-dxf.js';
-import { drawGrid, drawMinimap, drawPendingPoints, drawLoupe, drawConstraintBadges } from './render-hud.js';
+import { drawGrid, drawMinimap, drawPendingPoints, drawToolPreview, drawLoupe, drawConstraintBadges } from './render-hud.js';
 import { drawReticle } from './render-reticle.js';
 import { drawLensCalOverlay } from './lens-cal.js';
 import { drawTiltCalOverlay } from './tilt-cal.js';
@@ -159,6 +159,22 @@ export function resizeCanvas() {
   const r = streamEl.getBoundingClientRect();
   const vr = streamEl.parentElement.getBoundingClientRect();
 
+  if (state.frozen) {
+    // Frozen: the canvas fills the whole viewer container; the viewport
+    // transform (zoom/pan) handles letterboxing like a normal image viewer.
+    canvas.style.left   = "0px";
+    canvas.style.top    = "0px";
+    canvas.style.width  = vr.width + "px";
+    canvas.style.height = vr.height + "px";
+    canvas.width  = Math.round(vr.width);
+    canvas.height = Math.round(vr.height);
+    if (!imageWidth) setImageSize(canvas.width, canvas.height);
+    redraw();
+    return;
+  }
+
+  // Live: the canvas must sit exactly over the pixels the stream <img>/<video>
+  // displays, so letterbox the canvas element to the image aspect.
   let displayW = r.width;
   let displayH = r.height;
   const iw = imageWidth || Math.round(r.width);
@@ -362,6 +378,7 @@ export function redraw() {
     drawMaskPreviewOverlay();
   }
   drawPendingPoints();
+  drawToolPreview();
   // Snap indicator (annotation snap — blue circle)
   if (state.snapTarget && state.tool !== "select") {
     ctx.save();

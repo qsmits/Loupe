@@ -3,7 +3,7 @@ import { state } from './state.js';
 import { redraw, showStatus, img, canvas, resizeCanvas } from './render.js';
 import { addAnnotation } from './annotations.js';
 import { updateFreezeUI } from './sidebar.js';
-import { setImageSize, imageWidth, imageHeight } from './viewport.js';
+import { setImageSize, imageWidth, imageHeight, fitToWindow, clampPan } from './viewport.js';
 import { cacheImageData } from './subpixel-js.js';
 import { isBrowserCameraActive, captureBrowserFrame } from './browser-camera.js';
 
@@ -43,6 +43,11 @@ export async function doFreeze() {
     state.frozen = true;
     updateFreezeUI();
     resizeCanvas();
+    // Freezing changes the canvas shape (stream letterbox → full viewer);
+    // recenter letterboxed axes without touching the user's zoom.
+    const rect = canvas.getBoundingClientRect();
+    clampPan(rect.width, rect.height);
+    redraw();
     return;
   }
 
@@ -51,13 +56,23 @@ export async function doFreeze() {
     try {
       const { image, width, height } = await captureBrowserFrame();
       state.frozenSize = { w: width, h: height };
-      if (width !== imageWidth || height !== imageHeight) setImageSize(width, height);
+      const dimsChanged = width !== imageWidth || height !== imageHeight;
+      if (dimsChanged) setImageSize(width, height);
       state.frozenBackground = image;
       document.getElementById("browser-cam-video").style.opacity = "0";
       state.frozen = true;
       cacheImageData(image, width, height);
       updateFreezeUI();
       resizeCanvas();
+      const rect = canvas.getBoundingClientRect();
+      if (dimsChanged) {
+        fitToWindow(rect.width, rect.height);
+      } else {
+        // Canvas shape changed (stream letterbox → full viewer) even though
+        // dims did not — recenter letterboxed axes, keep the user's zoom.
+        clampPan(rect.width, rect.height);
+      }
+      redraw();
     } catch (err) {
       showStatus("Failed to capture frame: " + err.message);
     }
@@ -70,7 +85,8 @@ export async function doFreeze() {
   state.frozenSize = { w: width, h: height };
   // Only update image dimensions if they actually changed — loadCameraInfo
   // already sets them at startup for real cameras.
-  if (width !== imageWidth || height !== imageHeight) {
+  const dimsChanged = width !== imageWidth || height !== imageHeight;
+  if (dimsChanged) {
     setImageSize(width, height);
   }
 
@@ -101,6 +117,16 @@ export async function doFreeze() {
   cacheImageData(state.frozenBackground, imageWidth, imageHeight);
   updateFreezeUI();
   resizeCanvas();  // re-read img rect after opacity change to guarantee pixel-perfect alignment
+  const rect = canvas.getBoundingClientRect();
+  if (dimsChanged) {
+    // Fit only when the frame size changed — keep the user's zoom on a routine freeze
+    fitToWindow(rect.width, rect.height);
+  } else {
+    // Canvas shape changed (stream letterbox → full viewer) even though dims
+    // did not — recenter letterboxed axes, keep the user's zoom.
+    clampPan(rect.width, rect.height);
+  }
+  redraw();
 }
 
 // ── Detect tool event handlers ──────────────────────────────────────────────

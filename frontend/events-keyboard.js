@@ -218,8 +218,9 @@ export function initKeyboard(closeAllDropdowns) {
         redraw();
       } else if (state.frozen) {
         e.preventDefault();
-        viewport.panX += dx;
-        viewport.panY += dy;
+        // Divide by zoom so the pan step is constant in screen pixels
+        viewport.panX += dx / viewport.zoom;
+        viewport.panY += dy / viewport.zoom;
         const rect = canvas.getBoundingClientRect();
         clampPan(rect.width, rect.height);
         resizeCanvas();

@@ -330,9 +330,9 @@ function matchDxfToDetected(ann) {
   const detected = state.annotations
     .filter(a => a.type === "detected-circle")
     .map(a => ({
-      cx: a.x * (canvas.width / a.frameWidth),
-      cy: a.y * (canvas.height / a.frameHeight),
-      r:  a.radius * (canvas.width / a.frameWidth),
+      cx: a.x * (imageWidth / a.frameWidth),
+      cy: a.y * (imageHeight / a.frameHeight),
+      r:  a.radius * (imageWidth / a.frameWidth),
     }));
 
   return ann.entities
@@ -511,12 +511,12 @@ export function drawDeviations(ann) {
 
 export function drawEdgesOverlay(ann) {
   ctx.globalAlpha = 0.7;
-  ctx.drawImage(ann.image, 0, 0, canvas.width, canvas.height);
+  ctx.drawImage(ann.image, 0, 0, imageWidth || canvas.width, imageHeight || canvas.height);
   ctx.globalAlpha = 1.0;
 }
 
 export function drawPreprocessedOverlay(ann) {
   ctx.globalAlpha = 0.75;
-  ctx.drawImage(ann.image, 0, 0, canvas.width, canvas.height);
+  ctx.drawImage(ann.image, 0, 0, imageWidth || canvas.width, imageHeight || canvas.height);
   ctx.globalAlpha = 1.0;
 }
