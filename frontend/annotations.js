@@ -2,6 +2,7 @@ import { state, pushUndo, DETECTION_TYPES } from './state.js';
 import { cascadeDeleteConstraints } from './constraints.js';
 import { canvas, showStatus, redraw } from './render.js';
 import { renderSidebar, updateCameraInfo, updateCalibrationButton, renderInspectionTable } from './sidebar.js';
+import { calibrationPixelsPerMm } from './math.js';
 import { imageWidth, imageHeight } from './viewport.js';
 
 // ── Annotations management ──────────────────────────────────────────────────────
@@ -18,8 +19,11 @@ function _cleanupAnnotation(ann) {
   }
 }
 
-export function addAnnotation(data) {
-  pushUndo();
+export function addAnnotation(data, { skipUndo = false } = {}) {
+  // skipUndo: for callers (applyCalibration) that already took a snapshot
+  // BEFORE their own mutations — a second push here would create an extra
+  // undo step whose snapshot captures an inconsistent intermediate state.
+  if (!skipUndo) pushUndo();
   const ann = { ...data, id: state.nextId++, name: data.name ?? "", purpose: data.purpose ?? "measurement" };
   state.annotations.push(ann);
   state.selected = new Set([ann.id]);
@@ -274,19 +278,17 @@ export function clearAll() {
   showStatus("Cleared all annotations");
 }
 
-export function applyCalibration(ann) {
-  pushUndo();
-  // Remove any existing calibration annotation
-  state.annotations = state.annotations.filter(a => a.type !== "calibration");
-  // Compute pixelsPerMm
-  let pixelDist;
-  if (ann.x1 !== undefined) {
-    pixelDist = Math.hypot(ann.x2 - ann.x1, ann.y2 - ann.y1);
-  } else {
-    pixelDist = ann.r * 2; // diameter
-  }
-  const knownMm = ann.unit === "µm" ? ann.knownValue / 1000 : ann.knownValue;
-  state.calibration = { pixelsPerMm: pixelDist / knownMm, displayUnit: ann.unit };
+// Recompute state.calibration (and everything that mirrors it) from a
+// calibration annotation's CURRENT geometry + knownValue/unit. Shared by
+// applyCalibration and the calibration drag path in tools.js handleDrag —
+// without this, dragging a calibration endpoint changed the drawn reference
+// while the stored scale silently stayed stale.
+// Returns false (and changes nothing) for degenerate geometry, e.g. both
+// endpoints dragged onto each other mid-drag.
+export function recalibrateFromAnnotation(ann) {
+  const ppm = calibrationPixelsPerMm(ann);
+  if (ppm == null) return false;
+  state.calibration = { pixelsPerMm: ppm, displayUnit: ann.unit };
   // Auto-update DXF scale if not manually overridden
   const dxfAnn = state.annotations.find(a => a.type === "dxf-overlay");
   if (dxfAnn && !dxfAnn.scaleManual) {
@@ -294,8 +296,25 @@ export function applyCalibration(ann) {
     const dxfScaleEl = document.getElementById("dxf-scale");
     if (dxfScaleEl) dxfScaleEl.value = dxfAnn.scale.toFixed(3);
   }
-  addAnnotation(ann);
   updateCameraInfo(); // refresh the scale display in the sidebar
   updateCalibrationButton();
   document.dispatchEvent(new CustomEvent("dxf-state-changed"));
+  return true;
+}
+
+export function applyCalibration(ann) {
+  // Validate before the undo snapshot so a rejected calibration leaves no
+  // phantom undo step.
+  if (calibrationPixelsPerMm(ann) == null) {
+    showStatus("Calibration rejected — zero length or zero known value");
+    return;
+  }
+  // Single snapshot, taken BEFORE any mutation. addAnnotation below runs
+  // with skipUndo so it does not push a second, inconsistent snapshot
+  // (new calibration but no calibration annotation yet).
+  pushUndo();
+  // Remove any existing calibration annotation
+  state.annotations = state.annotations.filter(a => a.type !== "calibration");
+  recalibrateFromAnnotation(ann);
+  addAnnotation(ann, { skipUndo: true });
 }

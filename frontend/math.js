@@ -10,6 +10,24 @@ export function parseDistanceInput(input) {
   return { value, unit, mm };
 }
 
+// Pixels-per-mm from a calibration annotation. Pure — shared by
+// applyCalibration (annotations.js) and the calibration drag path in
+// handleDrag (tools.js), so dragging a calibration endpoint can never leave
+// state.calibration.pixelsPerMm stale relative to the drawn reference.
+// ann: two-point { x1,y1,x2,y2 } or circle { r } (known value is the
+// diameter), plus { knownValue, unit } where unit is "mm" or "µm"
+// (anything else is treated as mm, matching parseDistanceInput output).
+// Returns null for degenerate input (zero/non-finite length or known value).
+export function calibrationPixelsPerMm(ann) {
+  const pixelDist = ann.x1 !== undefined
+    ? Math.hypot(ann.x2 - ann.x1, ann.y2 - ann.y1)
+    : ann.r * 2;
+  const knownMm = ann.unit === "µm" ? ann.knownValue / 1000 : ann.knownValue;
+  if (!Number.isFinite(pixelDist) || !Number.isFinite(knownMm)) return null;
+  if (pixelDist <= 0 || knownMm <= 0) return null;
+  return pixelDist / knownMm;
+}
+
 export function fitCircle(p1, p2, p3) {
   const ax = p1.x, ay = p1.y;
   const bx = p2.x, by = p2.y;

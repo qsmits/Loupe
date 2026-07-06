@@ -3,7 +3,7 @@ import { refinePointJS } from './subpixel-js.js';
 import { state, TOOL_STATUS, pushUndo } from './state.js';
 import { redraw, canvas, showStatus, getLineEndpoints, lineAngleDeg, listEl } from './render.js';
 import { dxfToCanvas } from './render-dxf.js';
-import { addAnnotation, applyCalibration, elevateAnnotation } from './annotations.js';
+import { addAnnotation, applyCalibration, elevateAnnotation, recalibrateFromAnnotation } from './annotations.js';
 import { fitCircle, fitCircleAlgebraic, fitLine, splineArcLength, parseDistanceInput, distPointToSegment, polygonArea, catmullRomControlPoints } from './math.js';
 import { renderSidebar } from './sidebar.js';
 import { viewport, screenToImage, imageWidth, imageHeight } from './viewport.js';
@@ -738,6 +738,10 @@ export function handleDrag(pt) {
     } else {
       ann.cx+=dx; ann.cy+=dy;
     }
+    // The calibration annotation IS the scale reference: an endpoint drag
+    // changes the reference pixel distance, so pixelsPerMm must follow
+    // (body drags preserve the distance — recompute is a harmless no-op).
+    recalibrateFromAnnotation(ann);
   }
   else if (ann.type === "area") {
     if (handleKey === "body") {
