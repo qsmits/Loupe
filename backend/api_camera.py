@@ -227,10 +227,18 @@ def make_camera_router(camera: BaseCamera, frame_store: SessionFrameStore, start
         return {"ok": True}
 
     @router.put("/camera/gain")
-    async def set_gain(body: GainBody):
+    async def set_gain(body: GainBody, request: Request):
         if camera.is_null:
             raise HTTPException(503, detail="No camera")
-        camera.set_gain(body.value)
+        # to_thread: set_gain takes the reader's format lock and can block
+        # behind a camera switch/reconfigure — must not run on the event loop.
+        try:
+            await asyncio.to_thread(camera.set_gain, body.value)
+        except Exception as e:
+            raise HTTPException(
+                502,
+                detail=safe_error_detail(request, e, "Gain adjustment rejected"),
+            )
         return {"ok": True}
 
     @router.put("/camera/pixel-format")
@@ -239,7 +247,9 @@ def make_camera_router(camera: BaseCamera, frame_store: SessionFrameStore, start
             raise HTTPException(503, detail="No camera")
         if body.pixel_format not in _SUPPORTED_PIXEL_FORMATS:
             raise HTTPException(status_code=400, detail=f"Unsupported format: {body.pixel_format}")
-        camera.set_pixel_format(body.pixel_format)
+        # to_thread: stops/joins the reader thread (up to ~2 s) — must not
+        # run on the event loop.
+        await asyncio.to_thread(camera.set_pixel_format, body.pixel_format)
         return {"ok": True}
 
     @router.post("/camera/white-balance/auto")

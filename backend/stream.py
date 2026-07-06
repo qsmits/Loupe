@@ -37,6 +37,12 @@ class CameraReader(BaseCamera):
         self._frame_times: collections.deque[float] = collections.deque(maxlen=60)
         self._dropped_frames = 0  # transient None returns from get_frame()
         self._read_errors = 0  # exceptions from get_frame()
+        # Join timeouts (instance attrs so tests can shrink them). Cameras
+        # bound their own get_frame() to ~2 s (Aravis pop timeout, dc1394
+        # poll deadline), so these give headroom over one blocked read.
+        self._join_timeout_close = 5.0
+        self._join_timeout_switch = 5.0
+        self._join_timeout_reconfig = 2.0
 
     # ── BaseCamera interface ────────────────────────────────────────────────
 
@@ -46,15 +52,30 @@ class CameraReader(BaseCamera):
         # initial (set) state — so it is safe to replace _camera and call open() again
         # after a failure (as done in the lifespan fallback in main.py).
         self._camera.open()
-        self._stop.clear()
-        self._thread = threading.Thread(target=self._run, daemon=True)
-        self._thread.start()
+        self._spawn_reader()
 
     def close(self) -> None:
-        self._stop.set()
-        if self._thread is not None:
-            self._thread.join(timeout=5)  # Camera timeout_pop_buffer is 2s, need headroom
-        self._camera.close()
+        self._stop.set()  # early hint: breaks MJPEG generators immediately
+        # _format_lock serializes shutdown with in-flight reconfigures
+        # (ROI / pixel format / switch / HDR bracket) — freeing the camera
+        # while one of those is mid-call would be a native use-after-free.
+        with self._format_lock:
+            self._stop.set()  # re-set: a reconfigure may have respawned the reader
+            if self._thread is not None:
+                self._thread.join(timeout=self._join_timeout_close)
+                if self._thread.is_alive():
+                    # The reader thread is wedged inside camera.get_frame().
+                    # Closing the camera now would free a native handle another
+                    # thread is actively using (use-after-free → segfault).
+                    # Leak the handle instead — leak-not-crash.
+                    _log.error(
+                        "Reader thread did not stop within %.1f s; SKIPPING camera "
+                        "close to avoid freeing a handle in use by a live thread "
+                        "(camera handle intentionally leaked).",
+                        self._join_timeout_close,
+                    )
+                    return
+            self._camera.close()
 
     def get_frame(self) -> np.ndarray:
         with self._lock:
@@ -62,7 +83,10 @@ class CameraReader(BaseCamera):
         return frame.copy() if frame is not None else _BLANK.copy()
 
     def set_exposure(self, microseconds: float) -> None:
-        self._camera.set_exposure(microseconds)
+        # _format_lock so we never call into a camera that switch_camera is
+        # concurrently closing/freeing (native use-after-free).
+        with self._format_lock:
+            self._camera.set_exposure(microseconds)
 
     def capture_hdr_bracket(
         self,
@@ -94,13 +118,8 @@ class CameraReader(BaseCamera):
                 raise RuntimeError("Could not read baseline exposure")
 
             # Stop reader so we have exclusive access to the camera.
-            self._stop.set()
-            if self._thread is not None:
-                self._thread.join(timeout=2)
-                if self._thread.is_alive():
-                    raise RuntimeError(
-                        "Reader thread did not stop within 2 s; aborting HDR bracket."
-                    )
+            # On timeout this resumes/respawns the reader and raises.
+            self._stop_reader_for_reconfigure("HDR bracket")
 
             frames: list[np.ndarray] = []
             try:
@@ -126,14 +145,13 @@ class CameraReader(BaseCamera):
                 except Exception as e:
                     _log.warning("Failed to restore baseline exposure: %s", e)
                 # Restart reader thread.
-                self._stop.clear()
-                self._thread = threading.Thread(target=self._run, daemon=True)
-                self._thread.start()
+                self._spawn_reader()
 
             return frames
 
     def set_gain(self, db: float) -> None:
-        self._camera.set_gain(db)
+        with self._format_lock:
+            self._camera.set_gain(db)
 
     def set_pixel_format(self, fmt: str) -> None:
         with self._format_lock:
@@ -141,22 +159,17 @@ class CameraReader(BaseCamera):
                 raise RuntimeError("CameraReader is not open")
             # Stop the reader thread so no concurrent get_frame() calls race
             # against the Aravis stream restart inside set_pixel_format().
-            self._stop.set()
-            if self._thread is not None:
-                self._thread.join(timeout=2)
-                if self._thread.is_alive():
-                    raise RuntimeError(
-                        "Reader thread did not stop within 2 s; aborting pixel format change."
-                    )
-            # Delegate to the inner camera (thread is stopped — safe).
-            self._camera.set_pixel_format(fmt)
-            # Restart the reader thread.
-            # Note: _run() will start calling get_frame() immediately. AravisCamera's
-            # set_pixel_format() ensures start_acquisition() completes before returning,
-            # so by the time we reach here the camera is ready. No additional delay needed.
-            self._stop.clear()
-            self._thread = threading.Thread(target=self._run, daemon=True)
-            self._thread.start()
+            self._stop_reader_for_reconfigure("pixel format change")
+            try:
+                # Delegate to the inner camera (thread is stopped — safe).
+                self._camera.set_pixel_format(fmt)
+            finally:
+                # Restart the reader thread even if the camera rejected the
+                # format — the live view must survive a failed reconfigure.
+                # Note: _run() will start calling get_frame() immediately.
+                # AravisCamera's set_pixel_format() ensures start_acquisition()
+                # completes before returning, so the camera is ready by now.
+                self._spawn_reader()
 
     def switch_camera(self, new_camera: BaseCamera) -> None:
         """
@@ -168,13 +181,11 @@ class CameraReader(BaseCamera):
         exception is raised.
         """
         with self._format_lock:
-            self._stop.set()
-            if self._thread is not None:
-                self._thread.join(timeout=5)
-                if self._thread.is_alive():
-                    raise RuntimeError(
-                        "Reader thread did not stop within 5 s; aborting camera switch."
-                    )
+            # On timeout this resumes/respawns the reader and raises — the
+            # old camera keeps streaming and no camera handle is touched.
+            self._stop_reader_for_reconfigure(
+                "camera switch", timeout=self._join_timeout_switch
+            )
             old_camera = self._camera
             # Drop the cached frame so the UI doesn't keep displaying the
             # previous camera's last image when the new camera fails to start
@@ -182,7 +193,7 @@ class CameraReader(BaseCamera):
             # acquisition failure visible.
             with self._lock:
                 self._latest = None
-            self._frame_times.clear()
+                self._frame_times.clear()
             self._dropped_frames = 0
             self._read_errors = 0
             try:
@@ -210,73 +221,113 @@ class CameraReader(BaseCamera):
                     self._camera = NullCamera()
                     self._camera.open()
                     _log.warning("Camera switch failed and old camera could not reopen; using NullCamera")
-                self._stop.clear()
-                self._thread = threading.Thread(target=self._run, daemon=True)
-                self._thread.start()
+                self._spawn_reader()
                 raise switch_err
-            self._stop.clear()
-            self._thread = threading.Thread(target=self._run, daemon=True)
-            self._thread.start()
+            self._spawn_reader()
 
     def get_info(self) -> dict[str, object]:
         return self._camera.get_info()
 
     def get_white_balance(self) -> dict[str, float]:
-        with self._wb_lock:
+        # _format_lock (outer) protects against switch_camera freeing the
+        # camera mid-call; _wb_lock (inner) keeps WB ops serialized among
+        # themselves. Lock order is always format → wb.
+        with self._format_lock, self._wb_lock:
             return self._camera.get_white_balance()
 
     def set_white_balance_auto(self) -> dict[str, float]:
         # Blocking (up to ~1 s polling) — call via asyncio.to_thread in the API layer.
-        with self._wb_lock:
+        with self._format_lock, self._wb_lock:
             return self._camera.set_white_balance_auto()
 
     def set_white_balance_ratio(self, channel: str, value: float) -> None:
-        with self._wb_lock:
+        with self._format_lock, self._wb_lock:
             return self._camera.set_white_balance_ratio(channel, value)
 
     def set_gamma(self, value: float) -> None:
-        self._camera.set_gamma(value)
+        with self._format_lock:
+            self._camera.set_gamma(value)
 
     def get_gamma(self) -> float:
-        return self._camera.get_gamma()
+        with self._format_lock:
+            return self._camera.get_gamma()
 
     def set_auto_exposure(self) -> float:
-        # Blocking (polls for up to ~2s) — call via asyncio.to_thread in API
-        return self._camera.set_auto_exposure()
+        # Blocking (polls for up to ~5s) — call via asyncio.to_thread in API.
+        # Holds _format_lock for the duration so a concurrent camera switch
+        # cannot free the handle under the poll loop.
+        with self._format_lock:
+            return self._camera.set_auto_exposure()
 
     def set_roi(self, offset_x, offset_y, width, height):
         with self._format_lock:
             if self._thread is None:
                 raise RuntimeError("CameraReader is not open")
-            self._stop.set()
-            if self._thread is not None:
-                self._thread.join(timeout=2)
-                if self._thread.is_alive():
-                    raise RuntimeError("Reader thread did not stop within 2 s; aborting ROI change.")
-            self._camera.set_roi(offset_x, offset_y, width, height)
-            self._stop.clear()
-            self._thread = threading.Thread(target=self._run, daemon=True)
-            self._thread.start()
+            self._stop_reader_for_reconfigure("ROI change")
+            try:
+                self._camera.set_roi(offset_x, offset_y, width, height)
+            finally:
+                self._spawn_reader()
 
     def reset_roi(self):
         with self._format_lock:
             if self._thread is None:
                 raise RuntimeError("CameraReader is not open")
-            self._stop.set()
-            if self._thread is not None:
-                self._thread.join(timeout=2)
-                if self._thread.is_alive():
-                    raise RuntimeError("Reader thread did not stop within 2 s; aborting ROI reset.")
-            self._camera.reset_roi()
-            self._stop.clear()
-            self._thread = threading.Thread(target=self._run, daemon=True)
-            self._thread.start()
+            self._stop_reader_for_reconfigure("ROI reset")
+            try:
+                self._camera.reset_roi()
+            finally:
+                self._spawn_reader()
 
     @property
     def is_null(self) -> bool:
         return self._camera.is_null
 
     # ── Internal ───────────────────────────────────────────────────────────
+
+    def _spawn_reader(self) -> None:
+        """Start a fresh reader thread. Caller must ensure no other reader
+        thread is running (join succeeded, or the previous thread was reaped)."""
+        self._stop.clear()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def _stop_reader_for_reconfigure(self, what: str, timeout: float | None = None) -> None:
+        """Stop the reader thread before reconfiguring the camera.
+
+        Callers must hold _format_lock. On success the thread is joined and
+        the caller may safely touch the camera. On join timeout the operation
+        is aborted: the reader is resumed (or respawned) so the live view
+        survives, then RuntimeError is raised — the camera is NOT touched.
+        """
+        if timeout is None:
+            timeout = self._join_timeout_reconfig
+        self._stop.set()
+        t = self._thread
+        if t is not None:
+            t.join(timeout=timeout)
+            if t.is_alive():
+                self._resume_reader_after_failed_stop()
+                raise RuntimeError(
+                    f"Reader thread did not stop within {timeout:g} s; aborting {what}."
+                )
+
+    def _resume_reader_after_failed_stop(self) -> None:
+        """Recover after a join timeout so the reader is not orphaned.
+
+        The reader thread checks _stop once per loop iteration, so clearing
+        it lets a thread that is merely wedged inside camera.get_frame()
+        resume when the driver unblocks. If instead the thread exited in the
+        window right after the join timeout, reap it and spawn a fresh one.
+        """
+        self._stop.clear()
+        t = self._thread
+        if t is not None:
+            # Give a thread that was exiting a moment to be reaped.
+            t.join(timeout=0.25)
+            if t.is_alive():
+                return  # wedged thread will resume once get_frame() returns
+        self._spawn_reader()
 
     def _run(self) -> None:
         while not self._stop.is_set():
@@ -291,7 +342,9 @@ class CameraReader(BaseCamera):
                 else:
                     with self._lock:
                         self._latest = frame
-                    self._frame_times.append(time.monotonic())
+                        # Under _lock: get_stats() iterates this deque under
+                        # the same lock ("deque mutated during iteration").
+                        self._frame_times.append(time.monotonic())
             except Exception as e:
                 self._read_errors += 1
                 _log.warning("get_frame() error: %s", e)

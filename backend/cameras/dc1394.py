@@ -7,14 +7,18 @@ Requires: server running as root (sudo) — macOS IOKit blocks userspace
           USB interface claims for vendor-specific class devices.
 
 Continuous streaming is implemented via multi-shot (255 frames) re-armed
-every 5 s from a background thread, because the standard iso_enable
-register does not engage continuous streaming on this firmware.
+from a background thread, because the standard iso_enable register does
+not engage continuous streaming on this firmware. The re-arm cadence
+adapts to the measured frame rate (see compute_rearm_interval) so the
+255-frame batch never runs dry at high fps / reduced ROI.
 """
 
 import atexit
+import collections
 import ctypes
 import ctypes.util
 import logging
+import math
 import os
 import threading
 import time
@@ -85,6 +89,50 @@ DC1394_FEATURE_MODE_ONE_PUSH_AUTO = 738
 
 # dc1394error_t success value
 DC1394_SUCCESS = 0
+
+# ---------------------------------------------------------------------------
+# Streaming tunables
+# ---------------------------------------------------------------------------
+
+# Frames per multi-shot batch (the "continuous streaming" trick).
+MULTI_SHOT_FRAMES = 255
+# Historical fixed re-arm cadence; used as fallback and ceiling.
+REARM_FALLBACK_INTERVAL_S = 5.0
+# Floor so extreme frame rates don't hammer the control endpoint.
+REARM_MIN_INTERVAL_S = 0.25
+# get_frame() bounded-wait dequeue: total timeout matches the ~2 s contract
+# the rest of the code assumes (Aravis pop timeout, CameraReader join
+# headroom); the poll interval keeps latency negligible at any frame rate.
+_DEQUEUE_TIMEOUT_S = 2.0
+_DEQUEUE_POLL_INTERVAL_S = 0.005
+
+
+def compute_rearm_interval(fps_estimate: float | None) -> float:
+    """Pure function: seconds to wait between multi-shot re-arms.
+
+    The camera is armed in MULTI_SHOT_FRAMES-frame batches, so a batch lasts
+    MULTI_SHOT_FRAMES / fps seconds (4.25 s at 60 fps, ~2.55 s at 100 fps
+    with a reduced ROI). Re-arm when roughly half the batch could have been
+    consumed so acquisition never runs dry, clamped to:
+
+      floor REARM_MIN_INTERVAL_S (0.25 s) — don't hammer the control endpoint
+      ceil  REARM_FALLBACK_INTERVAL_S (5.0 s) — the historical cadence, which
+            is already conservative at <= ~25 fps
+
+    Unknown / invalid fps (None, <= 0, NaN, inf) falls back to the historical
+    5.0 s cadence. Re-arming early is always safe: the firmware silently
+    accepts re-arms before the previous batch is exhausted.
+    """
+    if fps_estimate is None:
+        return REARM_FALLBACK_INTERVAL_S
+    try:
+        fps = float(fps_estimate)
+    except (TypeError, ValueError):
+        return REARM_FALLBACK_INTERVAL_S
+    if not math.isfinite(fps) or fps <= 0.0:
+        return REARM_FALLBACK_INTERVAL_S
+    interval = 0.5 * MULTI_SHOT_FRAMES / max(fps, 1.0)
+    return min(REARM_FALLBACK_INTERVAL_S, max(REARM_MIN_INTERVAL_S, interval))
 
 # ---------------------------------------------------------------------------
 # ctypes structures mirroring dc1394video_frame_t from video.h
@@ -503,7 +551,13 @@ class Dc1394Camera(BaseCamera):
         # methods (get_gamma, _get_abs_feature) without self-deadlocking.
         self._lock = threading.RLock()
         self._stop_rearm = threading.Event()
+        # Set at the very top of close(): aborts any in-flight get_frame()
+        # poll loop immediately so shutdown never waits on a stalled dequeue.
+        self._closing = threading.Event()
         self._rearm_thread: threading.Thread | None = None
+        # Timestamps of successful dequeues (guarded by self._lock) — used
+        # to estimate fps for the adaptive multi-shot re-arm cadence.
+        self._dequeue_times: collections.deque[float] = collections.deque(maxlen=64)
         self._width = 0
         self._height = 0
         self._sensor_width = 0
@@ -545,38 +599,60 @@ class Dc1394Camera(BaseCamera):
 
         try:
             self._full_setup(lib, cam)
+
+            # Everything below runs AFTER dc1394_capture_setup succeeded,
+            # i.e. the USB interface is claimed and transmission is armed.
+            # Any failure from here on must tear the capture down, or the
+            # device is leaked half-open and locked until power-cycle.
+            self._cam_handle = cam
+            # Read current image size
+            self._refresh_size(lib, cam)
+            # Read sensor max size
+            mw = ctypes.c_uint32(0)
+            mh = ctypes.c_uint32(0)
+            lib.dc1394_format7_get_max_image_size(
+                cam, DC1394_VIDEO_MODE_FORMAT7_0,
+                ctypes.byref(mw), ctypes.byref(mh),
+            )
+            self._sensor_width  = int(mw.value) or self._width
+            self._sensor_height = int(mh.value) or self._height
+            # ROI unit sizes
+            uw = ctypes.c_uint32(0)
+            uh = ctypes.c_uint32(0)
+            lib.dc1394_format7_get_unit_size(
+                cam, DC1394_VIDEO_MODE_FORMAT7_0,
+                ctypes.byref(uw), ctypes.byref(uh),
+            )
+            self._roi_w_unit = max(1, int(uw.value))
+            self._roi_h_unit = max(1, int(uh.value))
+
+            with self._lock:
+                self._dequeue_times.clear()
+            self._closing.clear()
+            self._opened = True
+            self._stop_rearm.clear()
+            self._rearm_thread = threading.Thread(
+                target=self._rearm_loop, daemon=True, name="dc1394-rearm"
+            )
+            self._rearm_thread.start()
         except Exception:
-            lib.dc1394_camera_free(cam)
+            # Best-effort teardown mirroring close(). capture_stop /
+            # set_transmission are harmless no-ops (error returns, not
+            # exceptions) if capture_setup never succeeded.
+            self._opened = False
+            self._cam_handle = None
+            self._rearm_thread = None
+            for teardown, args in (
+                (lib.dc1394_video_set_transmission, (cam, DC1394_OFF)),
+                (lib.dc1394_capture_stop, (cam,)),
+                (lib.dc1394_camera_free, (cam,)),
+            ):
+                try:
+                    teardown(*args)
+                except Exception:
+                    pass
             raise
 
-        self._cam_handle = cam
-        # Read current image size
-        self._refresh_size(lib, cam)
-        # Read sensor max size
-        mw = ctypes.c_uint32(0)
-        mh = ctypes.c_uint32(0)
-        lib.dc1394_format7_get_max_image_size(
-            cam, DC1394_VIDEO_MODE_FORMAT7_0,
-            ctypes.byref(mw), ctypes.byref(mh),
-        )
-        self._sensor_width  = int(mw.value) or self._width
-        self._sensor_height = int(mh.value) or self._height
-        # ROI unit sizes
-        uw = ctypes.c_uint32(0)
-        uh = ctypes.c_uint32(0)
-        lib.dc1394_format7_get_unit_size(
-            cam, DC1394_VIDEO_MODE_FORMAT7_0,
-            ctypes.byref(uw), ctypes.byref(uh),
-        )
-        self._roi_w_unit = max(1, int(uw.value))
-        self._roi_h_unit = max(1, int(uh.value))
-
-        self._opened = True
-        self._stop_rearm.clear()
-        self._rearm_thread = threading.Thread(
-            target=self._rearm_loop, daemon=True, name="dc1394-rearm"
-        )
-        self._rearm_thread.start()
         log.info(
             "dc1394 camera opened: guid=%016x size=%dx%d",
             guid, self._width, self._height,
@@ -617,7 +693,7 @@ class Dc1394Camera(BaseCamera):
 
         # Arm multi-shot: 255 frames. This is our "continuous" mode — see docstring.
         _check(
-            lib.dc1394_video_set_multi_shot(cam, 255, DC1394_ON),
+            lib.dc1394_video_set_multi_shot(cam, MULTI_SHOT_FRAMES, DC1394_ON),
             "set_multi_shot initial arm",
         )
 
@@ -653,7 +729,11 @@ class Dc1394Camera(BaseCamera):
 
     def close(self) -> None:
         """Stop streaming, kill the re-arm thread, and free the camera."""
-        # Signal and wait for the re-arm thread first (no lock needed for the event)
+        # FIRST: abort any in-flight get_frame() poll loop. It checks this
+        # flag between POLL attempts, so it bails out within one poll
+        # interval instead of waiting for its full dequeue timeout.
+        self._closing.set()
+        # Signal and wait for the re-arm thread (no lock needed for the event)
         self._stop_rearm.set()
         if self._rearm_thread is not None:
             self._rearm_thread.join(timeout=8.0)
@@ -690,30 +770,74 @@ class Dc1394Camera(BaseCamera):
 
     def _rearm_loop(self) -> None:
         """
-        Re-arm multi-shot every 5 seconds.
-        At 255 frames × minimum frame time, 5s is a comfortable safety margin
-        even at high frame rates. The camera silently accepts re-arms before
-        the previous batch is exhausted.
+        Keep the multi-shot "continuous" trick alive by periodically
+        re-arming a fresh 255-frame batch. The camera silently accepts
+        re-arms before the previous batch is exhausted.
+
+        The cadence adapts to the measured dequeue rate: a batch lasts
+        255/fps seconds (4.25 s at 60 fps, ~2.55 s at ~100 fps with a
+        reduced ROI), so the historical fixed 5 s wait let acquisition run
+        dry between batches at high frame rates. See compute_rearm_interval.
+
+        The loop ticks every REARM_MIN_INTERVAL_S and re-evaluates the due
+        interval each tick, so a frame-rate jump (e.g. right after an ROI
+        shrink) shortens the *current* period instead of only the next one.
+        This also makes close() reap this thread within one tick.
         """
-        while not self._stop_rearm.wait(timeout=5.0):
+        last_arm = time.monotonic()
+        while not self._stop_rearm.wait(timeout=REARM_MIN_INTERVAL_S):
+            due = compute_rearm_interval(self._estimate_fps())
+            if time.monotonic() - last_arm < due:
+                continue
             with self._lock:
                 if not self._opened or self._cam_handle is None or _lib is None:
                     break
                 try:
                     _lib.dc1394_video_set_multi_shot(
-                        self._cam_handle, 255, DC1394_ON,
+                        self._cam_handle, MULTI_SHOT_FRAMES, DC1394_ON,
                     )
                 except Exception as e:
                     log.warning("dc1394 re-arm failed: %s", e)
+                last_arm = time.monotonic()
+
+    def _estimate_fps(self) -> float | None:
+        """Estimate the current dequeue rate from recent frame timestamps.
+
+        Returns None when there is not enough fresh data (startup, stall) —
+        compute_rearm_interval treats that as "unknown" and uses the safe
+        5 s fallback cadence.
+        """
+        with self._lock:
+            times = list(self._dequeue_times)
+        if len(times) < 2:
+            return None
+        now = time.monotonic()
+        recent = [t for t in times if now - t <= 3.0]
+        if len(recent) < 2:
+            return None
+        span = recent[-1] - recent[0]
+        if span <= 0.0:
+            return None
+        return (len(recent) - 1) / span
 
     # ------------------------------------------------------------------
     # Frame capture
     # ------------------------------------------------------------------
 
-    def get_frame(self) -> np.ndarray:
+    def get_frame(self) -> np.ndarray | None:
         """
         Dequeue one frame, copy the image bytes, re-enqueue the transport buffer,
         then convert MONO8 → BGR.
+
+        Uses POLICY_POLL in a bounded wait loop instead of POLICY_WAIT:
+        POLICY_WAIT blocks indefinitely when frames stop (stall, unplug,
+        exhausted multi-shot batch), which wedges the CameraReader thread and
+        turns every teardown path into a native use-after-free. The loop is
+        bounded by _DEQUEUE_TIMEOUT_S (matching the ~2 s contract the rest of
+        the code assumes) and aborts immediately when close() starts.
+
+        Returns None on timeout / while closing — CameraReader counts that as
+        a transient dropped frame, same as AravisCamera pop timeouts.
 
         The copy MUST happen before enqueue — the image pointer is invalidated
         as soon as the buffer is returned to the ring.
@@ -721,38 +845,53 @@ class Dc1394Camera(BaseCamera):
         if not self._opened or self._cam_handle is None or _lib is None:
             raise RuntimeError("Camera not open")
 
-        frame_pp = ctypes.POINTER(_Dc1394VideoFrame)()
-        # Dequeue outside the lock so re-arms can proceed during long exposures.
-        err = _lib.dc1394_capture_dequeue(
-            self._cam_handle,
-            DC1394_CAPTURE_POLICY_WAIT,
-            ctypes.byref(frame_pp),
-        )
-        if err != DC1394_SUCCESS or not frame_pp:
-            raise RuntimeError(f"dc1394_capture_dequeue failed: err={err}")
-
-        frame_p = frame_pp  # POINTER(_Dc1394VideoFrame)
-        f = frame_p.contents
-
-        width       = int(f.size[0])
-        height      = int(f.size[1])
-        image_bytes = int(f.image_bytes)
-
-        # CRITICAL: copy bytes BEFORE enqueue. The pointer is invalidated
-        # when the buffer is returned to the ring buffer.
-        if not f.image or image_bytes == 0:
+        deadline = time.monotonic() + _DEQUEUE_TIMEOUT_S
+        raw_bytes: bytes | None = None
+        width = height = 0
+        while True:
+            if self._closing.is_set():
+                return None
+            frame_pp = ctypes.POINTER(_Dc1394VideoFrame)()
+            # Each POLL attempt holds the lock (it never blocks), so close()
+            # can never free the handle under a dequeue/copy/enqueue. Re-arms
+            # interleave between poll iterations.
             with self._lock:
-                _lib.dc1394_capture_enqueue(self._cam_handle, frame_p)
-            raise RuntimeError("dc1394 frame has null image or zero bytes")
+                if (
+                    self._closing.is_set()
+                    or not self._opened
+                    or self._cam_handle is None
+                    or _lib is None
+                ):
+                    return None
+                err = _lib.dc1394_capture_dequeue(
+                    self._cam_handle,
+                    DC1394_CAPTURE_POLICY_POLL,
+                    ctypes.byref(frame_pp),
+                )
+                if err == DC1394_SUCCESS and frame_pp:
+                    f = frame_pp.contents
+                    width       = int(f.size[0])
+                    height      = int(f.size[1])
+                    image_bytes = int(f.image_bytes)
+                    try:
+                        if f.image and image_bytes > 0:
+                            # CRITICAL: copy BEFORE enqueue — the pointer is
+                            # invalidated when the buffer returns to the ring.
+                            raw_bytes = ctypes.string_at(f.image, image_bytes)
+                    finally:
+                        _lib.dc1394_capture_enqueue(self._cam_handle, frame_pp)
+                    if raw_bytes is None:
+                        raise RuntimeError("dc1394 frame has null image or zero bytes")
+                    self._dequeue_times.append(time.monotonic())
+                    break
+            if err != DC1394_SUCCESS:
+                raise RuntimeError(f"dc1394_capture_dequeue failed: err={err}")
+            if time.monotonic() >= deadline:
+                # Acquisition stalled (batch exhausted, cable pulled, …).
+                return None
+            time.sleep(_DEQUEUE_POLL_INTERVAL_S)
 
-        raw_bytes = ctypes.string_at(f.image, image_bytes)
-
-        # Return buffer to ring — hold lock so we don't race with close()
-        with self._lock:
-            if self._cam_handle is not None and _lib is not None:
-                _lib.dc1394_capture_enqueue(self._cam_handle, frame_p)
-
-        # Convert MONO8 to numpy then to BGR
+        # Convert MONO8 to numpy then to BGR (outside the lock)
         raw = np.frombuffer(raw_bytes, dtype=np.uint8).copy()
         expected = width * height
         if len(raw) < expected:
@@ -895,7 +1034,7 @@ class Dc1394Camera(BaseCamera):
                 "capture_setup (after ROI)",
             )
             _check(
-                lib.dc1394_video_set_multi_shot(cam, 255, DC1394_ON),
+                lib.dc1394_video_set_multi_shot(cam, MULTI_SHOT_FRAMES, DC1394_ON),
                 "set_multi_shot (after ROI)",
             )
             self._refresh_size(lib, cam)
