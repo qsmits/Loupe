@@ -45,7 +45,8 @@ describe('session id resolution', () => {
 });
 
 describe('apiFetchFrame — lazy frame re-upload', () => {
-  const noFrame = () => new Response('No frame stored. Call /freeze first.', { status: 400 });
+  const noFrame = (status = 400) =>
+    new Response('No frame stored. Call /freeze first.', { status });
 
   it('on 400 no-frame: uploads the provider blob to /load-image and retries once', async () => {
     setFrameProvider(async () => new Blob(['jpeg'], { type: 'image/jpeg' }));
@@ -59,6 +60,29 @@ describe('apiFetchFrame — lazy frame re-upload', () => {
     assert.equal(calls[1].options.method, 'POST');
     assert.ok(calls[1].options.body instanceof FormData);
     assert.equal(calls[2].url, '/detect-circles');
+  });
+
+  it('on 404 no-frame (e.g. /refine-point): uploads the provider blob to /load-image and retries once', async () => {
+    setFrameProvider(async () => new Blob(['jpeg'], { type: 'image/jpeg' }));
+    script = [noFrame(404), new Response('{"width":4,"height":3}', { status: 200 }),
+              new Response('{"x":1,"y":2}', { status: 200 })];
+    const r = await apiFetchFrame('/refine-point', { method: 'POST', body: '{}' });
+    assert.equal(r.status, 200);
+    assert.deepEqual(await r.json(), { x: 1, y: 2 });
+    assert.equal(calls.length, 3);
+    assert.equal(calls[1].url, '/load-image');
+    assert.equal(calls[1].options.method, 'POST');
+    assert.ok(calls[1].options.body instanceof FormData);
+    assert.equal(calls[2].url, '/refine-point');
+  });
+
+  it('a 404 WITHOUT the no-frame message passes through untouched (not a blanket 404 retry)', async () => {
+    setFrameProvider(async () => new Blob(['jpeg'], { type: 'image/jpeg' }));
+    script = [new Response('Point not found', { status: 404 })];
+    const r = await apiFetchFrame('/refine-point', { method: 'POST' });
+    assert.equal(r.status, 404);
+    assert.equal(await r.text(), 'Point not found');
+    assert.equal(calls.length, 1, 'must not attempt /load-image');
   });
 
   it('retries at most once (second 400 is returned as-is)', async () => {

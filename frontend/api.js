@@ -57,7 +57,7 @@ export function setFrameProvider(fn) { _frameProvider = fn; }
 
 const NO_FRAME_RE = /no frame stored/i;
 
-function rebuild400(text, original) {
+function rebuildFailure(text, original) {
   return new Response(text, {
     status: original.status,
     statusText: original.statusText,
@@ -66,24 +66,27 @@ function rebuild400(text, original) {
 }
 
 /**
- * apiFetch + one silent recovery: 400 "No frame stored" → POST the stored
+ * apiFetch + one silent recovery: "No frame stored" → POST the stored
  * frame Blob to /load-image → retry the original request once.
+ * The no-frame condition surfaces as 400 (most detect endpoints) or 404
+ * (/refine-point); either status is only treated as recoverable when the
+ * body matches NO_FRAME_RE — an unrelated 400/404 passes straight through.
  * NOTE: options.body must be re-sendable (string / FormData / Blob — all
  * callers qualify; never pass a ReadableStream).
  */
 export async function apiFetchFrame(url, options = {}) {
   const first = await apiFetch(url, options);
-  if (first.status !== 400) return first;
+  if (first.status !== 400 && first.status !== 404) return first;
   const text = await first.text();
-  if (!NO_FRAME_RE.test(text)) return rebuild400(text, first);
+  if (!NO_FRAME_RE.test(text)) return rebuildFailure(text, first);
   const blob = await _frameProvider?.();
-  if (!blob) return rebuild400(text, first);
+  if (!blob) return rebuildFailure(text, first);
   const fd = new FormData();
   fd.append("file", blob, "frame.jpg");
   const up = await apiFetch("/load-image", { method: "POST", body: fd });
   if (!up.ok) {
     console.debug("[api] frame re-upload failed:", up.status);
-    return rebuild400(text, first);
+    return rebuildFailure(text, first);
   }
   console.debug("[api] re-uploaded stored frame after 'No frame stored'; retrying", url);
   return apiFetch(url, options);

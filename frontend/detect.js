@@ -113,6 +113,9 @@ export async function doFreeze() {
     showStatus("Failed to capture frame: " + err.message);
     state.frozenBackground = null;
     state.frozen = false;
+    state.frozenBlob = null;
+    state.frozenSource = null;
+    state.frozenFilename = null;
     updateFreezeUI();
     return;
   }
@@ -204,7 +207,7 @@ export function initDetectHandlers() {
   const btnPreproc = document.getElementById("btn-show-preprocessed");
   btnPreproc.addEventListener("click", withBusy(btnPreproc, "Preprocessing", async () => {
     await ensureFrozen();
-    const r = await apiFetch("/preprocessed-view", {
+    const r = await apiFetchFrame("/preprocessed-view", {
       method: "POST",
       headers: {"Content-Type": "application/json"},
       body: JSON.stringify({ surface_mode: state.surfaceMode }),
