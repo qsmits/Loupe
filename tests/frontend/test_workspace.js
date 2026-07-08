@@ -9,13 +9,14 @@
  *
  * Run with: node --test tests/frontend/test_workspace.js
  */
-import { describe, it, beforeEach } from 'node:test';
+import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { state, undoStack, redoStack } from '../../frontend/state.js';
 import { viewport, imageWidth, imageHeight, setImageSize } from '../../frontend/viewport.js';
 import {
   STATE_FIELDS, FIELD_DEFAULTS, freshWorkspaceRecord,
   serializeWorkspace, restoreWorkspace, captureEpoch, isStale,
+  registerWorkspaceDom,
 } from '../../frontend/workspace.js';
 
 const CATEGORIES = new Set(['swapped', 'transient', 'global']);
@@ -179,5 +180,89 @@ describe('epoch guard', () => {
     restoreWorkspace(freshWorkspaceRecord());
     restoreWorkspace(freshWorkspaceRecord());
     assert.ok(captureEpoch() >= e0 + 2);
+  });
+});
+
+describe('registerWorkspaceDom hook', () => {
+  beforeEach(() => {
+    // Reset workspace and clear any registered hook before each test
+    registerWorkspaceDom(null);
+    restoreWorkspace(freshWorkspaceRecord());
+  });
+
+  afterEach(() => {
+    // Clean up: unregister the hook so it doesn't leak to other test files
+    registerWorkspaceDom(null);
+  });
+
+  it('hook fires on restore', () => {
+    let hookWasCalled = false;
+    const hook = {
+      afterRestore: () => { hookWasCalled = true; }
+    };
+
+    registerWorkspaceDom(hook);
+    restoreWorkspace(freshWorkspaceRecord());
+
+    assert.equal(hookWasCalled, true);
+  });
+
+  it('hook receives the correct record argument', () => {
+    let capturedRecord = null;
+    const hook = {
+      afterRestore: (record) => { capturedRecord = record; }
+    };
+
+    registerWorkspaceDom(hook);
+    const record = freshWorkspaceRecord();
+    record.state.tool = 'distance';  // Modify to make it unique
+    restoreWorkspace(record);
+
+    assert.equal(capturedRecord, record, 'hook must receive the exact record object');
+    assert.equal(capturedRecord.state.tool, 'distance');
+  });
+
+  it('hook fires exactly once per restore', () => {
+    let callCount = 0;
+    const hook = {
+      afterRestore: () => { callCount += 1; }
+    };
+
+    registerWorkspaceDom(hook);
+    restoreWorkspace(freshWorkspaceRecord());
+
+    assert.equal(callCount, 1);
+  });
+
+  it('re-registration overwrites, not accumulates', () => {
+    const callLog = [];
+    const hookA = {
+      afterRestore: () => { callLog.push('A'); }
+    };
+    const hookB = {
+      afterRestore: () => { callLog.push('B'); }
+    };
+
+    registerWorkspaceDom(hookA);
+    registerWorkspaceDom(hookB);
+    restoreWorkspace(freshWorkspaceRecord());
+
+    assert.deepEqual(callLog, ['B'], 'only hook B should fire; hook A was overwritten');
+  });
+
+  it('hook is graceful no-op when none registered', () => {
+    registerWorkspaceDom(null);
+    // Should not throw
+    assert.doesNotThrow(() => {
+      restoreWorkspace(freshWorkspaceRecord());
+    });
+  });
+
+  it('hook is graceful no-op when hook has no afterRestore method', () => {
+    registerWorkspaceDom({});  // Empty object, no afterRestore
+    // Should not throw
+    assert.doesNotThrow(() => {
+      restoreWorkspace(freshWorkspaceRecord());
+    });
   });
 });
