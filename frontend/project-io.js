@@ -154,11 +154,14 @@ export async function offerAutosaveMigration() {
   });
   if (choice === "convert") {
     const now = new Date().toISOString();
-    await adoptProject({
+    const ok = await adoptProject({
       id: crypto.randomUUID(), type: "microscopy", name: "Recovered session",
       createdAt: now, updatedAt: now,
       thumbnail: null, image: null, imageMeta: null, workspace,
     });
+    // adoptProject already toasted the failure; keep the only copy of the
+    // legacy session around so the user can retry instead of losing it.
+    if (!ok) return;
   }
   localStorage.removeItem(LEGACY_AUTOSAVE_KEY);
 }

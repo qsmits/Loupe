@@ -316,7 +316,14 @@ export async function openProject(id) {
 }
 
 /** Register an externally-constructed project record (import paths) and
- *  open it. Regenerates the id if it collides with an existing project. */
+ *  open it. Regenerates the id if it collides with an existing project.
+ *  Returns the persisted project's id on success, or null if the write
+ *  failed (e.g. QuotaExceededError) — callers that need to know whether the
+ *  import actually landed (e.g. legacy-autosave migration, which must not
+ *  destroy its only copy on a failed convert) should check the return value.
+ *  On failure we do NOT call openProject: the record was never saved, so
+ *  opening it would only produce a confusing second "Project not found"
+ *  toast on top of the one below. */
 export async function adoptProject(proj) {
   try {
     if (await getProject(proj.id)) proj.id = crypto.randomUUID();
@@ -327,8 +334,10 @@ export async function adoptProject(proj) {
     showToast("Couldn't save the imported project — storage may be full", {
       actionLabel: "Manage projects", onAction: () => showHomeScreen(),
     });
+    return null;
   }
   await openProject(proj.id);
+  return proj.id;
 }
 
 /** Close a tab. NEVER destructive — autosave keeps the project current in

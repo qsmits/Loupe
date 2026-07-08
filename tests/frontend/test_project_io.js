@@ -27,7 +27,7 @@ import { describe, it, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
 import './dom-stub.js';
 import { createIdbStub } from './idb-stub.js';
-import { _setIndexedDbFactory, getProject } from '../../frontend/projects-db.js';
+import { _setIndexedDbFactory, getProject, putProject } from '../../frontend/projects-db.js';
 import { restoreWorkspace, freshWorkspaceRecord } from '../../frontend/workspace.js';
 import { buildWorkspaceV4 } from '../../frontend/project-format.js';
 import { _setNoticeHandler, _setToastHandler } from '../../frontend/shell.js';
@@ -247,6 +247,39 @@ describe('.loupe build -> parse -> reconstruct round trip', () => {
     const id = tm.getActiveTabId();
     assert.match(id, /^[0-9a-f-]{36}$/, 'adoptProject must mint a fresh UUID when the .loupe carried none');
   });
+
+  it('mints a fresh id and leaves the pre-existing project untouched when the imported .loupe id collides', async () => {
+    const existing = {
+      id: 'collide-id-1234', type: 'microscopy', name: 'Existing Project',
+      createdAt: '2025-01-01T00:00:00.000Z', updatedAt: '2025-01-01T00:00:00.000Z',
+      thumbnail: null, image: null, imageMeta: null, workspace: null,
+    };
+    await putProject(existing);
+
+    const loupeObj = {
+      format: 'loupe-project', loupeVersion: 1,
+      project: {
+        id: 'collide-id-1234', type: 'microscopy', name: 'Imported Colliding Project',
+        createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
+      },
+      imageMeta: null, imageDataUrl: null, workspace: null,
+    };
+    const file = fakeFile('collide.loupe', '', JSON.stringify(loupeObj));
+    await importFile(file);
+
+    const newId = tm.getActiveTabId();
+    assert.notEqual(newId, 'collide-id-1234',
+      'adoptProject must mint a fresh id instead of overwriting the existing project with the same id');
+    assert.match(newId, /^[0-9a-f-]{36}$/);
+
+    const imported = await getProject(newId);
+    assert.equal(imported.name, 'Imported Colliding Project');
+
+    const original = await getProject('collide-id-1234');
+    assert.ok(original, 'the pre-existing project must still be retrievable under its original id');
+    assert.equal(original.name, 'Existing Project', 'the pre-existing project must be unchanged');
+    assert.equal(original.updatedAt, '2025-01-01T00:00:00.000Z');
+  });
 });
 
 describe('offerAutosaveMigration', () => {
@@ -283,6 +316,34 @@ describe('offerAutosaveMigration', () => {
     assert.equal(proj.type, 'microscopy');
     assert.equal(proj.image, null, 'v3 autosaves never carried the image');
     assert.equal(proj.workspace.annotations.length, 1);
+  });
+
+  it('on a failed convert (putProject rejects), preserves the legacy key and shows a failure toast — no data lost', async () => {
+    // Force the "loupe"/"projects" store to exist in the in-memory IDB stub
+    // before sabotaging it — same pattern as test_tab_manager.js's
+    // "surfaces a toast and does not throw when deleteProjectRecord itself
+    // fails" — so this drives a REAL rejection through putProject's actual
+    // IndexedDB code path (asRequest -> onerror -> reqAsPromise reject),
+    // not a stubbed adoptProject.
+    await getProject('__warmup__');
+    const store = _idb._databases.get('loupe').stores.get('projects');
+    store.data.set = () => { throw new Error('simulated QuotaExceededError'); };
+
+    const raw = JSON.stringify({
+      version: 3,
+      annotations: [{ type: 'distance', id: 1, a: { x: 0, y: 0 }, b: { x: 50, y: 0 }, purpose: 'measurement' }],
+    });
+    localStorage.setItem('microscope-autosave', raw);
+    const before = tm.getActiveTabId();
+    _setNoticeHandler(() => 'convert');
+
+    await offerAutosaveMigration();
+
+    assert.equal(localStorage.getItem('microscope-autosave'), raw,
+      'a failed convert must NOT clear the legacy key — it is the only copy of the session');
+    assert.equal(tm.getActiveTabId(), before, 'a failed convert must not open a new (unsaved) tab');
+    assert.equal(toasts.length, 1, 'exactly one failure toast — no second "Project not found" toast on top of it');
+    assert.match(toasts[0].message, /storage may be full/);
   });
 
   it('on discard, clears the key and adopts nothing', async () => {
