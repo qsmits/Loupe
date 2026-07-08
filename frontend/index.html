@@ -1601,6 +1601,26 @@
     </div>
   </div>
 
+  <!-- Server-upload notice (hosted instances only — see frontend/upload-notice.js) -->
+  <div id="upload-notice-dialog" class="dialog-overlay" hidden>
+    <div class="dialog-content">
+      <div class="dialog-header">
+        <span class="dialog-title">Image is sent to the server</span>
+      </div>
+      <div style="padding: 14px 16px;">
+        <p style="margin: 0 0 12px; line-height: 1.5;">
+          This feature sends the frozen image to the server for processing.
+          The frame is kept only for your session and expires automatically.
+        </p>
+        <label style="display: flex; align-items: center; gap: 6px; margin: 0 0 14px;">
+          <input type="checkbox" id="upload-notice-dont-show" />
+          Don't show this again
+        </label>
+        <button id="btn-upload-notice-ok" class="settings-save-btn">Continue</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Gear generate/analyze dialog -->
   <div id="gear-generate-dialog" class="dialog-overlay" hidden>
     <div class="dialog-content">

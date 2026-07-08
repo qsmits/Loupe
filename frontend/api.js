@@ -1,5 +1,7 @@
 // api.js — Session-aware fetch wrapper for multi-user hosted mode.
 
+import { maybeShowUploadNotice } from './upload-notice.js';
+
 // On first load in a tab, request a server-issued session token.
 // If the server is unreachable (offline / local file), fall back to
 // a client-generated UUID.  sessionStorage keeps the token for the
@@ -22,7 +24,10 @@ const SESSION_ID = sessionStorage.getItem("sessionId");
 /**
  * Drop-in replacement for fetch() that adds X-Session-ID header.
  */
-export function apiFetch(url, options = {}) {
+export async function apiFetch(url, options = {}) {
+  // Hosted instances: first frame-compute call shows a one-time
+  // "image is sent to the server" notice and waits for acknowledgment.
+  await maybeShowUploadNotice(url);
   const headers = new Headers(options.headers || {});
   headers.set("X-Session-ID", SESSION_ID);
   return fetch(url, { ...options, headers });
