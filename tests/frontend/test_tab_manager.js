@@ -331,11 +331,34 @@ describe('open-tab-set persistence', () => {
     assert.equal(state.annotations[0].id, 1);
   });
 
-  it('opens a fresh microscopy project when nothing was persisted (transitional boot path)', async () => {
+  it('shows the home screen (no tabs) when nothing was persisted', async () => {
     const tm = await freshTabManager();
     await tm.initTabManager();
-    assert.equal(tm.getTabs().length, 1);
-    assert.equal(tm.getTabs()[0].type, 'microscopy');
+    assert.equal(tm.getTabs().length, 0);
+    assert.equal(tm.getActiveTabId(), null);
+    assert.equal(tm.isHomeVisible(), true);
+  });
+
+  it('shows the home screen on boot when tabs were open but none was active', async () => {
+    const tm1 = await freshTabManager();
+    const tabA = await tm1.newProject('microscopy', { name: 'A' });
+    await tm1.showHomeScreen();   // tabs stay open in the strip; no active tab
+
+    const tm2 = await freshTabManager();
+    await tm2.initTabManager();
+    assert.equal(tm2.isHomeVisible(), true);
+    assert.equal(tm2.getActiveTabId(), null);
+    assert.deepEqual(tm2.getTabs().map(t => t.id), [tabA.id], 'the open tab set is preserved');
+  });
+
+  it('activates the first tab on boot if the saved active id no longer exists', async () => {
+    const tm1 = await freshTabManager();
+    const tabA = await tm1.newProject('microscopy', { name: 'A' });
+    localStorage.setItem('loupe-open-tabs', JSON.stringify({ open: [tabA.id], active: 'missing-id' }));
+
+    const tm2 = await freshTabManager();
+    await tm2.initTabManager();
+    assert.equal(tm2.getActiveTabId(), tabA.id);
   });
 });
 
