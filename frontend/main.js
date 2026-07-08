@@ -33,7 +33,7 @@ import { loadReticle, unloadReticle, saveCustomReticle, importReticle } from './
 import { initReticlePanel } from './sidebar.js';
 import { initGear } from './gear.js';
 import { initFringe } from './fringe.js';
-import { initModes, getActiveMode } from './modes.js';
+import { getActiveMode } from './modes.js';
 import { enterMaskEditSession, isCrossModeActive } from './cross-mode.js';
 import { captureEpoch, isStale, registerWorkspaceDom } from './workspace.js';
 import { initShell } from './shell.js';
@@ -78,7 +78,6 @@ function toggleDropdown(btnId, dropId) {
 // ── Init event modules ───────────────────────────────���────────────────────────
 initMouseHandlers();
 initKeyboard(closeAllDropdowns);
-initModes();
 initShell();
 
 // DOM side of restoreWorkspace(): re-fit the canvas/viewport and refresh
@@ -1598,6 +1597,11 @@ updateFreezeUI();
 // Boot the tab layer last — every engine subsystem above must be wired
 // before the first restoreWorkspace() fires.
 initTabManager();
+
+// TRANSITIONAL (removed by the home-screen task): instrument tabs are
+// reachable from the console until the home screen provides type cards.
+window._loupeNewProject = (type) =>
+  document.dispatchEvent(new CustomEvent("new-project", { detail: { type } }));
 
 // ── Camera signal histogram ────────────────────────────────────────────────
 // Samples the live stream image at ~1 Hz whenever the camera panel is open

@@ -1,8 +1,8 @@
-// modes.js — Mode switching: Microscope / Deflectometry / Fringe Analysis.
-//
-// Controls visibility of mode root containers and top-bar items.
-// Each mode module registers itself; switching hides the current
-// container and shows the new one.
+// modes.js — low-level mode-container switching (Microscope / Deflectometry
+// / Fringe). Since Track B, mode switching is driven by the tab manager
+// (tab-manager.js) and by cross-mode.js's modal excursions — there is no
+// user-facing mode switcher. Kept as its own module because cross-mode and
+// keyboard code depend on switchMode/getActiveMode.
 
 const MODES = ["microscope", "deflectometry", "fringe"];
 let activeMode = "microscope";
@@ -12,28 +12,24 @@ function $(id) { return document.getElementById(id); }
 /** Switch to a mode by id. Hides current, shows target, toggles top-bar items. */
 export function switchMode(modeId) {
   if (!MODES.includes(modeId)) return;
-  // Block user-initiated mode switching during cross-mode mask editing
+  // Block mode switching during cross-mode mask editing
   if (document.getElementById('cross-mode-action-bar')) return;
   activeMode = modeId;
 
-  // Toggle mode containers
   for (const m of MODES) {
     const el = $("mode-" + m);
     if (el) el.hidden = m !== modeId;
   }
 
-  // Toggle microscope-only top-bar items
   document.querySelectorAll(".microscope-only").forEach(el => {
     el.hidden = modeId !== "microscope";
   });
 
-  // Toggle fringe-only top-bar items
   document.querySelectorAll(".fringe-only").forEach(el => {
     el.hidden = modeId !== "fringe";
   });
 
-  // Toggle microscope-only bottom elements (tool strip, sidebar)
-  const toolStrip = $("tool-strip");
+  const toolStrip = $("tool-strip");   // removed in the toolbar task; null-safe
   const sidebar = $("sidebar");
   if (toolStrip) toolStrip.hidden = modeId !== "microscope";
   if (sidebar) sidebar.hidden = modeId !== "microscope";
@@ -43,11 +39,4 @@ export function switchMode(modeId) {
 
 export function getActiveMode() {
   return activeMode;
-}
-
-/** Wire up the mode switcher <select>. Call once from main.js. */
-export function initModes() {
-  const sel = $("mode-switcher");
-  if (!sel) return;
-  sel.addEventListener("change", () => switchMode(sel.value));
 }
