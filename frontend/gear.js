@@ -6,6 +6,7 @@ import { showStatus, redraw } from "./render.js";
 import { hitTestAnnotation } from "./hit-test.js";
 import { apiFetch, apiFetchFrame } from "./api.js";
 import { setDxfOverlayFromEntities } from "./dxf.js";
+import { captureEpoch, isStale } from "./workspace.js";
 
 // Dialog state: the picked tip/root circles, held while the modal is open.
 let _gearDialogCircles = null;
@@ -165,6 +166,7 @@ async function detectToothCountFromDialog() {
   const orig = btn?.textContent;
   if (btn) { btn.disabled = true; btn.textContent = "Detecting…"; }
   setGearDialogStatus("Detecting tooth count…");
+  const epoch = captureEpoch();
 
   try {
     const r = await apiFetchFrame("/detect-gear-teeth", {
@@ -183,6 +185,7 @@ async function detectToothCountFromDialog() {
       return;
     }
     const result = await r.json();
+    if (isStale(epoch)) { console.debug("[epoch] stale result dropped: /detect-gear-teeth"); return; }
     const nInput = document.getElementById("gear-gen-n");
     if (nInput) {
       nInput.value = String(result.n_teeth);
@@ -218,6 +221,7 @@ function runAnalyzeGearFromDialog() {
   const root_r = rootCircle.r;
 
   setGearDialogStatus("Analyzing gear…");
+  const epoch = captureEpoch();
 
   apiFetchFrame("/analyze-gear", {
     method: "POST",
@@ -229,6 +233,7 @@ function runAnalyzeGearFromDialog() {
       return r.json();
     })
     .then((result) => {
+      if (isStale(epoch)) { console.debug("[epoch] stale result dropped: /analyze-gear"); return; }
       if (result.error) {
         setGearDialogStatus(`Gear analysis: ${result.error}`);
         return;

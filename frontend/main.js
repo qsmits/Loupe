@@ -35,6 +35,7 @@ import { initGear } from './gear.js';
 import { initFringe } from './fringe.js';
 import { initModes, getActiveMode } from './modes.js';
 import { enterMaskEditSession, isCrossModeActive } from './cross-mode.js';
+import { captureEpoch, isStale } from './workspace.js';
 
 // ─── Dropdown helpers ─────��──────────────────────────────────────────────────
 function closeAllDropdowns() {
@@ -296,6 +297,7 @@ document.getElementById("file-input").addEventListener("change", async e => {
   const loadingEl = document.getElementById("loading-overlay");
   loadingEl.hidden = false;
   try {
+    const epoch = captureEpoch();
     const formData = new FormData();
     formData.append("file", file);
     const r = await apiFetch("/load-image", { method: "POST", body: formData });
@@ -307,6 +309,7 @@ document.getElementById("file-input").addEventListener("change", async e => {
     const url = URL.createObjectURL(file);
     const loadedImg = new Image();
     loadedImg.onload = async () => {
+      if (isStale(epoch)) { console.debug("[epoch] stale result dropped: image load"); loadingEl.hidden = true; return; }
       loadingEl.hidden = true;
       state.frozenBackground = loadedImg;
       state.frozenBlob = file;
@@ -419,6 +422,7 @@ viewerEl.addEventListener("drop", async e => {
   const loadingEl = document.getElementById("loading-overlay");
   loadingEl.hidden = false;
   try {
+    const epoch = captureEpoch();
     const formData = new FormData();
     formData.append("file", file);
     const r = await apiFetch("/load-image", { method: "POST", body: formData });
@@ -430,6 +434,7 @@ viewerEl.addEventListener("drop", async e => {
     const url = URL.createObjectURL(file);
     const loadedImg = new Image();
     loadedImg.onload = () => {
+      if (isStale(epoch)) { console.debug("[epoch] stale result dropped: image load"); loadingEl.hidden = true; return; }
       loadingEl.hidden = true;
       state.frozenBackground = loadedImg;
       state.frozenBlob = file;

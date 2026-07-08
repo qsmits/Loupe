@@ -7,6 +7,7 @@ import { exportInspectionCsv, exportInspectionPdf } from './session.js';
 import { serverSubpixelMethod } from './subpixel-js.js';
 import { ensureFrozen } from './detect.js';
 import { imageWidth, imageHeight } from './viewport.js';
+import { captureEpoch, isStale } from './workspace.js';
 
 // ── Shared alignment helper ───────────────────────────────────────────────
 
@@ -143,6 +144,7 @@ export function initDxfHandlers() {
       // Auto-align if calibrated and frozen
       if (cal?.pixelsPerMm && state.frozen) {
         showStatus("Auto-aligning DXF…");
+        const alignEpoch = captureEpoch();
         try {
           const smoothing = parseInt(document.getElementById("adv-smoothing")?.value || "2");
           const alignResp = await apiFetchFrame("/align-dxf-edges", {
@@ -156,6 +158,7 @@ export function initDxfHandlers() {
           });
           if (alignResp.ok) {
             const result = await alignResp.json();
+            if (isStale(alignEpoch)) { console.debug("[epoch] stale result dropped: /align-dxf-edges"); return; }
             const ann = state.annotations.find(a => a.type === "dxf-overlay");
             if (ann) {
               applyAlignmentResult(ann, result);
@@ -278,6 +281,7 @@ export function initDxfHandlers() {
 
     if (dxfHasCircles && circles.length === 0) {
       setStatus("Running circle detection…");
+      const circleEpoch = captureEpoch();
       const detectResp = await apiFetchFrame("/detect-circles", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -285,6 +289,7 @@ export function initDxfHandlers() {
       });
       if (detectResp.ok) {
         const detected = await detectResp.json();
+        if (isStale(circleEpoch)) { console.debug("[epoch] stale result dropped: /detect-circles"); return; }
         if (detected.length > 0) {
           const fw = state.frozenSize?.w || imageWidth || canvas.width;
           const fh = state.frozenSize?.h || imageHeight || canvas.height;
@@ -302,6 +307,7 @@ export function initDxfHandlers() {
 
     // Try circle-based alignment first, fall back to edge-based
     setStatus("Aligning…");
+    const alignEpoch = captureEpoch();
     try {
       let result;
       let usedEdges = false;
@@ -343,6 +349,8 @@ export function initDxfHandlers() {
         }
         result = await r.json();
       }
+
+      if (isStale(alignEpoch)) { console.debug("[epoch] stale result dropped: /align-dxf"); return; }
 
       pushUndo();
       if (result.flip_h != null) ann.flipH = result.flip_h;
@@ -400,6 +408,7 @@ export function initDxfHandlers() {
       if (state._templateLoaded && state.frozen) {
         showStatus("Auto-aligning DXF...");
         const smoothing = parseInt(document.getElementById("adv-smoothing")?.value || "2");
+        const alignEpoch = captureEpoch();
         try {
           const alignResp = await apiFetchFrame("/align-dxf-edges", {
             method: "POST",
@@ -412,6 +421,7 @@ export function initDxfHandlers() {
           });
           if (alignResp.ok) {
             const alignResult = await alignResp.json();
+            if (isStale(alignEpoch)) { console.debug("[epoch] stale result dropped: /align-dxf-edges"); return; }
             applyAlignmentResult(ann, alignResult);
             redraw();
             showStatus("Aligned. Running inspection...");
@@ -424,6 +434,7 @@ export function initDxfHandlers() {
       }
 
       const inspectableTypes = ["line", "polyline_line", "arc", "polyline_arc", "circle"];
+      const epoch = captureEpoch();
       const resp = await apiFetchFrame("/inspect-guided", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -453,6 +464,7 @@ export function initDxfHandlers() {
       }
 
       const results = await resp.json();
+      if (isStale(epoch)) { console.debug("[epoch] stale result dropped: /inspect-guided"); return; }
       ann.guidedResults = results;
 
       // Populate state.inspectionResults for session/export
@@ -766,6 +778,7 @@ export async function setDxfOverlayFromEntities(entities, opts) {
   if (opts.skipAutoAlign || !state.frozen) return;
 
   showStatus("Auto-aligning overlay…");
+  const epoch = captureEpoch();
   try {
     const smoothing = parseInt(document.getElementById("adv-smoothing")?.value || "1");
     const alignResp = await apiFetchFrame("/align-dxf-edges", {
@@ -775,6 +788,7 @@ export async function setDxfOverlayFromEntities(entities, opts) {
     });
     if (alignResp.ok) {
       const result = await alignResp.json();
+      if (isStale(epoch)) { console.debug("[epoch] stale result dropped: /align-dxf-edges"); return; }
       const ann = state.annotations.find(a => a.type === "dxf-overlay");
       if (ann) {
         applyAlignmentResult(ann, result);

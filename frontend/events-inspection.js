@@ -8,6 +8,7 @@ import { fitCircle, fitLine, fitCircleAlgebraic, distPointToSegment } from './ma
 import { viewport } from './viewport.js';
 import { imageWidth, imageHeight } from './viewport.js';
 import { serverSubpixelMethod } from './subpixel-js.js';
+import { captureEpoch, isStale } from './workspace.js';
 
 export function _hitTestGuidedResult(pt, dxfAnn) {
   const threshold = 10 / viewport.zoom;
@@ -179,6 +180,7 @@ export async function _finalizePickInspection() {
   }
 
   let successCount = 0;
+  const epoch = captureEpoch();
 
   try {
     // Fit each sub-segment with enough points
@@ -204,6 +206,7 @@ export async function _finalizePickInspection() {
       });
       if (!resp.ok) continue;
       const result = await resp.json();
+      if (isStale(epoch)) { console.debug("[epoch] stale result dropped: /fit-feature"); return; }
       result.source = "manual";
 
       // Replace or add to guided results

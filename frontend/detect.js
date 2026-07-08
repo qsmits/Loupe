@@ -6,6 +6,7 @@ import { updateFreezeUI } from './sidebar.js';
 import { setImageSize, imageWidth, imageHeight, fitToWindow, clampPan } from './viewport.js';
 import { cacheImageData } from './subpixel-js.js';
 import { isBrowserCameraActive, captureBrowserFrame } from './browser-camera.js';
+import { captureEpoch, isStale } from './workspace.js';
 
 // ── Detection busy indicator ──────────────────────────────────────────────
 function withBusy(btn, label, fn) {
@@ -33,6 +34,7 @@ export async function ensureFrozen() {
 }
 
 export async function doFreeze() {
+  const epoch = captureEpoch();
   // If we already have a frozen background (e.g., from a loaded image), just
   // mark as frozen without re-capturing from the camera. In no-camera mode,
   // /freeze would overwrite the loaded image with a blank NullCamera frame.
@@ -55,6 +57,7 @@ export async function doFreeze() {
   if (isBrowserCameraActive()) {
     try {
       const { image, width, height, blob } = await captureBrowserFrame();
+      if (isStale(epoch)) { console.debug("[epoch] stale result dropped: freeze"); return; }
       state.frozenSize = { w: width, h: height };
       const dimsChanged = width !== imageWidth || height !== imageHeight;
       if (dimsChanged) setImageSize(width, height);
@@ -85,6 +88,7 @@ export async function doFreeze() {
   const r = await apiFetch("/freeze", { method: "POST" });
   if (!r.ok) return;
   const { width, height } = await r.json();
+  if (isStale(epoch)) { console.debug("[epoch] stale result dropped: freeze"); return; }
   state.frozenSize = { w: width, h: height };
   // Only update image dimensions if they actually changed — loadCameraInfo
   // already sets them at startup for real cameras.
@@ -120,6 +124,7 @@ export async function doFreeze() {
     return;
   }
 
+  if (isStale(epoch)) { console.debug("[epoch] stale result dropped: freeze"); return; }
   img.style.opacity = "0";   // hide stream
   // Stream continues in background (see note above)
   state.frozen = true;
@@ -182,6 +187,7 @@ export function initDetectHandlers() {
   const btnEdges = document.getElementById("btn-run-edges");
   btnEdges.addEventListener("click", withBusy(btnEdges, "Detecting edges", async () => {
     await ensureFrozen();
+    const epoch = captureEpoch();
     const t1 = parseInt(document.getElementById("canny-low").value);
     const t2 = parseInt(document.getElementById("canny-high").value);
     const r = await apiFetchFrame("/detect-edges", {
@@ -191,10 +197,12 @@ export function initDetectHandlers() {
     });
     if (!r.ok) { alert(await r.text()); return; }
     const blob = await r.blob();
+    if (isStale(epoch)) { console.debug("[epoch] stale result dropped: /detect-edges"); return; }
     const url = URL.createObjectURL(blob);
     const edgeImg = new Image();
     edgeImg.onload = () => {
       URL.revokeObjectURL(url);
+      if (isStale(epoch)) { console.debug("[epoch] stale result dropped: /detect-edges onload"); return; }
       state.annotations = state.annotations.filter(a => a.type !== "edges-overlay");
       addAnnotation({ type: "edges-overlay", image: edgeImg });
       redraw();
@@ -207,6 +215,7 @@ export function initDetectHandlers() {
   const btnPreproc = document.getElementById("btn-show-preprocessed");
   btnPreproc.addEventListener("click", withBusy(btnPreproc, "Preprocessing", async () => {
     await ensureFrozen();
+    const epoch = captureEpoch();
     const r = await apiFetchFrame("/preprocessed-view", {
       method: "POST",
       headers: {"Content-Type": "application/json"},
@@ -214,10 +223,12 @@ export function initDetectHandlers() {
     });
     if (!r.ok) { alert(await r.text()); return; }
     const blob = await r.blob();
+    if (isStale(epoch)) { console.debug("[epoch] stale result dropped: /preprocessed-view"); return; }
     const url = URL.createObjectURL(blob);
     const ppImg = new Image();
     ppImg.onload = () => {
       URL.revokeObjectURL(url);
+      if (isStale(epoch)) { console.debug("[epoch] stale result dropped: /preprocessed-view onload"); return; }
       state.annotations = state.annotations.filter(a => a.type !== "preprocessed-overlay");
       addAnnotation({ type: "preprocessed-overlay", image: ppImg });
       redraw();
@@ -230,6 +241,7 @@ export function initDetectHandlers() {
   const btnCircles = document.getElementById("btn-run-circles");
   btnCircles.addEventListener("click", withBusy(btnCircles, "Detecting circles", async () => {
     await ensureFrozen();
+    const epoch = captureEpoch();
     const sensitivity = parseInt(document.getElementById("hough-p2").value);
     const minR = parseInt(document.getElementById("circle-min-r").value);
     const maxR = parseInt(document.getElementById("circle-max-r").value);
@@ -242,6 +254,7 @@ export function initDetectHandlers() {
     });
     if (!resp.ok) { alert(await resp.text()); return; }
     const circles = await resp.json();
+    if (isStale(epoch)) { console.debug("[epoch] stale result dropped: /detect-circles"); return; }
     const fw = state.frozenSize?.w || canvas.width;
     const fh = state.frozenSize?.h || canvas.height;
     // Remove previous auto-detected circles, keep manual ones
@@ -258,6 +271,7 @@ export function initDetectHandlers() {
   const btnLines = document.getElementById("btn-run-lines");
   if (btnLines) btnLines.addEventListener("click", withBusy(btnLines, "Detecting lines", async () => {
     await ensureFrozen();
+    const epoch = captureEpoch();
     const sensitivity = parseInt(document.getElementById("line-sensitivity").value);
     const minLength   = parseInt(document.getElementById("line-min-length").value);
     const resp = await apiFetchFrame("/detect-lines", {
@@ -267,6 +281,7 @@ export function initDetectHandlers() {
     });
     if (!resp.ok) { alert(await resp.text()); return; }
     const lines = await resp.json();
+    if (isStale(epoch)) { console.debug("[epoch] stale result dropped: /detect-lines"); return; }
     const fw = state.frozenSize?.w || canvas.width;
     const fh = state.frozenSize?.h || canvas.height;
     // Remove previous auto-detected lines, keep manual ones
@@ -284,6 +299,7 @@ export function initDetectHandlers() {
   const btnMergedLines = document.getElementById("btn-detect-lines-merged");
   if (btnMergedLines) btnMergedLines.addEventListener("click", withBusy(btnMergedLines, "Detecting lines", async () => {
     await ensureFrozen();
+    const epoch = captureEpoch();
     const t1 = parseInt(document.getElementById("canny-low").value);
     const t2 = parseInt(document.getElementById("canny-high").value);
     const smoothing = parseInt(document.getElementById("adv-smoothing").value);
@@ -296,6 +312,7 @@ export function initDetectHandlers() {
       body: JSON.stringify({ threshold1: t1, threshold2: t2, min_length: minLen, nms_dist: nmsDist, smoothing, subpixel, surface_mode: state.surfaceMode }) });
     if (!r.ok) { const d = await r.json().catch(() => null); showStatus(d?.detail || "Line detection failed (HTTP " + r.status + ")"); return; }
     const lines = await r.json();
+    if (isStale(epoch)) { console.debug("[epoch] stale result dropped: /detect-lines-merged"); return; }
     const fw = state.frozenSize?.w || canvas.width;
     const fh = state.frozenSize?.h || canvas.height;
     state.annotations = state.annotations.filter(a => a.type !== "detected-line-merged");
@@ -309,6 +326,7 @@ export function initDetectHandlers() {
   const btnArcs = document.getElementById("btn-detect-arcs-partial");
   if (btnArcs) btnArcs.addEventListener("click", withBusy(btnArcs, "Detecting arcs", async () => {
     await ensureFrozen();
+    const epoch = captureEpoch();
     const t1 = parseInt(document.getElementById("canny-low").value);
     const t2 = parseInt(document.getElementById("canny-high").value);
     const smoothing = parseInt(document.getElementById("adv-smoothing").value);
@@ -320,6 +338,7 @@ export function initDetectHandlers() {
       body: JSON.stringify({ threshold1: t1, threshold2: t2, min_span_deg: minSpan, smoothing, subpixel, surface_mode: state.surfaceMode }) });
     if (!r.ok) { const d = await r.json().catch(() => null); showStatus(d?.detail || "Arc detection failed (HTTP " + r.status + ")"); return; }
     const arcs = await r.json();
+    if (isStale(epoch)) { console.debug("[epoch] stale result dropped: /detect-arcs-partial"); return; }
     const fw = state.frozenSize?.w || canvas.width;
     const fh = state.frozenSize?.h || canvas.height;
     state.annotations = state.annotations.filter(a => a.type !== "detected-arc-partial");
