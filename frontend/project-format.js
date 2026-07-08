@@ -22,6 +22,24 @@ export const LOUPE_VERSION = 1;
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
+/** Validate and sanitize calibration object.
+ *  Returns the calibration if valid, or null if missing/invalid.
+ *  An invalid calibration (non-numeric/non-positive pixelsPerMm, bad displayUnit)
+ *  becomes null (uncalibrated) rather than being trusted — consistent with
+ *  how migrateV3ToV4 and session.js validate. */
+export function sanitizeCalibration(cal) {
+  if (cal == null) return null;
+  if (typeof cal !== "object") return null;
+  if (typeof cal.pixelsPerMm !== "number" || !isFinite(cal.pixelsPerMm)
+      || cal.pixelsPerMm <= 0) {
+    return null;
+  }
+  if (cal.displayUnit !== "mm" && cal.displayUnit !== "µm") {
+    return null;
+  }
+  return cal;
+}
+
 /** In-memory tab record → JSON-safe v4 workspace (deep copy).
  *  Keeps detections + dxf-overlay (plain JSON, unlike v3's TRANSIENT filter);
  *  strips only OVERLAY_TYPES (live HTMLImageElement payloads). */
@@ -74,7 +92,7 @@ export function applyWorkspaceV4(v4) {
   s.nextId = v4.nextId
     ?? (v4.annotations.reduce((m, a) => Math.max(m, a.id ?? 0), 0) + 1);
   s.nextConstraintId = v4.nextConstraintId ?? 1;
-  s.calibration = v4.calibration ?? null;
+  s.calibration = sanitizeCalibration(v4.calibration);
   s.origin = v4.origin ?? null;
   if (v4.tolerances && typeof v4.tolerances === "object") {
     s.tolerances = { ...v4.tolerances };
@@ -119,14 +137,12 @@ export function migrateV3ToV4(data) {
   if (!Array.isArray(data.annotations)) {
     throw new Error("Invalid session: no annotations array");
   }
+  let calibration = null;
   if (data.calibration != null) {
-    const cal = data.calibration;
-    if (typeof cal.pixelsPerMm !== "number" || !isFinite(cal.pixelsPerMm)
-        || cal.pixelsPerMm <= 0) {
+    // Validate using shared helper; if it was non-null but failed validation, throw
+    calibration = sanitizeCalibration(data.calibration);
+    if (calibration === null) {
       throw new Error("Invalid session: bad calibration");
-    }
-    if (cal.displayUnit !== "mm" && cal.displayUnit !== "µm") {
-      throw new Error("Invalid session: bad calibration display unit");
     }
   }
   return {
@@ -139,7 +155,7 @@ export function migrateV3ToV4(data) {
     nextId: data.nextId
       ?? (data.annotations.reduce((m, a) => Math.max(m, a.id ?? 0), 0) + 1),
     nextConstraintId: data.nextConstraintId ?? 1,
-    calibration: data.calibration ?? null,
+    calibration: calibration,
     origin: data.origin ?? null,
     tolerances: { warn: 0.10, fail: 0.25 },
     showDeviations: false,

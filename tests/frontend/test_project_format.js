@@ -8,6 +8,7 @@ import { freshWorkspaceRecord } from '../../frontend/workspace.js';
 import {
   WORKSPACE_VERSION, PROJECT_TYPES,
   buildWorkspaceV4, applyWorkspaceV4, migrateV3ToV4,
+  sanitizeCalibration,
   LOUPE_FORMAT, LOUPE_VERSION, buildLoupeObject, parseLoupe, dataUrlToBlob,
 } from '../../frontend/project-format.js';
 
@@ -71,6 +72,53 @@ describe('buildWorkspaceV4', () => {
   });
 });
 
+describe('sanitizeCalibration', () => {
+  it('passes through a valid calibration unchanged', () => {
+    const cal = { pixelsPerMm: 100, displayUnit: 'mm' };
+    assert.deepEqual(sanitizeCalibration(cal), cal);
+  });
+
+  it('accepts µm displayUnit', () => {
+    const cal = { pixelsPerMm: 42.5, displayUnit: 'µm' };
+    assert.deepEqual(sanitizeCalibration(cal), cal);
+  });
+
+  it('returns null for missing/null calibration', () => {
+    assert.equal(sanitizeCalibration(null), null);
+    assert.equal(sanitizeCalibration(undefined), null);
+  });
+
+  it('returns null for non-object calibration', () => {
+    assert.equal(sanitizeCalibration("not an object"), null);
+    assert.equal(sanitizeCalibration(123), null);
+  });
+
+  it('returns null for negative pixelsPerMm', () => {
+    const cal = { pixelsPerMm: -1, displayUnit: 'mm' };
+    assert.equal(sanitizeCalibration(cal), null);
+  });
+
+  it('returns null for zero pixelsPerMm', () => {
+    const cal = { pixelsPerMm: 0, displayUnit: 'mm' };
+    assert.equal(sanitizeCalibration(cal), null);
+  });
+
+  it('returns null for non-numeric pixelsPerMm', () => {
+    const cal = { pixelsPerMm: 'garbage', displayUnit: 'mm' };
+    assert.equal(sanitizeCalibration(cal), null);
+  });
+
+  it('returns null for non-finite pixelsPerMm (NaN, Infinity)', () => {
+    assert.equal(sanitizeCalibration({ pixelsPerMm: NaN, displayUnit: 'mm' }), null);
+    assert.equal(sanitizeCalibration({ pixelsPerMm: Infinity, displayUnit: 'mm' }), null);
+  });
+
+  it('returns null for invalid displayUnit', () => {
+    const cal = { pixelsPerMm: 42.5, displayUnit: 'px' };
+    assert.equal(sanitizeCalibration(cal), null);
+  });
+});
+
 describe('applyWorkspaceV4', () => {
   it('round-trips buildWorkspaceV4 output', () => {
     const v4 = buildWorkspaceV4(sampleRecord());
@@ -101,6 +149,52 @@ describe('applyWorkspaceV4', () => {
       annotations: [{ type: 'distance', id: 1 }],
     });
     assert.equal(rec.state.annotations[0].purpose, 'measurement');
+  });
+
+  it('sanitizes bad calibration: negative pixelsPerMm becomes null', () => {
+    const rec = applyWorkspaceV4({
+      version: 4, tool: 'select', frozen: false, viewport: null, imageSize: null,
+      annotations: [],
+      calibration: { pixelsPerMm: -1, displayUnit: 'mm' },
+    });
+    assert.equal(rec.state.calibration, null);
+  });
+
+  it('sanitizes bad calibration: non-numeric pixelsPerMm becomes null', () => {
+    const rec = applyWorkspaceV4({
+      version: 4, tool: 'select', frozen: false, viewport: null, imageSize: null,
+      annotations: [],
+      calibration: { pixelsPerMm: 'garbage', displayUnit: 'mm' },
+    });
+    assert.equal(rec.state.calibration, null);
+  });
+
+  it('sanitizes bad calibration: invalid displayUnit becomes null', () => {
+    const rec = applyWorkspaceV4({
+      version: 4, tool: 'select', frozen: false, viewport: null, imageSize: null,
+      annotations: [],
+      calibration: { pixelsPerMm: 100, displayUnit: 'cm' },
+    });
+    assert.equal(rec.state.calibration, null);
+  });
+
+  it('sanitizes bad calibration: non-object calibration becomes null', () => {
+    const rec = applyWorkspaceV4({
+      version: 4, tool: 'select', frozen: false, viewport: null, imageSize: null,
+      annotations: [],
+      calibration: 'not an object',
+    });
+    assert.equal(rec.state.calibration, null);
+  });
+
+  it('preserves valid calibration unchanged', () => {
+    const cal = { pixelsPerMm: 100, displayUnit: 'mm' };
+    const rec = applyWorkspaceV4({
+      version: 4, tool: 'select', frozen: false, viewport: null, imageSize: null,
+      annotations: [],
+      calibration: cal,
+    });
+    assert.deepEqual(rec.state.calibration, cal);
   });
 });
 
