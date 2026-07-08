@@ -200,6 +200,47 @@ describe('autosave (flushAutosave)', () => {
     const proj = await getProject(tab.id);
     assert.equal(proj.workspace, null);
   });
+
+  it('surfaces a "storage may be full" toast pointing at project management on write failure, does not throw, and does not clear dirty', async () => {
+    // Same fault-injection pattern as the deleteProjectEverywhere / adoptProject
+    // failure tests: sabotage the IDB store's put() so putProject rejects like
+    // a real QuotaExceededError, then drive the failure through the actual
+    // flushAutosave code path (no stubbing of flushAutosave itself).
+    const tm = await freshTabManager();
+    const tab = await tm.newProject('microscopy', { name: 'A' });
+    const store = _idb._databases.get('loupe').stores.get('projects');
+    store.data.set = () => { throw new Error('simulated QuotaExceededError'); };
+
+    state.annotations = [{ type: 'distance', id: 1, points: [] }];
+    state._dirty = true;
+
+    let toastMessage = null, toastOpts = null;
+    _setToastHandler((msg, opts) => { toastMessage = msg; toastOpts = opts; });
+
+    await assert.doesNotReject(tm.flushAutosave());
+
+    assert.match(toastMessage, /storage may be full/);
+    assert.equal(toastOpts?.actionLabel, 'Manage projects');
+    assert.equal(state._dirty, true, 'a failed flush must not clear the dirty flag (nothing was actually saved)');
+  });
+
+  it('does not re-toast on a second consecutive failed flush (warn-once guard)', async () => {
+    const tm = await freshTabManager();
+    const tab = await tm.newProject('microscopy', { name: 'A' });
+    const store = _idb._databases.get('loupe').stores.get('projects');
+    store.data.set = () => { throw new Error('simulated QuotaExceededError'); };
+
+    state.annotations = [{ type: 'distance', id: 1, points: [] }];
+    state._dirty = true;
+
+    let toastCount = 0;
+    _setToastHandler(() => { toastCount += 1; });
+
+    await tm.flushAutosave();
+    await tm.flushAutosave();
+
+    assert.equal(toastCount, 1, 'repeated failures while still dirty must only toast once');
+  });
 });
 
 describe('closeTab', () => {

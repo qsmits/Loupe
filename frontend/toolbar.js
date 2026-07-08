@@ -94,14 +94,6 @@ const SUB_MODES = {
   },
 };
 
-// stateKey → set-tool event detail key (matches the event contract).
-const DETAIL_KEY = {
-  circleMode: "circleMode",
-  arcFitMode: "arcFitMode",
-  arcMeasureMode: "arcMeasureMode",
-  angleMode: "angleMode",
-};
-
 function ToolButton({ btn }) {
   const active = state.tool === btn.tool;
   const title = btn.key ? `${btn.label} (${btn.key})` : btn.label;
@@ -122,7 +114,7 @@ function SubModeSegment() {
         <button key=${opt.value}
           class="tb-seg-btn ${current === opt.value ? "active" : ""}"
           onClick=${() => dispatch("set-tool",
-            { tool: state.tool, [DETAIL_KEY[group.stateKey]]: opt.value })}>
+            { tool: state.tool, [group.stateKey]: opt.value })}>
           ${opt.label}
         </button>`)}
     </div>`;

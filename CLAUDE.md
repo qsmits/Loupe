@@ -19,9 +19,10 @@ NO_CAMERA=1 .venv/bin/python -m uvicorn backend.main:app --host 0.0.0.0 --port 8
 
 **Run tests:**
 ```bash
-.venv/bin/pytest tests/               # all tests
+.venv/bin/pytest tests/               # all backend tests
 .venv/bin/pytest tests/test_api.py   # single file
 .venv/bin/pytest -v                   # verbose
+node --test tests/frontend/*.js       # all frontend tests (no build step)
 ```
 
 ## Architecture
@@ -55,7 +56,7 @@ Priority order at startup:
 - `backend/frame_store.py` — Thread-safe single-frame store for the "freeze" feature.
 - `backend/config.py` — Atomic JSON config load/save with version-aware migration.
 
-### Frontend (ES modules, no framework)
+### Frontend (ES modules; vendored Preact/htm shell, no build step)
 - `frontend/main.js` — Entry point, event wiring, mouse/keyboard handlers, undo/redo, context menu, point-pick mode.
 - `frontend/state.js` — Global `state` object, undo stack, `TRANSIENT_TYPES`, `DETECTION_TYPES`.
 - `frontend/render.js` — Canvas rendering with viewport transform, all annotation draw functions, DXF overlay, guided inspection result rendering, measurement labels, HUD (crosshair, zoom badge).
@@ -64,13 +65,22 @@ Priority order at startup:
 - `frontend/dxf.js` — DXF load/align/flip/rotate, "Run Inspection" handler (calls `/inspect-guided`), per-feature tolerance popover, drag-to-translate.
 - `frontend/detect.js` — Detection button handlers with busy indicators, auto-freeze, arc deduplication, slider wiring.
 - `frontend/annotations.js` — Add/delete/elevate annotations, merge lines, clear operations (detections/measurements/DXF/all), `deleteSelected`.
-- `frontend/session.js` — Save/load sessions (v2 format with inspection results), CSV/PDF/DXF export, auto-save to localStorage.
+- `frontend/session.js` — Manual JSON session export/import (v3 format) and PNG/CSV/DXF export; day-to-day persistence now lives in the projects model below.
 - `frontend/sidebar.js` — Sidebar rendering, inspection result table, camera controls, tolerance config.
 - `frontend/math.js` — Geometric helpers: `fitCircle`, `fitCircleAlgebraic`, `fitLine`, `polygonArea`, `distPointToSegment`.
+- `frontend/workspace.js` — Swap-on-activate workspace state for project tabs: `serializeWorkspace`/`restoreWorkspace`, the `STATE_FIELDS` swapped/transient/global classification, `state._epoch` staleness guard. See "Projects & tabs" below.
+- `frontend/project-format.js` — Pure codecs: in-memory tab record ↔ workspace v4 (JSON) ↔ `.loupe` file (JSON + data-URL image); `migrateV3ToV4` for legacy session import.
+- `frontend/projects-db.js` — The ONLY persistence layer: browser-local IndexedDB (`loupe` DB, `projects` store), with an in-memory fallback + `onStorageUnavailable`/`isPersistent` when IndexedDB is unavailable.
+- `frontend/tab-manager.js` — Typed project tabs over the singleton engine: open/activate/close, swap-on-activate, singleton rules for deflectometry/fringe, ~2s dirty-poll autosave, per-tab `X-Session-ID`.
+- `frontend/shell.js` — Preact/htm app bar (tab strip) and overlay layer: modal `showNotice`, `showToast`; re-renders on `workspace-changed`/`tool-changed`.
+- `frontend/toolbar.js` — Flat row-2 microscopy toolbar (Preact): every tool as icon+text, contextual sub-mode segment, Calibrate/Origin/Undo/Redo.
+- `frontend/home-screen.js` — Preact home screen: new-project type cards, IndexedDB-only recents grid, import drop zone.
+- `frontend/project-io.js` — `.loupe` export/import, plain-image and v3-session import, legacy `microscope-autosave` migration offer, global `.loupe` drag-in.
+- `frontend/vendor/` — Vendored `preact.mjs` + `htm.mjs` (plain ES module imports, no npm/bundler).
 - Calibration flow lives in `tools.js` (`handleToolClick` calibrate branch) + `annotations.js` (`applyCalibration`, `recalibrateFromAnnotation`); pure scale math in `math.js::calibrationPixelsPerMm`.
 
 ### Key Features
-- **14 measurement tools**: Select, Distance, Angle, Circle, Fit Arc, Arc Measure, Center Dist, Para Dist, Perp Dist, Area, Pt-Circle Dist, Line Intersect, Slot Distance, Pan.
+- **13 tools on a flat row-2 toolbar** (`frontend/toolbar.js`, no flyouts/hidden tools): Select, Pan, Note, Distance, Angle, Circle, Best fit (circle/arc), Arc, Area, Shape (area-from-shape), Spline, Flatness, Point — plus dedicated Calibrate/Origin buttons and Undo/Redo. Contextual sub-mode segments (e.g. Circle → 3-point/Center+edge, Best fit → Circle/Arc) show inline for the active tool.
 - **Multi-select**: Set-based selection, Shift+click, rectangle drag-select, bulk delete/elevate.
 - **Detection elevation**: Promote auto-detected features to editable measurements. Merge multiple line segments into one.
 - **Right-click context menu**: Elevate, delete, rename, merge lines, group, convert arc→circle, Punch/Die toggle, clear operations.
@@ -80,9 +90,16 @@ Priority order at startup:
 - **DXF-guided inspection**: Corridor-based per-feature edge detection, manual point-pick with compound features, RANSAC inlier filtering, shadow-aware edge selection, Punch/Die tolerance tagging.
 - **Draggable labels**: Deviation labels can be repositioned with leader lines. Hover tooltips with full feature detail.
 - **Grouped inspection results**: Sidebar groups results by compound feature with collapsible headers, worst-case badges, Punch/Die indicators, numbered cross-references to canvas and PDF.
-- **Session persistence**: Auto-save to localStorage (30s), restore prompt, beforeunload warning. Manual save/load as JSON (v2 format).
+- **Projects & persistence**: Autosave to browser-local IndexedDB every ~2s while dirty (plus flush on tab switch / `beforeunload`); `.loupe` export/import round-trips image + measurements + calibration + viewport; legacy v3 session JSON is still importable (adopted as a new project); the open-tab set is restored on refresh. See "Projects & tabs" below.
 - **Sidebar**: Detections separated from measurements with elevate ↑ button, grouped inspection results with Punch/Die badges, resizable.
 - **Export**: Annotated PNG, measurement CSV, inspection CSV, inspection PDF (jsPDF), **DXF export** (reverse engineering — measurements to DXF in mm).
+
+### Projects & tabs
+- **Typed projects**: `microscopy` is multi-tab (any number open at once); `deflectometry` and `fringe` are singleton types — only one tab of each may be open, and opening a second prompts "Close & open" (swap confirmation via `shell.js::showNotice`).
+- **Swap-on-activate** (`frontend/workspace.js`): the app's singleton `state`/viewport/undo-redo stacks always describe the ACTIVE tab only. Switching tabs serializes the outgoing tab's workspace and restores the incoming one. Every key of `state` must be classified in `STATE_FIELDS` as `swapped` (travels with the tab), `transient` (reset on every restore), or `global` (untouched by tab switches) — enforced by the swap-completeness gate in `tests/frontend/test_workspace.js`. **A new `state` field added without classifying it there fails that test.**
+- **`state._epoch` staleness rule**: `restoreWorkspace()` bumps `state._epoch` before anything else. Any async handler that captures `captureEpoch()` before an awaited server call must check `isStale(epoch)` before applying its result, so a slow response from a since-deactivated tab can't land in the wrong tab. Dropped results log `console.debug("[epoch] stale result dropped: <label>")`.
+- **Per-tab server sessions**: `X-Session-ID` (`frontend/api.js`) is the active project's UUID, registered via `tab-manager.js`'s `setSessionIdProvider`. The server only holds transient, TTL'd per-session frames; if a frame has expired or the project was just restored from IndexedDB, `apiFetchFrame()` silently re-uploads the stored frame Blob via `/load-image` and retries once — no "No frame stored" error should ever reach the user.
+- **Hard rule: no server-side project storage.** `frontend/projects-db.js` is the ONLY persistence layer (browser-local IndexedDB); the server never stores, lists, or has any notion of "a project". This is what keeps hosted multi-user instances from leaking data between users — the home screen's recents grid reads IndexedDB only.
 
 ### Coordinate frames — read this before touching DXF, overlays, or gear code
 
@@ -112,6 +129,7 @@ When in doubt, render the output of your new code as a colored overlay on top of
 - Tests use `httpx` async client against a real FastAPI test app (no mocking of the HTTP layer).
 - `tests/test_guided_inspection.py` — corridor detection, fitting, tolerance thresholds, manual point fitting.
 - Camera hardware is never required to run tests.
+- `node --test tests/frontend/*.js` — frontend unit tests via Node's built-in test runner (no build step): the workspace swap-completeness gate, project-format codecs, projects-db (IndexedDB + in-memory fallback), tab-manager lifecycle (open/activate/close, autosave, singleton rules), toolbar, home screen, and other DOM-stub-driven pure-logic suites. `frontend/main.js` itself is a plain wiring script with no exports and is not unit-tested — its DOM-coupled behavior is covered by manual verification instead.
 
 ### Config
 `config.json` at repo root stores runtime state: `camera_id`, `no_camera`, `version`, `tolerance_warn`, `tolerance_fail`. Managed by `backend/config.py`.

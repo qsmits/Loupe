@@ -81,63 +81,6 @@ export function setTool(name) {
   redraw();
 }
 
-const _MEASURE_TOOLS = new Set([
-  "distance","angle","circle","arc-fit","arc-measure",
-  "area","area-shape","spline","fit-line","point",
-]);
-
-// ── Top-level measure-tool groups (6-entry consolidated menu) ────────────────
-// Each top-level tool has sub-modes that map to underlying tool strings.
-// The first sub-mode in each group is the default.
-export const MEASURE_TOP_LEVEL = {
-  distance: {
-    label: "Distance",
-    subModes: [
-      { id: "direct",       label: "Direct",        tool: "distance" },
-    ],
-  },
-  angle: {
-    label: "Angle",
-    subModes: [
-      // Both sub-modes trigger the same underlying tool; angle tool chooses
-      // two-lines vs three-points based on whether the first click hits a line.
-      { id: "two-lines",   label: "Two lines",   tool: "angle", angleMode: "two-lines" },
-      { id: "three-points",label: "Three points",tool: "angle", angleMode: "three-points" },
-    ],
-  },
-  circle: {
-    label: "Circle / Arc",
-    subModes: [
-      { id: "3-point",       label: "3-point",     tool: "circle",      circleMode: "3-point" },
-      { id: "center-edge",   label: "Center+edge", tool: "circle",      circleMode: "center-edge" },
-      { id: "best-fit-circ", label: "Best-fit circle",tool: "arc-fit",  arcFitMode: "circle" },
-      { id: "best-fit-arc",  label: "Best-fit arc",   tool: "arc-fit",  arcFitMode: "arc" },
-      { id: "arc-sequential",label: "Arc (seq)",   tool: "arc-measure", arcMeasureMode: "sequential" },
-      { id: "arc-ends-first",label: "Arc (ends)",  tool: "arc-measure", arcMeasureMode: "ends-first" },
-    ],
-  },
-  area: {
-    label: "Area",
-    subModes: [
-      { id: "polygon", label: "Polygon", tool: "area" },
-      { id: "shape",   label: "From shape", tool: "area-shape" },
-    ],
-  },
-  misc: {
-    label: "Misc",
-    subModes: [
-      { id: "flatness", label: "Flatness", tool: "fit-line" },
-      { id: "spline",   label: "Spline",   tool: "spline" },
-    ],
-  },
-  point: {
-    label: "Point",
-    subModes: [
-      { id: "point", label: "Point", tool: "point" },
-    ],
-  },
-};
-
 // Reverse lookup: underlying tool string → top-level key.
 // For tools shared across groups we pick the canonical parent.
 const _TOOL_TO_TOP_LEVEL = {
@@ -152,10 +95,6 @@ const _TOOL_TO_TOP_LEVEL = {
   "spline":         "misc",
   "point":          "point",
 };
-
-export function topLevelOfTool(tool) {
-  return _TOOL_TO_TOP_LEVEL[tool] ?? null;
-}
 
 export function canvasPoint(e) {
   const r = canvas.getBoundingClientRect();

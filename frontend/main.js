@@ -32,12 +32,12 @@ import { loadReticle, unloadReticle, saveCustomReticle, importReticle } from './
 import { initReticlePanel } from './sidebar.js';
 import { initGear } from './gear.js';
 import { initFringe } from './fringe.js';
-import { getActiveMode } from './modes.js';
 import { enterMaskEditSession, isCrossModeActive } from './cross-mode.js';
 import { captureEpoch, isStale, registerWorkspaceDom } from './workspace.js';
 import { initShell } from './shell.js';
 import { initTabManager } from './tab-manager.js';
 import { initProjectIo, offerAutosaveMigration } from './project-io.js';
+import { onStorageUnavailable } from './projects-db.js';
 
 // ─── Dropdown helpers ─────��──────────────────────────────────────────────────
 function closeAllDropdowns() {
@@ -66,6 +66,19 @@ function toggleDropdown(btnId, dropId) {
 initMouseHandlers();
 initKeyboard(closeAllDropdowns);
 initShell();
+
+// IndexedDB unavailable (e.g. Safari private mode): in-memory fallback is
+// active — warn persistently. Registered before initTabManager so the very
+// first failed open() triggers it.
+onStorageUnavailable(() => {
+  if (document.getElementById("storage-banner")) return;
+  const banner = document.createElement("div");
+  banner.id = "storage-banner";
+  banner.textContent =
+    "Storage unavailable (private browsing?) — projects will NOT persist. " +
+    "Export anything important as .loupe.";
+  document.body.prepend(banner);
+});
 
 // DOM side of restoreWorkspace(): re-fit the canvas/viewport and refresh
 // every view after a tab swap. record.viewport === null → fresh project →
@@ -189,7 +202,7 @@ document.getElementById("btn-clear-measurements")?.addEventListener("click", () 
 document.getElementById("btn-clear-dxf")?.addEventListener("click", () => { closeAllDropdowns(); clearDxfOverlay(); });
 document.getElementById("btn-clear-all")?.addEventListener("click", () => { closeAllDropdowns(); clearAll(); });
 
-["btn-load-dxf","btn-export","btn-export-csv","btn-crosshair","btn-set-origin"]
+["btn-load-dxf","btn-export","btn-export-csv","btn-crosshair"]
   .forEach(id => {
     const el = document.getElementById(id);
     if (el) el.addEventListener("click", closeAllDropdowns, true);

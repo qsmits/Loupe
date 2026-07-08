@@ -1800,21 +1800,6 @@ body.no-camera .camera-section { display: none; }
 
 /* ── Mode system ─────────────────────────────────────────── */
 
-.mode-switcher {
-  font-size: 14px;
-  font-weight: 600;
-  background: var(--surface);
-  color: var(--text);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 3px 8px;
-  cursor: pointer;
-  outline: none;
-}
-.mode-switcher:focus {
-  border-color: var(--accent);
-}
-
 .mode-container {
   display: flex;
   flex: 1;
@@ -3929,4 +3914,14 @@ body.no-camera .camera-section { display: none; }
 }
 .home-import-zone.drag-active { border-color: var(--accent); color: var(--text); }
 .home-import-browse { color: var(--accent); cursor: pointer; text-decoration: underline; }
+
+/* ─── Storage-unavailable banner ─────────────────────────────── */
+#storage-banner {
+  background: #7f1d1d;
+  color: #fff;
+  font-size: 12px;
+  text-align: center;
+  padding: 6px 12px;
+  flex-shrink: 0;
+}
 
