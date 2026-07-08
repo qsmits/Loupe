@@ -13,7 +13,7 @@ import { initSubModeSelector } from './sub-mode-selector.js';
 import { initDxfHandlers, measurementsAsDxf } from './dxf.js';
 import { doFreeze, initDetectHandlers } from './detect.js';
 import { initCompareHandlers } from './compare.js';
-import { saveSession, loadSession, exportAnnotatedImage, exportCsv, exportDxf, autoSave, tryAutoRestore } from './session.js';
+import { saveSession, loadSession, exportAnnotatedImage, exportCsv, exportDxf } from './session.js';
 import { viewport, clampPan, fitToWindow, setImageSize, imageWidth, imageHeight } from './viewport.js';
 import { cacheImageData } from './subpixel-js.js';
 import { showContextMenu, hideContextMenu } from './events-context-menu.js';
@@ -35,8 +35,9 @@ import { initGear } from './gear.js';
 import { initFringe } from './fringe.js';
 import { initModes, getActiveMode } from './modes.js';
 import { enterMaskEditSession, isCrossModeActive } from './cross-mode.js';
-import { captureEpoch, isStale } from './workspace.js';
+import { captureEpoch, isStale, registerWorkspaceDom } from './workspace.js';
 import { initShell } from './shell.js';
+import { initTabManager } from './tab-manager.js';
 
 // ─── Dropdown helpers ─────��──────────────────────────────────────────────────
 function closeAllDropdowns() {
@@ -79,6 +80,31 @@ initMouseHandlers();
 initKeyboard(closeAllDropdowns);
 initModes();
 initShell();
+
+// DOM side of restoreWorkspace(): re-fit the canvas/viewport and refresh
+// every view after a tab swap. record.viewport === null → fresh project →
+// fit to window; otherwise the restored zoom/pan is kept (clamped).
+registerWorkspaceDom({
+  afterRestore(record) {
+    img.style.opacity = state.frozen ? "0" : "1";
+    updateFreezeUI();
+    resizeCanvas();
+    const rect = canvas.getBoundingClientRect();
+    if (record.viewport) clampPan(rect.width, rect.height);
+    else fitToWindow(rect.width, rect.height);
+    if (state.frozenBackground && imageWidth > 0) {
+      cacheImageData(state.frozenBackground, imageWidth, imageHeight);
+    }
+    renderSidebar();
+    renderInspectionTable();
+    updateCalibrationButton();
+    updateDxfControlsVisibility();
+    updateTemplateDisplay();
+    document.dispatchEvent(new CustomEvent("dxf-state-changed"));
+    document.dispatchEvent(new CustomEvent("inspection-state-changed"));
+    redraw();
+  },
+});
 
 // Frame provider for lazy re-upload (api.js apiFetchFrame): the stored
 // frozen Blob, or a JPEG re-encode of the frozen background as fallback
@@ -1552,15 +1578,10 @@ document.getElementById("spc-header")?.addEventListener("click", () => {
   header.textContent = collapsed ? "SPC Dashboard \u25BE" : "SPC Dashboard \u25B8";
 });
 
-// Auto-save every 30 seconds
-setInterval(autoSave, 30000);
-
-// Offer to restore previous session
-tryAutoRestore();
-
-// Warn before closing if unsaved
-window.addEventListener("beforeunload", e => {
-  // Best-effort session cleanup (frees server memory)
+// Best-effort cleanup + autosave flush on close. The unsaved-work dialog is
+// gone: IndexedDB autosave (tab-manager) keeps the project complete,
+// including the image.
+window.addEventListener("beforeunload", () => {
   try {
     fetch("/session", {
       method: "DELETE",
@@ -1571,14 +1592,12 @@ window.addEventListener("beforeunload", e => {
       keepalive: true,
     });
   } catch { /* ignore */ }
-
-  // Existing dirty-state warning
-  if (!state._savedManually && state.annotations.some(a => !TRANSIENT_TYPES.has(a.type))) {
-    e.preventDefault();
-    e.returnValue = "";
-  }
 });
 updateFreezeUI();
+
+// Boot the tab layer last — every engine subsystem above must be wired
+// before the first restoreWorkspace() fires.
+initTabManager();
 
 // ── Camera signal histogram ────────────────────────────────────────────────
 // Samples the live stream image at ~1 Hz whenever the camera panel is open
