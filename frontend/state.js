@@ -160,6 +160,17 @@ export function pushUndo(snapshot = null) {
   state._savedManually = false;
 }
 
+// Classify what Ctrl-Z should act on (Track A #1). Multi-click tools
+// accumulate clicks in state.pendingPoints (tools.js) and the DXF point-pick
+// in state.inspectionPickPoints (events-mouse.js); neither is covered by the
+// undo stack — snapshots happen on finalize — so the keyboard handler pops
+// them directly before falling through to history undo.
+export function undoTarget(s) {
+  if (s.inspectionPickTarget && s.inspectionPickPoints.length > 0) return "pick-point";
+  if (s.pendingPoints.length > 0) return "pending-point";
+  return "history";
+}
+
 // ── TOOL_STATUS ─────────────────────────────────────────────────────────────
 export const TOOL_STATUS = {
   "select":         "Select",

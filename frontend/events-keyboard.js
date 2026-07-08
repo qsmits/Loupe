@@ -1,14 +1,14 @@
 // ── Undo / Redo / Keyboard shortcuts ─────────────────────────────────────────
-import { state, undoStack, redoStack, takeSnapshot, mergeRestoredAnnotations } from './state.js';
+import { state, undoStack, redoStack, takeSnapshot, mergeRestoredAnnotations, undoTarget, TOOL_STATUS } from './state.js';
 import { canvas, showStatus, redraw, resizeCanvas } from './render.js';
 import { renderSidebar, renderInspectionTable } from './sidebar.js';
 import { deleteSelected, elevateSelected } from './annotations.js';
-import { setTool, promptArcFitChoice, finalizeArcFit, finalizeArea, finalizeSpline, finalizeFitLine, nudgeSelected } from './tools.js';
+import { setTool, promptArcFitChoice, finalizeArcFit, finalizeArea, finalizeSpline, finalizeFitLine, nudgeSelected, updateToolStatus } from './tools.js';
 import { exitDxfAlignMode } from './dxf.js';
 import { saveSession } from './session.js';
 import { viewport, fitToWindow, zoomOneToOne, clampPan, imageWidth, imageHeight } from './viewport.js';
 import { hideContextMenu } from './events-context-menu.js';
-import { _finalizePickInspection } from './events-inspection.js';
+import { _finalizePickInspection, _updatePickFit } from './events-inspection.js';
 import { getActiveMode } from './modes.js';
 import { nudgeReticleRotation, setReticleRotation } from './reticle.js';
 
@@ -139,7 +139,31 @@ export function initKeyboard(closeAllDropdowns) {
       return;
     }
     const ctrlOrMeta = e.ctrlKey || e.metaKey;
-    if (ctrlOrMeta && e.key === "z" && !e.shiftKey) { e.preventDefault(); undo(); return; }
+    if (ctrlOrMeta && e.key === "z" && !e.shiftKey) {
+      e.preventDefault();
+      // In-progress picks: Ctrl-Z removes the LAST point instead of touching
+      // the undo stack (Track A #1). Escape still aborts the whole pick.
+      const target = undoTarget(state);
+      if (target === "pick-point") {
+        state.inspectionPickPoints.pop();
+        _updatePickFit();
+        const n = state.inspectionPickPoints.length;
+        showStatus(n > 0
+          ? `Point removed — ${n} placed. Click points along the edge. Double-click or Enter to finish.`
+          : "Point removed — click points along the edge. Double-click or Enter to finish.");
+        redraw();
+        return;
+      }
+      if (target === "pending-point") {
+        state.pendingPoints.pop();
+        if (state.pendingPoints.length > 0) updateToolStatus();
+        else showStatus(TOOL_STATUS[state.tool] ?? state.tool);
+        redraw();
+        return;
+      }
+      undo();
+      return;
+    }
     if (ctrlOrMeta && (e.key === "y" || (e.key === "z" && e.shiftKey))) { e.preventDefault(); redo(); return; }
     if (e.key === "u" && state.selected.size > 0) {
       elevateSelected();
