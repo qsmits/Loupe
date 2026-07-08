@@ -88,4 +88,62 @@ describe('memory fallback when IndexedDB is unavailable', () => {
     await deleteProjectRecord(ID_A);
     assert.equal(await getProject(ID_A), null);
   });
+
+  it('late subscriber is notified immediately when fallback already engaged', async () => {
+    _setIndexedDbFactory(null);
+    await putProject(proj(ID_A, 'x', '2026-07-08T00:00:00Z')); // trigger fallback engagement
+    let notified = 0;
+    onStorageUnavailable(() => { notified += 1; });
+    // The subscriber must fire immediately, synchronously, without requiring another await
+    assert.equal(notified, 1, 'late subscriber should fire immediately');
+  });
+
+  it('early subscriber fires exactly once (no double-fire)', async () => {
+    _setIndexedDbFactory(null);
+    let notified = 0;
+    onStorageUnavailable(() => { notified += 1; });
+    // Now trigger the fallback
+    await putProject(proj(ID_A, 'x', '2026-07-08T00:00:00Z'));
+    assert.equal(notified, 1, 'early subscriber should fire exactly once');
+    // Register a second subscriber after fallback is engaged
+    let notified2 = 0;
+    onStorageUnavailable(() => { notified2 += 1; });
+    assert.equal(notified2, 1, 'second subscriber should also fire exactly once (immediate)');
+    assert.equal(notified, 1, 'first subscriber should not fire again');
+  });
+
+  it('stub captures pre-mutation snapshot on put (direct stub test)', async () => {
+    // Test the stub's clone timing directly, since the module's async nature
+    // makes it hard to test through putProject. This proves the fix works.
+    const stub = createIdbStub();
+    const openReq = stub.open('test-db', 1);
+    // Wait for open to complete
+    const db = await new Promise(resolve => {
+      openReq.onsuccess = () => resolve(openReq.result);
+    });
+    db.createObjectStore('test-store', { keyPath: 'id' });
+    const store = db.transaction('test-store', 'readwrite').objectStore('test-store');
+
+    // Create a record with a nested object
+    const record = { id: 'test-1', name: 'original', nested: { field: 'value' } };
+    // Call put() synchronously — the clone must happen now, not in the async callback
+    const putReq = store.put(record);
+    // Mutate the original record immediately, before the async callback runs
+    record.name = 'mutated-name';
+    record.nested.field = 'mutated-value';
+    // Wait for the put callback to run
+    await new Promise(resolve => { putReq.onsuccess = resolve; });
+
+    // Retrieve the stored record
+    const getReq = store.get('test-1');
+    const stored = await new Promise(resolve => {
+      getReq.onsuccess = () => resolve(getReq.result);
+    });
+
+    // The stored record must have the original values, not the mutated ones
+    assert.equal(stored.name, 'original',
+      'stored record name must be the pre-mutation snapshot');
+    assert.equal(stored.nested.field, 'value',
+      'stored record nested field must be the pre-mutation snapshot');
+  });
 });

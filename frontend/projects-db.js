@@ -26,11 +26,19 @@ export function _setIndexedDbFactory(factory) {
   _dbPromise = null;
   _memory = null;
   _notified = false;
+  _onUnavailable = null;
 }
 
 export function isPersistent() { return _memory === null; }
 
-export function onStorageUnavailable(fn) { _onUnavailable = fn; }
+export function onStorageUnavailable(fn) {
+  _onUnavailable = fn;
+  // If the fallback has already engaged, notify immediately so late subscribers
+  // (e.g. banner component in private mode) don't miss the notification.
+  if (_notified) {
+    try { fn(); } catch { /* never let the banner break storage */ }
+  }
+}
 
 function reqAsPromise(req) {
   return new Promise((resolve, reject) => {

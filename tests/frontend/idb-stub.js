@@ -34,10 +34,14 @@ export function createIdbStub() {
   function makeStoreApi(store) {
     return {
       put(value) {
+        // Clone synchronously at call time, before the async request callback,
+        // to match real IndexedDB's behavior. This catches callers who mutate
+        // the record after put without awaiting.
+        const cloned = clone(value);
         return asRequest(() => {
-          const key = value[store.keyPath];
+          const key = cloned[store.keyPath];
           if (key === undefined) throw new Error("no key");
-          store.data.set(key, clone(value));
+          store.data.set(key, cloned);
           return key;
         });
       },
