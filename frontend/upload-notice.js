@@ -22,6 +22,8 @@ export const FRAME_UPLOAD_ENDPOINTS = [
   '/align-dxf', '/align-dxf-edges',
   '/inspect-guided', '/fit-feature',
   '/refine-point', '/gradient-overlay',
+  // Gear-analysis compute endpoints that read the frozen frame
+  '/analyze-gear', '/detect-gear-teeth', '/auto-phase-gear',
 ];
 
 /** Pure: does this URL hit a server-side frame-compute endpoint? */

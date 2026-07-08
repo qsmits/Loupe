@@ -16,6 +16,7 @@ describe('isFrameUploadEndpoint', () => {
       '/detect-arcs-partial', '/preprocessed-view',
       '/align-dxf', '/align-dxf-edges',
       '/inspect-guided', '/fit-feature', '/refine-point', '/gradient-overlay',
+      '/analyze-gear', '/detect-gear-teeth', '/auto-phase-gear',
     ]) {
       assert.equal(isFrameUploadEndpoint(url), true, url);
     }
