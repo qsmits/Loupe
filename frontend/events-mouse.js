@@ -289,8 +289,12 @@ async function onMouseDown(e) {
           if (ann) {
             const offset = ann.labelOffset || { dx: 0, dy: 0 };
             _beginDragUndo();
+            // effDx/effDy = rendered offset incl. viewport clamping (see
+            // render.js drawMeasurementLabel) — seeding the drag from it keeps
+            // a clamped label under the cursor instead of teleporting it to
+            // its off-screen natural anchor on the first mousemove.
             state._labelDrag = { annId: box.annId, startX: pt.x, startY: pt.y,
-                                 origDx: offset.dx, origDy: offset.dy };
+                                 origDx: box.effDx ?? offset.dx, origDy: box.effDy ?? offset.dy };
             // Comments: clicking the label selects the annotation too.
             if (ann.type === "comment") {
               state.selected = new Set([ann.id]);

@@ -4,6 +4,7 @@ import { viewport, imageWidth, imageHeight, setImageSize, fitToWindow } from './
 import { measurementLabel as _measurementLabel, getLineEndpoints, lineAngleDeg } from './format.js';
 export { getLineEndpoints, lineAngleDeg } from './format.js';
 import { isCrossModeActive } from './cross-mode.js';
+import { clampBoxToView } from './label-clamp.js';
 
 // ── Shared primitives (used by sub-modules via import from render.js) ────────
 
@@ -99,15 +100,42 @@ export function drawLabel(text, x, y) {
   ctx.fillText(text, x, y);
 }
 
-/** Draw a measurement label with optional drag offset and leader line. Records hitbox. */
+/** Draw a measurement label with optional drag offset and leader line. Records hitbox.
+ *  A label whose natural anchor lies outside the visible viewport is clamped
+ *  into view with a leader line to the true anchor (Track A #2). A
+ *  user-dragged label (labelOffset ≠ 0) is never clamped — its offset is
+ *  authoritative; double-click resets it (events-mouse.js). */
 export function drawMeasurementLabel(ann, text, defaultX, defaultY, refX, refY) {
   if (ann.purpose && ann.purpose !== 'measurement') return; // suppress label for drawing/helper
   const offset = ann.labelOffset || { dx: 0, dy: 0 };
-  const lx = defaultX + offset.dx;
-  const ly = defaultY + offset.dy;
+  const userDragged = offset.dx !== 0 || offset.dy !== 0;
+  let lx = defaultX + offset.dx;
+  let ly = defaultY + offset.dy;
 
-  // Leader line if offset
-  if (offset.dx !== 0 || offset.dy !== 0) {
+  // Measure once — needed for both clamping and the hitbox.
+  const fontSize = pw(12);
+  ctx.font = `bold ${fontSize}px ui-monospace, monospace`;
+  const textW = ctx.measureText(text).width;
+
+  let clamped = false;
+  if (!userDragged) {
+    // Visible viewport in image space — drawing happens inside the viewport
+    // transform (redraw: scale(zoom) then translate(-pan)), so labels are
+    // positioned in image coordinates.
+    const view = {
+      left: viewport.panX,
+      top: viewport.panY,
+      right: viewport.panX + canvas.width / viewport.zoom,
+      bottom: viewport.panY + canvas.height / viewport.zoom,
+    };
+    // drawLabel paints the background at (x−2, y−13) sized (w+4, 16) in pw units.
+    const box = { x: lx - pw(2), y: ly - pw(13), w: textW + pw(4), h: pw(16) };
+    const shift = clampBoxToView(box, view, pw(8));
+    if (shift.clamped) { lx += shift.dx; ly += shift.dy; clamped = true; }
+  }
+
+  // Leader line back to the true anchor when dragged or clamped
+  if (userDragged || clamped) {
     ctx.save();
     ctx.strokeStyle = "rgba(150, 150, 150, 0.5)";
     ctx.lineWidth = pw(0.5);
@@ -120,16 +148,17 @@ export function drawMeasurementLabel(ann, text, defaultX, defaultY, refX, refY) 
 
   drawLabel(text, lx, ly);
 
-  // Record hitbox for dragging
-  const fontSize = pw(12);
-  ctx.font = `bold ${fontSize}px ui-monospace, monospace`;
-  const textW = ctx.measureText(text).width;
+  // Record hitbox for dragging. effDx/effDy is the label's rendered offset
+  // from its default position (drag offset + clamp shift) — events-mouse.js
+  // seeds a new drag from it so grabbing a clamped label doesn't teleport it
+  // back to its off-screen natural anchor.
   _labelHitBoxes.push({
     annId: ann.id,
     handle: null,  // null = regular measurement (not guided result)
     x: lx - pw(2), y: ly - pw(13),
     w: textW + pw(4), h: pw(16),
     refX: refX ?? defaultX, refY: refY ?? defaultY,
+    effDx: lx - defaultX, effDy: ly - defaultY,
   });
 }
 
