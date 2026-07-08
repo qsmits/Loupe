@@ -28,6 +28,22 @@ function asRequest(fn) {
   return req;
 }
 
+// Same request-callback contract as asRequest, but `fn`'s return value is
+// awaited before firing onsuccess/onerror — used by put() only, so tests can
+// fault-inject an in-flight delay (e.g. `store.data.set = (...a) =>
+// somePromise.then(() => realSet(...a))`) in addition to the synchronous-
+// throw idiom the other request types (get/getAll/delete) already support.
+function asAsyncRequest(fn) {
+  const req = { result: undefined, error: null, onsuccess: null, onerror: null };
+  queueMicrotask(() => {
+    Promise.resolve().then(fn).then(
+      (result) => { req.result = result; req.onsuccess?.({ target: req }); },
+      (e) => { req.error = e; req.onerror?.({ target: req }); },
+    );
+  });
+  return req;
+}
+
 export function createIdbStub() {
   const databases = new Map();   // name → { version, stores: Map<name, {keyPath, data: Map}> }
 
@@ -38,11 +54,10 @@ export function createIdbStub() {
         // to match real IndexedDB's behavior. This catches callers who mutate
         // the record after put without awaiting.
         const cloned = clone(value);
-        return asRequest(() => {
+        return asAsyncRequest(() => {
           const key = cloned[store.keyPath];
           if (key === undefined) throw new Error("no key");
-          store.data.set(key, cloned);
-          return key;
+          return Promise.resolve(store.data.set(key, cloned)).then(() => key);
         });
       },
       get(key) {

@@ -1561,10 +1561,16 @@ window.addEventListener("beforeunload", () => {
 updateFreezeUI();
 
 // Boot the tab layer last — every engine subsystem above must be wired
-// before the first restoreWorkspace() fires.
-initTabManager();
-initProjectIo();
-offerAutosaveMigration();
+// before the first restoreWorkspace() fires. initTabManager() is async (it
+// restores the previous open-tab set from IndexedDB/localStorage and may
+// itself call activateTab()/showHomeScreen()); initProjectIo()'s import/drop
+// handlers and offerAutosaveMigration() can both reach adoptProject() ->
+// openProject() -> activateTab(), so they must not fire until that restore
+// has fully settled, or the two activateTab() calls race each other.
+initTabManager().then(() => {
+  initProjectIo();
+  offerAutosaveMigration();
+});
 
 // ── Camera signal histogram ────────────────────────────────────────────────
 // Samples the live stream image at ~1 Hz whenever the camera panel is open

@@ -241,6 +241,108 @@ describe('autosave (flushAutosave)', () => {
 
     assert.equal(toastCount, 1, 'repeated failures while still dirty must only toast once');
   });
+
+  // ── Autosave dirty-flag race (Track B whole-branch review, Fix 1) ────────
+  // flushAutosave used to clear state._dirty AFTER its awaits (getProject /
+  // makeThumbnail / putProject), unconditionally against the live `state`
+  // singleton. That's wrong for two reasons, covered by the next two tests:
+  //  (a) same-tab: an edit landing during those awaits is not in the
+  //      already-snapshotted `record`, yet got marked clean anyway — lost
+  //      until the next edit happened to re-dirty it.
+  //  (b) cross-tab: a tab switch during those awaits installs the INCOMING
+  //      tab's state via restoreWorkspace() into the same `state` singleton
+  //      — the outgoing flush's post-await clear then wiped the incoming
+  //      tab's own dirty flag.
+  // The fix clears state._dirty synchronously, right after the snapshot is
+  // taken and before the first await — see tab-manager.js::flushAutosave.
+  //
+  // Both tests use idb-stub.js's put() fault-injection seam extended for
+  // this task (asAsyncRequest) to hold a flush open across an await, the
+  // same store.data.set override idiom the failure tests above use for a
+  // synchronous throw, but here resolving on a controllable gate instead.
+  it('a same-tab edit made while a flush is in-flight survives (is not clobbered by the flush completing)', async () => {
+    const tm = await freshTabManager();
+    const tab = await tm.newProject('microscopy', { name: 'A' });
+    state.annotations = [{ type: 'distance', id: 1, points: [] }];
+    state._dirty = true;
+
+    const store = _idb._databases.get('loupe').stores.get('projects');
+    const realSet = store.data.set.bind(store.data);
+    let releasePut;
+    const gate = new Promise(resolve => { releasePut = resolve; });
+    store.data.set = (...args) => gate.then(() => realSet(...args));
+
+    const flushPromise = tm.flushAutosave();
+    // flushAutosave() runs synchronously up to its first await (getProject),
+    // which is reached before the gated put() — so by now the dirty flag
+    // must already be cleared, proving the clear happens at snapshot time,
+    // not after putProject() resolves.
+    assert.equal(state._dirty, false,
+      'the dirty flag must clear synchronously at snapshot time, before any await');
+
+    // Simulate an edit landing while the save is still in flight (held open
+    // by the gate above, currently parked at the awaited putProject()).
+    state._dirty = true;
+
+    releasePut();
+    await flushPromise;
+
+    assert.equal(state._dirty, true,
+      'an edit made during the flush\'s awaits must survive as a re-dirtied flag ' +
+      '(persisted by this save or picked up by the next cycle), not be cleared by ' +
+      'the flush\'s completion');
+  });
+
+  it('cross-tab: a swap during an in-flight flush does not clear the incoming tab\'s dirty flag', async () => {
+    const tm = await freshTabManager();
+    const tabA = await tm.newProject('microscopy', { name: 'A' });
+    const tabB = await tm.newProject('microscopy', { name: 'B' });   // B ends up active
+
+    const store = _idb._databases.get('loupe').stores.get('projects');
+    const realSet = store.data.set.bind(store.data);
+
+    // Leave B's stored record dirty by forcing ITS switch-away flush to fail
+    // (same throw-based fault-injection idiom as the "storage may be full"
+    // test above): deactivateCurrent()'s flushAutosave() call fails while B
+    // is still the active tab, so Fix 1's catch branch restores
+    // state._dirty = true before tab.record = serializeWorkspace() captures
+    // it — giving B a genuinely dirty record to switch back into below.
+    state.annotations = [{ type: 'distance', id: 1, points: [] }];
+    state._dirty = true;
+    store.data.set = () => { throw new Error('simulated failure — keep B dirty'); };
+    _setToastHandler(() => {});   // swallow the "storage may be full" toast
+    await tm.activateTab(tabA.id);   // B -> A; B's flush fails and stays dirty
+    store.data.set = realSet;        // real writes work again from here on
+
+    assert.equal(tm.getTabs().find(t => t.id === tabB.id).dirty, true,
+      'B must still read dirty after its failed switch-away flush');
+
+    // Dirty A and start a flush whose putProject() is held open on a gate.
+    state.annotations = [{ type: 'circle', id: 2, cx: 1, cy: 1, r: 1 }];
+    state._dirty = true;
+    let releasePut;
+    const gate = new Promise(resolve => { releasePut = resolve; });
+    store.data.set = (...args) => gate.then(() => realSet(...args));
+
+    const flushPromise = tm.flushAutosave();   // flushes A
+    assert.equal(state._dirty, false, 'Fix 1: A\'s dirty flag must clear synchronously at snapshot time');
+
+    // Swap back to B WHILE A's flush is still awaiting its gated putProject().
+    await tm.activateTab(tabB.id);
+    assert.equal(state._dirty, true,
+      'switching in must install the incoming (B) tab\'s own dirty flag');
+
+    releasePut();
+    await flushPromise;   // A's flush now completes
+
+    assert.equal(state._dirty, true,
+      'A\'s flush completing must not clear B\'s dirty flag now that B is active — ' +
+      'the cross-tab swap/edit race this fix closes');
+    assert.equal(tm.getTabs().find(t => t.id === tabA.id).dirty, false,
+      'A must read clean — its own flush completed successfully');
+    assert.equal(tm.getTabs().find(t => t.id === tabB.id).dirty, true,
+      'B must still read dirty — active-tab dirty tracks live state._dirty, untouched by A\'s flush');
+  });
 });
 
 describe('closeTab', () => {

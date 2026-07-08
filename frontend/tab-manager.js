@@ -51,7 +51,13 @@ export function getActiveTab() { return tabs.find(t => t.id === activeTabId) ?? 
 export function isHomeVisible() { return homeVisible; }
 
 /** Optional per-type persistence seam (spec: deflectometry/fringe may
- *  persist little in v1 — today they persist nothing, no regression). */
+ *  persist little in v1 — today they persist nothing, no regression).
+ *  DELIBERATELY UNWIRED in v1: nothing calls this yet, so `modeHooks` stays
+ *  empty and the serialize/restore branches below that read from it
+ *  (deactivateCurrent's `modeHooks[tab.type]?.serialize?.()`, activateTab's
+ *  `modeHooks[tab.type]?.restore?.(...)`) are always no-ops by design, not
+ *  a bug — a forward-compat seam for when those modes gain their own
+ *  persisted state. */
 export function registerModeHooks(type, hooks) { modeHooks[type] = hooks; }
 
 function emitChanged() {
@@ -114,9 +120,23 @@ export async function flushAutosave() {
   if (!state._dirty || _saving) return;
   if (isCrossModeActive()) return;
   _saving = true;
+  const activeAtStart = tab.id;   // captured before any await — see below
   try {
-    const record = serializeWorkspace();
+    const record = serializeWorkspace();   // synchronous snapshot of `state`
     tab.record = record;
+    // Clear the dirty flag HERE — synchronously, right after the snapshot,
+    // NOT after the awaits below. `record` is a complete synchronous copy
+    // of `state` at this instant, so "dirty" correctly becomes false for
+    // everything it contains. Clearing post-await (the old bug) was wrong
+    // two ways: (1) a tab switch during the awaits calls restoreWorkspace()
+    // on the incoming tab, installing ITS state into this same `state`
+    // singleton — a post-await `state._dirty = false` would then clear the
+    // INCOMING tab's flag, not this (outgoing) tab's; (2) an edit made to
+    // `state` during the awaits sets `_dirty = true` again via pushUndo()
+    // — clearing early lets that re-dirty survive so the next autosave
+    // cycle picks it up, instead of an unconditional post-await clear
+    // wiping out an edit that was never captured in `record`.
+    state._dirty = false;
     const existing = await getProject(tab.id);
     const proj = existing ?? {
       id: tab.id, type: tab.type, name: tab.name,
@@ -136,11 +156,14 @@ export async function flushAutosave() {
       : null;
     proj.thumbnail = await makeThumbnail(record.state.frozenBackground) ?? proj.thumbnail;
     await putProject(proj);
-    state._dirty = false;
     _saveWarned = false;
     emitChanged();                       // clears the dirty dot
   } catch (e) {
     console.warn("[autosave] failed:", e);
+    // Only resurrect the dirty flag if this tab is still the one live in
+    // `state` — otherwise a save failure for the OUTGOING tab would
+    // incorrectly mark whatever tab is active now (after a swap) as dirty.
+    if (getActiveTabId() === activeAtStart) state._dirty = true;
     if (!_saveWarned) {
       _saveWarned = true;
       showToast("Couldn't save project — storage may be full", {

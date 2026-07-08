@@ -75,7 +75,11 @@ export const state = {
   angleMode: "two-lines",      // "two-lines" | "three-points"
   circleMode: "3-point",       // "3-point" | "center-edge"
   surfaceMode: "edm",          // "edm" | "lathe" | "print"
-  _topLevelTool: null,      // non-persistent: "distance"|"angle"|"circle"|"flatness"|"area"|"intersect" when a measure tool is active
+  _topLevelTool: null,      // "swapped" (workspace.js STATE_FIELDS): travels with the
+                             // tab in-memory across switches, but is not written into
+                             // buildWorkspaceV4()'s output, so it never reaches saved
+                             // sessions/projects. "distance"|"angle"|"circle"|"flatness"|
+                             // "area"|"intersect" when a measure tool is active.
   _noCamera: false,         // was let _noCamera (line 36)
   _hosted: false,           // set from /config/ui at startup
   _dirty: false,
