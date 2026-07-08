@@ -158,7 +158,11 @@ export function initDxfHandlers() {
           });
           if (alignResp.ok) {
             const result = await alignResp.json();
-            if (isStale(alignEpoch)) { console.debug("[epoch] stale result dropped: /align-dxf-edges"); return; }
+            if (isStale(alignEpoch)) {
+              console.debug("[epoch] stale result dropped: /align-dxf-edges");
+              e.target.value = ""; // reset even on stale-drop so re-selecting the same file re-fires "change"
+              return;
+            }
             const ann = state.annotations.find(a => a.type === "dxf-overlay");
             if (ann) {
               applyAlignmentResult(ann, result);

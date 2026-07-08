@@ -303,6 +303,7 @@ document.getElementById("file-input").addEventListener("change", async e => {
     const r = await apiFetch("/load-image", { method: "POST", body: formData });
     if (!r.ok) { alert("Could not load image"); return; }
     const { width, height } = await r.json();
+    if (isStale(epoch)) { console.debug("[epoch] stale result dropped: load-image"); loadingEl.hidden = true; return; }
     state.frozenSize = { w: width, h: height };
     setImageSize(width, height);
 
@@ -428,6 +429,7 @@ viewerEl.addEventListener("drop", async e => {
     const r = await apiFetch("/load-image", { method: "POST", body: formData });
     if (!r.ok) { alert("Could not load image"); return; }
     const { width, height } = await r.json();
+    if (isStale(epoch)) { console.debug("[epoch] stale result dropped: load-image"); loadingEl.hidden = true; return; }
     state.frozenSize = { w: width, h: height };
     setImageSize(width, height);
 

@@ -233,7 +233,11 @@ function runAnalyzeGearFromDialog() {
       return r.json();
     })
     .then((result) => {
-      if (isStale(epoch)) { console.debug("[epoch] stale result dropped: /analyze-gear"); return; }
+      if (isStale(epoch)) {
+        console.debug("[epoch] stale result dropped: /analyze-gear");
+        setGearDialogStatus("");
+        return;
+      }
       if (result.error) {
         setGearDialogStatus(`Gear analysis: ${result.error}`);
         return;
@@ -289,6 +293,12 @@ async function runGenerateGearOverlayFromDialog() {
   const { tipCircle, rootCircle } = _gearDialogCircles;
   const r_tip_mm = tipCircle.r / ppm;
   const module_mm = (2 * r_tip_mm) / (n + 2 * addendum);
+
+  // Captured before the first await below (/auto-phase-gear) so we can drop
+  // a stale result at the seam right before setDxfOverlayFromEntities, which
+  // synchronously mutates swapped tab state (annotations/inspectionResults/
+  // inspectionFrame/dxfFilename) on entry — see that helper's docstring.
+  const token = captureEpoch();
 
   // If the user hasn't set a rotation, auto-detect it via DFT phase of the
   // pitch-circle intensity profile. Edge-based template matching doesn't
@@ -368,6 +378,12 @@ async function runGenerateGearOverlayFromDialog() {
       throw new Error(`HTTP ${r.status}: ${txt}`);
     }
     const entities = await r.json();
+
+    if (isStale(token)) {
+      console.debug("[epoch] stale result dropped: /generate-gear-dxf");
+      setGearDialogStatus("");
+      return;
+    }
 
     closeGearDialog();
     await setDxfOverlayFromEntities(entities, {
