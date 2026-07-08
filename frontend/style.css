@@ -3886,3 +3886,122 @@ body.no-camera .camera-section { display: none; }
 }
 .defl-sm-details-section:first-of-type { border-top: 0; }
 
+/* ─── Shell: app bar (row 1) ─────────────────────────────────── */
+#app-bar {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  padding: 0 10px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  min-height: 34px;
+  flex-shrink: 0;
+  z-index: 110;
+}
+#app-bar-mount { display: flex; align-items: stretch; flex: 1; min-width: 0; }
+#app-bar-right { display: flex; align-items: center; gap: 4px; }
+
+.shell-mark {
+  display: flex;
+  align-items: center;
+  padding: 0 8px;
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text);
+  cursor: pointer;
+  white-space: nowrap;
+  user-select: none;
+}
+.shell-mark:hover { color: var(--accent); }
+
+.shell-tabstrip {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  overflow-x: auto;
+  scrollbar-width: thin;
+  min-width: 0;
+  flex: 1;
+}
+.shell-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px 5px;
+  border-radius: 8px 8px 0 0;
+  font-size: 11px;
+  color: var(--text-secondary);
+  background: transparent;
+  border: 1px solid transparent;
+  border-bottom: none;
+  cursor: pointer;
+  max-width: 200px;
+  white-space: nowrap;
+  user-select: none;
+}
+.shell-tab:hover { background: var(--surface-2); }
+.shell-tab.active {
+  background: var(--surface-2);
+  border-color: var(--border);
+  color: var(--text);
+}
+.shell-tab-type {
+  font-size: 9px;
+  font-weight: 700;
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: var(--border);
+  color: var(--text);
+  flex-shrink: 0;
+}
+.shell-tab-name { overflow: hidden; text-overflow: ellipsis; }
+.shell-tab-dirty { color: var(--accent); font-size: 8px; flex-shrink: 0; }
+.shell-tab-close {
+  border: none; background: none; color: var(--muted);
+  font-size: 12px; padding: 0 2px; border-radius: 4px; cursor: pointer;
+  flex-shrink: 0;
+}
+.shell-tab-close:hover { background: var(--border); color: var(--text); }
+.shell-tab-add {
+  border: none; background: none; color: var(--text-secondary);
+  font-size: 15px; padding: 2px 10px; cursor: pointer; border-radius: 6px;
+  align-self: center;
+}
+.shell-tab-add:hover { background: var(--surface-2); color: var(--text); }
+
+/* ─── Shell: dialog + toast ──────────────────────────────────── */
+.shell-dialog-backdrop {
+  position: fixed; inset: 0; z-index: 1000;
+  background: rgba(0,0,0,.55);
+  display: flex; align-items: center; justify-content: center;
+}
+.shell-dialog {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 12px; padding: 18px 20px; max-width: 420px;
+  box-shadow: 0 12px 40px rgba(0,0,0,.6);
+}
+.shell-dialog-title { font-size: 13px; font-weight: 600; margin-bottom: 8px; color: var(--text); }
+.shell-dialog-message { font-size: 12px; color: var(--text-secondary); line-height: 1.5; margin-bottom: 14px; white-space: pre-line; }
+.shell-dialog-buttons { display: flex; gap: 8px; justify-content: flex-end; }
+.shell-dialog-btn {
+  padding: 5px 14px; border-radius: 7px; font-size: 11px;
+  background: var(--surface-2); color: var(--text); border: 1px solid var(--border);
+  cursor: pointer;
+}
+.shell-dialog-btn:hover { background: var(--border); }
+.shell-dialog-btn.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+.shell-dialog-btn.primary:hover { background: var(--accent-hover); }
+
+.shell-toast {
+  position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%);
+  z-index: 1001; display: flex; align-items: center; gap: 10px;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 10px; padding: 8px 14px; font-size: 12px; color: var(--text);
+  box-shadow: 0 8px 30px rgba(0,0,0,.6);
+}
+.shell-toast-action {
+  border: none; background: none; color: var(--accent);
+  font-size: 12px; font-weight: 600; cursor: pointer;
+}
+.shell-toast-close { border: none; background: none; color: var(--muted); cursor: pointer; }
+

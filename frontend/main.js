@@ -36,6 +36,7 @@ import { initFringe } from './fringe.js';
 import { initModes, getActiveMode } from './modes.js';
 import { enterMaskEditSession, isCrossModeActive } from './cross-mode.js';
 import { captureEpoch, isStale } from './workspace.js';
+import { initShell } from './shell.js';
 
 // ─── Dropdown helpers ─────��──────────────────────────────────────────────────
 function closeAllDropdowns() {
@@ -77,6 +78,7 @@ function toggleDropdown(btnId, dropId) {
 initMouseHandlers();
 initKeyboard(closeAllDropdowns);
 initModes();
+initShell();
 
 // Frame provider for lazy re-upload (api.js apiFetchFrame): the stored
 // frozen Blob, or a JPEG re-encode of the frozen background as fallback

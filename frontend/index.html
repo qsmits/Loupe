@@ -8,6 +8,15 @@
 </head>
 <body>
 
+  <!-- Row 1: app bar (Preact shell) -->
+  <div id="app-bar">
+    <div id="app-bar-mount"></div>
+    <div id="app-bar-right">
+      <button id="btn-settings" class="top-btn icon-btn" title="Settings">&#9881;</button>
+      <button id="btn-help" class="top-btn icon-btn" title="Help &amp; shortcuts (?)">?</button>
+    </div>
+  </div>
+
   <!-- Top bar -->
   <div id="top-bar">
     <select id="mode-switcher" class="mode-switcher">
@@ -391,8 +400,6 @@
       <button id="btn-load" class="top-btn icon-btn microscope-only" title="Load image">📁</button>
       <button id="btn-save-image" class="top-btn icon-btn microscope-only" title="Save current image">📷</button>
       <button id="btn-save-session" class="top-btn icon-btn microscope-only" title="Save session">💾</button>
-      <button id="btn-settings" class="top-btn icon-btn" title="Settings">⚙</button>
-      <button id="btn-help" class="top-btn icon-btn" title="Help &amp; shortcuts (?)">?</button>
     </div>
   </div>
 
@@ -1715,6 +1722,7 @@
   <div id="context-menu" hidden></div>
   <div id="label-tooltip" hidden></div>
 
+  <div id="shell-overlays"></div>
   <script src="/lib/jspdf.umd.min.js"></script>
   <script type="module" src="main.js"></script>
 </body>
