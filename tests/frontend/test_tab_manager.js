@@ -232,6 +232,50 @@ describe('closeTab', () => {
   });
 });
 
+describe('singleton tabs (deflectometry/fringe)', () => {
+  // Task 7 already implements the one-tab-per-instrument gate in newProject
+  // (showNotice() swap-confirmation); Task 8 is the first task that makes it
+  // reachable end-to-end (console shim -> "new-project" event -> newProject).
+  // The modal itself can't be driven here (see the file header + dom-stub.js:
+  // showNotice() renders via Preact into `shell-overlays`, which this stub
+  // does not provide, so its promise never resolves without a real click).
+  // What IS testable without a DOM/Preact renderer is the gate itself: a
+  // second open of an already-open singleton type must not create a second
+  // tab, and must block (stay pending) until the modal is answered — proving
+  // newProject() doesn't race ahead of the confirmation.
+  it('blocks a second open of the same singleton type pending the swap-confirmation modal', async () => {
+    const tm = await freshTabManager();
+    const first = await tm.newProject('deflectometry', { name: 'D1' });
+    assert.equal(tm.getTabs().length, 1);
+    assert.equal(tm.getActiveTabId(), first.id);
+
+    let settled = false;
+    tm.newProject('deflectometry', { name: 'D2' }).then(() => { settled = true; });
+    await new Promise(r => setTimeout(r, 20));
+
+    assert.equal(settled, false, 'newProject must block on the confirmation modal, not race ahead');
+    assert.equal(tm.getTabs().length, 1, 'no second tab should exist while the modal is unanswered');
+    assert.equal(tm.getTabs()[0].id, first.id, 'the original singleton tab must remain untouched while blocked');
+    assert.equal(tm.getActiveTabId(), first.id, 'the original tab must still be active while blocked');
+    // Intentionally left pending: nothing in this environment can click the
+    // modal to resolve it. It holds no timer/handle, so it doesn't keep the
+    // test process alive.
+  });
+
+  it('allows a fresh open of a different singleton type without prompting', async () => {
+    const tm = await freshTabManager();
+    const defl = await tm.newProject('deflectometry', { name: 'D1' });
+    assert.equal(tm.getTabs().length, 1);
+
+    // Different type (fringe, not deflectometry) — no existing tab of this
+    // type, so newProject must resolve immediately (no showNotice branch).
+    const fringe = await tm.newProject('fringe', { name: 'F1' });
+    assert.equal(tm.getTabs().length, 2);
+    assert.equal(tm.getActiveTabId(), fringe.id);
+    assert.ok(tm.getTabs().some(t => t.id === defl.id), 'the deflectometry tab must remain open alongside fringe');
+  });
+});
+
 describe('renameProject', () => {
   it('updates the tab name and the persisted record with a fresh updatedAt', async () => {
     const tm = await freshTabManager();
