@@ -77,9 +77,19 @@ initMouseHandlers();
 initKeyboard(closeAllDropdowns);
 initModes();
 
-// Cross-mode mask editing: enter mask-edit session when microscope activates with crossMode
+// Mode switched back to microscope: re-fit, then (cross-mode only) enter the
+// mask-edit session.
 document.addEventListener('mode-switched', (e) => {
-  if (e.detail.mode === 'microscope' && isCrossModeActive()) {
+  if (e.detail.mode !== 'microscope') return;
+  // Aspect-ratio band-aid (Track A #5) — PERMANENT, survives Track B as the
+  // re-fit-on-activate step: while another mode was active the viewer rect
+  // was 0×0, so canvas dims and viewport fit are stale. Mirror the restore
+  // sequence used by cross-mode.js and loadCameraInfo.
+  resizeCanvas();
+  const rect = canvas.getBoundingClientRect();
+  fitToWindow(rect.width, rect.height);
+  redraw();
+  if (isCrossModeActive()) {
     setTimeout(() => enterMaskEditSession(), 0);
   }
 });

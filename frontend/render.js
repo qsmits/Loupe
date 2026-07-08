@@ -1,6 +1,6 @@
 import { state, _deviationHitBoxes, _labelHitBoxes } from './state.js';
 import { fitCircleAlgebraic, fitLine, polygonArea } from './math.js';
-import { viewport, imageWidth, imageHeight, setImageSize, fitToWindow } from './viewport.js';
+import { viewport, imageWidth, imageHeight, setImageSize, fitToWindow, canSeedImageSize } from './viewport.js';
 import { measurementLabel as _measurementLabel, getLineEndpoints, lineAngleDeg } from './format.js';
 export { getLineEndpoints, lineAngleDeg } from './format.js';
 import { isCrossModeActive } from './cross-mode.js';
@@ -188,6 +188,16 @@ export { drawDistance, drawAngle, drawCircle, drawArcMeasure,
          drawArcFit, drawSpline, drawSplinePreview } from './render-annotations.js';
 
 // ── Canvas sizing ──────────────────────────────────────────────────────────────
+
+// True when it is safe to seed the canonical image size from this rect.
+// Aspect-ratio band-aid (Track A #5) — PERMANENT, survives Track B: while
+// #mode-microscope is hidden the ResizeObserver/resize handlers still fire
+// and the viewer rect is 0×0; seeding from it corrupts image-space.
+function _canSeedFrom(rect) {
+  const modeRoot = document.getElementById("mode-microscope");
+  return canSeedImageSize(rect.width, rect.height, !!(modeRoot && modeRoot.hidden));
+}
+
 export function resizeCanvas() {
   const streamEl = state.browserCamera?.active
     ? document.getElementById("browser-cam-video")
@@ -204,7 +214,7 @@ export function resizeCanvas() {
     canvas.style.height = vr.height + "px";
     canvas.width  = Math.round(vr.width);
     canvas.height = Math.round(vr.height);
-    if (!imageWidth) setImageSize(canvas.width, canvas.height);
+    if (!imageWidth && _canSeedFrom(vr)) setImageSize(canvas.width, canvas.height);
     redraw();
     return;
   }
@@ -234,7 +244,7 @@ export function resizeCanvas() {
 
   canvas.width  = Math.round(displayW);
   canvas.height = Math.round(displayH);
-  if (!imageWidth) setImageSize(canvas.width, canvas.height);
+  if (!imageWidth && _canSeedFrom(r)) setImageSize(canvas.width, canvas.height);
   redraw();
 }
 

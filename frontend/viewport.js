@@ -17,6 +17,21 @@ export function setImageSize(w, h) {
   imageHeight = h;
 }
 
+/** Guard for seeding imageWidth/imageHeight from a DOM rect (the
+ * render.js::resizeCanvas fallback). Seeding from a hidden or collapsed
+ * container bakes letterbox/zero dimensions into image-space and shifts
+ * every annotation (aspect-ratio bug, Track A #5).
+ * PERMANENT — Track B keeps this as the hidden-DOM guard.
+ * @param {number} rectW  viewer rect width in CSS px
+ * @param {number} rectH  viewer rect height in CSS px
+ * @param {boolean} containerHidden  true when #mode-microscope is hidden
+ * @returns {boolean} true when seeding is safe
+ */
+export function canSeedImageSize(rectW, rectH, containerHidden) {
+  if (containerHidden) return false;
+  return rectW >= 2 && rectH >= 2;
+}
+
 /** Pure version — takes viewport as parameter (for testing) */
 export function imageToScreenPure(x, y, vp) {
   return { x: (x - vp.panX) * vp.zoom, y: (y - vp.panY) * vp.zoom };
