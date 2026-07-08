@@ -1,5 +1,5 @@
 // ── Inspection / point-pick helpers ────────────────────────────────────────
-import { apiFetch } from './api.js';
+import { apiFetch, apiFetchFrame } from './api.js';
 import { state } from './state.js';
 import { canvas, showStatus, redraw, dxfToCanvas } from './render.js';
 import { renderInspectionTable } from './sidebar.js';
@@ -187,7 +187,7 @@ export async function _finalizePickInspection() {
       const segPts = buckets[i];
       if (segPts.length < 2) continue;  // not enough points
 
-      const resp = await apiFetch("/fit-feature", {
+      const resp = await apiFetchFrame("/fit-feature", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

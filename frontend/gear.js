@@ -4,7 +4,7 @@
 import { state } from "./state.js";
 import { showStatus, redraw } from "./render.js";
 import { hitTestAnnotation } from "./hit-test.js";
-import { apiFetch } from "./api.js";
+import { apiFetch, apiFetchFrame } from "./api.js";
 import { setDxfOverlayFromEntities } from "./dxf.js";
 
 // Dialog state: the picked tip/root circles, held while the modal is open.
@@ -167,7 +167,7 @@ async function detectToothCountFromDialog() {
   setGearDialogStatus("Detecting tooth count…");
 
   try {
-    const r = await apiFetch("/detect-gear-teeth", {
+    const r = await apiFetchFrame("/detect-gear-teeth", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -219,7 +219,7 @@ function runAnalyzeGearFromDialog() {
 
   setGearDialogStatus("Analyzing gear…");
 
-  apiFetch("/analyze-gear", {
+  apiFetchFrame("/analyze-gear", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ cx, cy, tip_r, root_r, n_teeth: n }),

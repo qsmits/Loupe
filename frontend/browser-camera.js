@@ -92,7 +92,7 @@ export async function captureBrowserFrame() {
         const { width, height } = await r.json();
         const url = URL.createObjectURL(blob);
         const bmpImg = new Image();
-        bmpImg.onload = () => { URL.revokeObjectURL(url); resolve({ image: bmpImg, width, height }); };
+        bmpImg.onload = () => { URL.revokeObjectURL(url); resolve({ image: bmpImg, width, height, blob }); };
         bmpImg.onerror = () => { URL.revokeObjectURL(url); reject(new Error("Frame decode failed")); };
         bmpImg.src = url;
       } catch (err) {

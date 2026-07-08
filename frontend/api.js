@@ -1,54 +1,105 @@
-// api.js — Session-aware fetch wrapper for multi-user hosted mode.
+// api.js — session-aware fetch for multi-user hosted mode + per-tab sessions.
+//
+// X-Session-ID is resolved PER CALL:
+//   1. the registered provider (tab-manager registers the active project's
+//      UUID — the project id doubles as the server session id, spec §tabs)
+//   2. fallback: a stable client-generated UUID (kept in sessionStorage so
+//      reloads reuse it; plain variable when sessionStorage is unavailable)
+//
+// apiFetchFrame() wraps frame-dependent endpoints (/detect-*, /align-*,
+// /inspect-guided, /fit-feature, /refine-point, gear endpoints): when the
+// server answers 400 "No frame stored" (TTL expiry, server restart, or a
+// project restored from IndexedDB), it silently re-uploads the stored image
+// Blob via the existing /load-image and retries exactly once.
+//
+// Node-importable: no top-level await, no unguarded DOM/sessionStorage.
 
+import { state } from './state.js';
 import { maybeShowUploadNotice } from './upload-notice.js';
 
-// On first load in a tab, request a server-issued session token.
-// If the server is unreachable (offline / local file), fall back to
-// a client-generated UUID.  sessionStorage keeps the token for the
-// lifetime of the tab so subsequent navigations skip the fetch.
-if (!sessionStorage.getItem("sessionId")) {
-  try {
-    const resp = await fetch("/session/new", { method: "POST" });
-    if (resp.ok) {
-      const data = await resp.json();
-      sessionStorage.setItem("sessionId", data.session_id);
-    }
-  } catch { /* server unreachable — fall through to client-generated ID */ }
-  if (!sessionStorage.getItem("sessionId")) {
-    sessionStorage.setItem("sessionId", crypto.randomUUID());
+let _sessionIdProvider = null;
+
+/** Register `() => activeProjectId | null`. Pass null to unregister. */
+export function setSessionIdProvider(fn) { _sessionIdProvider = fn; }
+
+let _fallbackId = null;
+function fallbackId() {
+  if (_fallbackId) return _fallbackId;
+  if (typeof sessionStorage !== "undefined") {
+    _fallbackId = sessionStorage.getItem("sessionId") || crypto.randomUUID();
+    try { sessionStorage.setItem("sessionId", _fallbackId); } catch { /* private mode */ }
+  } else {
+    _fallbackId = crypto.randomUUID();
   }
+  return _fallbackId;
 }
 
-const SESSION_ID = sessionStorage.getItem("sessionId");
+/** Current session ID (also used by sendBeacon/keepalive callers). */
+export function getSessionId() {
+  return _sessionIdProvider?.() || fallbackId();
+}
 
-/**
- * Drop-in replacement for fetch() that adds X-Session-ID header.
- */
+/** Drop-in replacement for fetch() that adds X-Session-ID. */
 export async function apiFetch(url, options = {}) {
   // Hosted instances: first frame-compute call shows a one-time
   // "image is sent to the server" notice and waits for acknowledgment.
   await maybeShowUploadNotice(url);
   const headers = new Headers(options.headers || {});
-  headers.set("X-Session-ID", SESSION_ID);
+  headers.set("X-Session-ID", getSessionId());
   return fetch(url, { ...options, headers });
 }
 
-/** Get the current session ID (for sendBeacon/keepalive fallback). */
-export function getSessionId() {
-  return SESSION_ID;
+let _frameProvider = null;
+
+/** Register `async () => Blob | null` returning the active tab's frozen
+ *  frame. Pass null to unregister. */
+export function setFrameProvider(fn) { _frameProvider = fn; }
+
+const NO_FRAME_RE = /no frame stored/i;
+
+function rebuild400(text, original) {
+  return new Response(text, {
+    status: original.status,
+    statusText: original.statusText,
+    headers: original.headers,
+  });
 }
 
 /**
- * Upload a corrected canvas to the server so backend analysis (detection,
- * guided inspection, sub-pixel refinement) operates on the corrected image.
- * Call this after any client-side image correction (lens distortion, perspective).
- *
- * @param {HTMLCanvasElement} canvas — the corrected image canvas
+ * apiFetch + one silent recovery: 400 "No frame stored" → POST the stored
+ * frame Blob to /load-image → retry the original request once.
+ * NOTE: options.body must be re-sendable (string / FormData / Blob — all
+ * callers qualify; never pass a ReadableStream).
+ */
+export async function apiFetchFrame(url, options = {}) {
+  const first = await apiFetch(url, options);
+  if (first.status !== 400) return first;
+  const text = await first.text();
+  if (!NO_FRAME_RE.test(text)) return rebuild400(text, first);
+  const blob = await _frameProvider?.();
+  if (!blob) return rebuild400(text, first);
+  const fd = new FormData();
+  fd.append("file", blob, "frame.jpg");
+  const up = await apiFetch("/load-image", { method: "POST", body: fd });
+  if (!up.ok) {
+    console.debug("[api] frame re-upload failed:", up.status);
+    return rebuild400(text, first);
+  }
+  console.debug("[api] re-uploaded stored frame after 'No frame stored'; retrying", url);
+  return apiFetch(url, options);
+}
+
+/**
+ * Upload a corrected canvas so backend analysis operates on the corrected
+ * image. Also updates state.frozenBlob so persistence and lazy re-upload
+ * carry the corrected frame.
+ * @param {HTMLCanvasElement} canvas
  */
 export async function uploadCorrectedFrame(canvas) {
   const blob = await new Promise(resolve => canvas.toBlob(resolve, "image/jpeg", 0.95));
   if (!blob) return;
+  state.frozenBlob = blob;
   const fd = new FormData();
   fd.append("file", blob, "frame.jpg");
-  await apiFetch("/update-frame", { method: "POST", body: fd });
+  await apiFetchFrame("/update-frame", { method: "POST", body: fd });
 }

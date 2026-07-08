@@ -1,4 +1,4 @@
-import { apiFetch } from './api.js';
+import { apiFetch, apiFetchFrame } from './api.js';
 import { state, pushUndo } from './state.js';
 import { redraw, canvas, img, showStatus, renderExportCanvas } from './render.js';
 import { addAnnotation } from './annotations.js';
@@ -145,7 +145,7 @@ export function initDxfHandlers() {
         showStatus("Auto-aligning DXF…");
         try {
           const smoothing = parseInt(document.getElementById("adv-smoothing")?.value || "2");
-          const alignResp = await apiFetch("/align-dxf-edges", {
+          const alignResp = await apiFetchFrame("/align-dxf-edges", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -278,7 +278,7 @@ export function initDxfHandlers() {
 
     if (dxfHasCircles && circles.length === 0) {
       setStatus("Running circle detection…");
-      const detectResp = await apiFetch("/detect-circles", {
+      const detectResp = await apiFetchFrame("/detect-circles", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ min_radius: 8, max_radius: 500 }),
@@ -308,7 +308,7 @@ export function initDxfHandlers() {
 
       if (circles.length >= 2 && dxfHasCircles) {
         // Circle-based alignment
-        const r = await apiFetch("/align-dxf", {
+        const r = await apiFetchFrame("/align-dxf", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -327,7 +327,7 @@ export function initDxfHandlers() {
         // Edge-based alignment (works without circles)
         usedEdges = true;
         const smoothing = parseInt(document.getElementById("adv-smoothing")?.value || "2");
-        const r = await apiFetch("/align-dxf-edges", {
+        const r = await apiFetchFrame("/align-dxf-edges", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -401,7 +401,7 @@ export function initDxfHandlers() {
         showStatus("Auto-aligning DXF...");
         const smoothing = parseInt(document.getElementById("adv-smoothing")?.value || "2");
         try {
-          const alignResp = await apiFetch("/align-dxf-edges", {
+          const alignResp = await apiFetchFrame("/align-dxf-edges", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -424,7 +424,7 @@ export function initDxfHandlers() {
       }
 
       const inspectableTypes = ["line", "polyline_line", "arc", "polyline_arc", "circle"];
-      const resp = await apiFetch("/inspect-guided", {
+      const resp = await apiFetchFrame("/inspect-guided", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -768,7 +768,7 @@ export async function setDxfOverlayFromEntities(entities, opts) {
   showStatus("Auto-aligning overlay…");
   try {
     const smoothing = parseInt(document.getElementById("adv-smoothing")?.value || "1");
-    const alignResp = await apiFetch("/align-dxf-edges", {
+    const alignResp = await apiFetchFrame("/align-dxf-edges", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ entities, pixels_per_mm: ppm, smoothing }),

@@ -1,4 +1,4 @@
-import { apiFetch, getSessionId } from './api.js';
+import { apiFetch, getSessionId, setFrameProvider } from './api.js';
 import { state, TRANSIENT_TYPES, camBounds } from './state.js';
 import { canvas, ctx, img, showStatus, redraw, resizeCanvas } from './render.js';
 import { renderSidebar, loadCameraInfo, loadUiConfig, loadTolerances,
@@ -76,6 +76,20 @@ function toggleDropdown(btnId, dropId) {
 initMouseHandlers();
 initKeyboard(closeAllDropdowns);
 initModes();
+
+// Frame provider for lazy re-upload (api.js apiFetchFrame): the stored
+// frozen Blob, or a JPEG re-encode of the frozen background as fallback
+// (covers z-stack/stitch results that set frozenBackground directly).
+setFrameProvider(async () => {
+  if (state.frozenBlob) return state.frozenBlob;
+  const bg = state.frozenBackground;
+  if (!bg || !imageWidth || !imageHeight) return null;
+  const c = document.createElement("canvas");
+  c.width = imageWidth;
+  c.height = imageHeight;
+  c.getContext("2d").drawImage(bg, 0, 0, c.width, c.height);
+  return await new Promise(res => c.toBlob(res, "image/jpeg", 0.95));
+});
 
 // Mode switched back to microscope: re-fit, then (cross-mode only) enter the
 // mask-edit session.
@@ -248,6 +262,9 @@ document.getElementById("btn-freeze").addEventListener("click", async () => {
     }
     state.frozen = false;
     state.frozenBackground = null;
+    state.frozenBlob = null;
+    state.frozenSource = null;
+    state.frozenFilename = null;
     state._gradientOverlayImg = null;
     state.showGradientOverlay = false;
     state._subpixelSnapTarget = null;
@@ -292,6 +309,9 @@ document.getElementById("file-input").addEventListener("change", async e => {
     loadedImg.onload = async () => {
       loadingEl.hidden = true;
       state.frozenBackground = loadedImg;
+      state.frozenBlob = file;
+      state.frozenSource = "file";
+      state.frozenFilename = file.name;
       img.style.opacity = "0";
       // MJPEG stream continues in background (changing src breaks canvas sizing)
       state.frozen = true;
@@ -412,6 +432,9 @@ viewerEl.addEventListener("drop", async e => {
     loadedImg.onload = () => {
       loadingEl.hidden = true;
       state.frozenBackground = loadedImg;
+      state.frozenBlob = file;
+      state.frozenSource = "file";
+      state.frozenFilename = file.name;
       img.style.opacity = "0";
       // MJPEG stream continues in background (changing src breaks canvas sizing)
       state.frozen = true;

@@ -1,5 +1,5 @@
 // ── Canvas mouse events ──────────────────────────────────────────────────────
-import { apiFetch } from './api.js';
+import { apiFetch, apiFetchFrame } from './api.js';
 import { state, _deviationHitBoxes, _labelHitBoxes, pushUndo, takeSnapshot, TRANSIENT_TYPES } from './state.js';
 import { canvas, ctx, img, showStatus, redraw, resizeCanvas,
          drawOrigin, dxfToCanvas } from './render.js';
@@ -61,7 +61,7 @@ function _updateSubpixelPreview(pt, altKey = false) {
   clearTimeout(_subpixelDebounce);
   _subpixelDebounce = setTimeout(async () => {
     try {
-      const resp = await apiFetch("/refine-point", {
+      const resp = await apiFetchFrame("/refine-point", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ x: pt.x, y: pt.y, search_radius: searchRadius, subpixel: method }),

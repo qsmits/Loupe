@@ -1,4 +1,4 @@
-import { apiFetch } from './api.js';
+import { apiFetch, apiFetchFrame } from './api.js';
 import { state } from './state.js';
 import { redraw, showStatus, img, canvas, resizeCanvas } from './render.js';
 import { addAnnotation } from './annotations.js';
@@ -54,11 +54,14 @@ export async function doFreeze() {
   // Browser camera: capture frame from video element and upload to /load-image
   if (isBrowserCameraActive()) {
     try {
-      const { image, width, height } = await captureBrowserFrame();
+      const { image, width, height, blob } = await captureBrowserFrame();
       state.frozenSize = { w: width, h: height };
       const dimsChanged = width !== imageWidth || height !== imageHeight;
       if (dimsChanged) setImageSize(width, height);
       state.frozenBackground = image;
+      state.frozenBlob = blob;
+      state.frozenSource = "browser-cam";
+      state.frozenFilename = null;
       document.getElementById("browser-cam-video").style.opacity = "0";
       state.frozen = true;
       cacheImageData(image, width, height);
@@ -103,6 +106,9 @@ export async function doFreeze() {
       bmpImg.onerror = () => { URL.revokeObjectURL(frameUrl); reject(new Error("Frame image decode failed")); };
       bmpImg.src = frameUrl;
     });
+    state.frozenBlob = frameBlob;
+    state.frozenSource = "camera";
+    state.frozenFilename = null;
   } catch (err) {
     showStatus("Failed to capture frame: " + err.message);
     state.frozenBackground = null;
@@ -175,7 +181,7 @@ export function initDetectHandlers() {
     await ensureFrozen();
     const t1 = parseInt(document.getElementById("canny-low").value);
     const t2 = parseInt(document.getElementById("canny-high").value);
-    const r = await apiFetch("/detect-edges", {
+    const r = await apiFetchFrame("/detect-edges", {
       method: "POST",
       headers: {"Content-Type": "application/json"},
       body: JSON.stringify({ threshold1: t1, threshold2: t2, surface_mode: state.surfaceMode }),
@@ -226,7 +232,7 @@ export function initDetectHandlers() {
     const maxR = parseInt(document.getElementById("circle-max-r").value);
     const subpixel = document.getElementById("detect-subpixel")?.checked
       ? state.settings.subpixelMethod : "none";
-    const resp = await apiFetch("/detect-circles", {
+    const resp = await apiFetchFrame("/detect-circles", {
       method: "POST",
       headers: {"Content-Type": "application/json"},
       body: JSON.stringify({ min_radius:minR, max_radius:maxR, sensitivity, subpixel, surface_mode: state.surfaceMode }),
@@ -251,7 +257,7 @@ export function initDetectHandlers() {
     await ensureFrozen();
     const sensitivity = parseInt(document.getElementById("line-sensitivity").value);
     const minLength   = parseInt(document.getElementById("line-min-length").value);
-    const resp = await apiFetch("/detect-lines", {
+    const resp = await apiFetchFrame("/detect-lines", {
       method: "POST",
       headers: {"Content-Type": "application/json"},
       body: JSON.stringify({ threshold1: 50, threshold2: 130, hough_threshold: sensitivity, min_length: minLength, max_gap: 8, surface_mode: state.surfaceMode }),
@@ -282,7 +288,7 @@ export function initDetectHandlers() {
     const nmsDist = parseInt(document.getElementById("adv-nms-dist").value);
     const subpixel = document.getElementById("detect-subpixel")?.checked
       ? state.settings.subpixelMethod : "none";
-    const r = await apiFetch("/detect-lines-merged", { method: "POST",
+    const r = await apiFetchFrame("/detect-lines-merged", { method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ threshold1: t1, threshold2: t2, min_length: minLen, nms_dist: nmsDist, smoothing, subpixel, surface_mode: state.surfaceMode }) });
     if (!r.ok) { const d = await r.json().catch(() => null); showStatus(d?.detail || "Line detection failed (HTTP " + r.status + ")"); return; }
@@ -306,7 +312,7 @@ export function initDetectHandlers() {
     const minSpan = parseInt(document.getElementById("adv-min-span").value);
     const subpixel = document.getElementById("detect-subpixel")?.checked
       ? state.settings.subpixelMethod : "none";
-    const r = await apiFetch("/detect-arcs-partial", { method: "POST",
+    const r = await apiFetchFrame("/detect-arcs-partial", { method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ threshold1: t1, threshold2: t2, min_span_deg: minSpan, smoothing, subpixel, surface_mode: state.surfaceMode }) });
     if (!r.ok) { const d = await r.json().catch(() => null); showStatus(d?.detail || "Arc detection failed (HTTP " + r.status + ")"); return; }

@@ -1,4 +1,4 @@
-import { apiFetch } from './api.js';
+import { apiFetch, apiFetchFrame } from './api.js';
 import { refinePointJS } from './subpixel-js.js';
 import { state, TOOL_STATUS, pushUndo } from './state.js';
 import { redraw, canvas, showStatus, getLineEndpoints, lineAngleDeg, listEl } from './render.js';
@@ -275,7 +275,7 @@ export async function handleToolClick(rawPt, e = {}) {
       if (result) pt = { x: result.x, y: result.y, snapped: true };
     } else {
       try {
-        const resp = await apiFetch("/refine-point", {
+        const resp = await apiFetchFrame("/refine-point", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ x: pt.x, y: pt.y, search_radius: searchRadius, subpixel: method }),
