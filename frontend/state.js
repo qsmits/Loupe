@@ -4,6 +4,10 @@ export const state = {
   frozen: false,
   frozenBackground: null,   // HTMLImageElement set by doFreeze()
   frozenSize: null,          // { w, h } set by doFreeze()
+  frozenBlob: null,          // Blob of the frozen frame (JPEG/PNG) — used for
+                             // project persistence and lazy server re-upload
+  frozenSource: null,        // "camera" | "file" | "browser-cam" | null
+  frozenFilename: null,      // original filename when frozenSource === "file"
   crosshair: false,
   showGrid: false,
   showGradientOverlay: false,
@@ -88,6 +92,17 @@ export const state = {
   reticleRotationDeg: 0,         // current rotation in degrees
   reticleColorOverride: null,    // user color override, or null (use reticle default)
   reticleOpacityOverride: null,  // user opacity override, or null (use reticle default)
+  // Tab/workspace machinery (Track B)
+  _epoch: 0,                 // bumped by workspace.restoreWorkspace(); async
+                             // handlers capture it and drop stale results
+  // Keys that were previously assigned dynamically by other modules without
+  // appearing in this literal. They are listed here so the swap-completeness
+  // gate test (tests/frontend/test_workspace.js) can see and classify them.
+  browserCamera: null,           // set by browser-camera.js
+  browserCameraDevices: null,    // set by browser-camera.js
+  _cameraInfo: null,             // set by sidebar.js
+  _badgeDrag: null,              // set by events-mouse.js (zoom badge drag)
+  _reticleDrag: null,            // set by events-mouse.js (reticle rotate drag)
 };
 
 // Active camera's exposure and gain bounds — refreshed from /camera/info
