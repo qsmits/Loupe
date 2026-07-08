@@ -14,10 +14,6 @@ import { solveConstraints } from './constraint-solver.js';
 // Re-export for backward compatibility (other modules import these from tools.js)
 export { hitTestAnnotation, hitTestDxfEntity } from './hit-test.js';
 
-// Optional hook set by sub-mode-selector.js to keep the segmented control in sync.
-let _subModeSelectorSync = null;
-export function registerSubModeSelectorSync(fn) { _subModeSelectorSync = fn; }
-
 export function setTool(name) {
   // Pan is only meaningful in frozen mode (live camera fills the viewport, so
   // panning would just shift annotations out from under the fixed image).
@@ -79,10 +75,7 @@ export function setTool(name) {
     state.gearPickHover = null;
     canvas.style.cursor = "default";
   }
-  document.querySelectorAll("#tool-strip .strip-btn[data-tool]").forEach(btn => {
-    btn.classList.toggle("active", btn.dataset.tool === name);
-  });
-  _updateStripGroups(name);
+  document.dispatchEvent(new CustomEvent("tool-changed"));
   showStatus(TOOL_STATUS[name] ?? name);
   canvas.style.cursor = name === "pan" ? "grab" : name === "select" ? "default" : "crosshair";
   redraw();
@@ -162,40 +155,6 @@ const _TOOL_TO_TOP_LEVEL = {
 
 export function topLevelOfTool(tool) {
   return _TOOL_TO_TOP_LEVEL[tool] ?? null;
-}
-
-const _TOOL_LABELS = {
-  "distance":"Distance","angle":"Angle","circle":"Circle / Arc","arc-fit":"Circle / Arc",
-  "arc-measure":"Circle / Arc","area":"Area",
-  "spline":"Misc","fit-line":"Misc",
-  "calibrate":"Calibrate",
-  "point":"Point",
-};
-
-function _updateStripGroups(name) {
-  const measureBtn = document.getElementById("btn-strip-measure");
-  const setupBtn   = document.getElementById("btn-strip-setup");
-  const optsBar    = document.getElementById("tool-options-bar");
-  if (measureBtn) {
-    const inGroup = _MEASURE_TOOLS.has(name);
-    const topKey = _TOOL_TO_TOP_LEVEL[name];
-    const topLabel = topKey ? MEASURE_TOP_LEVEL[topKey].label : null;
-    measureBtn.textContent = inGroup ? (topLabel ?? _TOOL_LABELS[name] ?? name) + " ▾" : "Measure ▾";
-    measureBtn.classList.toggle("active", inGroup);
-  }
-  if (setupBtn) {
-    setupBtn.classList.toggle("active", name === "calibrate");
-  }
-  if (optsBar) {
-    // All measure sub-options now live in the bottom-center sub-mode selector.
-    // Keep the legacy inline bar hidden.
-    optsBar.hidden = true;
-    const arcOpts = document.getElementById("tool-opts-arc-measure");
-    const circleOpts = document.getElementById("tool-opts-circle");
-    if (arcOpts) arcOpts.hidden = true;
-    if (circleOpts) circleOpts.hidden = true;
-  }
-  if (_subModeSelectorSync) _subModeSelectorSync();
 }
 
 export function canvasPoint(e) {

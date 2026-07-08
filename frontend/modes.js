@@ -29,9 +29,7 @@ export function switchMode(modeId) {
     el.hidden = modeId !== "fringe";
   });
 
-  const toolStrip = $("tool-strip");   // removed in the toolbar task; null-safe
   const sidebar = $("sidebar");
-  if (toolStrip) toolStrip.hidden = modeId !== "microscope";
   if (sidebar) sidebar.hidden = modeId !== "microscope";
 
   document.dispatchEvent(new CustomEvent('mode-switched', { detail: { mode: modeId } }));

@@ -134,7 +134,8 @@ export function initKeyboard(closeAllDropdowns) {
       setTool("select");
       if (state._originMode) {
         state._originMode = false;
-        document.getElementById("btn-set-origin").classList.remove("active");
+        document.getElementById("btn-set-origin")?.classList.remove("active");
+        document.dispatchEvent(new CustomEvent("tool-changed"));
       }
       return;
     }

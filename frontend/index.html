@@ -19,6 +19,7 @@
 
   <!-- Top bar -->
   <div id="top-bar">
+    <div id="toolbar-root" class="microscope-only"></div>
     <div class="menu-group fringe-only" hidden>
       <button class="menu-btn" id="btn-menu-fringe-settings">Settings ▾</button>
       <div class="dropdown fringe-settings-panel" id="dropdown-fringe-settings" hidden>
@@ -117,7 +118,7 @@
       </div>
     </div>
 
-    <div class="menu-group microscope-only">
+    <div class="menu-group microscope-only workspace-menus-start">
       <button class="menu-btn" id="btn-menu-detect">Detect ▾</button>
       <div class="dropdown detect-panel" id="dropdown-detect" hidden>
         <div class="detect-section">
@@ -251,7 +252,6 @@
         <label class="dropdown-item" style="display:flex;align-items:center;gap:6px;padding:4px 10px;cursor:pointer">
           <input type="checkbox" id="btn-gradient-overlay" /> Gradient overlay
         </label>
-        <button class="dropdown-item" id="btn-set-origin">Set origin</button>
         <div class="dropdown-divider"></div>
         <button class="dropdown-item" id="btn-save-template">Save as Template</button>
         <button class="dropdown-item" id="btn-load-template">Load Template</button>
@@ -305,6 +305,17 @@
         <button class="dropdown-item" id="btn-clear-dxf">Clear DXF overlay</button>
         <div class="dropdown-divider"></div>
         <button class="dropdown-item" id="btn-clear-all">Clear all</button>
+      </div>
+    </div>
+
+    <div class="menu-group microscope-only">
+      <button class="menu-btn" id="btn-menu-setup">Setup ▾</button>
+      <div class="dropdown" id="dropdown-setup" hidden>
+        <button class="dropdown-item" id="btn-lens-cal-open">Lens Cal</button>
+        <button class="dropdown-item" id="btn-tilt-cal-open">Perspective Correct</button>
+        <button class="dropdown-item" id="btn-tilt-cal-undo" hidden>Undo Perspective</button>
+        <button class="dropdown-item" id="btn-cal-profiles-open">Cal Profiles…</button>
+        <div id="cal-status-line" class="flyout-cal-status"></div>
       </div>
     </div>
 
@@ -436,63 +447,6 @@
       <!-- Calibration warning border -->
       <div id="cal-indicator" hidden></div>
 
-      <!-- Sub-mode selector (horizontal segmented control, sits above tool strip) -->
-      <div id="sub-mode-selector" hidden></div>
-
-      <!-- Floating tool strip -->
-      <div id="tool-strip">
-        <div id="tool-strip-main">
-          <button class="strip-btn" data-tool="select" title="Select (V)">Select</button>
-          <button class="strip-btn" data-tool="pan" title="Pan (H)">Pan</button>
-          <button class="strip-btn" id="btn-menu-note" title="Note (T) — place a text comment">📌 Note</button>
-          <div class="strip-divider"></div>
-
-          <!-- Measure group -->
-          <div class="strip-group">
-            <button class="strip-btn group-btn" id="btn-strip-measure">Measure ▾</button>
-            <div class="strip-flyout" id="strip-flyout-measure" hidden>
-              <button class="strip-btn flyout-item" data-tool="distance" data-top-level="distance">Distance <span class="flyout-key">D</span></button>
-              <button class="strip-btn flyout-item" data-tool="angle" data-top-level="angle">Angle <span class="flyout-key">A</span></button>
-              <button class="strip-btn flyout-item" data-tool="circle" data-top-level="circle">Circle / Arc <span class="flyout-key">O</span></button>
-              <button class="strip-btn flyout-item" data-tool="fit-line" data-top-level="misc">Misc <span class="flyout-key">L</span></button>
-              <button class="strip-btn flyout-item" data-tool="area" data-top-level="area">Area <span class="flyout-key">R</span></button>
-              <button class="strip-btn flyout-item" data-tool="point" data-top-level="point">Point <span class="flyout-key">P</span></button>
-            </div>
-          </div>
-
-          <!-- Setup group -->
-          <div class="strip-group">
-            <button class="strip-btn group-btn" id="btn-strip-setup">Setup ▾</button>
-            <div class="strip-flyout" id="strip-flyout-setup" hidden>
-              <button class="strip-btn flyout-item" data-tool="calibrate">Calibrate <span class="flyout-key">C</span></button>
-              <button class="strip-btn flyout-item" id="btn-lens-cal-open">Lens Cal</button>
-              <button class="strip-btn flyout-item" id="btn-tilt-cal-open">Perspective Correct</button>
-              <button class="strip-btn flyout-item" id="btn-tilt-cal-undo" hidden>Undo Perspective</button>
-              <button class="strip-btn flyout-item" id="btn-cal-profiles-open">Cal Profiles…</button>
-              <div id="cal-status-line" class="flyout-cal-status"></div>
-            </div>
-          </div>
-
-          <div class="strip-divider"></div>
-          <button class="strip-btn" id="btn-undo" title="Undo (Ctrl+Z)">↩</button>
-          <button class="strip-btn" id="btn-redo" title="Redo (Ctrl+Y)">↪</button>
-        </div>
-
-        <!-- Tool options row: shown for tools with extra options -->
-        <div id="tool-options-bar" hidden>
-          <div class="tool-opts-divider"></div>
-          <div id="tool-opts-arc-measure" hidden>
-            <span class="tool-opts-label">Point order:</span>
-            <button class="strip-btn tool-opts-btn active" id="btn-arc-order-sequential">Sequential</button>
-            <button class="strip-btn tool-opts-btn" id="btn-arc-order-ends-first">Ends first</button>
-          </div>
-          <div id="tool-opts-circle" hidden>
-            <span class="tool-opts-label">Mode:</span>
-            <button class="strip-btn tool-opts-btn active" id="btn-circle-mode-3pt">3-Point</button>
-            <button class="strip-btn tool-opts-btn" id="btn-circle-mode-center-edge">Center+Edge</button>
-          </div>
-        </div>
-      </div>
     </div>
 
     <!-- Right sidebar -->

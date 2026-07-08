@@ -9,7 +9,6 @@ import { renderSidebar, loadCameraInfo, loadUiConfig, loadTolerances,
 import { deleteAnnotation, addAnnotation, elevateSelected, clearDetections, clearMeasurements, clearDxfOverlay, clearAll } from './annotations.js';
 import { assembleTemplate, downloadTemplate, readTemplateFile } from './template.js';
 import { setTool } from './tools.js';
-import { initSubModeSelector } from './sub-mode-selector.js';
 import { initDxfHandlers, measurementsAsDxf } from './dxf.js';
 import { doFreeze, initDetectHandlers } from './detect.js';
 import { initCompareHandlers } from './compare.js';
@@ -41,28 +40,15 @@ import { initTabManager } from './tab-manager.js';
 
 // ─── Dropdown helpers ─────��──────────────────────────────────────────────────
 function closeAllDropdowns() {
-  ["dropdown-detect","dropdown-overlay","dropdown-clear","dropdown-camera","dropdown-fringe-settings","dropdown-fringe-export"].forEach(id => {
+  ["dropdown-detect","dropdown-overlay","dropdown-clear","dropdown-setup","dropdown-camera","dropdown-fringe-settings","dropdown-fringe-export"].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.hidden = true;
   });
-  ["btn-menu-detect","btn-menu-overlay","btn-menu-clear","btn-menu-camera","btn-menu-fringe-settings","btn-menu-fringe-export"].forEach(id => {
+  ["btn-menu-detect","btn-menu-overlay","btn-menu-clear","btn-menu-setup","btn-menu-camera","btn-menu-fringe-settings","btn-menu-fringe-export"].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.classList.remove("open");
   });
   stopCameraStatsPolling();
-  // Close strip flyouts
-  ["strip-flyout-measure","strip-flyout-setup"].forEach(id => {
-    const el = document.getElementById(id);
-    if (el) el.hidden = true;
-  });
-}
-
-function toggleStripFlyout(flyoutId) {
-  const flyout = document.getElementById(flyoutId);
-  if (!flyout) return;
-  const wasOpen = !flyout.hidden;
-  closeAllDropdowns();
-  if (!wasOpen) flyout.hidden = false;
 }
 
 function toggleDropdown(btnId, dropId) {
@@ -103,6 +89,30 @@ registerWorkspaceDom({
     document.dispatchEvent(new CustomEvent("inspection-state-changed"));
     redraw();
   },
+});
+
+// Shell toolbar seam: set-tool applies sub-mode fields first (mirrors the
+// old sub-mode selector), then switches the tool.
+document.addEventListener("set-tool", e => {
+  const d = e.detail || {};
+  if (d.circleMode)     { state.circleMode = d.circleMode; state.pendingPoints = []; }
+  if (d.angleMode)      { state.angleMode = d.angleMode; }
+  if (d.arcFitMode)     { state.arcFitMode = d.arcFitMode; }
+  if (d.arcMeasureMode) { state.arcMeasureMode = d.arcMeasureMode; state.pendingPoints = []; }
+  if (!d.tool) return;
+  if (state.tool !== d.tool) {
+    setTool(d.tool);
+  } else {
+    redraw();
+    document.dispatchEvent(new CustomEvent("tool-changed"));
+  }
+});
+
+document.addEventListener("toolbar-action", e => {
+  const action = e.detail?.action;
+  if (action === "undo") undo();
+  else if (action === "redo") redo();
+  else if (action === "origin") toggleOriginMode();
 });
 
 // Frame provider for lazy re-upload (api.js apiFetchFrame): the stored
@@ -149,10 +159,9 @@ document.getElementById("btn-menu-clear").addEventListener("click", e => {
   e.stopPropagation();
   toggleDropdown("btn-menu-clear", "dropdown-clear");
 });
-document.getElementById("btn-menu-note")?.addEventListener("click", e => {
+document.getElementById("btn-menu-setup").addEventListener("click", e => {
   e.stopPropagation();
-  closeAllDropdowns();
-  setTool("comment");
+  toggleDropdown("btn-menu-setup", "dropdown-setup");
 });
 document.getElementById("btn-menu-camera").addEventListener("click", e => {
   e.stopPropagation();
@@ -191,25 +200,7 @@ document.getElementById("btn-clear-all")?.addEventListener("click", () => { clos
     if (el) el.addEventListener("click", closeAllDropdowns, true);
   });
 
-// ── Strip flyout groups ───────────────────────────────────────────────────────
-document.getElementById("btn-strip-measure")?.addEventListener("click", e => {
-  e.stopPropagation();
-  toggleStripFlyout("strip-flyout-measure");
-});
-document.getElementById("btn-strip-setup")?.addEventListener("click", e => {
-  e.stopPropagation();
-  toggleStripFlyout("strip-flyout-setup");
-});
-
-// Tools in flyouts: use event delegation on each flyout
-document.querySelectorAll(".strip-flyout .flyout-item[data-tool]").forEach(btn => {
-  btn.addEventListener("click", () => {
-    setTool(btn.dataset.tool);
-    closeAllDropdowns();
-  });
-});
-
-// Lens Cal button in setup flyout
+// Lens Cal button in setup menu
 document.getElementById("btn-lens-cal-open")?.addEventListener("click", () => {
   closeAllDropdowns();
   openLensCalDialog();
@@ -239,42 +230,9 @@ document.getElementById("btn-cal-profiles-open")?.addEventListener("click", () =
   openCalProfiles();
 });
 
-// Arc-measure point-order toggle
-document.getElementById("btn-arc-order-sequential")?.addEventListener("click", () => {
-  state.arcMeasureMode = "sequential";
-  document.getElementById("btn-arc-order-sequential").classList.add("active");
-  document.getElementById("btn-arc-order-ends-first").classList.remove("active");
-  state.pendingPoints = [];
-  redraw();
-});
-document.getElementById("btn-arc-order-ends-first")?.addEventListener("click", () => {
-  state.arcMeasureMode = "ends-first";
-  document.getElementById("btn-arc-order-ends-first").classList.add("active");
-  document.getElementById("btn-arc-order-sequential").classList.remove("active");
-  state.pendingPoints = [];
-  redraw();
-});
-
-// Circle mode toggle
-document.getElementById("btn-circle-mode-3pt")?.addEventListener("click", () => {
-  state.circleMode = "3-point";
-  document.getElementById("btn-circle-mode-3pt").classList.add("active");
-  document.getElementById("btn-circle-mode-center-edge").classList.remove("active");
-  state.pendingPoints = [];
-  redraw();
-});
-document.getElementById("btn-circle-mode-center-edge")?.addEventListener("click", () => {
-  state.circleMode = "center-edge";
-  document.getElementById("btn-circle-mode-center-edge").classList.add("active");
-  document.getElementById("btn-circle-mode-3pt").classList.remove("active");
-  state.pendingPoints = [];
-  redraw();
-});
-
 // ── Close dropdowns on click-outside ─────────────────────────────────────────
 document.addEventListener("click", e => {
-  // Don't close if clicking inside a dropdown or strip flyout (e.g. adjusting sliders)
-  if (e.target.closest(".dropdown") || e.target.closest(".strip-group")) return;
+  if (e.target.closest(".dropdown")) return;
   closeAllDropdowns();
 });
 
@@ -360,10 +318,6 @@ document.getElementById("file-input").addEventListener("change", async e => {
   }
   e.target.value = "";
 });
-
-// ── Undo/redo buttons ─────────────────────────────────────────────────────────
-document.getElementById("btn-undo")?.addEventListener("click", undo);
-document.getElementById("btn-redo")?.addEventListener("click", redo);
 
 // ── Elevate from sidebar ─────────────────────────────────────────────────────
 document.addEventListener("elevate-selected", () => elevateSelected());
@@ -487,7 +441,7 @@ viewerEl.addEventListener("drop", async e => {
 });
 
 // ── Coordinate origin ───���──────────────────────────────────────────────────────
-document.getElementById("btn-set-origin").addEventListener("click", () => {
+function toggleOriginMode() {
   // Exit other modal modes first
   if (state.dxfAlignMode) {
     state.dxfAlignMode = false; state.dxfAlignStep = 0;
@@ -508,8 +462,9 @@ document.getElementById("btn-set-origin").addEventListener("click", () => {
     state.inspectionPickFit = null;
   }
   state._originMode = !state._originMode;
-  document.getElementById("btn-set-origin").classList.toggle("active", state._originMode);
-});
+  document.getElementById("btn-set-origin")?.classList.toggle("active", state._originMode);
+  document.dispatchEvent(new CustomEvent("tool-changed"));   // toolbar re-renders Origin state
+}
 
 // ── Session save button ───────────────────────────────────────────────────────
 document.getElementById("btn-save-session").addEventListener("click", saveSession);
@@ -604,7 +559,8 @@ document.getElementById("btn-clear")?.addEventListener("click", () => {
     }
     if (state._originMode) {
       state._originMode = false;
-      document.getElementById("btn-set-origin").classList.remove("active");
+      document.getElementById("btn-set-origin")?.classList.remove("active");
+      document.dispatchEvent(new CustomEvent("tool-changed"));
     }
     const coordEl = document.getElementById("coord-display");
     if (coordEl) coordEl.textContent = "";
@@ -1538,10 +1494,6 @@ new ResizeObserver(resizeCanvas).observe(img);
 img.addEventListener("load", resizeCanvas);
 window.addEventListener("resize", resizeCanvas);
 
-document.querySelectorAll("#tool-strip .strip-btn[data-tool]").forEach(btn => {
-  btn.addEventListener("click", () => setTool(btn.dataset.tool));
-});
-initSubModeSelector();   // wires the segmented control under the tool strip
 setTool(state.tool);  // sync initial active state via setTool
 
 loadCameraInfo();

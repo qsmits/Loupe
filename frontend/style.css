@@ -54,7 +54,60 @@ input[type=range] { cursor: pointer; accent-color: var(--accent); }
   position: relative;
   z-index: 100;
   flex-shrink: 0;
+  flex-wrap: wrap;
+  row-gap: 4px;
 }
+
+/* ─── Row 2 toolbar (microscopy) ─────────────────────────────── */
+#toolbar-root {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+#toolbar-root[hidden] { display: none; }
+.workspace-menus-start { margin-left: auto; }
+
+.tb-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 8px;
+  border-radius: 7px;
+  font-size: 10px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+.tb-btn svg { flex-shrink: 0; }
+.tb-btn:hover { background: var(--surface-2); color: var(--text); }
+.tb-btn.active { background: var(--accent); color: #fff; font-weight: 500; }
+.tb-btn.active:hover { background: var(--accent-hover); }
+
+.tb-divider {
+  width: 1px;
+  height: 16px;
+  background: var(--border);
+  margin: 0 4px;
+  flex-shrink: 0;
+}
+
+.tb-seg {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  overflow: hidden;
+  margin: 0 2px;
+}
+.tb-seg-btn {
+  padding: 3px 8px;
+  font-size: 9px;
+  color: var(--text-secondary);
+  background: transparent;
+}
+.tb-seg-btn:hover { background: var(--surface-2); color: var(--text); }
+.tb-seg-btn.active { background: var(--accent); color: #fff; font-weight: 500; }
 
 .top-bar-divider {
   width: 1px;
@@ -453,204 +506,12 @@ body.no-camera #stream-img {
   font-weight: 500;
 }
 
-/* ─── Floating tool strip ───────────────────────────────────── */
-#tool-strip {
-  position: absolute;
-  bottom: 12px;
-  left: 50%;
-  transform: translateX(-50%);
-  background: rgba(28,28,30,.96);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 5px 8px;
-  display: flex;
-  flex-direction: column;
-  gap: 0;
-  box-shadow: 0 4px 16px rgba(0,0,0,.6);
-  z-index: 200;
-}
-
-#tool-strip-main {
-  display: flex;
-  align-items: center;
-  gap: 3px;
-}
-
-.strip-btn {
-  padding: 5px 10px;
-  border-radius: 8px;
-  font-size: 10px;
-  color: var(--text-secondary);
-}
-.strip-btn:hover { background: var(--surface-2); color: var(--text); }
-.strip-btn.active { background: var(--accent); color: #fff; font-weight: 500; }
-.strip-btn.active:hover { background: var(--accent-hover); }
-
-.strip-divider {
-  width: 1px;
-  height: 16px;
-  background: var(--border);
-  margin: 0 2px;
-  flex-shrink: 0;
-}
-
-/* ─── Strip groups with flyout menus ────────────────────────── */
-.strip-group {
-  position: relative;
-}
-
-.group-btn {
-  white-space: nowrap;
-}
-
-.strip-flyout {
-  position: absolute;
-  bottom: calc(100% + 6px);
-  left: 50%;
-  transform: translateX(-50%);
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 4px;
-  box-shadow: 0 4px 20px rgba(0,0,0,.6);
-  z-index: 460;
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  min-width: 150px;
-}
-.strip-flyout[hidden] { display: none; }
-
-.flyout-item {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  text-align: left;
-  padding: 5px 10px;
-  border-radius: 6px;
-  white-space: nowrap;
-  width: 100%;
-}
-
-.flyout-key {
-  color: var(--muted);
-  font-size: 9px;
-  margin-left: 12px;
-  flex-shrink: 0;
-}
-
 .flyout-cal-status {
   margin-top: 3px;
   padding: 3px 10px 2px;
   font-size: 9px;
   color: var(--muted);
   border-top: 1px solid var(--border);
-}
-
-/* ─── Tool options bar ──────────────────────────────────────── */
-#tool-options-bar {
-  display: flex;
-  flex-direction: column;
-  gap: 0;
-}
-#tool-options-bar[hidden] { display: none; }
-
-.tool-opts-divider {
-  height: 1px;
-  background: var(--border);
-  margin: 4px -8px 3px;
-}
-
-#tool-opts-arc-measure {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 1px 0 2px;
-}
-
-.tool-opts-label {
-  font-size: 9px;
-  color: var(--muted);
-  white-space: nowrap;
-  margin-right: 2px;
-}
-
-.tool-opts-btn {
-  padding: 3px 8px;
-  font-size: 9px;
-  border-radius: 6px;
-  color: var(--text-secondary);
-}
-.tool-opts-btn.active {
-  background: var(--accent);
-  color: #fff;
-  font-weight: 500;
-}
-
-/* ─── Sub-mode selector (bottom-center of canvas, above tool strip) ───── */
-#sub-mode-selector {
-  position: absolute;
-  /* Sits directly above #tool-strip (which is at bottom:12) with a small gap. */
-  bottom: 58px;
-  left: 50%;
-  transform: translateX(-50%);
-  background: rgba(20, 20, 22, 0.92);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 4px 8px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.55);
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
-  z-index: 199;
-  white-space: nowrap;
-  pointer-events: auto;
-}
-#sub-mode-selector[hidden] { display: none; }
-
-.sub-mode-label {
-  font-size: 10px;
-  font-weight: 600;
-  color: var(--muted);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  padding-right: 4px;
-  border-right: 1px solid var(--border);
-}
-
-.sub-mode-segmented {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  background: rgba(255, 255, 255, 0.04);
-  border-radius: 7px;
-  padding: 2px;
-}
-
-.sub-mode-btn {
-  padding: 4px 9px;
-  font-size: 10px;
-  border-radius: 5px;
-  border: none;
-  background: transparent;
-  color: var(--text-secondary);
-  cursor: pointer;
-  white-space: nowrap;
-  transition: background 0.12s ease, color 0.12s ease;
-}
-.sub-mode-btn:hover {
-  background: rgba(255, 255, 255, 0.08);
-  color: var(--text);
-}
-.sub-mode-btn.active {
-  background: var(--accent);
-  color: #fff;
-  font-weight: 500;
-}
-.sub-mode-btn.active:hover {
-  background: var(--accent-hover);
 }
 
 /* ─── Calibration warning indicator ────────────────────────── */

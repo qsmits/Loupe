@@ -214,7 +214,8 @@ async function onMouseDown(e) {
     state.origin = { x: pt.x, y: pt.y, angle: 0 };
     addAnnotation({ type: "origin", x: pt.x, y: pt.y, angle: 0 });
     state._originMode = false;
-    document.getElementById("btn-set-origin").classList.remove("active");
+    document.getElementById("btn-set-origin")?.classList.remove("active");
+    document.dispatchEvent(new CustomEvent("tool-changed"));
     return;
   }
   if (isLensCalMode()) { lensCalClick(pt); return; }

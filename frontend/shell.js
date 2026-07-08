@@ -8,6 +8,7 @@
 import { h, render } from './vendor/preact.mjs';
 import htm from './vendor/htm.mjs';
 import { getTabs, getActiveTabId } from './tab-manager.js';
+import { Toolbar } from './toolbar.js';
 
 export const html = htm.bind(h);
 
@@ -103,9 +104,11 @@ function Toast() {
 // ── Mount / render ───────────────────────────────────────────────────────────
 let _appBarMount = null;
 let _overlayMount = null;
+let _toolbarMount = null;
 
 export function renderShell() {
   if (_appBarMount) render(html`<${AppBar} />`, _appBarMount);
+  if (_toolbarMount) render(html`<${Toolbar} />`, _toolbarMount);
 }
 
 function renderOverlays() {
@@ -115,6 +118,7 @@ function renderOverlays() {
 export function initShell() {
   _appBarMount = document.getElementById("app-bar-mount");
   _overlayMount = document.getElementById("shell-overlays");
+  _toolbarMount = document.getElementById("toolbar-root");
   document.addEventListener("workspace-changed", renderShell);
   document.addEventListener("tool-changed", renderShell);
   renderShell();
