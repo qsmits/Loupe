@@ -1,5 +1,4 @@
 import { apiFetch } from './api.js';
-import { isCrossModeActive } from './cross-mode.js';
 import { state, TRANSIENT_TYPES, DETECTION_TYPES } from './state.js';
 import { redraw, canvas, img, showStatus, renderExportCanvas } from './render.js';
 import { renderSidebar, renderInspectionTable } from './sidebar.js';
@@ -546,82 +545,6 @@ export function loadSession(raw) {
 
 // ── Auto-save ────────────────────────────────────────────────────────────────
 const AUTOSAVE_KEY = "microscope-autosave";
-
-// Warn the user at most once per failure streak (autoSave runs every 30 s —
-// without the flag the warning would flash on every tick). A later successful
-// autosave resets the flag, so a NEW failure after recovery warns again.
-let _autoSaveWarned = false;
-
-export function autoSave() {
-  if (isCrossModeActive()) return;
-  if (!state._dirty) return;
-  const session = {
-    version: 3,
-    savedAt: new Date().toISOString(),
-    nextId: state.nextId,
-    nextConstraintId: state.nextConstraintId,
-    calibration: state.calibration ? { ...state.calibration } : null,
-    origin: state.origin ? { ...state.origin } : null,
-    featureTolerances: { ...state.featureTolerances },
-    featureModes: { ...state.featureModes },
-    featureNames: { ...state.featureNames },
-    measurementGroups: { ...state.measurementGroups },
-    dxfFilename: state.dxfFilename ?? null,
-    inspectionResults: state.inspectionResults.slice(),
-    inspectionFrame: null,  // excluded — too large for localStorage
-    constraints: state.constraints.map(c => ({ ...c, contactPoint: c.contactPoint ? { ...c.contactPoint } : null })),
-    annotations: state.annotations
-      .filter(a => !TRANSIENT_TYPES.has(a.type))
-      .map(a => ({ ...a })),
-  };
-  try {
-    localStorage.setItem(AUTOSAVE_KEY, JSON.stringify(session));
-    state._dirty = false;
-    _autoSaveWarned = false;
-  } catch (e) {
-    console.warn("Auto-save failed:", e.message);
-    if (!_autoSaveWarned) {
-      _autoSaveWarned = true;
-      showStatus("⚠ Auto-save failed — storage full? Use manual Save");
-    }
-  }
-}
-
-export function tryAutoRestore() {
-  const raw = localStorage.getItem(AUTOSAVE_KEY);
-  if (!raw) return;
-  try {
-    const data = JSON.parse(raw);
-    if (!data.annotations || data.annotations.length === 0) {
-      localStorage.removeItem(AUTOSAVE_KEY);
-      return;
-    }
-  } catch { return; }
-
-  showStatus("Previous session found");
-  const bar = document.getElementById("status-bar");
-  if (!bar) return;
-  const prompt = document.createElement("div");
-  prompt.id = "autosave-prompt";
-  prompt.style.cssText = "display:flex; gap:8px; align-items:center; padding:4px 12px; font-size:12px;";
-  prompt.innerHTML = `
-    <span style="color:var(--text)">Restore previous session?</span>
-    <button id="restore-btn" class="tool-btn" style="font-size:11px; padding:2px 10px;">Restore</button>
-    <button id="dismiss-btn" class="tool-btn" style="font-size:11px; padding:2px 10px;">Dismiss</button>
-  `;
-  bar.parentElement.insertBefore(prompt, bar.nextSibling);
-  document.getElementById("restore-btn").addEventListener("click", () => {
-    prompt.remove();
-    loadSession(raw);
-    localStorage.removeItem(AUTOSAVE_KEY);
-    showStatus("Session restored");
-  });
-  document.getElementById("dismiss-btn").addEventListener("click", () => {
-    prompt.remove();
-    localStorage.removeItem(AUTOSAVE_KEY);
-    showStatus("Auto-save dismissed");
-  });
-}
 
 export function clearAutoSave() {
   localStorage.removeItem(AUTOSAVE_KEY);

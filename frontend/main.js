@@ -37,6 +37,7 @@ import { enterMaskEditSession, isCrossModeActive } from './cross-mode.js';
 import { captureEpoch, isStale, registerWorkspaceDom } from './workspace.js';
 import { initShell } from './shell.js';
 import { initTabManager } from './tab-manager.js';
+import { initProjectIo, offerAutosaveMigration } from './project-io.js';
 
 // ─── Dropdown helpers ─────��──────────────────────────────────────────────────
 function closeAllDropdowns() {
@@ -1549,6 +1550,8 @@ updateFreezeUI();
 // Boot the tab layer last — every engine subsystem above must be wired
 // before the first restoreWorkspace() fires.
 initTabManager();
+initProjectIo();
+offerAutosaveMigration();
 
 // ── Camera signal histogram ────────────────────────────────────────────────
 // Samples the live stream image at ~1 Hz whenever the camera panel is open

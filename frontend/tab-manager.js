@@ -315,6 +315,22 @@ export async function openProject(id) {
   await activateTab(proj.id);
 }
 
+/** Register an externally-constructed project record (import paths) and
+ *  open it. Regenerates the id if it collides with an existing project. */
+export async function adoptProject(proj) {
+  try {
+    if (await getProject(proj.id)) proj.id = crypto.randomUUID();
+  } catch { /* memory mode */ }
+  try { await putProject(proj); }
+  catch (e) {
+    console.warn("[projects] adopt failed:", e);
+    showToast("Couldn't save the imported project — storage may be full", {
+      actionLabel: "Manage projects", onAction: () => showHomeScreen(),
+    });
+  }
+  await openProject(proj.id);
+}
+
 /** Close a tab. NEVER destructive — autosave keeps the project current in
  *  IndexedDB; this only removes it from the open set. */
 export async function closeTab(id) {
