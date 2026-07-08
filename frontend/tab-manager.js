@@ -21,7 +21,7 @@ import {
   serializeWorkspace, restoreWorkspace, freshWorkspaceRecord,
 } from './workspace.js';
 import { buildWorkspaceV4, applyWorkspaceV4 } from './project-format.js';
-import { putProject, getProject, listProjectSummaries } from './projects-db.js';
+import { putProject, getProject, listProjectSummaries, deleteProjectRecord } from './projects-db.js';
 import { setSessionIdProvider } from './api.js';
 import { switchMode } from './modes.js';
 import { isCrossModeActive } from './cross-mode.js';
@@ -351,6 +351,25 @@ export async function renameProject(id, name) {
   emitChanged();
 }
 
+export async function deleteProjectEverywhere(id) {
+  let name = id;
+  try { name = (await getProject(id))?.name ?? id; } catch { /* keep id */ }
+  const choice = await showNotice({
+    title: "Delete project?",
+    message: `"${name}" will be permanently deleted from this browser.\nThis cannot be undone. (Export it as .loupe first if unsure.)`,
+    buttons: [
+      { id: "cancel", label: "Cancel", primary: true },
+      { id: "delete", label: "Delete" },
+    ],
+  });
+  if (choice !== "delete") return;
+  const open = tabs.find(t => t.id === id);
+  if (open) await closeTab(id);
+  try { await deleteProjectRecord(id); }
+  catch (e) { console.warn("[projects] delete failed:", e); showToast("Delete failed"); return; }
+  document.dispatchEvent(new CustomEvent("home-shown"));   // refresh recents
+}
+
 export async function showHomeScreen() {
   if (isCrossModeActive()) return;
   await deactivateCurrent();
@@ -377,6 +396,7 @@ export async function initTabManager() {
   document.addEventListener("close-tab", e => closeTab(e.detail.id));
   document.addEventListener("open-project", e => openProject(e.detail.id));
   document.addEventListener("rename-project", e => renameProject(e.detail.id, e.detail.name));
+  document.addEventListener("delete-project", e => deleteProjectEverywhere(e.detail.id));
   document.addEventListener("new-project", e => {
     if (e.detail?.type) newProject(e.detail.type);
     else showHomeScreen();
@@ -402,14 +422,14 @@ export async function initTabManager() {
       if (s) tabs.push({ id: s.id, type: s.type, name: s.name, record: null });
     }
   }
-  if (tabs.length > 0) {
-    const target = tabs.find(t => t.id === saved.active) ?? tabs[0];
-    await activateTab(target.id);
+  if (tabs.length > 0 && saved?.active && tabs.some(t => t.id === saved.active)) {
+    await activateTab(saved.active);
+  } else if (tabs.length > 0 && saved?.active == null) {
+    await showHomeScreen();          // tabs stay open in the strip, home visible
+  } else if (tabs.length > 0) {
+    await activateTab(tabs[0].id);
   } else {
-    // TRANSITIONAL until the home screen lands (Task "Home screen"
-    // replaces this branch with `await showHomeScreen()`): keep the app
-    // usable by opening a fresh microscopy project.
-    await newProject("microscopy");
+    await showHomeScreen();
   }
   emitChanged();
 }

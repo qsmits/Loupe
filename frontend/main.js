@@ -1550,11 +1550,6 @@ updateFreezeUI();
 // before the first restoreWorkspace() fires.
 initTabManager();
 
-// TRANSITIONAL (removed by the home-screen task): instrument tabs are
-// reachable from the console until the home screen provides type cards.
-window._loupeNewProject = (type) =>
-  document.dispatchEvent(new CustomEvent("new-project", { detail: { type } }));
-
 // ── Camera signal histogram ────────────────────────────────────────────────
 // Samples the live stream image at ~1 Hz whenever the camera panel is open
 // and draws a luma histogram + min/mean/max/clip stats. Pure client-side —

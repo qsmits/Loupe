@@ -9,6 +9,7 @@ import { h, render } from './vendor/preact.mjs';
 import htm from './vendor/htm.mjs';
 import { getTabs, getActiveTabId } from './tab-manager.js';
 import { Toolbar } from './toolbar.js';
+import { HomeScreen, refreshHomeData } from './home-screen.js';
 
 export const html = htm.bind(h);
 
@@ -105,10 +106,12 @@ function Toast() {
 let _appBarMount = null;
 let _overlayMount = null;
 let _toolbarMount = null;
+let _homeMount = null;
 
 export function renderShell() {
   if (_appBarMount) render(html`<${AppBar} />`, _appBarMount);
   if (_toolbarMount) render(html`<${Toolbar} />`, _toolbarMount);
+  if (_homeMount) render(html`<${HomeScreen} />`, _homeMount);
 }
 
 function renderOverlays() {
@@ -119,7 +122,9 @@ export function initShell() {
   _appBarMount = document.getElementById("app-bar-mount");
   _overlayMount = document.getElementById("shell-overlays");
   _toolbarMount = document.getElementById("toolbar-root");
+  _homeMount = document.getElementById("home-screen-mount");
   document.addEventListener("workspace-changed", renderShell);
   document.addEventListener("tool-changed", renderShell);
+  document.addEventListener("home-shown", refreshHomeData);
   renderShell();
 }
