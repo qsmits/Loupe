@@ -53,16 +53,34 @@ function AppBar() {
 let _dialog = null;   // { title, message, buttons, resolve }
 let _toast = null;    // { message, actionLabel, onAction }
 let _toastTimer = 0;
+let _noticeStub = null;   // test seam, see _setNoticeHandler
+let _toastStub = null;    // test seam, see _setToastHandler
+
+/** Test seam: stub showNotice() so it resolves synchronously with whatever
+ *  button id `stub({ title, message, buttons })` returns, bypassing the
+ *  Preact overlay render — in a headless test DOM there's no button to
+ *  click, so the real promise would never resolve. Pass null to restore
+ *  the real modal. */
+export function _setNoticeHandler(stub) { _noticeStub = stub; }
+
+/** Test seam: stub showToast() so `stub(message, opts)` is called instead
+ *  of scheduling the real overlay + auto-dismiss timer (which would leave
+ *  a dangling timeout in a headless test run). Pass null to restore the
+ *  real toast. */
+export function _setToastHandler(stub) { _toastStub = stub; }
 
 /** Modal notice. Resolves with the clicked button's id. */
 export function showNotice({ title, message, buttons }) {
+  if (_noticeStub) return Promise.resolve(_noticeStub({ title, message, buttons }));
   return new Promise(resolve => {
     _dialog = { title, message, buttons, resolve };
     renderOverlays();
   });
 }
 
-export function showToast(message, { actionLabel, onAction, timeoutMs = 6000 } = {}) {
+export function showToast(message, opts = {}) {
+  if (_toastStub) { _toastStub(message, opts); return; }
+  const { actionLabel, onAction, timeoutMs = 6000 } = opts;
   _toast = { message, actionLabel, onAction };
   clearTimeout(_toastTimer);
   _toastTimer = setTimeout(() => { _toast = null; renderOverlays(); }, timeoutMs);

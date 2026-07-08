@@ -28,6 +28,7 @@ import { _setIndexedDbFactory, getProject } from '../../frontend/projects-db.js'
 import { state } from '../../frontend/state.js';
 import { restoreWorkspace, freshWorkspaceRecord } from '../../frontend/workspace.js';
 import { setImageSize } from '../../frontend/viewport.js';
+import { _setNoticeHandler, _setToastHandler } from '../../frontend/shell.js';
 
 // ── Timer bookkeeping: initTabManager() starts a 2s autosave interval and
 // registers a beforeunload listener per boot. Track and clear so the test
@@ -50,10 +51,15 @@ async function freshTabManager() {
   return import(`../../frontend/tab-manager.js?test=${_seq}`);
 }
 
+let _idb;   // the current test's in-memory IDB stub, for fault-injection (see deleteProjectEverywhere)
 beforeEach(() => {
-  _setIndexedDbFactory(createIdbStub());
+  _idb = createIdbStub();
+  _setIndexedDbFactory(_idb);
   localStorage.clear();
   restoreWorkspace(freshWorkspaceRecord());
+  _setNoticeHandler(null);
+  _setToastHandler(null);
+  window.crossMode = null;
 });
 
 describe('newProject', () => {
@@ -289,6 +295,85 @@ describe('renameProject', () => {
     const after = await getProject(tab.id);
     assert.equal(after.name, 'New Name');
     assert.ok(after.updatedAt > before.updatedAt);
+  });
+});
+
+describe('deleteProjectEverywhere', () => {
+  // showNotice() normally renders a Preact modal into #shell-overlays and
+  // resolves only on a real button click — dom-stub.js doesn't provide that
+  // mount, so the promise would hang forever here (see the file header /
+  // "singleton tabs" describe block above for the same limitation). Use the
+  // _setNoticeHandler/_setToastHandler test seams (frontend/shell.js) to
+  // simulate the user's choice and observe the resulting toast, instead of
+  // faking a click.
+
+  it('confirm ("delete") deletes the record and closes the tab if it was open', async () => {
+    const tm = await freshTabManager();
+    const tab = await tm.newProject('microscopy', { name: 'ToDelete' });
+    _setNoticeHandler(() => 'delete');
+
+    await tm.deleteProjectEverywhere(tab.id);
+
+    assert.equal(await getProject(tab.id), null, 'record must be gone from IndexedDB');
+    assert.equal(tm.getTabs().some(t => t.id === tab.id), false, 'the open tab must have been closed');
+    assert.equal(tm.getActiveTabId(), null, 'closing the only open tab falls back to the home screen');
+  });
+
+  it('cancel ("cancel", i.e. anything but "delete") preserves the record and leaves the tab open', async () => {
+    const tm = await freshTabManager();
+    const tab = await tm.newProject('microscopy', { name: 'KeepMe' });
+    _setNoticeHandler(() => 'cancel');   // the dialog's Cancel button id — anything !== "delete"
+
+    await tm.deleteProjectEverywhere(tab.id);
+
+    const proj = await getProject(tab.id);
+    assert.ok(proj, 'record must still exist after cancel');
+    assert.equal(proj.name, 'KeepMe');
+    assert.ok(tm.getTabs().some(t => t.id === tab.id), 'the tab must remain open after cancel');
+    assert.equal(tm.getActiveTabId(), tab.id, 'the active tab must be unchanged after cancel');
+  });
+
+  it('surfaces a toast and does not throw when deleteProjectRecord itself fails', async () => {
+    const tm = await freshTabManager();
+    const tab = await tm.newProject('microscopy', { name: 'FailMe' });
+    _setNoticeHandler(() => 'delete');
+
+    // Force the underlying IDB delete() to reject without a purpose-built
+    // failing stub: reach into idb-stub.js's introspection map (`_databases`,
+    // already exported for tests) and make the "projects" store's backing
+    // Map throw on delete, simulating e.g. a full/locked store.
+    const store = _idb._databases.get('loupe').stores.get('projects');
+    store.data.delete = () => { throw new Error('simulated IDB delete failure'); };
+
+    let toastMessage = null;
+    _setToastHandler(msg => { toastMessage = msg; });
+
+    await assert.doesNotReject(tm.deleteProjectEverywhere(tab.id));
+
+    assert.equal(toastMessage, 'Delete failed', 'failure must surface a toast, matching other tab-manager failure paths');
+    const proj = await getProject(tab.id);
+    assert.ok(proj, 'record must still exist — the delete call failed');
+  });
+
+  it('aborts before the confirm dialog and leaves everything untouched when cross-mode is active', async () => {
+    const tm = await freshTabManager();
+    const tab = await tm.newProject('microscopy', { name: 'Guarded' });
+    let noticeCalled = false;
+    _setNoticeHandler(() => { noticeCalled = true; return 'delete'; });
+    let toastMessage = null;
+    _setToastHandler(msg => { toastMessage = msg; });
+
+    window.crossMode = { source: 'fringe' };
+    try {
+      await tm.deleteProjectEverywhere(tab.id);
+    } finally {
+      window.crossMode = null;
+    }
+
+    assert.equal(noticeCalled, false, 'must abort before even showing the confirm dialog');
+    assert.ok(toastMessage, 'must surface a toast explaining the refusal');
+    assert.ok(tm.getTabs().some(t => t.id === tab.id), 'tab must remain open');
+    assert.ok(await getProject(tab.id), 'record must remain in IndexedDB');
   });
 });
 

@@ -352,6 +352,13 @@ export async function renameProject(id, name) {
 }
 
 export async function deleteProjectEverywhere(id) {
+  if (isCrossModeActive()) {
+    // closeTab() no-ops under cross-mode; proceeding would delete the IDB
+    // record while a tab stays open pointing at it. Unreachable via the
+    // shipped UI today (home refuses to show under cross-mode) — defensive.
+    showToast("Finish the mask / calibration editing session first");
+    return;
+  }
   let name = id;
   try { name = (await getProject(id))?.name ?? id; } catch { /* keep id */ }
   const choice = await showNotice({

@@ -223,16 +223,21 @@ describe('HomeScreen — per-project ⋯ menu', () => {
     assert.deepEqual(getExport(), { id: 'p1' });
   });
 
-  it('Delete… dispatches delete-project with the id (no confirmation here — that is tab-manager\'s job)', async () => {
+  it('Delete… dispatches delete-project with the id (no confirmation here — that is tab-manager\'s job) and closes the menu immediately', async () => {
     await seedProject({ id: 'p1', name: 'A' });
     await refreshHomeData();
     let nodes = render();
     nodes.find(n => hasClass(n, 'home-card-menu-btn')).props.onClick({ stopPropagation: () => {} });
     nodes = render();
     const getDelete = captureEvent('delete-project');
+    const getChanged = captureEvent('workspace-changed');
     const deleteBtn = nodes.find(n => n.type === 'button' && flattenText(n) === 'Delete…');
     deleteBtn.props.onClick({ stopPropagation: () => {} });
     assert.deepEqual(getDelete(), { id: 'p1' });
+    // Fix: the menu must close right away, independent of tab-manager's
+    // async confirm dialog resolving (cancel or failure must not leave it
+    // stuck open) — same re-render event Export .loupe uses.
+    assert.ok(getChanged(), 'expected workspace-changed to be dispatched so the menu closes immediately');
   });
 
   it('Rename with a non-empty prompt() answer dispatches rename-project with the trimmed name', async () => {

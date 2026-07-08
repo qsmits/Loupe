@@ -82,6 +82,9 @@ function ProjectCard({ p }) {
           <button class="danger" onClick=${() => {
             _menuFor = null;
             dispatch("delete-project", { id: p.id });
+            dispatch("workspace-changed", {});   // close the menu now — the confirm dialog
+                                                  // (tab-manager.js) resolves independently,
+                                                  // on any outcome (cancel/confirm/failure)
           }}>Delete…</button>
         </div>` : null}
     </div>`;
