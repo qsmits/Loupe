@@ -61,6 +61,25 @@ class RateLimiter:
         self._last_cleanup = now
 
 
+# Static assets are exempt from rate limiting: a cold app load fetches 60+
+# ES-module files near-simultaneously over HTTP/2, which tripped the global
+# per-IP burst and 429'd part of the app's own import graph (breaking boot —
+# state._hosted never got set, so hosted gating and the upload notice were
+# silently disabled). The limiter exists to protect compute, not file serving;
+# Apache fronts the static files anyway.
+_STATIC_SUFFIXES = (
+    ".js", ".mjs", ".css", ".html", ".svg", ".png", ".jpg", ".jpeg",
+    ".gif", ".ico", ".woff", ".woff2", ".map", ".json", ".webmanifest",
+)
+
+
+def _is_static_asset(method: str, path: str) -> bool:
+    """True for GET/HEAD requests that serve the app shell / static files."""
+    if method not in ("GET", "HEAD"):
+        return False
+    return path == "/" or path.endswith(_STATIC_SUFFIXES)
+
+
 # Heavy endpoints that get stricter limits
 _HEAVY_PATHS = frozenset({
     "/detect-edges", "/detect-circles", "/detect-lines",
@@ -89,6 +108,10 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         if not self._hosted:
             return await call_next(request)
 
+        path = request.url.path
+        if _is_static_asset(request.method, path):
+            return await call_next(request)
+
         ip = request.client.host if request.client else "unknown"
 
         # Global rate limit
@@ -99,7 +122,6 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             )
 
         # Stricter limit for heavy endpoints
-        path = request.url.path
         if path in _HEAVY_PATHS and not self._heavy.check(ip):
             return JSONResponse(
                 status_code=429,
