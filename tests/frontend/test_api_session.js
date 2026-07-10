@@ -7,6 +7,7 @@ import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   apiFetch, apiFetchFrame, getSessionId, setSessionIdProvider, setFrameProvider,
+  withTimeout,
 } from '../../frontend/api.js';
 
 const realFetch = globalThis.fetch;
@@ -123,5 +124,26 @@ describe('apiFetchFrame — lazy frame re-upload', () => {
     const r = await apiFetchFrame('/detect-circles', { method: 'POST' });
     assert.equal(r.status, 400);
     assert.equal(calls.length, 2);
+  });
+});
+
+describe('withTimeout — AbortController/timer factory for capping upload duration', () => {
+  it('aborts the returned signal once the delay elapses', (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const { signal, didTimeout } = withTimeout(30000);
+    assert.equal(signal.aborted, false);
+    assert.equal(didTimeout(), false);
+    t.mock.timers.tick(30000);
+    assert.equal(signal.aborted, true);
+    assert.equal(didTimeout(), true, 'didTimeout() must report that THIS timer fired the abort');
+  });
+
+  it('cancel() clears the pending timer so the signal never aborts', (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const { signal, cancel, didTimeout } = withTimeout(30000);
+    cancel();
+    t.mock.timers.tick(30000);
+    assert.equal(signal.aborted, false);
+    assert.equal(didTimeout(), false);
   });
 });

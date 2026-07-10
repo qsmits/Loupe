@@ -1,4 +1,4 @@
-import { apiFetch, getSessionId, setFrameProvider } from './api.js';
+import { apiFetch, getSessionId, setFrameProvider, withTimeout } from './api.js';
 import { state, TRANSIENT_TYPES, camBounds } from './state.js';
 import { canvas, ctx, img, showStatus, redraw, resizeCanvas } from './render.js';
 import { renderSidebar, loadCameraInfo, loadUiConfig, loadTolerances,
@@ -34,7 +34,7 @@ import { initGear } from './gear.js';
 import { initFringe } from './fringe.js';
 import { enterMaskEditSession, isCrossModeActive } from './cross-mode.js';
 import { captureEpoch, isStale, registerWorkspaceDom } from './workspace.js';
-import { initShell } from './shell.js';
+import { initShell, showToast } from './shell.js';
 import { initTabManager } from './tab-manager.js';
 import { initProjectIo, offerAutosaveMigration } from './project-io.js';
 import { onStorageUnavailable } from './projects-db.js';
@@ -295,11 +295,13 @@ document.getElementById("file-input").addEventListener("change", async e => {
 
   const loadingEl = document.getElementById("loading-overlay");
   loadingEl.hidden = false;
+  const { signal, cancel, didTimeout } = withTimeout(30000);
   try {
     const epoch = captureEpoch();
     const formData = new FormData();
     formData.append("file", file);
-    const r = await apiFetch("/load-image", { method: "POST", body: formData });
+    const r = await apiFetch("/load-image", { method: "POST", body: formData, signal });
+    cancel();
     if (!r.ok) { alert("Could not load image"); return; }
     const { width, height } = await r.json();
     if (isStale(epoch)) { console.debug("[epoch] stale result dropped: load-image"); loadingEl.hidden = true; return; }
@@ -329,6 +331,7 @@ document.getElementById("file-input").addEventListener("change", async e => {
     loadedImg.src = url;
   } catch {
     loadingEl.hidden = true;
+    if (didTimeout()) showToast("Image upload timed out — the server may be busy");
   }
   e.target.value = "";
 });
@@ -417,11 +420,13 @@ viewerEl.addEventListener("drop", async e => {
 
   const loadingEl = document.getElementById("loading-overlay");
   loadingEl.hidden = false;
+  const { signal, cancel, didTimeout } = withTimeout(30000);
   try {
     const epoch = captureEpoch();
     const formData = new FormData();
     formData.append("file", file);
-    const r = await apiFetch("/load-image", { method: "POST", body: formData });
+    const r = await apiFetch("/load-image", { method: "POST", body: formData, signal });
+    cancel();
     if (!r.ok) { alert("Could not load image"); return; }
     const { width, height } = await r.json();
     if (isStale(epoch)) { console.debug("[epoch] stale result dropped: load-image"); loadingEl.hidden = true; return; }
@@ -451,6 +456,7 @@ viewerEl.addEventListener("drop", async e => {
     loadedImg.src = url;
   } catch {
     loadingEl.hidden = true;
+    if (didTimeout()) showToast("Image upload timed out — the server may be busy");
   }
 });
 

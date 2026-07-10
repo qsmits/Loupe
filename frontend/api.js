@@ -39,6 +39,28 @@ export function getSessionId() {
   return _sessionIdProvider?.() || fallbackId();
 }
 
+/**
+ * AbortController + timer factory for capping how long a fetch may run.
+ * Pass `signal` into the fetch options; call `cancel()` on every completion
+ * path (success or error) to clear the pending timer — otherwise it fires
+ * later for nothing. `didTimeout()` distinguishes "this timer fired the
+ * abort" from any other reason the signal might be aborted, so callers can
+ * show a timeout-specific message only when that's actually what happened.
+ */
+export function withTimeout(ms) {
+  const controller = new AbortController();
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, ms);
+  return {
+    signal: controller.signal,
+    cancel() { clearTimeout(timer); },
+    didTimeout: () => timedOut,
+  };
+}
+
 /** Drop-in replacement for fetch() that adds X-Session-ID. */
 export async function apiFetch(url, options = {}) {
   // Hosted instances: first frame-compute call shows a one-time

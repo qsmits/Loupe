@@ -377,6 +377,27 @@ class CameraReader(BaseCamera):
         return stats
 
 
+def _encode_mjpeg_frame(frame: np.ndarray) -> tuple[bool, np.ndarray | None]:
+    """CPU-bound per-frame work for mjpeg_generator: apply the active
+    "compare" post-processing profile (if any) and JPEG-encode the result.
+
+    Runs inside asyncio.to_thread — must not touch the event loop. Kept as
+    a standalone function (rather than inline in the generator) so both
+    pieces of synchronous work leave the loop in the same to_thread call.
+    """
+    # Apply the 4-up "compare" post-processing profile if one is active.
+    # Import lazily to avoid a circular import (api_compare -> cameras -> stream).
+    try:
+        from .api_compare import get_active_profile
+        from .vision.settings_proposer import apply_variant
+        profile = get_active_profile()
+        if profile is not None:
+            frame = apply_variant(frame, profile)
+    except Exception as e:  # pragma: no cover - defensive
+        _log.warning("compare profile apply failed: %s", e)
+    return cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
+
+
 async def mjpeg_generator(camera: BaseCamera, fps: int = 30):
     """
     Async generator yielding MJPEG multipart chunks.
@@ -391,17 +412,10 @@ async def mjpeg_generator(camera: BaseCamera, fps: int = 30):
             start = loop.time()
 
             frame = camera.get_frame()
-            # Apply the 4-up "compare" post-processing profile if one is active.
-            # Import lazily to avoid a circular import (api_compare -> cameras -> stream).
-            try:
-                from .api_compare import get_active_profile
-                from .vision.settings_proposer import apply_variant
-                profile = get_active_profile()
-                if profile is not None:
-                    frame = apply_variant(frame, profile)
-            except Exception as e:  # pragma: no cover - defensive
-                _log.warning("compare profile apply failed: %s", e)
-            ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
+            # Post-processing + JPEG encode are both synchronous cv2 calls —
+            # run them off the event loop so N open /stream connections don't
+            # starve other coroutines (e.g. /load-image) every ~33 ms each.
+            ok, buf = await asyncio.to_thread(_encode_mjpeg_frame, frame)
             if ok:
                 data = buf.tobytes()
                 yield (

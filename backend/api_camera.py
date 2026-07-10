@@ -63,6 +63,14 @@ class LoadSnapshotBody(BaseModel):
 MAX_UPLOAD_BYTES = 100 * 1024 * 1024  # 100 MB (stitched panoramas can be large)
 
 
+def _decode_image(data: bytes) -> np.ndarray | None:
+    """Decode raw upload bytes to a BGR frame. Synchronous/CPU-bound —
+    callers must run this via asyncio.to_thread, not directly on the
+    event loop (see /load-image and /update-frame)."""
+    arr = np.frombuffer(data, np.uint8)
+    return cv2.imdecode(arr, cv2.IMREAD_COLOR)
+
+
 def make_camera_router(camera: BaseCamera, frame_store: SessionFrameStore, startup_warning: str | None = None) -> APIRouter:
     router = APIRouter()
     _warning = [startup_warning]   # mutable container for pop semantics
@@ -140,8 +148,11 @@ def make_camera_router(camera: BaseCamera, frame_store: SessionFrameStore, start
         data = await file.read(MAX_UPLOAD_BYTES + 1)
         if len(data) > MAX_UPLOAD_BYTES:
             raise HTTPException(status_code=413, detail="Image too large (max 20 MB)")
-        arr = np.frombuffer(data, np.uint8)
-        frame = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+        # np.frombuffer is a zero-copy view (cheap), but cv2.imdecode is a
+        # synchronous CPU-bound decode — run it off the event loop so it
+        # doesn't contend with mjpeg_generator's per-frame encode on the
+        # same loop while a live /stream connection is open.
+        frame = await asyncio.to_thread(_decode_image, data)
         if frame is None:
             raise HTTPException(status_code=400, detail="Cannot decode image")
         frame_store.store(session_id, frame)
@@ -156,8 +167,8 @@ def make_camera_router(camera: BaseCamera, frame_store: SessionFrameStore, start
         data = await file.read(MAX_UPLOAD_BYTES + 1)
         if len(data) > MAX_UPLOAD_BYTES:
             raise HTTPException(status_code=413, detail="Image too large (max 20 MB)")
-        arr = np.frombuffer(data, np.uint8)
-        frame = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+        # See /load-image above: decode off the event loop.
+        frame = await asyncio.to_thread(_decode_image, data)
         if frame is None:
             raise HTTPException(status_code=400, detail="Cannot decode image")
         frame_store.store(session_id, frame)
@@ -308,13 +319,20 @@ def make_camera_router(camera: BaseCamera, frame_store: SessionFrameStore, start
             status = "error"
             aravis_error = safe_error_detail(request, e, "Camera discovery failed")
 
-        # dc1394 enumeration (fast — no network I/O)
+        # dc1394 enumeration (fast — no network I/O, but bus/driver calls can
+        # still wedge; cap it like the Aravis branch above so a stuck probe
+        # degrades to an empty list instead of hanging the whole request).
         dc1394_cams: list[dict] = []
         try:
             from .cameras.dc1394 import list_dc1394_cameras
-            dc1394_cams = await asyncio.to_thread(list_dc1394_cameras)
+            dc1394_cams = await asyncio.wait_for(
+                asyncio.to_thread(list_dc1394_cameras), timeout=8.0,
+            )
         except ImportError:
             pass  # library not installed — silently skip
+        except asyncio.TimeoutError:
+            log_dc = __import__("logging").getLogger(__name__)
+            log_dc.debug("dc1394 enumeration timed out")
         except Exception as e:
             log_dc = __import__("logging").getLogger(__name__)
             log_dc.debug("dc1394 enumeration error: %s", e)
