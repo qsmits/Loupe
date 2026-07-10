@@ -273,6 +273,7 @@ document.getElementById("btn-freeze").addEventListener("click", async () => {
     state._gradientOverlayImg = null;
     state.showGradientOverlay = false;
     state._subpixelSnapTarget = null;
+    state._dirty = true;   // unfreezing clears the stored image — persist that
     const gradChk = document.getElementById("btn-gradient-overlay");
     if (gradChk) gradChk.checked = false;
     updateFreezeUI();
@@ -335,6 +336,9 @@ document.getElementById("file-input").addEventListener("change", async e => {
       img.style.opacity = "0";
       // MJPEG stream continues in background (changing src breaks canvas sizing)
       state.frozen = true;
+      // Image mutations must dirty the workspace or autosave (dirty-gated)
+      // never persists the image/thumbnail into the project record.
+      state._dirty = true;
       cacheImageData(loadedImg, width, height);
       updateFreezeUI();
       resizeCanvas();
@@ -475,6 +479,9 @@ viewerEl.addEventListener("drop", async e => {
       img.style.opacity = "0";
       // MJPEG stream continues in background (changing src breaks canvas sizing)
       state.frozen = true;
+      // Image mutations must dirty the workspace or autosave (dirty-gated)
+      // never persists the image/thumbnail into the project record.
+      state._dirty = true;
       cacheImageData(loadedImg, width, height);
       updateFreezeUI();
       resizeCanvas();

@@ -67,6 +67,9 @@ export async function doFreeze() {
       state.frozenFilename = null;
       document.getElementById("browser-cam-video").style.opacity = "0";
       state.frozen = true;
+      // Image mutations must dirty the workspace or autosave (dirty-gated)
+      // never persists the captured frame/thumbnail into the project record.
+      state._dirty = true;
       cacheImageData(image, width, height);
       updateFreezeUI();
       resizeCanvas();
@@ -113,6 +116,8 @@ export async function doFreeze() {
     state.frozenBlob = frameBlob;
     state.frozenSource = "camera";
     state.frozenFilename = null;
+    // Freeze captures a new frame — dirty the workspace so autosave persists it.
+    state._dirty = true;
   } catch (err) {
     showStatus("Failed to capture frame: " + err.message);
     state.frozenBackground = null;

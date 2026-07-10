@@ -124,6 +124,7 @@ export async function uploadCorrectedFrame(canvas) {
   const blob = await new Promise(resolve => canvas.toBlob(resolve, "image/jpeg", 0.95));
   if (!blob) return;
   state.frozenBlob = blob;
+  state._dirty = true;   // the corrected frame must be persisted by autosave
   const fd = new FormData();
   fd.append("file", blob, "frame.jpg");
   await apiFetchFrame("/update-frame", { method: "POST", body: fd });
