@@ -266,3 +266,13 @@ export function restoreWorkspace(record) {
 
 export function captureEpoch() { return state._epoch; }
 export function isStale(epoch) { return epoch !== state._epoch; }
+
+/** Invalidate any in-flight async work for the workspace being left, without
+ *  otherwise touching state. Call this whenever a tab stops being the active
+ *  one — not just when another tab replaces it (restoreWorkspace already
+ *  bumps for that) but also when nothing replaces it (e.g. the home screen),
+ *  which used to leave the epoch untouched and let a slow response land in
+ *  the now-detached workspace. Monotonic; isStale() only ever compares for
+ *  inequality, so a redundant bump alongside restoreWorkspace's own is
+ *  harmless. */
+export function bumpEpoch() { state._epoch += 1; }

@@ -302,16 +302,26 @@ document.getElementById("file-input").addEventListener("change", async e => {
     formData.append("file", file);
     const r = await apiFetch("/load-image", { method: "POST", body: formData, signal });
     cancel();
-    if (!r.ok) { alert("Could not load image"); return; }
+    if (!r.ok) { loadingEl.hidden = true; alert("Could not load image"); return; }
     const { width, height } = await r.json();
-    if (isStale(epoch)) { console.debug("[epoch] stale result dropped: load-image"); loadingEl.hidden = true; return; }
+    if (isStale(epoch)) {
+      console.debug("[epoch] stale result dropped: load-image");
+      loadingEl.hidden = true;
+      showToast("Image load cancelled — the tab changed while it was loading");
+      return;
+    }
     state.frozenSize = { w: width, h: height };
     setImageSize(width, height);
 
     const url = URL.createObjectURL(file);
     const loadedImg = new Image();
     loadedImg.onload = async () => {
-      if (isStale(epoch)) { console.debug("[epoch] stale result dropped: image load"); loadingEl.hidden = true; return; }
+      if (isStale(epoch)) {
+        console.debug("[epoch] stale result dropped: image load");
+        loadingEl.hidden = true;
+        showToast("Image load cancelled — the tab changed while it was loading");
+        return;
+      }
       loadingEl.hidden = true;
       state.frozenBackground = loadedImg;
       state.frozenBlob = file;
@@ -327,6 +337,11 @@ document.getElementById("file-input").addEventListener("change", async e => {
       fitToWindow(rect.width, rect.height);
       redraw();
       showStatus("Loaded image");
+    };
+    loadedImg.onerror = () => {
+      loadingEl.hidden = true;
+      URL.revokeObjectURL(url);
+      showToast("Could not decode image");
     };
     loadedImg.src = url;
   } catch {
@@ -427,16 +442,26 @@ viewerEl.addEventListener("drop", async e => {
     formData.append("file", file);
     const r = await apiFetch("/load-image", { method: "POST", body: formData, signal });
     cancel();
-    if (!r.ok) { alert("Could not load image"); return; }
+    if (!r.ok) { loadingEl.hidden = true; alert("Could not load image"); return; }
     const { width, height } = await r.json();
-    if (isStale(epoch)) { console.debug("[epoch] stale result dropped: load-image"); loadingEl.hidden = true; return; }
+    if (isStale(epoch)) {
+      console.debug("[epoch] stale result dropped: load-image");
+      loadingEl.hidden = true;
+      showToast("Image load cancelled — the tab changed while it was loading");
+      return;
+    }
     state.frozenSize = { w: width, h: height };
     setImageSize(width, height);
 
     const url = URL.createObjectURL(file);
     const loadedImg = new Image();
     loadedImg.onload = () => {
-      if (isStale(epoch)) { console.debug("[epoch] stale result dropped: image load"); loadingEl.hidden = true; return; }
+      if (isStale(epoch)) {
+        console.debug("[epoch] stale result dropped: image load");
+        loadingEl.hidden = true;
+        showToast("Image load cancelled — the tab changed while it was loading");
+        return;
+      }
       loadingEl.hidden = true;
       state.frozenBackground = loadedImg;
       state.frozenBlob = file;
@@ -452,6 +477,11 @@ viewerEl.addEventListener("drop", async e => {
       fitToWindow(rect.width, rect.height);
       redraw();
       showStatus("Loaded image");
+    };
+    loadedImg.onerror = () => {
+      loadingEl.hidden = true;
+      URL.revokeObjectURL(url);
+      showToast("Could not decode image");
     };
     loadedImg.src = url;
   } catch {

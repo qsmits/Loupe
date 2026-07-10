@@ -18,7 +18,7 @@
 import { state } from './state.js';
 import { imageWidth, imageHeight } from './viewport.js';
 import {
-  serializeWorkspace, restoreWorkspace, freshWorkspaceRecord,
+  serializeWorkspace, restoreWorkspace, freshWorkspaceRecord, bumpEpoch,
 } from './workspace.js';
 import { buildWorkspaceV4, applyWorkspaceV4 } from './project-format.js';
 import { putProject, getProject, listProjectSummaries, deleteProjectRecord } from './projects-db.js';
@@ -234,6 +234,10 @@ async function deactivateCurrent() {
     await flushAutosave();               // must run while the tab is still live
     tab.record = serializeWorkspace();
     stopStreamForDeactivate();
+    // Shared viewer DOM: hide it here so an in-flight upload's spinner
+    // doesn't carry over onto whatever tab (or the home screen) comes next.
+    const loadingEl = document.getElementById("loading-overlay");
+    if (loadingEl) loadingEl.hidden = true;
   } else {
     // Persist optional per-type state, then hide the container — the mode's
     // own MutationObserver on [hidden] stops polling/capture.
@@ -249,6 +253,13 @@ async function deactivateCurrent() {
     const el = document.getElementById("mode-" + MODE_FOR_TYPE[tab.type]);
     if (el) el.hidden = true;
   }
+  // Invalidate any async work still in flight for the tab we're leaving —
+  // closes the hole where showHomeScreen() used to leave the epoch
+  // unbumped, letting a slow response land in the now-detached workspace.
+  // restoreWorkspace() bumps again on the activate-another-tab path; that's
+  // a harmless redundant bump (epoch is monotonic, only ever compared for
+  // inequality).
+  bumpEpoch();
   activeTabId = null;
 }
 

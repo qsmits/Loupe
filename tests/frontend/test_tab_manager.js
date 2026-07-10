@@ -26,7 +26,7 @@ import './dom-stub.js';
 import { createIdbStub } from './idb-stub.js';
 import { _setIndexedDbFactory, getProject } from '../../frontend/projects-db.js';
 import { state } from '../../frontend/state.js';
-import { restoreWorkspace, freshWorkspaceRecord } from '../../frontend/workspace.js';
+import { restoreWorkspace, freshWorkspaceRecord, captureEpoch, isStale } from '../../frontend/workspace.js';
 import { setImageSize } from '../../frontend/viewport.js';
 import { _setNoticeHandler, _setToastHandler } from '../../frontend/shell.js';
 
@@ -132,6 +132,36 @@ describe('swap-on-activate', () => {
 
     await tm.activateTab(tabA.id);
     assert.deepEqual(state.pendingPoints, [], 'switching back must not resurrect the pending point either');
+  });
+});
+
+describe('epoch invalidation on leaving a tab', () => {
+  // deactivateCurrent() is the single chokepoint for "leaving the active
+  // tab" — both activateTab(otherId) and showHomeScreen() route through it.
+  // Only the activate-another-tab path used to bump the staleness epoch
+  // (via restoreWorkspace() on the way in); showHomeScreen() left it
+  // untouched, so an in-flight /load-image response arriving while home
+  // was shown would pass isStale() and write into the detached record.
+  it('showHomeScreen invalidates in-flight async work for the tab it left', async () => {
+    const tm = await freshTabManager();
+    await tm.newProject('microscopy', { name: 'A' });
+    const token = captureEpoch();
+
+    await tm.showHomeScreen();
+
+    assert.ok(isStale(token),
+      'leaving to the home screen must bump the epoch so an in-flight handler sees itself stale');
+  });
+
+  it('activating a different tab still invalidates in-flight async work (regression guard)', async () => {
+    const tm = await freshTabManager();
+    const tabA = await tm.newProject('microscopy', { name: 'A' });
+    await tm.newProject('microscopy', { name: 'B' });
+    const token = captureEpoch();
+
+    await tm.activateTab(tabA.id);
+
+    assert.ok(isStale(token), 'switching tabs must bump the epoch');
   });
 });
 
