@@ -735,12 +735,6 @@
           <button class="help-nav-item top-level" data-page="tool-circle" data-help-modes="microscope">Circle</button>
           <button class="help-nav-item top-level" data-page="tool-arc-fit" data-help-modes="microscope">Fit Arc</button>
           <button class="help-nav-item top-level" data-page="tool-arc-measure" data-help-modes="microscope">Arc Measure</button>
-          <button class="help-nav-item top-level" data-page="tool-center-dist" data-help-modes="microscope">Center Distance</button>
-          <button class="help-nav-item top-level" data-page="tool-perp" data-help-modes="microscope">Perp Distance</button>
-          <button class="help-nav-item top-level" data-page="tool-para" data-help-modes="microscope">Para Distance</button>
-          <button class="help-nav-item top-level" data-page="tool-pt-circle" data-help-modes="microscope">Pt-Circle Distance</button>
-          <button class="help-nav-item top-level" data-page="tool-intersect" data-help-modes="microscope">Line Intersect</button>
-          <button class="help-nav-item top-level" data-page="tool-slot" data-help-modes="microscope">Slot Distance</button>
           <button class="help-nav-item top-level" data-page="tool-area" data-help-modes="microscope">Area</button>
           <button class="help-nav-item top-level" data-page="tool-spline" data-help-modes="microscope">Bézier Spline</button>
 
@@ -790,16 +784,16 @@
           <!-- Getting Started -->
           <div class="help-page" id="help-page-start">
             <h2 class="help-page-title">Getting Started</h2>
-            <p class="help-page-sub">Loupe supports multiple instrument modes — Microscope, Deflectometry, and Fringe Analysis — selectable from the mode dropdown in the top bar. Microscope is the default mode and provides precision measurement tools for camera or imported images.</p>
+            <p class="help-page-sub">Loupe supports multiple instrument modes — Microscope, Deflectometry, and Fringe Analysis. Choose a project type on the home screen to start one; each open project appears as a tab in the top bar. Microscope is the most common mode and provides precision measurement tools for camera or imported images.</p>
             <div class="help-section-label">Basic workflow</div>
             <div class="help-step"><span class="help-step-num">1</span><span>Freeze a frame using the <strong>❄ Live</strong> button, or drag and drop an image onto the viewer.</span></div>
             <div class="help-step"><span class="help-step-num">2</span><span>Calibrate the image: press <kbd>C</kbd>, click two points of known distance, enter the value in mm.</span></div>
-            <div class="help-step"><span class="help-step-num">3</span><span>Select a measurement tool from the <strong>Measure ▾</strong> flyout in the toolbar, or press its shortcut key. Click points on the image to place measurements. Some tools show extra options (e.g. point order) in the options row above the flyout.</span></div>
+            <div class="help-step"><span class="help-step-num">3</span><span>Select a measurement tool from the measuring-tools bar at the bottom of the header, or press its shortcut key. Click points on the image to place measurements. Some tools show extra sub-mode options inline in the same bar, next to the tool, when relevant.</span></div>
             <div class="help-step"><span class="help-step-num">4</span><span>Export results as CSV, PDF, or annotated PNG from the Overlay menu.</span></div>
             <div class="help-section-label">Tips</div>
             <div class="help-tip">Hover over the image with a measurement tool active — the cursor snaps to the nearest detected edge automatically. Hold <kbd>Alt</kbd> to bypass snapping and place a point exactly where you click.</div>
             <div class="help-tip">Use <kbd>?</kbd> at any time to open this documentation.</div>
-            <div class="help-tip">Sessions auto-save to your browser every 30 seconds. Press <kbd>S</kbd> to save manually as a JSON file you can reload later.</div>
+            <div class="help-tip">Your work auto-saves to the browser (IndexedDB) within a couple of seconds of any change, and open tabs are restored when you come back. Use <strong>File ▾ → Export project (.loupe)</strong> to save a portable file you can move or back up elsewhere.</div>
           </div>
 
           <!-- Modes Overview -->
@@ -807,7 +801,7 @@
             <h2 class="help-page-title">Modes</h2>
             <p class="help-page-sub">Loupe is a multi-instrument platform. Each mode provides a dedicated workspace tailored to a different measurement technique.</p>
             <div class="help-section-label">Switching modes</div>
-            <p class="help-p">Use the <strong>mode dropdown</strong> in the top bar to switch between instruments. The three available modes are:</p>
+            <p class="help-p">Each instrument opens as a <strong>project tab</strong> from the home screen, not from a mode dropdown. The three available project types are:</p>
             <table>
               <thead><tr><th>Mode</th><th>Purpose</th></tr></thead>
               <tbody>
@@ -817,7 +811,7 @@
               </tbody>
             </table>
             <div class="help-section-label">Workspace isolation</div>
-            <p class="help-p">Each mode has its own workspace — switching modes does not discard your work in another mode. Toolbar contents, sidebar panels, and keyboard shortcuts are scoped to the active mode.</p>
+            <p class="help-p">Each open project has its own workspace — switching tabs does not discard your work in another tab. Toolbar contents, sidebar panels, and keyboard shortcuts are scoped to the active tab's mode. Microscopy allows any number of tabs open at once; Deflectometry and Fringe Analysis each allow only <strong>one</strong> open tab at a time — opening a second one of either prompts you to close the first.</p>
             <div class="help-tip">Press <kbd>?</kbd> from any mode to open this help dialog.</div>
           </div>
 
@@ -1254,7 +1248,7 @@
             <p class="help-p">Regular lenses project through a curved optical path. Points near the image edge appear shifted inward (barrel) or outward (pincushion) relative to their true position. A pixel calibration at the centre will under- or over-measure features near the edges. Telecentric lenses eliminate this by design; this tool compensates for it in software.</p>
             <div class="help-section-label">How to calibrate</div>
             <div class="help-step"><span class="help-step-num">1</span><span>Freeze an image of something with a <strong>repeating equal dimension</strong> — evenly-spaced holes, a grid, a ruler, or any feature you can measure multiple times.</span></div>
-            <div class="help-step"><span class="help-step-num">2</span><span>Open the <strong>Setup ▾</strong> flyout in the toolbar and click <strong>Lens Cal</strong>.</span></div>
+            <div class="help-step"><span class="help-step-num">2</span><span>Open the <strong>Setup ▾</strong> menu in the toolbar and click <strong>Lens Cal</strong>.</span></div>
             <div class="help-step"><span class="help-step-num">3</span><span>Click two points to measure the dimension at one position. Repeat at 3–8 positions spread across the image — include measurements near the centre, the middle, and the edges.</span></div>
             <div class="help-step"><span class="help-step-num">4</span><span>The dialog shows the <strong>spread</strong> (max deviation from mean) before and after correction, and a dot plot of each measurement vs its radial distance from centre. Grey = raw, green = corrected. When the green dots cluster near the horizontal axis, the fit is good.</span></div>
             <div class="help-step"><span class="help-step-num">5</span><span>Press <strong>Apply</strong>. The correction is applied directly to the frozen image — all subsequent measurements are automatically corrected.</span></div>
@@ -1273,7 +1267,7 @@
             <p class="help-p">If you photograph a flat part at an angle (even a slight tilt), parallel edges appear to converge, circles become ellipses, and measurements are systematically skewed. Perspective correction remaps the image as if taken from directly above, restoring accurate geometry before you calibrate and measure.</p>
             <div class="help-section-label">How to correct</div>
             <div class="help-step"><span class="help-step-num">1</span><span>Freeze the image first.</span></div>
-            <div class="help-step"><span class="help-step-num">2</span><span>Open the <strong>Setup ▾</strong> flyout in the toolbar and click <strong>Perspective Correct</strong>.</span></div>
+            <div class="help-step"><span class="help-step-num">2</span><span>Open the <strong>Setup ▾</strong> menu in the toolbar and click <strong>Perspective Correct</strong>.</span></div>
             <div class="help-step"><span class="help-step-num">3</span><span>Click the four corners of a known rectangular feature — a reference square, graph paper grid cell, or part edge — in order: <strong>TL → TR → BR → BL</strong> (top-left first, then clockwise).</span></div>
             <div class="help-step"><span class="help-step-num">4</span><span>Enter the <strong>width</strong> and <strong>height</strong> of the rectangle in mm in the dialog.</span></div>
             <div class="help-step"><span class="help-step-num">5</span><span>Click <strong>Apply</strong>. The frozen image is remapped and replaces the original.</span></div>
@@ -1310,13 +1304,13 @@
             <p class="help-p">Outputs: center coordinates, diameter, and radius. The three points define a unique circle using perpendicular bisector intersection.</p>
             <div class="help-tip">For the most accurate result, space the three points as evenly as possible around the arc rather than clustering them together.</div>
             <div class="help-section-label">Center+Edge mode</div>
-            <p class="help-p">Switch to <strong>Center+Edge</strong> in the tool options bar above the toolbar. Click the center first, then click any point on the circumference. Useful when the center is known (e.g. a punch mark, a detected circle center, or a known coordinate).</p>
+            <p class="help-p">Switch to <strong>Center+Edge</strong> using the sub-mode buttons that appear inline in the measuring-tools bar, next to the tool, when Circle is active. Click the center first, then click any point on the circumference. Useful when the center is known (e.g. a punch mark, a detected circle center, or a known coordinate).</p>
           </div>
 
           <div class="help-page" id="help-page-tool-arc-fit" hidden>
-            <h2 class="help-page-title">Fit Arc <span class="help-badge">F</span></h2>
+            <h2 class="help-page-title">Fit Arc</h2>
             <p class="help-page-sub">Best-fit circle through three or more points — more robust than the 3-point circle for noisy edges.</p>
-            <div class="help-step"><span class="help-step-num">1</span><span>Press <kbd>F</kbd> and click at least 3 points along the arc or circle edge.</span></div>
+            <div class="help-step"><span class="help-step-num">1</span><span>Click <strong>Best fit</strong> in the measuring-tools bar, then click at least 3 points along the arc or circle edge.</span></div>
             <div class="help-step"><span class="help-step-num">2</span><span>Double-click or press <kbd>Enter</kbd> to confirm.</span></div>
             <p class="help-p">Uses an algebraic (least-squares) fit minimising distance in the implicit circle space. The more points placed, the more stable the result — especially useful on partial arcs with surface texture or noise.</p>
             <div class="help-section-label">Output</div>
@@ -1331,63 +1325,9 @@
             <div class="help-step"><span class="help-step-num">2</span><span>Click a midpoint on the arc.</span></div>
             <div class="help-step"><span class="help-step-num">3</span><span>Click the end point of the arc.</span></div>
             <div class="help-section-label">Ends-first mode</div>
-            <p class="help-p">When the arc ends are easier to snap to than the midpoint, switch to <strong>Ends first</strong> in the tool options bar: click the two endpoints first, then click the midpoint. The arc is computed identically — only the click order differs.</p>
-            <div class="help-tip">Switch modes using the <strong>Sequential / Ends first</strong> buttons that appear in the options row above the toolbar when Arc Measure is active.</div>
+            <p class="help-p">When the arc ends are easier to snap to than the midpoint, switch to <strong>Ends first</strong> using the sub-mode buttons that appear inline in the measuring-tools bar, next to the tool: click the two endpoints first, then click the midpoint. The arc is computed identically — only the click order differs.</p>
+            <div class="help-tip">Switch modes using the <strong>Sequential / Ends first</strong> buttons that appear inline in the toolbar row when Arc Measure is active.</div>
             <p class="help-p">Outputs: radius, chord distance (straight line from start to end), and arc span in degrees.</p>
-          </div>
-
-          <div class="help-page" id="help-page-tool-center-dist" hidden>
-            <h2 class="help-page-title">Center Distance <span class="help-badge">M</span></h2>
-            <p class="help-page-sub">Distance between the centers of two circles or arcs.</p>
-            <div class="help-step"><span class="help-step-num">1</span><span>Press <kbd>M</kbd> and click the first circle or arc annotation.</span></div>
-            <div class="help-step"><span class="help-step-num">2</span><span>Click the second circle or arc annotation.</span></div>
-            <p class="help-p">Draws a line between the two centers and shows the distance. Useful for bolt-hole patterns, pin spacing, etc.</p>
-            <div class="help-section-label">Live tracking</div>
-            <p class="help-p">The Center Distance measurement is <strong>linked</strong> to its two source circles. If you reposition either circle (by dragging its center handle), the Center Distance line and label update automatically.</p>
-            <div class="help-tip">Center Distance annotations are read-only — you cannot drag their endpoints directly. To remove one, select it and press <kbd>Del</kbd>.</div>
-          </div>
-
-          <div class="help-page" id="help-page-tool-perp" hidden>
-            <h2 class="help-page-title">Perp Distance <span class="help-badge">P</span></h2>
-            <p class="help-page-sub">Distance measured perpendicular to a reference line.</p>
-            <div class="help-step"><span class="help-step-num">1</span><span>Press <kbd>P</kbd> and click an existing line annotation to use as the reference.</span></div>
-            <div class="help-step"><span class="help-step-num">2</span><span>Click two points. The measurement line is constrained to be perpendicular to the reference.</span></div>
-            <p class="help-p">Use this to measure a step height, wall thickness, or any dimension that must be taken at a right angle to a known datum.</p>
-          </div>
-
-          <div class="help-page" id="help-page-tool-para" hidden>
-            <h2 class="help-page-title">Para Distance / Parallelism <span class="help-badge">L</span></h2>
-            <p class="help-page-sub">Parallel distance or angle deviation between two lines.</p>
-            <div class="help-section-label">Parallel distance</div>
-            <div class="help-step"><span class="help-step-num">1</span><span>Press <kbd>L</kbd> and click an existing line annotation as the reference.</span></div>
-            <div class="help-step"><span class="help-step-num">2</span><span>Click two points to define a second line parallel to the first. Shows the perpendicular distance between them.</span></div>
-            <div class="help-section-label">Parallelism check</div>
-            <div class="help-step"><span class="help-step-num">1</span><span>Click a line annotation as the reference.</span></div>
-            <div class="help-step"><span class="help-step-num">2</span><span>Click a second line annotation. Shows the angle deviation from parallel.</span></div>
-          </div>
-
-          <div class="help-page" id="help-page-tool-pt-circle" hidden>
-            <h2 class="help-page-title">Pt-Circle Distance <span class="help-badge">G</span></h2>
-            <p class="help-page-sub">Shortest distance from a free point to a circle's edge.</p>
-            <div class="help-step"><span class="help-step-num">1</span><span>Press <kbd>G</kbd> and click a circle or arc annotation.</span></div>
-            <div class="help-step"><span class="help-step-num">2</span><span>Click a free point in the image.</span></div>
-            <p class="help-p">Measures the gap (positive) or overlap (negative) between the point and the circle edge. Useful for checking clearance between a hole and a nearby feature.</p>
-          </div>
-
-          <div class="help-page" id="help-page-tool-intersect" hidden>
-            <h2 class="help-page-title">Line Intersect <span class="help-badge">I</span></h2>
-            <p class="help-page-sub">Mathematical intersection of two lines, even outside the image frame.</p>
-            <div class="help-step"><span class="help-step-num">1</span><span>Press <kbd>I</kbd> and click the first line annotation.</span></div>
-            <div class="help-step"><span class="help-step-num">2</span><span>Click the second line annotation.</span></div>
-            <p class="help-p">Computes the intersection of the two lines' infinite extensions and places a marker. The coordinates are shown in the label and included in CSV export.</p>
-          </div>
-
-          <div class="help-page" id="help-page-tool-slot" hidden>
-            <h2 class="help-page-title">Slot Distance <span class="help-badge">W</span></h2>
-            <p class="help-page-sub">Perpendicular distance between two parallel lines — slot or gap width.</p>
-            <div class="help-step"><span class="help-step-num">1</span><span>Press <kbd>W</kbd> and click the first line annotation.</span></div>
-            <div class="help-step"><span class="help-step-num">2</span><span>Click the second line annotation.</span></div>
-            <p class="help-p">Shows the perpendicular (shortest) distance between the two lines. Best used after detecting or manually placing parallel lines on opposing slot walls.</p>
           </div>
 
           <div class="help-page" id="help-page-tool-area" hidden>
@@ -1399,10 +1339,10 @@
           </div>
 
           <div class="help-page" id="help-page-tool-spline" hidden>
-            <h2 class="help-page-title">Bézier Spline <span class="help-badge">B</span></h2>
+            <h2 class="help-page-title">Bézier Spline</h2>
             <p class="help-page-sub">A smooth curve through a series of points — for capturing freeform profiles, blended fillets, and organic contours.</p>
             <div class="help-section-label">Placing a spline</div>
-            <div class="help-step"><span class="help-step-num">1</span><span>Press <kbd>B</kbd> and click to place anchor points along the curve.</span></div>
+            <div class="help-step"><span class="help-step-num">1</span><span>Click <strong>Spline</strong> in the measuring-tools bar, then click to place anchor points along the curve.</span></div>
             <div class="help-step"><span class="help-step-num">2</span><span>Double-click or press <kbd>Enter</kbd> to finish. A smooth curve is fitted automatically.</span></div>
             <div class="help-section-label">Editing anchor points</div>
             <p class="help-p">After placing, switch to Select (<kbd>V</kbd>) and click the spline to select it. Drag any orange anchor point to reshape the curve. The curve tangents are computed automatically using <strong>Catmull-Rom interpolation</strong> — the curve always passes smoothly through every anchor point without requiring manual handle adjustments.</p>
@@ -1419,16 +1359,14 @@
             <table>
               <thead><tr><th>Key</th><th>Tool</th><th>Key</th><th>Tool</th></tr></thead>
               <tbody>
-                <tr><td><kbd>V</kbd></td><td>Select</td><td><kbd>G</kbd></td><td>Pt-Circle Dist</td></tr>
-                <tr><td><kbd>D</kbd></td><td>Distance</td><td><kbd>I</kbd></td><td>Line Intersect</td></tr>
-                <tr><td><kbd>A</kbd></td><td>Angle</td><td><kbd>W</kbd></td><td>Slot Distance</td></tr>
-                <tr><td><kbd>O</kbd></td><td>Circle (3-point)</td><td><kbd>R</kbd></td><td>Area</td></tr>
-                <tr><td><kbd>F</kbd></td><td>Fit Arc</td><td><kbd>B</kbd></td><td>Bézier Spline</td></tr>
-                <tr><td><kbd>M</kbd></td><td>Center Distance</td><td><kbd>C</kbd></td><td>Calibrate</td></tr>
-                <tr><td><kbd>P</kbd></td><td>Perp Distance</td><td><kbd>E</kbd></td><td>Detect panel</td></tr>
-                <tr><td><kbd>L</kbd></td><td>Para Distance</td><td><kbd>H</kbd></td><td>Pan</td></tr>
+                <tr><td><kbd>V</kbd></td><td>Select</td><td><kbd>T</kbd></td><td>Note</td></tr>
+                <tr><td><kbd>H</kbd></td><td>Pan</td><td><kbd>R</kbd></td><td>Area</td></tr>
+                <tr><td><kbd>D</kbd></td><td>Distance</td><td><kbd>L</kbd></td><td>Flatness</td></tr>
+                <tr><td><kbd>A</kbd></td><td>Angle</td><td><kbd>P</kbd></td><td>Point</td></tr>
+                <tr><td><kbd>O</kbd></td><td>Circle (3-point)</td><td><kbd>C</kbd></td><td>Calibrate</td></tr>
               </tbody>
             </table>
+            <div class="help-tip">Best fit, Arc, Shape, and Spline have no shortcut key — select them by clicking the tool in the measuring-tools bar.</div>
             <div class="help-section-label">Actions</div>
             <table>
               <thead><tr><th>Key</th><th>Action</th></tr></thead>
@@ -1438,11 +1376,11 @@
                 <tr><td><kbd>U</kbd></td><td>Elevate selected detection to measurement</td></tr>
                 <tr><td><kbd>Enter</kbd></td><td>Confirm multi-point tool or point-pick inspection</td></tr>
                 <tr><td><kbd>S</kbd></td><td>Save session</td></tr>
-                <tr><td><kbd>0</kbd></td><td>Zoom to fit window</td></tr>
-                <tr><td><kbd>1</kbd></td><td>Zoom to 1:1 pixels</td></tr>
+                <tr><td><kbd>0</kbd></td><td>Zoom to fit window (frozen only)</td></tr>
+                <tr><td><kbd>1</kbd></td><td>Zoom to 1:1 pixels (frozen only)</td></tr>
                 <tr><td><kbd>`</kbd></td><td>Toggle measurement grid</td></tr>
-                <tr><td><kbd>←</kbd><kbd>↑</kbd><kbd>→</kbd><kbd>↓</kbd></td><td>Nudge selected annotation 1 px (hold <kbd>Shift</kbd> for 10 px)</td></tr>
-                <tr><td><kbd>Ctrl Z</kbd> / <kbd>⌘Z</kbd></td><td>Undo</td></tr>
+                <tr><td><kbd>←</kbd><kbd>↑</kbd><kbd>→</kbd><kbd>↓</kbd></td><td>Nudge selected annotation 1 px (hold <kbd>Shift</kbd> for 10 px); pans the frozen viewport when nothing is selected</td></tr>
+                <tr><td><kbd>Ctrl Z</kbd> / <kbd>⌘Z</kbd></td><td>During a multi-point measurement, removes the last placed point; otherwise undoes the last action.</td></tr>
                 <tr><td><kbd>Ctrl Y</kbd> / <kbd>⌘⇧Z</kbd></td><td>Redo</td></tr>
                 <tr><td><kbd>?</kbd></td><td>Open this documentation</td></tr>
               </tbody>
@@ -1608,7 +1546,8 @@
                 <tr><td><strong>Inspection CSV</strong></td><td>Guided inspection results: feature handle, deviation, pass/fail, Punch/Die</td><td>Overlay → Export Inspection CSV (requires inspection)</td></tr>
                 <tr><td><strong>Inspection PDF</strong></td><td>Formatted report with numbered features, deviation table, pass/fail summary</td><td>Overlay → Export Inspection PDF (requires inspection)</td></tr>
                 <tr><td><strong>DXF (reverse engineering)</strong></td><td>All measurement annotations converted to DXF entities in mm-space. Distances → lines, circles → circles, splines → SPLINE entities.</td><td>Overlay → Export DXF</td></tr>
-                <tr><td><strong>Session JSON</strong></td><td>Full session state including all annotations, calibration, DXF, and inspection results. Can be reloaded exactly.</td><td>Press <kbd>S</kbd> or the 💾 button</td></tr>
+                <tr><td><strong>Session JSON</strong></td><td>Full session state including all annotations, calibration, DXF, and inspection results. Can be reloaded exactly.</td><td>File ▾ → Save session, or press <kbd>S</kbd></td></tr>
+                <tr><td><strong>Project (.loupe)</strong></td><td>Complete project — image, measurements, and calibration — as a single portable file.</td><td>File ▾ → Export project</td></tr>
               </tbody>
             </table>
           </div>
