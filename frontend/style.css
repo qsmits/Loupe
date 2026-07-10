@@ -3860,7 +3860,12 @@ body.no-camera .camera-section { display: none; }
 
 /* ─── Home screen ────────────────────────────────────────────── */
 #home-screen { overflow-y: auto; }
-.home-wrap { max-width: 960px; margin: 0 auto; padding: 28px 24px 60px; width: 100%; }
+/* The Preact mount div is the actual flex item of #home-screen; without
+   width it shrink-wraps at the left and .home-wrap's auto margins have no
+   free space to center against. margin:auto (not align/justify centering)
+   so tall content degrades to normal top-anchored scrolling un-clipped. */
+#home-screen-mount { display: flex; flex: 1; min-width: 0; }
+.home-wrap { max-width: 960px; margin: auto; padding: 28px 24px 60px; width: 100%; }
 .home-warning {
   background: rgba(220, 80, 60, 0.12); border: 1px solid rgba(220, 80, 60, 0.5);
   color: var(--text); border-radius: 10px; padding: 10px 14px;
