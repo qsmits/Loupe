@@ -163,7 +163,17 @@ export async function flushAutosave() {
     // Only resurrect the dirty flag if this tab is still the one live in
     // `state` — otherwise a save failure for the OUTGOING tab would
     // incorrectly mark whatever tab is active now (after a swap) as dirty.
-    if (getActiveTabId() === activeAtStart) state._dirty = true;
+    if (getActiveTabId() === activeAtStart) {
+      state._dirty = true;
+    } else if (tab.record?.state) {
+      // A swap landed mid-save: deactivateCurrent() re-serialized this
+      // (outgoing) tab's record AFTER our synchronous dirty-clear, so the
+      // record reads clean even though nothing was persisted. Mark the
+      // record itself dirty so the tab keeps its dot and the save retries
+      // on reactivation — otherwise a failed save followed by a swap would
+      // silently never retry.
+      tab.record.state._dirty = true;
+    }
     if (!_saveWarned) {
       _saveWarned = true;
       showToast("Couldn't save project — storage may be full", {

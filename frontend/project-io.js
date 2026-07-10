@@ -141,7 +141,13 @@ export async function offerAutosaveMigration() {
   if (!raw) return;
   let workspace = null;
   try { workspace = migrateV3ToV4(JSON.parse(raw)); }
-  catch { localStorage.removeItem(LEGACY_AUTOSAVE_KEY); return; }
+  catch {
+    // Unmigratable legacy JSON can never convert — drop it, but say so
+    // rather than silently discarding user data.
+    localStorage.removeItem(LEGACY_AUTOSAVE_KEY);
+    showToast("A previous session's auto-save was unreadable and was discarded");
+    return;
+  }
   const choice = await showNotice({
     title: "Previous session found",
     message: "An auto-saved session from the previous app version exists.\n" +

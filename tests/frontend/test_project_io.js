@@ -288,11 +288,13 @@ describe('offerAutosaveMigration', () => {
     assert.equal(notices.length, 0, 'must not prompt when there is nothing to migrate');
   });
 
-  it('silently discards and does not prompt when the stored value fails migration', async () => {
+  it('discards with a toast (no prompt) when the stored value fails migration', async () => {
     localStorage.setItem('microscope-autosave', 'not even json');
     await offerAutosaveMigration();
-    assert.equal(notices.length, 0);
+    assert.equal(notices.length, 0, 'must not show the convert/discard prompt for unmigratable data');
     assert.equal(localStorage.getItem('microscope-autosave'), null, 'the unreadable key must be cleared');
+    assert.equal(toasts.length, 1, 'the user must be told their legacy auto-save was discarded');
+    assert.match(toasts[0].message, /unreadable/i);
   });
 
   it('offers convert+discard and, on convert, adopts a "Recovered session" project then clears the key', async () => {

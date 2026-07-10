@@ -343,6 +343,45 @@ describe('autosave (flushAutosave)', () => {
     assert.equal(tm.getTabs().find(t => t.id === tabB.id).dirty, true,
       'B must still read dirty — active-tab dirty tracks live state._dirty, untouched by A\'s flush');
   });
+
+  it('cross-tab: a FAILED flush after a mid-flight swap marks the outgoing tab\'s record dirty so it retries on reactivation', async () => {
+    const tm = await freshTabManager();
+    const tabB = await tm.newProject('microscopy', { name: 'B' });
+    const tabA = await tm.newProject('microscopy', { name: 'A' });   // A ends up active
+
+    const store = _idb._databases.get('loupe').stores.get('projects');
+    const realSet = store.data.set.bind(store.data);
+    _setToastHandler(() => {});   // swallow the "storage may be full" toast
+
+    // Dirty A and start a flush whose putProject() is held open on a gate,
+    // then FAILS when released. (The only IDB write in the window below is
+    // this gated one — activateTab only get()s — so the fault stays scoped.)
+    state.annotations = [{ type: 'distance', id: 1, points: [] }];
+    state._dirty = true;
+    let releasePut;
+    const gate = new Promise(resolve => { releasePut = resolve; });
+    store.data.set = () => gate.then(() => { throw new Error('simulated write failure'); });
+
+    const flushPromise = tm.flushAutosave();   // flushes A (will fail)
+    assert.equal(state._dirty, false, 'dirty clears synchronously at snapshot time');
+
+    // Swap away WHILE A's flush is gated: deactivateCurrent() re-serializes
+    // A's record with _dirty=false (post-clear) — the residual gap under test.
+    await tm.activateTab(tabB.id);
+
+    releasePut();
+    await flushPromise;   // A's flush now fails, with B active
+    store.data.set = realSet;
+
+    assert.equal(state._dirty, false,
+      'the failed flush must not resurrect the dirty flag onto the now-active B');
+    assert.equal(tm.getTabs().find(t => t.id === tabA.id).dirty, true,
+      'A\'s record must be marked dirty — the failed save has to retry, not silently vanish');
+
+    // Reactivating A restores the dirty flag, so the next autosave cycle retries.
+    await tm.activateTab(tabA.id);
+    assert.equal(state._dirty, true, 'reactivating A must restore the retry-pending dirty flag');
+  });
 });
 
 describe('closeTab', () => {
