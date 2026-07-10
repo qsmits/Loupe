@@ -35,17 +35,17 @@ import { initFringe } from './fringe.js';
 import { enterMaskEditSession, isCrossModeActive } from './cross-mode.js';
 import { captureEpoch, isStale, registerWorkspaceDom } from './workspace.js';
 import { initShell, showToast } from './shell.js';
-import { initTabManager } from './tab-manager.js';
+import { initTabManager, getActiveTabId, flushAutosave } from './tab-manager.js';
 import { initProjectIo, offerAutosaveMigration } from './project-io.js';
 import { onStorageUnavailable } from './projects-db.js';
 
 // ─── Dropdown helpers ─────��──────────────────────────────────────────────────
 function closeAllDropdowns() {
-  ["dropdown-detect","dropdown-overlay","dropdown-clear","dropdown-setup","dropdown-camera","dropdown-fringe-settings","dropdown-fringe-export"].forEach(id => {
+  ["dropdown-file","dropdown-detect","dropdown-overlay","dropdown-clear","dropdown-setup","dropdown-camera","dropdown-fringe-settings","dropdown-fringe-export"].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.hidden = true;
   });
-  ["btn-menu-detect","btn-menu-overlay","btn-menu-clear","btn-menu-setup","btn-menu-camera","btn-menu-fringe-settings","btn-menu-fringe-export"].forEach(id => {
+  ["btn-menu-file","btn-menu-detect","btn-menu-overlay","btn-menu-clear","btn-menu-setup","btn-menu-camera","btn-menu-fringe-settings","btn-menu-fringe-export"].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.classList.remove("open");
   });
@@ -161,6 +161,10 @@ document.addEventListener('mode-switched', (e) => {
 });
 
 // ── Dropdown menu wiring ───────────────────────────��─────────────────────────
+document.getElementById("btn-menu-file").addEventListener("click", e => {
+  e.stopPropagation();
+  toggleDropdown("btn-menu-file", "dropdown-file");
+});
 document.getElementById("btn-menu-detect").addEventListener("click", e => {
   e.stopPropagation();
   toggleDropdown("btn-menu-detect", "dropdown-detect");
@@ -202,7 +206,8 @@ document.getElementById("btn-clear-measurements")?.addEventListener("click", () 
 document.getElementById("btn-clear-dxf")?.addEventListener("click", () => { closeAllDropdowns(); clearDxfOverlay(); });
 document.getElementById("btn-clear-all")?.addEventListener("click", () => { closeAllDropdowns(); clearAll(); });
 
-["btn-load-dxf","btn-export","btn-export-csv","btn-crosshair"]
+["btn-load","btn-load-session","btn-save-image","btn-save-session","btn-export-loupe",
+ "btn-load-dxf","btn-export","btn-export-csv","btn-crosshair"]
   .forEach(id => {
     const el = document.getElementById(id);
     if (el) el.addEventListener("click", closeAllDropdowns, true);
@@ -546,6 +551,14 @@ document.getElementById("btn-save-image")?.addEventListener("click", async () =>
   } catch (e) {
     showStatus(`Save failed: ${e.message || e}`);
   }
+});
+
+// ── Export project (.loupe) button ────────────────────────────────────────────
+document.getElementById("btn-export-loupe")?.addEventListener("click", async () => {
+  const id = getActiveTabId();
+  if (!id) { showToast("No active project to export"); return; }
+  await flushAutosave();
+  document.dispatchEvent(new CustomEvent("export-project", { detail: { id } }));
 });
 
 // ── Scan webcams button ──────────────────────────────────────────────────────────

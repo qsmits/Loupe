@@ -118,6 +118,18 @@
     </div>
 
     <div class="menu-group microscope-only">
+      <button class="menu-btn" id="btn-menu-file">File ▾</button>
+      <div class="dropdown" id="dropdown-file" hidden>
+        <button class="dropdown-item" id="btn-load">Load image…</button>
+        <button class="dropdown-item" id="btn-load-session">Load session…</button>
+        <div class="dropdown-divider"></div>
+        <button class="dropdown-item" id="btn-save-image">Save image</button>
+        <button class="dropdown-item" id="btn-save-session">Save session</button>
+        <button class="dropdown-item" id="btn-export-loupe">Export project (.loupe)</button>
+      </div>
+    </div>
+
+    <div class="menu-group microscope-only">
       <button class="menu-btn" id="btn-menu-detect">Detect ▾</button>
       <div class="dropdown detect-panel" id="dropdown-detect" hidden>
         <div class="detect-section">
@@ -400,9 +412,6 @@
       <button id="btn-zstack-3d-view" class="top-btn microscope-only" title="Open 3D surface view (requires a built Z-stack)" disabled>Surface</button>
       <button id="btn-analyze-gear" class="top-btn microscope-only" title="Analyze gear tooth widths (PoC)">Gear</button>
       <button id="btn-freeze" class="top-btn freeze-btn freeze-live microscope-only">❄ Live</button>
-      <button id="btn-load" class="top-btn icon-btn microscope-only" title="Load image">📁</button>
-      <button id="btn-save-image" class="top-btn icon-btn microscope-only" title="Save current image">📷</button>
-      <button id="btn-save-session" class="top-btn icon-btn microscope-only" title="Save session">💾</button>
     </div>
   </div>
 
