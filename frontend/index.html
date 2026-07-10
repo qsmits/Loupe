@@ -714,6 +714,10 @@
           <button class="help-nav-item top-level active" data-page="start" data-help-modes="general">Getting Started</button>
           <button class="help-nav-item top-level" data-page="modes-overview" data-help-modes="general">Modes</button>
 
+          <div class="help-nav-section" data-help-modes="general">Projects</div>
+          <button class="help-nav-item top-level" data-page="projects" data-help-modes="general">Projects &amp; Tabs</button>
+          <button class="help-nav-item top-level" data-page="saving" data-help-modes="general">Saving &amp; Sharing</button>
+
           <div class="help-nav-section" data-help-modes="general">Camera</div>
           <button class="help-nav-item top-level" data-page="camera" data-help-modes="general">Camera Controls</button>
 
@@ -730,13 +734,20 @@
           <button class="help-nav-item top-level" data-page="tool-calibrate" data-help-modes="microscope">Calibrate</button>
           <button class="help-nav-item top-level" data-page="lens-cal" data-help-modes="microscope">Lens Calibration</button>
           <button class="help-nav-item top-level" data-page="perspective-cal" data-help-modes="microscope">Perspective Correction</button>
+          <button class="help-nav-item top-level" data-page="tool-note" data-help-modes="microscope">Note</button>
           <button class="help-nav-item top-level" data-page="tool-distance" data-help-modes="microscope">Distance</button>
           <button class="help-nav-item top-level" data-page="tool-angle" data-help-modes="microscope">Angle</button>
           <button class="help-nav-item top-level" data-page="tool-circle" data-help-modes="microscope">Circle</button>
           <button class="help-nav-item top-level" data-page="tool-arc-fit" data-help-modes="microscope">Fit Arc</button>
           <button class="help-nav-item top-level" data-page="tool-arc-measure" data-help-modes="microscope">Arc Measure</button>
           <button class="help-nav-item top-level" data-page="tool-area" data-help-modes="microscope">Area</button>
+          <button class="help-nav-item top-level" data-page="tool-shape" data-help-modes="microscope">Shape</button>
           <button class="help-nav-item top-level" data-page="tool-spline" data-help-modes="microscope">Bézier Spline</button>
+          <button class="help-nav-item top-level" data-page="tool-flatness" data-help-modes="microscope">Flatness</button>
+          <button class="help-nav-item top-level" data-page="tool-point" data-help-modes="microscope">Point</button>
+
+          <div class="help-nav-section" data-help-modes="microscope">Constraints</div>
+          <button class="help-nav-item top-level" data-page="constraints" data-help-modes="microscope">Constraints</button>
 
           <div class="help-nav-section" data-help-modes="microscope">Controls</div>
           <button class="help-nav-item top-level" data-page="shortcuts" data-help-modes="microscope">Keyboard Shortcuts</button>
@@ -745,7 +756,15 @@
           <div class="help-nav-section" data-help-modes="microscope">Features</div>
           <button class="help-nav-item top-level" data-page="detection" data-help-modes="microscope">Auto-Detection</button>
           <button class="help-nav-item top-level" data-page="dxf" data-help-modes="microscope">DXF Overlay</button>
+          <button class="help-nav-item top-level" data-page="overlays-templates" data-help-modes="microscope">Overlays &amp; Templates</button>
           <button class="help-nav-item top-level" data-page="inspection" data-help-modes="microscope">Guided Inspection</button>
+
+          <div class="help-nav-section" data-help-modes="microscope">Capture</div>
+          <button class="help-nav-item top-level" data-page="capture-compare" data-help-modes="microscope">4-up Compare</button>
+          <button class="help-nav-item top-level" data-page="capture-stitch" data-help-modes="microscope">Stitch</button>
+          <button class="help-nav-item top-level" data-page="capture-superres" data-help-modes="microscope">Super-Resolution</button>
+          <button class="help-nav-item top-level" data-page="capture-zstack" data-help-modes="microscope">Z-Stack &amp; Surface</button>
+          <button class="help-nav-item top-level" data-page="capture-gear" data-help-modes="microscope">Gear Analysis</button>
 
           <div class="help-nav-section" data-help-modes="deflectometry">Overview</div>
           <button class="help-nav-item top-level" data-page="defl-overview" data-help-modes="deflectometry">How It Works</button>
@@ -813,6 +832,38 @@
             <div class="help-section-label">Workspace isolation</div>
             <p class="help-p">Each open project has its own workspace — switching tabs does not discard your work in another tab. Toolbar contents, sidebar panels, and keyboard shortcuts are scoped to the active tab's mode. Microscopy allows any number of tabs open at once; Deflectometry and Fringe Analysis each allow only <strong>one</strong> open tab at a time — opening a second one of either prompts you to close the first.</p>
             <div class="help-tip">Press <kbd>?</kbd> from any mode to open this help dialog.</div>
+          </div>
+
+          <!-- Projects & Tabs -->
+          <div class="help-page" id="help-page-projects" hidden>
+            <h2 class="help-page-title">Projects &amp; Tabs</h2>
+            <p class="help-page-sub">The home screen manages your saved projects; each one you open becomes a tab in the top bar.</p>
+            <div class="help-section-label">Home screen</div>
+            <p class="help-p">Click a project-type card — <strong>Microscopy</strong>, <strong>Deflectometry</strong>, or <strong>Fringe analysis</strong> — to create and open a new project immediately. There's no naming dialog; it gets an auto-generated name (timestamped) that you can rename later. The <strong>Recents</strong> grid below shows your existing projects as thumbnail cards with name and last-modified date — click one to open it as a tab.</p>
+            <p class="help-p">Each recent card has a <strong>⋯</strong> menu with three actions: <strong>Rename</strong>, <strong>Export .loupe</strong>, and <strong>Delete…</strong>.</p>
+            <div class="help-section-label">Tabs</div>
+            <div class="help-step"><span class="help-step-num">1</span><span>Microscopy projects open as any number of tabs at once. Deflectometry and Fringe Analysis each allow only <strong>one</strong> open tab — opening a second prompts <strong>Close &amp; open</strong> to swap it in.</span></div>
+            <div class="help-step"><span class="help-step-num">2</span><span>Double-click a tab to rename it.</span></div>
+            <div class="help-step"><span class="help-step-num">3</span><span>Closing a tab never deletes the project — it just removes it from the open set. The project stays in Recents exactly as it was.</span></div>
+            <div class="help-tip">The only destructive action is <strong>Delete…</strong> from the home screen's ⋯ menu, which asks for confirmation before permanently removing a project. Export as .loupe first if you're not sure.</div>
+            <div class="help-section-label">Autosave</div>
+            <p class="help-p">Work auto-saves to the browser roughly every 2 seconds after a change, and again whenever you switch or close a tab. Open tabs are restored automatically the next time you load Loupe.</p>
+          </div>
+
+          <!-- Saving & Sharing -->
+          <div class="help-page" id="help-page-saving" hidden>
+            <h2 class="help-page-title">Saving &amp; Sharing</h2>
+            <p class="help-page-sub">Everything stays in your browser. Export a portable file to move or back up a project.</p>
+            <div class="help-section-label">Where your data lives</div>
+            <p class="help-p">Projects are stored locally in your browser's IndexedDB. The server never stores or lists your projects — it only ever sees a frozen frame, transiently, when you use a server-side processing feature (see below).</p>
+            <div class="help-section-label">Export &amp; import (.loupe)</div>
+            <p class="help-p"><strong>File ▾ → Export project (.loupe)</strong> downloads a single file containing the image, all measurements, calibration, and view state. Re-import it by dragging the file anywhere onto the app, or dropping it on the import zone on the home screen.</p>
+            <p class="help-p">Old session JSON (the pre-project v3 format) still imports. Note that v3 sessions never stored the image, so their measurements and calibration come back attached to a blank canvas.</p>
+            <div class="help-tip">If a pre-project autosave from an older app version is found in your browser, a one-time dialog offers to convert it into a project (<strong>Discard</strong> / <strong>Convert to project</strong>).</div>
+            <div class="help-section-label">Private browsing</div>
+            <div class="help-tip">If IndexedDB is unavailable — private/incognito windows in some browsers — a red "storage unavailable" banner appears on the home screen and nothing survives closing the tab. Export as .loupe before you close it.</div>
+            <div class="help-section-label">Hosted instance</div>
+            <p class="help-p">On the hosted instance, server-side features — auto-detection, DXF alignment, guided inspection, gear analysis — send the frozen image to the server for processing. A one-time notice explains this the first time you trigger one; the frame is kept only for your session and expires automatically.</p>
           </div>
 
           <!-- Deflectometry: How It Works -->
@@ -1238,6 +1289,8 @@
             <p class="help-p">All measurements already placed update immediately. The calibration is saved with the session.</p>
             <div class="help-section-label">Circle calibration</div>
             <p class="help-p">If a circle annotation is already placed, click it while in Calibrate mode and enter the known diameter — useful when you have a precision reference hole or pin.</p>
+            <div class="help-section-label">Cal Profiles</div>
+            <p class="help-p">Open <strong>Setup ▾ → Cal Profiles…</strong> to save the current calibration (px/mm scale, display unit, and lens distortion coefficient) under a name — e.g. one profile per objective or magnification. Type a name and click <strong>Save current</strong>. Click <strong>Load</strong> on a saved profile to apply it instantly, or the <strong>✕</strong> to delete it. The panel also has <strong>Export…</strong> / <strong>Import…</strong> buttons to move your whole profile list as a JSON file.</p>
             <div class="help-tip">For best accuracy, calibrate across the longest available reference distance to minimise the effect of pixel quantisation errors.</div>
           </div>
 
@@ -1277,6 +1330,14 @@
             <div class="help-tip">The corner markers are numbered on-canvas (1–4 with TL/TR/BR/BL labels). A dashed quadrilateral connects them so you can verify the shape before applying.</div>
             <div class="help-section-label">Technical note</div>
             <p class="help-p">A full projective homography (DLT, 8 DOF) is computed from the four point correspondences. Each output pixel is backward-mapped to the source image using bilinear interpolation, preserving sharpness. The destination rectangle is scaled to match the perimeter of the source quad, so the output resolution stays close to the input.</p>
+          </div>
+
+          <div class="help-page" id="help-page-tool-note" hidden>
+            <h2 class="help-page-title">Note <span class="help-badge">T</span></h2>
+            <p class="help-page-sub">A free-text annotation pinned to a point on the image.</p>
+            <div class="help-step"><span class="help-step-num">1</span><span>Press <kbd>T</kbd> and click a point on the image. A text box opens right there.</span></div>
+            <div class="help-step"><span class="help-step-num">2</span><span>Type your note and press <kbd>Enter</kbd> (or click elsewhere) to commit it.</span></div>
+            <p class="help-p">Press <kbd>Esc</kbd>, or commit with the box left empty, to cancel — no annotation is created either way.</p>
           </div>
 
           <div class="help-page" id="help-page-tool-distance" hidden>
@@ -1338,6 +1399,15 @@
             <p class="help-p">Area shown in px² or mm² if calibrated. Perimeter is also calculated. Uses the shoelace formula.</p>
           </div>
 
+          <div class="help-page" id="help-page-tool-shape" hidden>
+            <h2 class="help-page-title">Shape</h2>
+            <p class="help-page-sub">One click inside a closed loop of existing lines and arcs — turns it into an Area measurement.</p>
+            <div class="help-step"><span class="help-step-num">1</span><span>Click <strong>Shape</strong> in the measuring-tools bar (no shortcut key).</span></div>
+            <div class="help-step"><span class="help-step-num">2</span><span>Click on or near the boundary of a closed loop — a Circle, a closed Spline, an existing Area polygon, or a chain of Distance/Arc Measure/detected-line segments that forms a closed ring.</span></div>
+            <p class="help-p">Loupe traces the loop from your click, walking from segment to segment until it returns to the start, and creates an Area annotation from the traced boundary.</p>
+            <div class="help-tip">If the click doesn't land on anything, the status bar shows "Click a closed shape (or a segment of a closed loop)". If it hits a segment but the chain never closes, it shows "Not a closed shape" — nothing is added either way.</div>
+          </div>
+
           <div class="help-page" id="help-page-tool-spline" hidden>
             <h2 class="help-page-title">Bézier Spline</h2>
             <p class="help-page-sub">A smooth curve through a series of points — for capturing freeform profiles, blended fillets, and organic contours.</p>
@@ -1349,6 +1419,50 @@
             <div class="help-tip">To get a tighter curve, add more anchor points close together. To get a gentle sweep, space them further apart.</div>
             <div class="help-section-label">Output</div>
             <p class="help-p">Shows approximate arc length (mm if calibrated). Exports as a DXF <code>SPLINE</code> entity in reverse-engineering exports.</p>
+          </div>
+
+          <div class="help-page" id="help-page-tool-flatness" hidden>
+            <h2 class="help-page-title">Flatness <span class="help-badge">L</span></h2>
+            <p class="help-page-sub">Best-fit line through points along an edge, reported as a peak-to-valley flatness zone.</p>
+            <div class="help-step"><span class="help-step-num">1</span><span>Press <kbd>L</kbd> and click points along the edge.</span></div>
+            <div class="help-step"><span class="help-step-num">2</span><span>Double-click or press <kbd>Enter</kbd> to finish.</span></div>
+            <p class="help-p">Loupe fits a best-fit line through the points (orthogonal least-squares, not a simple vertical regression), then measures each point's perpendicular distance from that line. The reported value is the <strong>peak-to-valley span</strong> of those distances — a flatness zone width, shown with a <strong>⏥</strong> symbol in px or mm if calibrated. The fit line and its dashed zone boundaries are drawn on the image.</p>
+            <div class="help-tip">There's no RMS value or per-point deviation label — only the overall zone width — and no tolerance-based coloring.</div>
+          </div>
+
+          <div class="help-page" id="help-page-tool-point" hidden>
+            <h2 class="help-page-title">Point <span class="help-badge">P</span></h2>
+            <p class="help-page-sub">A free reference point, for marking a coordinate without measuring anything.</p>
+            <div class="help-step"><span class="help-step-num">1</span><span>Press <kbd>P</kbd> and click a location.</span></div>
+            <p class="help-p">Places a small crosshair marker at that pixel. It carries position data like any other annotation — useful as a snap target or a DXF-alignment reference point — but shows no coordinate readout in the sidebar or on the canvas by default.</p>
+          </div>
+
+          <!-- Constraints -->
+          <div class="help-page" id="help-page-constraints" hidden>
+            <h2 class="help-page-title">Constraints</h2>
+            <p class="help-page-sub">Link two selected annotations with a geometric relationship — parallel, perpendicular, tangent, and more.</p>
+            <div class="help-section-label">Applying a constraint</div>
+            <div class="help-step"><span class="help-step-num">1</span><span>Select exactly two annotations (click one, <kbd>Shift</kbd>+click the second).</span></div>
+            <div class="help-step"><span class="help-step-num">2</span><span>Right-click. If the pair supports a relationship, a <strong>Constrain</strong> submenu lists the valid options for that combination.</span></div>
+            <div class="help-step"><span class="help-step-num">3</span><span>Pick one. The second annotation you selected snaps to satisfy it immediately, and stays linked — dragging either one later re-solves the relationship.</span></div>
+            <div class="help-section-label">Available constraints</div>
+            <table>
+              <thead><tr><th>Constraint</th><th>Applies to</th></tr></thead>
+              <tbody>
+                <tr><td>⊥ Perpendicular</td><td>line + line</td></tr>
+                <tr><td>∥ Parallel</td><td>line + line</td></tr>
+                <tr><td>∠ Angle…</td><td>line + line — prompts for an angle in degrees (default 90°)</td></tr>
+                <tr><td>⊙ Concentric</td><td>circle + circle</td></tr>
+                <tr><td>T Tangent</td><td>circle + circle, or line + circle</td></tr>
+                <tr><td>• Coincident</td><td>any two annotations with an anchor point — offered as a fallback</td></tr>
+                <tr><td>• Point on line</td><td>point + line</td></tr>
+                <tr><td>• Point on circle</td><td>point + circle</td></tr>
+                <tr><td>M Midpoint</td><td>point + line — point becomes the line's midpoint</td></tr>
+              </tbody>
+            </table>
+            <div class="help-section-label">Removing a constraint</div>
+            <p class="help-p">A small badge marks the constraint's contact point — dark when satisfied, red if it can't converge, dashed when disabled. Right-click the badge for <strong>Remove constraint</strong> (or Enable/Disable). Right-click a single annotation that has constraints for a <strong>Constraints</strong> submenu listing each one individually.</p>
+            <div class="help-tip">This replaces the old dedicated Center Distance, Perpendicular Distance, Parallel Distance, Point-Circle Distance, Line Intersect, and Slot Distance tools. Old sessions containing those annotation types still display, hit-test, and export correctly — only the tools used to create new ones were removed.</div>
           </div>
 
           <!-- SHORTCUTS -->
@@ -1459,6 +1573,19 @@
             <p class="help-p">LINE, CIRCLE, ARC, LWPOLYLINE (decomposed into line and arc segments). Layer names are preserved and shown in hover tooltips.</p>
           </div>
 
+          <!-- OVERLAYS & TEMPLATES -->
+          <div class="help-page" id="help-page-overlays-templates" hidden>
+            <h2 class="help-page-title">Overlays &amp; Templates</h2>
+            <p class="help-page-sub">Reticle overlays and saved inspection templates, both in the <strong>Overlay ▾</strong> menu.</p>
+            <div class="help-section-label">Reticle overlays</div>
+            <p class="help-p">Pick a reticle from the dropdown under "Reticle overlay" — protractors, a crosshair, millimetre grids, radius rings, and thread gauges (common thread angles, plus metric and imperial pitch series). It's drawn centred on the canvas (not draggable), scaled by your calibration where applicable.</p>
+            <div class="help-step"><span class="help-step-num">1</span><span>Rotate it with <kbd>←</kbd>/<kbd>→</kbd> — 0.1° per press, or 1° per press with <kbd>Shift</kbd> held. The <strong>↺</strong> button resets rotation to 0.</span></div>
+            <div class="help-step"><span class="help-step-num">2</span><span>Adjust its color and opacity with the swatch and slider that appear below the dropdown.</span></div>
+            <p class="help-p"><strong>Export as Reticle…</strong> saves your current annotations as a custom reticle JSON file; <strong>Import Reticle…</strong> loads one back in.</p>
+            <div class="help-section-label">Save/Load Template</div>
+            <p class="help-p">A template captures a complete inspection setup — the loaded DXF geometry, calibration, tolerance thresholds, per-feature overrides, and detection settings — so you can reapply the same inspection to a new part image. <strong>Save as Template</strong> is enabled once a DXF overlay and a calibration both exist; <strong>Load Template</strong> validates the file before applying it.</p>
+          </div>
+
           <!-- GUIDED INSPECTION -->
           <div class="help-page" id="help-page-inspection" hidden>
             <h2 class="help-page-title">Guided Inspection</h2>
@@ -1473,6 +1600,72 @@
             <div class="help-tip">Right-click any inspection result on the canvas to toggle Punch/Die, re-measure manually, or delete the result.</div>
             <div class="help-section-label">Tolerances</div>
             <p class="help-p">Global warn/fail thresholds are set in Settings. Per-feature overrides can be set by clicking a deviation label on the canvas.</p>
+            <div class="help-section-label">SPC tracking</div>
+            <p class="help-p">After running an inspection, click <strong>Save Run</strong> (next to Run Inspection) and name the part. This saves the current inspection results as one dated "run" against that part. The SPC dashboard in the sidebar then plots each feature's deviation across saved runs, with your warn/fail tolerance bands, and shows a Cpk summary (mean, standard deviation, and range) once at least two runs exist.</p>
+          </div>
+
+          <!-- CAPTURE: 4-UP COMPARE -->
+          <div class="help-page" id="help-page-capture-compare" hidden>
+            <h2 class="help-page-title">4-up Compare</h2>
+            <p class="help-page-sub">Preview four camera-setting variants side by side, then apply the one that looks best (Keyence-style).</p>
+            <div class="help-section-label">Workflow</div>
+            <div class="help-step"><span class="help-step-num">1</span><span>Click <strong>4-up</strong> in the toolbar. Loupe grabs one live frame and proposes four setting variants shown in a 2×2 grid.</span></div>
+            <div class="help-step"><span class="help-step-num">2</span><span>Double-click a quadrant to apply it — it becomes the active profile applied to every subsequent live frame.</span></div>
+            <div class="help-step"><span class="help-step-num">3</span><span>Click <strong>Reset</strong> on the "Profile:" badge in the sidebar to return to the raw camera feed. <kbd>Esc</kbd> cancels the comparison grid without applying anything.</span></div>
+            <div class="help-tip">Requires a live camera — it always pulls a fresh frame, not a frozen or imported image.</div>
+          </div>
+
+          <!-- CAPTURE: STITCH -->
+          <div class="help-page" id="help-page-capture-stitch" hidden>
+            <h2 class="help-page-title">Stitch</h2>
+            <p class="help-page-sub">Capture a grid of overlapping live tiles and blend them into one panorama.</p>
+            <div class="help-section-label">Workflow</div>
+            <div class="help-step"><span class="help-step-num">1</span><span>Click <strong>Stitch</strong> in the toolbar. Set the grid size (columns × rows, 1–20 each) and overlap percentage (1–80%, default 20%), then <strong>Start Session</strong>.</span></div>
+            <div class="help-step"><span class="help-step-num">2</span><span>Follow the on-screen "Move X / Move Y" prompts — pan the stage by hand — and press <kbd>Space</kbd> to capture each tile in sequence.</span></div>
+            <div class="help-step"><span class="help-step-num">3</span><span>Once every tile is captured, click <strong>Build Panorama</strong>. Adjacent tiles are aligned by phase correlation and blended into one image.</span></div>
+            <div class="help-section-label">Output</div>
+            <p class="help-p"><strong>Download PNG</strong> saves the panorama; <strong>Use as image</strong> loads it as the new frozen working image.</p>
+            <div class="help-tip">Requires a live camera and is not available on the hosted instance — the button is hidden there.</div>
+          </div>
+
+          <!-- CAPTURE: SUPER-RESOLUTION -->
+          <div class="help-page" id="help-page-capture-superres" hidden>
+            <h2 class="help-page-title">Super-Resolution</h2>
+            <p class="help-page-sub">Reconstructs one higher-resolution image from several sub-pixel-shifted live captures.</p>
+            <div class="help-section-label">Workflow</div>
+            <div class="help-step"><span class="help-step-num">1</span><span>Click <strong>SR</strong> in the toolbar. Choose an upscale factor — <strong>2× (4 frames)</strong> or <strong>4× (16 frames)</strong> — then <strong>Start Session</strong>.</span></div>
+            <div class="help-step"><span class="help-step-num">2</span><span>For each requested shift, move the stage by the shown micrometre amount and press <kbd>Space</kbd> to capture.</span></div>
+            <div class="help-step"><span class="help-step-num">3</span><span>Click <strong>Reconstruct</strong> once every frame is captured. Loupe estimates the true shifts by phase correlation and combines the frames with a Lanczos upscale.</span></div>
+            <div class="help-section-label">Output</div>
+            <p class="help-p"><strong>Download PNG</strong> saves the result; <strong>Use as image</strong> loads it as the new frozen working image.</p>
+            <div class="help-tip">Requires a live camera and is not available on the hosted instance — the button is hidden there.</div>
+          </div>
+
+          <!-- CAPTURE: Z-STACK & SURFACE -->
+          <div class="help-page" id="help-page-capture-zstack" hidden>
+            <h2 class="help-page-title">Z-Stack &amp; Surface</h2>
+            <p class="help-page-sub">Builds an all-in-focus composite and a height map from a manually focus-stepped stack of live frames.</p>
+            <div class="help-section-label">How it works</div>
+            <p class="help-p">Each captured frame is scored per pixel by a focus measure — the variance of the Laplacian, a standard sharpness metric — so at every pixel, the frame where that measure peaks is the one locally in focus. Keeping the winning pixel from each frame builds an all-in-focus composite; the winning frame's index at each pixel, scaled by your Z-step, becomes a height map.</p>
+            <!-- zstack-schematic-slot -->
+            <div class="help-section-label">Workflow</div>
+            <div class="help-step"><span class="help-step-num">1</span><span>Click <strong>3D</strong> in the toolbar and set the Z-step in mm (default 0.05 mm).</span></div>
+            <div class="help-step"><span class="help-step-num">2</span><span>Focus at one extreme, click <strong>Capture frame</strong> (or press <kbd>Space</kbd>), then move Z up by one step and capture again. Repeat for 10–15 frames — <strong>Build height map</strong> stays disabled below a minimum of 3.</span></div>
+            <div class="help-step"><span class="help-step-num">3</span><span>Click <strong>Build height map</strong>, choosing <strong>Argmax</strong> (per-pixel best focus) or <strong>Pyramid</strong> (more detail-preserving) fusion. Then <strong>Open 3D view</strong> for an interactive rotatable surface, or <strong>Use composite as working image</strong> to drop the all-in-focus composite onto the canvas.</span></div>
+            <div class="help-tip">Requires a live camera and is not available on the hosted instance — the button is hidden there.</div>
+          </div>
+
+          <!-- CAPTURE: GEAR ANALYSIS -->
+          <div class="help-page" id="help-page-capture-gear" hidden>
+            <h2 class="help-page-title">Gear Analysis</h2>
+            <p class="help-page-sub">Measures per-tooth angular width deviation from a frozen image of a gear.</p>
+            <div class="help-section-label">Workflow</div>
+            <div class="help-step"><span class="help-step-num">1</span><span>Freeze the image, then fit two circle annotations on it: one on the tip (outer) diameter, one on the root (inner) diameter.</span></div>
+            <div class="help-step"><span class="help-step-num">2</span><span>Click <strong>Gear</strong> in the toolbar, click the tip circle, then click the root circle.</span></div>
+            <div class="help-step"><span class="help-step-num">3</span><span>Enter the tooth count — or click <strong>Detect</strong> to estimate it from the pitch-circle profile — then click <strong>Measure tooth widths</strong>.</span></div>
+            <div class="help-section-label">Output</div>
+            <p class="help-p">A results table lists each tooth's angular width, its deviation from the best tooth, and (if calibrated) that deviation in µm at the pitch circle diameter.</p>
+            <div class="help-tip">The same dialog's <strong>Generate overlay</strong> button can synthesize and overlay a nominal gear DXF from the tooth count — it needs a calibration (px/mm scale) to work.</div>
           </div>
 
           <!-- ALGO: SUB-PIXEL -->
