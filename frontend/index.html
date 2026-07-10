@@ -1052,6 +1052,44 @@
           <div class="help-page" id="help-page-fringe-setup" hidden>
             <h2 class="help-page-title">Setup</h2>
             <p class="help-page-sub">Prepare the system before analyzing an interferogram.</p>
+            <div class="help-section-label">Physical arrangement</div>
+            <div class="help-figure">
+              <svg viewBox="0 0 640 400" role="img" aria-label="Side view of the fringe-analysis setup: camera looking straight down at an optical flat resting on the part, illuminated by a monochromatic lamp; the air gap between flat and part creates interference fringes.">
+                <!-- table + part -->
+                <line x1="170" y1="350" x2="470" y2="350" stroke="var(--border)" stroke-width="2"/>
+                <rect x="260" y="330" width="120" height="20" fill="var(--surface-2)" stroke="var(--text)" stroke-width="1.5"/>
+                <text x="320" y="368" text-anchor="middle" font-size="11" fill="var(--text)">part — face up</text>
+                <!-- optical flat (wedge exaggerated), resting on the part -->
+                <polygon points="240,296 400,296 400,330 240,322" fill="var(--accent)" fill-opacity="0.12" stroke="var(--text)" stroke-width="1.5"/>
+                <text x="232" y="327" text-anchor="end" font-size="10" fill="var(--muted)">air gap</text>
+                <!-- fringe bands on the flat (contours of equal gap) -->
+                <g stroke="var(--accent)" stroke-width="4">
+                  <line x1="255" y1="298" x2="255" y2="305"/>
+                  <line x1="281" y1="298" x2="281" y2="305"/>
+                  <line x1="307" y1="298" x2="307" y2="305"/>
+                  <line x1="333" y1="298" x2="333" y2="305"/>
+                  <line x1="359" y1="298" x2="359" y2="305"/>
+                  <line x1="385" y1="298" x2="385" y2="305"/>
+                </g>
+                <line x1="408" y1="293" x2="428" y2="288" stroke="var(--muted)" stroke-width="1"/>
+                <text x="432" y="290" font-size="10" fill="var(--muted)">fringe bands</text>
+                <!-- camera, straight down -->
+                <rect x="296" y="38" width="48" height="40" fill="var(--surface-2)" stroke="var(--text)" stroke-width="1.5"/>
+                <polygon points="308,78 332,78 328,92 312,92" fill="var(--surface-2)" stroke="var(--text)" stroke-width="1.5"/>
+                <line x1="320" y1="94" x2="320" y2="294" stroke="var(--muted)" stroke-width="1" stroke-dasharray="4 4"/>
+                <text x="320" y="26" text-anchor="middle" font-size="11" fill="var(--text)">Camera — looks straight down</text>
+                <!-- monochromatic lamp + rays -->
+                <circle cx="140" cy="90" r="14" fill="var(--surface-2)" stroke="var(--text)" stroke-width="1.5"/>
+                <text x="140" y="60" text-anchor="middle" font-size="11" fill="var(--text)">monochromatic lamp</text>
+                <g stroke="var(--accent)" stroke-width="1.2">
+                  <line x1="150" y1="104" x2="240" y2="294"/>
+                  <line x1="154" y1="94" x2="320" y2="294"/>
+                  <line x1="152" y1="100" x2="280" y2="294"/>
+                </g>
+                <polygon points="257.4,218.6 255.0,210.3 249.6,214.7" fill="var(--accent)"/>
+              </svg>
+              <div class="help-figure-caption">Side view. The camera looks straight down at an optical flat resting on the part, lit by a single-wavelength lamp (sodium or a single-colour LED). Light reflected from the flat's bottom face and the part's top face interferes: each dark band marks another λ/2 of air gap, so the bands are contour lines of the gap (wedge exaggerated here).</div>
+            </div>
             <div class="help-section-label">Wavelength</div>
             <p class="help-p">Select the wavelength that matches your actual light source. The active calibration record owns this value, and the wavelength dropdown acts as a quick editor for that record. The wavelength determines the physical height conversion: height = phase &times; &lambda; / (4&pi;).</p>
             <div class="help-section-label">Mask threshold</div>
@@ -1647,7 +1685,44 @@
             <p class="help-page-sub">Builds an all-in-focus composite and a height map from a manually focus-stepped stack of live frames.</p>
             <div class="help-section-label">How it works</div>
             <p class="help-p">Each captured frame is scored per pixel by a focus measure — the variance of the Laplacian, a standard sharpness metric — so at every pixel, the frame where that measure peaks is the one locally in focus. Keeping the winning pixel from each frame builds an all-in-focus composite; the winning frame's index at each pixel, scaled by your Z-step, becomes a height map.</p>
-            <!-- zstack-schematic-slot -->
+            <div class="help-figure">
+              <svg viewBox="0 0 640 250" role="img" aria-label="Left: a camera above a stepped part with three dashed focal planes; each step of the part is sharp in a different plane. Right: sharpness versus slice for one pixel, peaking at the slice matching that pixel's height.">
+                <!-- left: focus sweep over a stepped part -->
+                <rect x="140" y="18" width="44" height="30" fill="var(--surface-2)" stroke="var(--text)" stroke-width="1.5"/>
+                <polygon points="150,48 174,48 170,58 154,58" fill="var(--surface-2)" stroke="var(--text)" stroke-width="1.5"/>
+                <line x1="162" y1="60" x2="162" y2="150" stroke="var(--muted)" stroke-width="1" stroke-dasharray="4 4"/>
+                <polygon points="70,215 250,215 250,155 190,155 190,185 130,185 130,200 70,200" fill="var(--surface-2)" stroke="var(--text)" stroke-width="1.5"/>
+                <g stroke="var(--muted)" stroke-width="1" stroke-dasharray="4 3">
+                  <line x1="60" y1="155" x2="265" y2="155"/>
+                  <line x1="60" y1="185" x2="265" y2="185"/>
+                  <line x1="60" y1="200" x2="265" y2="200"/>
+                </g>
+                <g stroke="var(--accent)" stroke-width="3">
+                  <line x1="192" y1="155" x2="248" y2="155"/>
+                  <line x1="132" y1="185" x2="188" y2="185"/>
+                  <line x1="72" y1="200" x2="128" y2="200"/>
+                </g>
+                <text x="272" y="158" font-size="9" fill="var(--muted)">slice 1</text>
+                <text x="272" y="188" font-size="9" fill="var(--muted)">slice 2</text>
+                <text x="272" y="203" font-size="9" fill="var(--muted)">slice 3</text>
+                <text x="162" y="238" text-anchor="middle" font-size="10" fill="var(--text)">focus sweep — each height is sharp in one slice</text>
+                <!-- right: per-pixel sharpness curve -->
+                <line x1="360" y1="190" x2="600" y2="190" stroke="var(--muted)" stroke-width="1"/>
+                <line x1="360" y1="60" x2="360" y2="190" stroke="var(--muted)" stroke-width="1"/>
+                <text x="364" y="40" font-size="10" fill="var(--muted)">sharpness (one pixel)</text>
+                <polyline points="380,180 420,168 450,120 480,72 510,120 540,168 580,180" fill="none" stroke="var(--accent)" stroke-width="2"/>
+                <g fill="var(--text)">
+                  <circle cx="420" cy="168" r="3"/><circle cx="480" cy="72" r="3"/><circle cx="540" cy="168" r="3"/>
+                </g>
+                <line x1="480" y1="72" x2="480" y2="190" stroke="var(--accent)" stroke-width="1.2" stroke-dasharray="3 3"/>
+                <text x="480" y="62" text-anchor="middle" font-size="10" fill="var(--accent)">sharpest slice = this pixel's height</text>
+                <text x="420" y="205" text-anchor="middle" font-size="10" fill="var(--muted)">1</text>
+                <text x="480" y="205" text-anchor="middle" font-size="10" fill="var(--muted)">2</text>
+                <text x="540" y="205" text-anchor="middle" font-size="10" fill="var(--muted)">3</text>
+                <text x="600" y="205" text-anchor="end" font-size="10" fill="var(--muted)">slice</text>
+              </svg>
+              <div class="help-figure-caption">Depth from focus: the focus is stepped through N heights (left); for every pixel, the slice where local sharpness peaks (right) gives that pixel's height — together they yield a height map and an all-in-focus composite.</div>
+            </div>
             <div class="help-section-label">Workflow</div>
             <div class="help-step"><span class="help-step-num">1</span><span>Click <strong>3D</strong> in the toolbar and set the Z-step in mm (default 0.05 mm).</span></div>
             <div class="help-step"><span class="help-step-num">2</span><span>Focus at one extreme, click <strong>Capture frame</strong> (or press <kbd>Space</kbd>), then move Z up by one step and capture again. Repeat for 10–15 frames — <strong>Build height map</strong> stays disabled below a minimum of 3.</span></div>
@@ -1676,6 +1751,35 @@
             <div class="help-section-label">How it works</div>
             <p class="help-p">A small neighbourhood around the cursor is sampled. A <strong>Sobel filter</strong> computes the image gradient — the rate of change of brightness — giving a high response at edges and near-zero in flat regions. The pixel with the highest gradient magnitude in the search radius is identified as the edge.</p>
             <p class="help-p">Then the edge is refined to sub-pixel precision along the gradient direction using one of two methods:</p>
+            <div class="help-figure">
+              <svg viewBox="0 0 420 215" role="img" aria-label="Plot of gradient magnitude sampled at whole pixels across an edge, with a parabola fitted through the three samples around the maximum; the fitted vertex sits between pixel centres.">
+                <line x1="40" y1="175" x2="400" y2="175" stroke="var(--muted)" stroke-width="1"/>
+                <line x1="55" y1="30" x2="55" y2="175" stroke="var(--muted)" stroke-width="1"/>
+                <text x="40" y="20" font-size="10" fill="var(--muted)">gradient magnitude</text>
+                <text x="228" y="207" text-anchor="middle" font-size="10" fill="var(--muted)">pixel position across the edge</text>
+                <!-- per-pixel samples -->
+                <g stroke="var(--border)" stroke-width="1">
+                  <line x1="60" y1="158" x2="60" y2="175"/><line x1="100" y1="152" x2="100" y2="175"/>
+                  <line x1="140" y1="134" x2="140" y2="175"/><line x1="180" y1="86" x2="180" y2="175"/>
+                  <line x1="220" y1="38" x2="220" y2="175"/><line x1="260" y1="62" x2="260" y2="175"/>
+                  <line x1="300" y1="116" x2="300" y2="175"/><line x1="340" y1="146" x2="340" y2="175"/>
+                  <line x1="380" y1="158" x2="380" y2="175"/>
+                </g>
+                <g fill="var(--text)">
+                  <circle cx="60" cy="158" r="3"/><circle cx="100" cy="152" r="3"/><circle cx="140" cy="134" r="3"/>
+                  <circle cx="180" cy="86" r="3"/><circle cx="220" cy="38" r="3"/><circle cx="260" cy="62" r="3"/>
+                  <circle cx="300" cy="116" r="3"/><circle cx="340" cy="146" r="3"/><circle cx="380" cy="158" r="3"/>
+                </g>
+                <!-- parabola through the three samples around the peak -->
+                <polyline points="172,104.2 184,78.0 196,58.2 208,44.8 220,38.0 226.7,37.0 232,37.6 244,43.7 256,56.4 268,75.6" fill="none" stroke="var(--accent)" stroke-width="2"/>
+                <line x1="220" y1="38" x2="220" y2="175" stroke="var(--muted)" stroke-width="1" stroke-dasharray="3 3"/>
+                <line x1="226.7" y1="37" x2="226.7" y2="175" stroke="var(--accent)" stroke-width="1.2" stroke-dasharray="3 3"/>
+                <circle cx="226.7" cy="37" r="3.5" fill="var(--accent)"/>
+                <text x="216" y="190" text-anchor="end" font-size="10" fill="var(--muted)">nearest pixel</text>
+                <text x="232" y="30" font-size="10" fill="var(--accent)">fitted peak ≈ +0.17 px</text>
+              </svg>
+              <div class="help-figure-caption">The gradient sampled at whole pixels (dots) peaks between pixel centres. Fitting a parabola (accent) through the three samples around the maximum places the edge at the fitted vertex — here 0.17 px right of the strongest pixel.</div>
+            </div>
             <table>
               <thead><tr><th>Method</th><th>How it works</th><th>Best for</th></tr></thead>
               <tbody>
