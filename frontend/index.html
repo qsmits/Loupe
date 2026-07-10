@@ -17,9 +17,8 @@
     </div>
   </div>
 
-  <!-- Top bar -->
+  <!-- Top bar (menus only) -->
   <div id="top-bar">
-    <div id="toolbar-root" class="microscope-only"></div>
     <div class="menu-group fringe-only" hidden>
       <button class="menu-btn" id="btn-menu-fringe-settings">Settings ▾</button>
       <div class="dropdown fringe-settings-panel" id="dropdown-fringe-settings" hidden>
@@ -118,7 +117,7 @@
       </div>
     </div>
 
-    <div class="menu-group microscope-only workspace-menus-start">
+    <div class="menu-group microscope-only">
       <button class="menu-btn" id="btn-menu-detect">Detect ▾</button>
       <div class="dropdown detect-panel" id="dropdown-detect" hidden>
         <div class="detect-section">
@@ -405,6 +404,11 @@
       <button id="btn-save-image" class="top-btn icon-btn microscope-only" title="Save current image">📷</button>
       <button id="btn-save-session" class="top-btn icon-btn microscope-only" title="Save session">💾</button>
     </div>
+  </div>
+
+  <!-- Tool bar: measuring tools (microscopy only) -->
+  <div id="tool-bar" class="microscope-only">
+    <div id="toolbar-root"></div>
   </div>
 
   <!-- Main content area -->

@@ -58,17 +58,24 @@ input[type=range] { cursor: pointer; accent-color: var(--accent); }
   row-gap: 4px;
 }
 
-/* ─── Row 2 toolbar (microscopy) ─────────────────────────────── */
+/* ─── Row 3 tool bar (microscopy measuring tools) ────────────── */
+#tool-bar {
+  display: flex;
+  align-items: center;
+  padding: 6px 12px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+#tool-bar[hidden] { display: none; }
+
 #toolbar-root {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
   gap: 2px;
-  flex: 1;
   min-width: 0;
 }
-#toolbar-root[hidden] { display: none; }
-.workspace-menus-start { margin-left: auto; }
 
 .tb-btn {
   display: inline-flex;
