@@ -10,9 +10,14 @@ import { viewport, screenToImage, imageWidth, imageHeight } from './viewport.js'
 import { hitTestAnnotation, hitTestDxfEntity } from './hit-test.js';
 import { openCommentEditor } from './comment-editor.js';
 import { solveConstraints } from './constraint-solver.js';
+import { showToast } from './shell.js';
 
 // Re-export for backward compatibility (other modules import these from tools.js)
 export { hitTestAnnotation, hitTestDxfEntity } from './hit-test.js';
+
+// One-shot discoverability hint for two-lines angle miss-clicks; re-armed on
+// every tool switch (module-local — deliberately not per-tab state).
+let _angleMissHinted = false;
 
 export function setTool(name) {
   // Pan is only meaningful in frozen mode (live camera fills the viewport, so
@@ -34,6 +39,7 @@ export function setTool(name) {
   // Track the top-level measure group so the sub-mode selector can stay visible.
   const topLevel = _TOOL_TO_TOP_LEVEL[name] ?? null;
   state._topLevelTool = topLevel;
+  _angleMissHinted = false;
   state.pendingPoints = [];
   state.pendingCenterCircle = null;
   state.pendingRefLine = null;
@@ -266,6 +272,12 @@ export async function handleToolClick(rawPt, e = {}) {
         const refAnn = findSnapLine(pt);
         if (!refAnn) {
           showStatus("Angle (two lines) — click on a line");
+          // The status bar is easy to miss; a silent miss-click reads as "the
+          // tool is broken" (real user report). Toast once per attempt.
+          if (!_angleMissHinted) {
+            _angleMissHinted = true;
+            showToast("Two-lines angle measures between existing lines — click directly on a line, or switch to “Three points” in the toolbar");
+          }
           return;
         }
         state.pendingRefLine = refAnn;
