@@ -118,7 +118,8 @@ export function HomeScreen() {
             </div>`}
       <div class="home-section-label">Import</div>
       <div id="home-import-zone" class="home-import-zone">
-        Drop a <b>.loupe</b> project, a session JSON, or an image here — or
+        Drop a <b>.loupe</b> project, a session JSON, or an image here, paste
+        an image (Ctrl/Cmd+V), or
         <label class="home-import-browse">browse
           <input type="file" id="home-import-input" hidden
             accept=".loupe,.json,application/json,image/*"

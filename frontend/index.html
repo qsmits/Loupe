@@ -441,7 +441,7 @@
       </div>
       <div id="coord-display"></div>
       <div id="drop-overlay">
-        <div class="drop-message">Drop image here</div>
+        <div class="drop-message">Drop image here, or paste (Ctrl/Cmd+V)</div>
       </div>
       <div id="compare-overlay" hidden>
         <div class="compare-grid">
@@ -805,7 +805,7 @@
             <h2 class="help-page-title">Getting Started</h2>
             <p class="help-page-sub">Loupe supports multiple instrument modes — Microscope, Deflectometry, and Fringe Analysis. Choose a project type on the home screen to start one; each open project appears as a tab in the top bar. Microscope is the most common mode and provides precision measurement tools for camera or imported images.</p>
             <div class="help-section-label">Basic workflow</div>
-            <div class="help-step"><span class="help-step-num">1</span><span>Freeze a frame using the <strong>❄ Live</strong> button, or drag and drop an image onto the viewer.</span></div>
+            <div class="help-step"><span class="help-step-num">1</span><span>Freeze a frame using the <strong>❄ Live</strong> button, drag and drop an image onto the viewer, or paste one (<kbd>Ctrl</kbd>/<kbd>⌘</kbd><kbd>V</kbd>).</span></div>
             <div class="help-step"><span class="help-step-num">2</span><span>Calibrate the image: press <kbd>C</kbd>, click two points of known distance, enter the value in mm.</span></div>
             <div class="help-step"><span class="help-step-num">3</span><span>Select a measurement tool from the measuring-tools bar at the bottom of the header, or press its shortcut key. Click points on the image to place measurements. Some tools show extra sub-mode options inline in the same bar, next to the tool, when relevant.</span></div>
             <div class="help-step"><span class="help-step-num">4</span><span>Export results as CSV, PDF, or annotated PNG from the Overlay menu.</span></div>
@@ -857,7 +857,7 @@
             <div class="help-section-label">Where your data lives</div>
             <p class="help-p">Projects are stored locally in your browser's IndexedDB. The server never stores or lists your projects — it only ever sees a frozen frame, transiently, when you use a server-side processing feature (see below).</p>
             <div class="help-section-label">Export &amp; import (.loupe)</div>
-            <p class="help-p"><strong>File ▾ → Export project (.loupe)</strong> downloads a single file containing the image, all measurements, calibration, and view state. Re-import it by dragging the file anywhere onto the app, or dropping it on the import zone on the home screen.</p>
+            <p class="help-p"><strong>File ▾ → Export project (.loupe)</strong> downloads a single file containing the image, all measurements, calibration, and view state. Re-import it by dragging the file anywhere onto the app, or dropping it on the import zone on the home screen. Images can also be pasted directly (<kbd>Ctrl</kbd>/<kbd>⌘</kbd><kbd>V</kbd>) — into the workspace, or onto the home screen to start a new project.</p>
             <p class="help-p">Old session JSON (the pre-project v3 format) still imports. Note that v3 sessions never stored the image, so their measurements and calibration come back attached to a blank canvas.</p>
             <div class="help-tip">If a pre-project autosave from an older app version is found in your browser, a one-time dialog offers to convert it into a project (<strong>Discard</strong> / <strong>Convert to project</strong>).</div>
             <div class="help-section-label">Private browsing</div>
@@ -1534,6 +1534,7 @@
                 <tr><td><kbd>←</kbd><kbd>↑</kbd><kbd>→</kbd><kbd>↓</kbd></td><td>Nudge selected annotation 1 px (hold <kbd>Shift</kbd> for 10 px); pans the frozen viewport when nothing is selected</td></tr>
                 <tr><td><kbd>Ctrl Z</kbd> / <kbd>⌘Z</kbd></td><td>During a multi-point measurement, removes the last placed point; otherwise undoes the last action.</td></tr>
                 <tr><td><kbd>Ctrl Y</kbd> / <kbd>⌘⇧Z</kbd></td><td>Redo</td></tr>
+                <tr><td><kbd>Ctrl V</kbd> / <kbd>⌘V</kbd></td><td>Paste an image from the clipboard — loads it like a drop</td></tr>
                 <tr><td><kbd>?</kbd></td><td>Open this documentation</td></tr>
               </tbody>
             </table>

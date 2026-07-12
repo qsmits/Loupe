@@ -35,7 +35,7 @@ import { initFringe } from './fringe.js';
 import { enterMaskEditSession, isCrossModeActive } from './cross-mode.js';
 import { captureEpoch, isStale, registerWorkspaceDom } from './workspace.js';
 import { initShell, showToast } from './shell.js';
-import { initTabManager, getActiveTabId, flushAutosave } from './tab-manager.js';
+import { initTabManager, getActiveTabId, getActiveTab, isHomeVisible, flushAutosave } from './tab-manager.js';
 import { initProjectIo, offerAutosaveMigration } from './project-io.js';
 import { onStorageUnavailable } from './projects-db.js';
 
@@ -295,10 +295,16 @@ document.getElementById("btn-load").addEventListener("click", () => {
   document.getElementById("file-input").click();
 });
 
-document.getElementById("file-input").addEventListener("change", async e => {
-  const file = e.target.files[0];
-  if (!file) return;
-
+// Shared by the file-input handler, the viewer drop handler, and clipboard
+// paste — all three load a File the same way. `sourceLabel` only affects the
+// final status text (default matches the original "Loaded image" wording);
+// it does not change frozenSource, which stays "file" for every File-backed
+// load (see state.js's frozenSource enum comment).
+//
+// NOTE: the epoch-guard placement and the `state._dirty = true` marking here
+// were review-hardened (undo/autosave correctness) — preserve exact
+// semantics if you touch this.
+async function loadImageFileIntoWorkspace(file, sourceLabel = null) {
   const loadingEl = document.getElementById("loading-overlay");
   loadingEl.hidden = false;
   const { signal, cancel, didTimeout } = withTimeout(30000);
@@ -345,7 +351,7 @@ document.getElementById("file-input").addEventListener("change", async e => {
       const rect = canvas.getBoundingClientRect();
       fitToWindow(rect.width, rect.height);
       redraw();
-      showStatus("Loaded image");
+      showStatus(sourceLabel === "paste" ? "Pasted image" : "Loaded image");
     };
     loadedImg.onerror = () => {
       loadingEl.hidden = true;
@@ -357,6 +363,14 @@ document.getElementById("file-input").addEventListener("change", async e => {
     loadingEl.hidden = true;
     if (didTimeout()) showToast("Image upload timed out — the server may be busy");
   }
+}
+
+document.getElementById("file-input").addEventListener("change", async e => {
+  const file = e.target.files[0];
+  if (!file) return;
+  await loadImageFileIntoWorkspace(file);
+  // Reset so choosing the same file again still fires "change" (drop/paste
+  // have no such input element, so this has no equivalent there).
   e.target.value = "";
 });
 
@@ -441,65 +455,46 @@ viewerEl.addEventListener("drop", async e => {
   dropOverlayEl.classList.remove("drag-active");
   const file = e.dataTransfer.files[0];
   if (!file) return;
+  await loadImageFileIntoWorkspace(file);
+});
 
-  const loadingEl = document.getElementById("loading-overlay");
-  loadingEl.hidden = false;
-  const { signal, cancel, didTimeout } = withTimeout(30000);
-  try {
-    const epoch = captureEpoch();
-    const formData = new FormData();
-    formData.append("file", file);
-    const r = await apiFetch("/load-image", { method: "POST", body: formData, signal });
-    cancel();
-    if (!r.ok) { loadingEl.hidden = true; alert("Could not load image"); return; }
-    const { width, height } = await r.json();
-    if (isStale(epoch)) {
-      console.debug("[epoch] stale result dropped: load-image");
-      loadingEl.hidden = true;
-      showToast("Image load cancelled — the tab changed while it was loading");
-      return;
-    }
-    state.frozenSize = { w: width, h: height };
-    setImageSize(width, height);
+// ── Clipboard paste (Ctrl/Cmd+V) — acts like a drop ─────────────────────────
+// Loads a pasted image into the active microscopy workspace, or routes it
+// through the normal project-import pipeline when the home screen is
+// showing. Ignored while typing in a field, with a dialog open, or during a
+// cross-mode modal excursion.
+function isTextEntryFocused() {
+  const el = document.activeElement;
+  if (!el) return false;
+  if (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT") return true;
+  return !!el.isContentEditable;
+}
 
-    const url = URL.createObjectURL(file);
-    const loadedImg = new Image();
-    loadedImg.onload = () => {
-      if (isStale(epoch)) {
-        console.debug("[epoch] stale result dropped: image load");
-        loadingEl.hidden = true;
-        showToast("Image load cancelled — the tab changed while it was loading");
-        return;
-      }
-      loadingEl.hidden = true;
-      state.frozenBackground = loadedImg;
-      state.frozenBlob = file;
-      state.frozenSource = "file";
-      state.frozenFilename = file.name;
-      img.style.opacity = "0";
-      // MJPEG stream continues in background (changing src breaks canvas sizing)
-      state.frozen = true;
-      // Image mutations must dirty the workspace or autosave (dirty-gated)
-      // never persists the image/thumbnail into the project record.
-      state._dirty = true;
-      cacheImageData(loadedImg, width, height);
-      updateFreezeUI();
-      resizeCanvas();
-      const rect = canvas.getBoundingClientRect();
-      fitToWindow(rect.width, rect.height);
-      redraw();
-      showStatus("Loaded image");
-    };
-    loadedImg.onerror = () => {
-      loadingEl.hidden = true;
-      URL.revokeObjectURL(url);
-      showToast("Could not decode image");
-    };
-    loadedImg.src = url;
-  } catch {
-    loadingEl.hidden = true;
-    if (didTimeout()) showToast("Image upload timed out — the server may be busy");
+document.addEventListener("paste", e => {
+  if (isTextEntryFocused()) return;
+  if (document.querySelector(".dialog-overlay:not([hidden])") !== null) return;
+  if (isCrossModeActive()) return;
+
+  const items = e.clipboardData?.items;
+  if (!items) return;
+  let file = null;
+  for (const item of items) {
+    if (item.type.startsWith("image/")) { file = item.getAsFile(); break; }
   }
+  if (!file) return;   // no image on the clipboard — let normal paste proceed
+
+  e.preventDefault();
+  if (!file.name) {
+    const ext = file.type.split("/")[1] || "png";
+    file = new File([file], `pasted-image.${ext}`, { type: file.type });
+  }
+
+  if (isHomeVisible()) {
+    document.dispatchEvent(new CustomEvent("import-files", { detail: { files: [file] } }));
+  } else if (getActiveTab()?.type === "microscopy") {
+    loadImageFileIntoWorkspace(file, "paste");
+  }
+  // Any other active tab (deflectometry/fringe) — ignore.
 });
 
 // ── Coordinate origin ───���──────────────────────────────────────────────────────
