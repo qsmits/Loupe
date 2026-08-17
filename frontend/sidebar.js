@@ -3,7 +3,7 @@ import { state, DETECTION_TYPES, camBounds, pushUndo } from './state.js';
 import { redraw, resizeCanvas, showStatus, getStatus, canvas, listEl } from './render.js';
 import { constraintsForAnnotation, CONSTRAINT_ICONS, CONSTRAINT_LABELS } from './constraints.js';
 import { measurementLabel } from './format.js';
-import { imageWidth, imageHeight, setImageSize, fitToWindow } from './viewport.js';
+import { imageWidth, imageHeight, setImageSize, fitToWindow, shouldAdoptCameraImageSize } from './viewport.js';
 import { renderGearResultsPanel } from './gear.js';
 import { loadReticleList, getReticleCategories, loadReticle, unloadReticle, setReticleRotation } from './reticle.js';
 
@@ -486,7 +486,7 @@ export async function loadCameraInfo() {
     // Set image dimensions from camera resolution so annotations are always
     // in camera-pixel coordinates, even before freeze. This prevents the
     // coordinate shift that occurs when doFreeze sets imageWidth/imageHeight.
-    if (d.width > 0 && d.height > 0 && (d.width !== imageWidth || d.height !== imageHeight)) {
+    if (shouldAdoptCameraImageSize(d.width, d.height, imageWidth, imageHeight, state.frozen)) {
       setImageSize(d.width, d.height);
       // Resize the canvas first (its shape can change), then fit the viewport
       // so the full camera frame is visible, then redraw.

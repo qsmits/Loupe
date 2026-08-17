@@ -32,6 +32,29 @@ export function canSeedImageSize(rectW, rectH, containerHidden) {
   return rectW >= 2 && rectH >= 2;
 }
 
+/** Should a camera's reported resolution become the workspace image size?
+ *
+ * Live view: yes — annotations are kept in camera-pixel coordinates from the
+ * start so nothing shifts at freeze time.
+ *
+ * Frozen: never. A loaded, pasted or frozen image owns the coordinate frame.
+ * Adopting camera dimensions there restretches the image under annotations
+ * that keep their old coordinates, silently detaching every measurement and
+ * invalidating any calibration — and the damage is autosaved.
+ *
+ * @param {number} camW  camera width from /camera/info
+ * @param {number} camH  camera height from /camera/info
+ * @param {number} curW  current imageWidth
+ * @param {number} curH  current imageHeight
+ * @param {boolean} frozen  state.frozen
+ * @returns {boolean}
+ */
+export function shouldAdoptCameraImageSize(camW, camH, curW, curH, frozen) {
+  if (frozen) return false;
+  if (!(camW > 0) || !(camH > 0)) return false;
+  return camW !== curW || camH !== curH;
+}
+
 /** Pure version — takes viewport as parameter (for testing) */
 export function imageToScreenPure(x, y, vp) {
   return { x: (x - vp.panX) * vp.zoom, y: (y - vp.panY) * vp.zoom };

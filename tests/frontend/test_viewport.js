@@ -19,6 +19,7 @@ import {
   viewport, setImageSize, fitToWindow,
   imageToScreen, screenToImage,
   zoomOneToOne, clampPan,
+  shouldAdoptCameraImageSize,
 } from '../../frontend/viewport.js';
 
 // ── Pure function tests (no module state) ────────────────────────────────────
@@ -341,5 +342,32 @@ describe('clampPan', () => {
       `panX: expected ${(2592 - 800 / 0.2) / 2}, got ${viewport.panX}`);
     assert.ok(Math.abs(viewport.panY - (1944 - 600 / 0.2) / 2) < 1e-9,
       `panY: expected ${(1944 - 600 / 0.2) / 2}, got ${viewport.panY}`);
+  });
+});
+
+// ── shouldAdoptCameraImageSize ──────────────────────────────────────────────
+
+describe('shouldAdoptCameraImageSize', () => {
+  it('adopts camera dimensions in live view when they differ', () => {
+    assert.equal(shouldAdoptCameraImageSize(2448, 2048, 640, 480, false), true);
+  });
+
+  it('never adopts while an image is frozen — the loaded image owns the frame', () => {
+    // Regression: opening the Camera menu with a 1400x900 image loaded used to
+    // restretch it to the camera's 640x480, detaching every annotation.
+    assert.equal(shouldAdoptCameraImageSize(640, 480, 1400, 900, true), false);
+  });
+
+  it('no-ops when the dimensions already match', () => {
+    assert.equal(shouldAdoptCameraImageSize(640, 480, 640, 480, false), false);
+  });
+
+  it('ignores a camera reporting zero or missing dimensions', () => {
+    assert.equal(shouldAdoptCameraImageSize(0, 0, 1400, 900, false), false);
+    assert.equal(shouldAdoptCameraImageSize(640, 0, 1400, 900, false), false);
+  });
+
+  it('adopts on a fresh live workspace that has no size yet', () => {
+    assert.equal(shouldAdoptCameraImageSize(640, 480, 0, 0, false), true);
   });
 });
