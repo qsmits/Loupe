@@ -1399,6 +1399,10 @@ async function useCompositeAsWorkingImage() {
     state.frozenBackground = loadedImg;
     img.style.opacity = "0";
     state.frozen = true;
+    // Persist the composite's bytes, not the pre-stack frame — otherwise
+    // autosave stores an image whose size disagrees with imageMeta.
+    state.frozenBlob = blob;
+    state._dirty = true;
     cacheImageData(loadedImg, width, height);
     updateFreezeUI();
     resizeCanvas();

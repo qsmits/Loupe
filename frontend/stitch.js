@@ -267,6 +267,12 @@ async function useAsImage() {
     state.frozenBackground = loadedImg;
     img.style.opacity = "0";
     state.frozen = true;
+    // The panorama is now the working image — the persisted blob must be its
+    // bytes, not the pre-stitch frame. A stale blob makes autosave store an
+    // image whose size disagrees with imageMeta, and reload then repairs the
+    // size back to the OLD image while annotations stay in panorama coords.
+    state.frozenBlob = blob;
+    state._dirty = true;
     cacheImageData(loadedImg, width, height);
     updateFreezeUI();
     resizeCanvas();

@@ -470,6 +470,10 @@ async function useResultAsImage() {
     state.frozenBackground = loadedImg;
     img.style.opacity = "0";
     state.frozen = true;
+    // Persist the super-res bytes, not the pre-upscale frame: a stale blob
+    // reloads at the original size with annotations still in 2x coordinates.
+    state.frozenBlob = blob;
+    state._dirty = true;
     cacheImageData(loadedImg, width, height);
     updateFreezeUI();
     resizeCanvas();
