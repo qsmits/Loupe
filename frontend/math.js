@@ -28,6 +28,79 @@ export function calibrationPixelsPerMm(ann) {
   return pixelDist / knownMm;
 }
 
+// Types whose pixel span is the distance between two stored endpoints.
+const _SPAN_ENDPOINT_TYPES = new Set(["distance", "perp-dist", "para-dist", "center-dist"]);
+// Types whose known dimension is a diameter (calibration convention: the user
+// enters the diameter, matching the existing circle-calibration flow).
+const _SPAN_RADIUS_TYPES = new Set(["circle", "arc-fit", "arc-measure"]);
+
+/** Pixel magnitude of a measurement, for calibrating from it.
+ *
+ * Returns null when the annotation carries no self-contained scale:
+ * angle/parallelism are dimensionless, fit-line is a flatness zone width, and
+ * slot-dist/pt-circle-dist/intersect are derived from *other* annotations
+ * looked up by id, so they cannot be resolved from `ann` alone. Detections are
+ * excluded too — elevate them to a measurement first.
+ *
+ * @param {object} ann
+ * @returns {{ span: number, kind: 'length'|'diameter'|'area' } | null}
+ */
+export function measurementPixelSpan(ann) {
+  if (!ann || typeof ann !== "object") return null;
+  let span = null;
+  let kind = null;
+  if (_SPAN_ENDPOINT_TYPES.has(ann.type)) {
+    if (!ann.a || !ann.b) return null;
+    span = Math.hypot(ann.b.x - ann.a.x, ann.b.y - ann.a.y);
+    kind = "length";
+  } else if (ann.type === "spline") {
+    span = ann.length_px;
+    kind = "length";
+  } else if (_SPAN_RADIUS_TYPES.has(ann.type)) {
+    span = ann.r * 2;
+    kind = "diameter";
+  } else if (ann.type === "area") {
+    if (!Array.isArray(ann.points) || ann.points.length < 3) return null;
+    span = polygonArea(ann.points);
+    kind = "area";
+  } else {
+    return null;
+  }
+  if (!Number.isFinite(span) || span <= 0) return null;
+  return { span, kind };
+}
+
+/** Unit-bearing area input: "25 mm²", "25 mm2", "4000 µm²", "25" (bare → mm²).
+ * Unlike parseDistanceInput this never alerts — math.js is imported by Node
+ * unit tests, where alert() does not exist. Callers report bad input.
+ * @returns {{ value: number, unit: 'mm'|'µm', mm2: number } | null}
+ */
+export function parseAreaInput(input) {
+  const m = String(input ?? "").trim().match(/^([0-9.]+)\s*(mm|µm|um)?\s*(?:²|2)?$/i);
+  if (!m) return null;
+  const value = parseFloat(m[1]);
+  if (!Number.isFinite(value) || value <= 0) return null;
+  const unit = (m[2] || "mm").replace(/um/i, "µm").toLowerCase();
+  const mm2 = unit === "µm" ? value / 1e6 : value;
+  return { value, unit, mm2 };
+}
+
+/** Pixels-per-mm implied by a measurement of known true size.
+ * Length and diameter are a direct ratio; an area gives the uniform scale
+ * √(px² / mm²). Returns null on degenerate input.
+ * @param {number} span    pixel magnitude from measurementPixelSpan
+ * @param {'length'|'diameter'|'area'} kind
+ * @param {number} knownMm known true size — mm for length/diameter, mm² for area
+ * @returns {number | null}
+ */
+export function calibrationPpmFromMeasurement(span, kind, knownMm) {
+  if (!Number.isFinite(span) || !Number.isFinite(knownMm)) return null;
+  if (span <= 0 || knownMm <= 0) return null;
+  if (kind === "length" || kind === "diameter") return span / knownMm;
+  if (kind === "area") return Math.sqrt(span / knownMm);
+  return null;
+}
+
 export function fitCircle(p1, p2, p3) {
   const ax = p1.x, ay = p1.y;
   const bx = p2.x, by = p2.y;

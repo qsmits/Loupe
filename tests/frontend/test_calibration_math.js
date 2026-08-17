@@ -22,7 +22,7 @@
 
 import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { calibrationPixelsPerMm } from '../../frontend/math.js';
+import { calibrationPixelsPerMm, measurementPixelSpan, parseAreaInput, calibrationPpmFromMeasurement } from '../../frontend/math.js';
 import { state, pushUndo, takeSnapshot, undoStack, redoStack } from '../../frontend/state.js';
 
 // ── Two-point calibration ────────────────────────────────────────────────────
@@ -200,5 +200,100 @@ describe('applyCalibration undo sequence (BUG 2)', () => {
     assert.equal(state.calibration, null);
     assert.equal(state.annotations.filter(a => a.type === 'calibration').length, 0);
     assert.equal(undoStack.length, 0, 'stack must be empty — no second phantom step');
+  });
+});
+
+describe('measurementPixelSpan', () => {
+  it('distance: endpoint separation as a length', () => {
+    const r = measurementPixelSpan({ type: 'distance', a: { x: 0, y: 0 }, b: { x: 30, y: 40 } });
+    assert.deepStrictEqual(r, { span: 50, kind: 'length' });
+  });
+
+  it('perp-dist, para-dist and center-dist use the same endpoints', () => {
+    for (const type of ['perp-dist', 'para-dist', 'center-dist']) {
+      const r = measurementPixelSpan({ type, a: { x: 0, y: 0 }, b: { x: 3, y: 4 } });
+      assert.deepStrictEqual(r, { span: 5, kind: 'length' }, type);
+    }
+  });
+
+  it('spline: arc length', () => {
+    const r = measurementPixelSpan({ type: 'spline', length_px: 123.5 });
+    assert.deepStrictEqual(r, { span: 123.5, kind: 'length' });
+  });
+
+  it('circle and arc-fit: diameter, not radius', () => {
+    assert.deepStrictEqual(measurementPixelSpan({ type: 'circle', r: 25 }),
+      { span: 50, kind: 'diameter' });
+    assert.deepStrictEqual(measurementPixelSpan({ type: 'arc-fit', r: 10 }),
+      { span: 20, kind: 'diameter' });
+    assert.deepStrictEqual(measurementPixelSpan({ type: 'arc-measure', r: 4 }),
+      { span: 8, kind: 'diameter' });
+  });
+
+  it('area: polygon area in px squared', () => {
+    const square = { type: 'area', points: [
+      { x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 100 }, { x: 0, y: 100 }] };
+    assert.deepStrictEqual(measurementPixelSpan(square), { span: 10000, kind: 'area' });
+  });
+
+  it('returns null for types with no self-contained scale', () => {
+    // angle/parallelism are dimensionless; fit-line is a flatness zone;
+    // slot-dist/pt-circle-dist/intersect are derived from other annotations.
+    for (const type of ['angle', 'parallelism', 'fit-line', 'comment', 'point',
+                        'slot-dist', 'pt-circle-dist', 'intersect', 'detected-circle']) {
+      assert.equal(measurementPixelSpan({ type }), null, type);
+    }
+    assert.equal(measurementPixelSpan(null), null);
+  });
+
+  it('returns null for degenerate geometry', () => {
+    assert.equal(measurementPixelSpan({ type: 'distance', a: { x: 5, y: 5 }, b: { x: 5, y: 5 } }), null);
+    assert.equal(measurementPixelSpan({ type: 'circle', r: 0 }), null);
+    assert.equal(measurementPixelSpan({ type: 'area', points: [{ x: 0, y: 0 }, { x: 1, y: 1 }] }), null);
+  });
+});
+
+describe('parseAreaInput', () => {
+  it('parses mm² in both spellings', () => {
+    assert.deepStrictEqual(parseAreaInput('25 mm²'), { value: 25, unit: 'mm', mm2: 25 });
+    assert.deepStrictEqual(parseAreaInput('25 mm2'), { value: 25, unit: 'mm', mm2: 25 });
+  });
+
+  it('parses µm² and converts to mm²', () => {
+    assert.deepStrictEqual(parseAreaInput('4000 µm²'), { value: 4000, unit: 'µm', mm2: 0.004 });
+    assert.deepStrictEqual(parseAreaInput('4000 um2'), { value: 4000, unit: 'µm', mm2: 0.004 });
+  });
+
+  it('treats a bare number as mm²', () => {
+    assert.deepStrictEqual(parseAreaInput('25'), { value: 25, unit: 'mm', mm2: 25 });
+  });
+
+  it('returns null for garbage without alerting', () => {
+    assert.equal(parseAreaInput('wide'), null);
+    assert.equal(parseAreaInput(''), null);
+    assert.equal(parseAreaInput('25 inches'), null);
+  });
+});
+
+describe('calibrationPpmFromMeasurement', () => {
+  it('length: pixels per mm is span over known', () => {
+    assert.equal(calibrationPpmFromMeasurement(500, 'length', 2), 250);
+  });
+
+  it('diameter behaves identically to length', () => {
+    assert.equal(calibrationPpmFromMeasurement(500, 'diameter', 2), 250);
+  });
+
+  it('area: uniform scale is the square root of the area ratio', () => {
+    // 10000 px² over 4 mm² -> 2500 px²/mm² -> 50 px/mm
+    assert.equal(calibrationPpmFromMeasurement(10000, 'area', 4), 50);
+  });
+
+  it('returns null on degenerate input', () => {
+    assert.equal(calibrationPpmFromMeasurement(0, 'length', 2), null);
+    assert.equal(calibrationPpmFromMeasurement(500, 'length', 0), null);
+    assert.equal(calibrationPpmFromMeasurement(NaN, 'length', 2), null);
+    assert.equal(calibrationPpmFromMeasurement(500, 'length', NaN), null);
+    assert.equal(calibrationPpmFromMeasurement(500, 'nonsense', 2), null);
   });
 });
