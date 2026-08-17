@@ -24,7 +24,7 @@ import { describe, it, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
 import './dom-stub.js';
 import { createIdbStub } from './idb-stub.js';
-import { _setIndexedDbFactory, getProject } from '../../frontend/projects-db.js';
+import { _setIndexedDbFactory, getProject, putProject } from '../../frontend/projects-db.js';
 import { state } from '../../frontend/state.js';
 import { restoreWorkspace, freshWorkspaceRecord, captureEpoch, isStale } from '../../frontend/workspace.js';
 import { setImageSize } from '../../frontend/viewport.js';
@@ -678,5 +678,30 @@ describe('lazy image restore', () => {
     assert.equal(state.frozen, true);
     assert.ok(state.frozenBackground, 'frozenBackground image element must be populated');
     assert.equal(state.frozenSource, 'file');
+  });
+
+  it('repairs a stored image size that disagrees with the image itself', async () => {
+    // A project damaged by the old camera-menu bug: imageMeta says 640x480
+    // but the stored blob decodes to 8x6 (the dom-stub FakeImage size).
+    const tm1 = await freshTabManager();
+    const tab = await tm1.newProject('microscopy', { name: 'Damaged' });
+    const proj = await getProject(tab.id);
+    proj.image = new Blob(['x'], { type: 'image/png' });
+    proj.imageMeta = { w: 640, h: 480, source: 'file', filename: 'x.png' };
+    await putProject(proj);
+
+    // New tab-manager instance forces tab.record to null, exercising the
+    // lazy-load path in ensureRecordLoaded (same pattern as "lazy image
+    // restore" above).
+    const tm2 = await freshTabManager();
+    await tm2.openProject(tab.id);
+
+    // getTabs() only maps id/type/name/dirty, so use getActiveTab() (already
+    // exported) to reach the raw tab.record that ensureRecordLoaded wrote.
+    const reopened = tm2.getActiveTab();
+    assert.equal(reopened.record.imageWidth, 8, 'adopts the decoded width');
+    assert.equal(reopened.record.imageHeight, 6, 'adopts the decoded height');
+    assert.deepStrictEqual(reopened.record.state.frozenSize, { w: 8, h: 6 });
+    assert.equal(reopened.record.state._dirty, true, 'repair is marked for persistence');
   });
 });

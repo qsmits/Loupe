@@ -214,8 +214,26 @@ async function ensureRecordLoaded(tab) {
     });
     if (el) {
       record.state.frozenBackground = el;
-      record.imageWidth = proj.imageMeta?.w || el.naturalWidth;
-      record.imageHeight = proj.imageMeta?.h || el.naturalHeight;
+      // The blob is ground truth; imageMeta is derived bookkeeping that an
+      // earlier bug could have written wrong (camera dimensions adopted over
+      // a loaded image, detaching every annotation). When they disagree,
+      // trust the decoded image and persist the correction.
+      const metaW = proj.imageMeta?.w || 0;
+      const metaH = proj.imageMeta?.h || 0;
+      const natW = el.naturalWidth || 0;
+      const natH = el.naturalHeight || 0;
+      if (natW > 0 && natH > 0 && (natW !== metaW || natH !== metaH)) {
+        if (metaW > 0 && metaH > 0) {
+          console.warn(`[projects] "${proj.name}": stored image size ${metaW}×${metaH} ` +
+                       `disagrees with the image (${natW}×${natH}) — repairing`);
+          record.state._dirty = true;
+        }
+        record.imageWidth = natW;
+        record.imageHeight = natH;
+      } else {
+        record.imageWidth = metaW || natW;
+        record.imageHeight = metaH || natH;
+      }
       record.state.frozenSize = { w: record.imageWidth, h: record.imageHeight };
     } else {
       showToast(`"${proj.name}": stored image could not be decoded`);
