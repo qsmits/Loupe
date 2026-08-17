@@ -35,7 +35,7 @@ import { initFringe } from './fringe.js';
 import { enterMaskEditSession, isCrossModeActive } from './cross-mode.js';
 import { captureEpoch, isStale, registerWorkspaceDom } from './workspace.js';
 import { initShell, showToast } from './shell.js';
-import { initTabManager, getActiveTabId, getActiveTab, isHomeVisible, flushAutosave } from './tab-manager.js';
+import { initTabManager, getActiveTabId, getActiveTab, isHomeVisible, flushAutosave, newProject } from './tab-manager.js';
 import { initProjectIo, offerAutosaveMigration } from './project-io.js';
 import { onStorageUnavailable } from './projects-db.js';
 
@@ -455,7 +455,7 @@ viewerEl.addEventListener("drop", async e => {
   dropOverlayEl.classList.remove("drag-active");
   const file = e.dataTransfer.files[0];
   if (!file) return;
-  await loadImageFileIntoWorkspace(file);
+  await importImageAsProject(file);
 });
 
 // ── Clipboard paste (Ctrl/Cmd+V) — acts like a drop ─────────────────────────
@@ -468,6 +468,29 @@ function isTextEntryFocused() {
   if (!el) return false;
   if (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT") return true;
   return !!el.isContentEditable;
+}
+
+// A microscopy tab that already holds an image is "occupied": loading another
+// image into it strands the existing measurements on a different picture, and
+// an image swap has no undo. Paste and drop therefore open a fresh project
+// instead — the original tab is untouched, so closing the new tab is the undo.
+// File > Load image still replaces in place; that one is an explicit action on
+// the current tab.
+function activeTabHasImage() {
+  return !!(state.frozen && state.frozenBackground);
+}
+
+async function importImageAsProject(file, sourceLabel = null) {
+  if (isHomeVisible()) {
+    document.dispatchEvent(new CustomEvent("import-files", { detail: { files: [file] } }));
+    return;
+  }
+  if (getActiveTab()?.type !== "microscopy") return;   // deflectometry/fringe: ignore
+  if (activeTabHasImage()) {
+    const tab = await newProject("microscopy");
+    if (!tab) return;            // blocked (e.g. a cross-mode session is active)
+  }
+  await loadImageFileIntoWorkspace(file, sourceLabel);
 }
 
 document.addEventListener("paste", e => {
@@ -489,12 +512,7 @@ document.addEventListener("paste", e => {
     file = new File([file], `pasted-image.${ext}`, { type: file.type });
   }
 
-  if (isHomeVisible()) {
-    document.dispatchEvent(new CustomEvent("import-files", { detail: { files: [file] } }));
-  } else if (getActiveTab()?.type === "microscopy") {
-    loadImageFileIntoWorkspace(file, "paste");
-  }
-  // Any other active tab (deflectometry/fringe) — ignore.
+  importImageAsProject(file, "paste");
 });
 
 // ── Coordinate origin ───���──────────────────────────────────────────────────────
