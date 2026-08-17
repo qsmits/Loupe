@@ -288,6 +288,16 @@ document.getElementById("btn-freeze").addEventListener("click", async () => {
     const rect = canvas.getBoundingClientRect();
     fitToWindow(rect.width, rect.height);
     redraw();
+    // The camera's pixel format / ROI / selected device may have changed while
+    // frozen, and loadCameraInfo deliberately never adopts dimensions over a
+    // frozen image (c02cec4) — so imageWidth/Height would stay at the frozen
+    // image's size while the live stream runs at another resolution, putting
+    // every live measurement silently at the wrong scale. Re-read now that
+    // state.frozen is false. Deliberately last: its adopt branch runs its own
+    // resizeCanvas + fitToWindow, so the final fit is against the camera's
+    // real dimensions. Only for the server camera — hosted has none, and the
+    // browser camera already reports its own dimensions.
+    if (!state._hosted && !isBrowserCameraActive()) await loadCameraInfo();
   } else {
     await doFreeze();
   }
