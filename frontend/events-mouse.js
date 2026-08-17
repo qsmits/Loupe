@@ -496,7 +496,10 @@ export function initMouseHandlers() {
     lensCalMouseMove(pt);
     tiltCalMouseMove(pt);
     _updateSubpixelPreview(pt, e.altKey);
-    drawLoupe(isLensCalMode() || isTiltCalMode());
+    // state.dragState is set while a handle or body drag is in flight (tools.js).
+    // Label drags use a separate path with no dragState, so they correctly do
+    // not raise the loupe — placement precision doesn't matter there.
+    drawLoupe(isLensCalMode() || isTiltCalMode() || !!state.dragState);
     if (state._panStart) {
       const dx = (e.clientX - state._panStart.x);
       const dy = (e.clientY - state._panStart.y);

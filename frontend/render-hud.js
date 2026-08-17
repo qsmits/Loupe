@@ -232,7 +232,13 @@ const _loupeCtx    = _loupeCanvas ? _loupeCanvas.getContext("2d") : null;
 export function drawLoupe(forceShow = false) {
   if (!_loupeCanvas || !_loupeCtx) return;
 
-  const show = forceShow || (state.frozenBackground && state.mousePos && _LOUPE_TOOLS.has(state.tool));
+  // Background/cursor check comes first: with forceShow set, the old ordering
+  // could reach drawImage(null) below and throw out of the mousemove handler.
+  if (!state.frozenBackground || !state.mousePos) {
+    _loupeCanvas.hidden = true;
+    return;
+  }
+  const show = forceShow || _LOUPE_TOOLS.has(state.tool);
   if (!show) {
     _loupeCanvas.hidden = true;
     return;
