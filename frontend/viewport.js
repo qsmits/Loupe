@@ -75,6 +75,9 @@ export function screenToImage(x, y) { return screenToImagePure(x, y, viewport); 
  * (equal margins on both sides); with matching aspects this is exactly (0,0). */
 export function fitToWindow(canvasWidth, canvasHeight) {
   if (imageWidth === 0 || imageHeight === 0) return;
+  // A canvas measured while its container is hidden is 0x0; fitting to it
+  // would set zoom=0 and pan=NaN, which wedges the viewer until a refresh.
+  if (!(canvasWidth > 0) || !(canvasHeight > 0)) return;
   viewport.zoom = Math.min(canvasWidth / imageWidth, canvasHeight / imageHeight);
   viewport.panX = (imageWidth - canvasWidth / viewport.zoom) / 2;
   viewport.panY = (imageHeight - canvasHeight / viewport.zoom) / 2;
@@ -94,6 +97,12 @@ export function zoomOneToOne(canvasCssWidth, canvasCssHeight) {
  * Axes where the visible extent covers the whole image are locked centered;
  * zoomed-in axes keep a ±10% margin of scroll past the image edge. */
 export function clampPan(canvasCssWidth, canvasCssHeight) {
+  if (!(canvasCssWidth > 0) || !(canvasCssHeight > 0)) return;
+  // Repair a pan that has already gone non-finite rather than clamping NaN
+  // (every comparison against NaN is false, so it would survive untouched).
+  if (!Number.isFinite(viewport.panX)) viewport.panX = 0;
+  if (!Number.isFinite(viewport.panY)) viewport.panY = 0;
+  if (!(viewport.zoom > 0) || !Number.isFinite(viewport.zoom)) return;
   const margin = 0.1;
   const visibleW = canvasCssWidth / viewport.zoom;
   const visibleH = canvasCssHeight / viewport.zoom;

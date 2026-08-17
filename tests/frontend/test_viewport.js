@@ -371,3 +371,44 @@ describe('shouldAdoptCameraImageSize', () => {
     assert.equal(shouldAdoptCameraImageSize(640, 480, 0, 0, false), true);
   });
 });
+
+// ── Degenerate-input guards ────────────────────────────────────────────────────
+
+describe('viewport degenerate-input guards', () => {
+  it('fitToWindow ignores a zero-sized canvas instead of setting zoom=0', () => {
+    setImageSize(1400, 900);
+    fitToWindow(1240, 795);
+    const good = { zoom: viewport.zoom, panX: viewport.panX, panY: viewport.panY };
+    fitToWindow(0, 0);                       // canvas measured while hidden
+    assert.deepStrictEqual(
+      { zoom: viewport.zoom, panX: viewport.panX, panY: viewport.panY }, good);
+  });
+
+  it('fitToWindow ignores negative canvas dimensions', () => {
+    setImageSize(1400, 900);
+    fitToWindow(1240, 795);
+    const good = viewport.zoom;
+    fitToWindow(-10, 795);
+    assert.equal(viewport.zoom, good);
+  });
+
+  it('clampPan repairs a non-finite pan instead of propagating it', () => {
+    setImageSize(1400, 900);
+    viewport.zoom = 1;
+    viewport.panX = NaN;
+    viewport.panY = NaN;
+    clampPan(1240, 795);
+    assert.ok(Number.isFinite(viewport.panX), 'panX finite');
+    assert.ok(Number.isFinite(viewport.panY), 'panY finite');
+  });
+
+  it('clampPan leaves pan finite when zoom is degenerate', () => {
+    setImageSize(1400, 900);
+    viewport.zoom = 0;
+    viewport.panX = 10;
+    viewport.panY = 20;
+    clampPan(1240, 795);
+    assert.ok(Number.isFinite(viewport.panX), 'panX finite');
+    assert.ok(Number.isFinite(viewport.panY), 'panY finite');
+  });
+});
