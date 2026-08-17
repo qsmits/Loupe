@@ -435,6 +435,10 @@ function onMouseUp() {
   // click-without-drag discards the snapshot instead of spamming the stack.
   _commitDragUndo();
   state.dragState = null;
+  // drawLoupe is only ever called from mousemove, and redraw() does not call
+  // it — so without this the drag-raised magnifier stays on screen until the
+  // mouse next moves. Same argument as the mousemove call, minus dragState.
+  drawLoupe(isLensCalMode() || isTiltCalMode());
 }
 
 export function initMouseHandlers() {

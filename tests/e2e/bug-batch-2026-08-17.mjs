@@ -4,14 +4,23 @@
  * Requires:
  *   - HOSTED=1 NO_CAMERA=1 server on 127.0.0.1:8123 (HOSTED makes /camera/info
  *     report the 640x480 NullCamera stub, which is what caused the corruption)
- *   - a 1400x900 fixture PNG (see the plan's fixture step) at SAMPLE_PNG
- *   - playwright-core resolvable from this file's own directory — install it
- *     in a scratch dir and run this file from a copy placed there, or from
- *     anywhere once playwright-core is reachable via Node's ESM node_modules
- *     walk from this file's path (cwd does not affect ESM bare-specifier
- *     resolution)
+ *   - a 1400x900 fixture PNG at SAMPLE_PNG (default /tmp/loupe-e2e/sample.png;
+ *     the exact command to generate it is printed if it is missing)
+ *   - playwright-core installed OUTSIDE the repo (never vendored here, never
+ *     in a package.json). It is resolved from the CWD, not from this file's
+ *     directory — a static `import 'playwright-core'` could not be, because
+ *     ESM bare-specifier resolution walks up from the importing file.
  *
- * Run: node tests/e2e/bug-batch-2026-08-17.mjs
+ * Setup + run:
+ *   mkdir -p /tmp/loupe-e2e && cd /tmp/loupe-e2e && npm init -y && npm i playwright-core
+ *   .venv/bin/python -c "
+ *   import numpy as np, cv2
+ *   img = np.full((900,1400,3), 235, np.uint8)
+ *   cv2.rectangle(img,(300,200),(1100,700),(60,60,60),3)
+ *   cv2.circle(img,(700,450),180,(90,90,90),3)
+ *   cv2.imwrite('/tmp/loupe-e2e/sample.png', img)"
+ *   cd /tmp/loupe-e2e && node /abs/path/to/repo/tests/e2e/bug-batch-2026-08-17.mjs
+ *
  * Exits non-zero if any check fails.
  *
  * Also covers calibration (Tasks 6-7): calibrating from a distance
@@ -21,16 +30,42 @@
  * dimensionless measurements like angle, absent when 2+ annotations are
  * selected).
  */
-import { chromium } from 'playwright-core';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
+import { pathToFileURL } from 'node:url';
 
 const EXEC = process.env.CHROMIUM_PATH ||
   '/Users/qsmits/Library/Caches/ms-playwright/chromium-1223/chrome-mac-arm64/' +
   'Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing';
 const APP = 'http://127.0.0.1:8123/';
 const SAMPLE = process.env.SAMPLE_PNG || '/tmp/loupe-e2e/sample.png';
-const SAMPLE_BASE64 = readFileSync(SAMPLE).toString('base64');
+
+function die(msg) { console.error(msg); process.exit(1); }
+
+// Resolve playwright-core from the CWD (see the header): the repo has no
+// node_modules and must not grow one.
+let chromium;
+try {
+  chromium = createRequire(pathToFileURL(process.cwd() + '/').href)('playwright-core').chromium;
+} catch {
+  die(`playwright-core is not installed in ${process.cwd()} — install it outside the repo and run from there:\n` +
+      `  mkdir -p /tmp/loupe-e2e && cd /tmp/loupe-e2e && npm init -y && npm i playwright-core\n` +
+      `  cd /tmp/loupe-e2e && node ${process.argv[1]}`);
+}
+
+let SAMPLE_BASE64;
+try {
+  SAMPLE_BASE64 = readFileSync(SAMPLE).toString('base64');
+} catch {
+  die(`fixture not found at ${SAMPLE} — generate it first (or point SAMPLE_PNG elsewhere):\n` +
+      `  .venv/bin/python -c "\n` +
+      `import numpy as np, cv2\n` +
+      `img = np.full((900,1400,3), 235, np.uint8)\n` +
+      `cv2.rectangle(img,(300,200),(1100,700),(60,60,60),3)\n` +
+      `cv2.circle(img,(700,450),180,(90,90,90),3)\n` +
+      `cv2.imwrite('${SAMPLE}', img)"`);
+}
 
 const browser = await chromium.launch({ executablePath: EXEC, headless: true });
 const failures = [];
