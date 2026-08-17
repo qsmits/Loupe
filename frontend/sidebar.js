@@ -72,6 +72,14 @@ function _createMeasurementRow(ann, number) {
   } else {
     valSpan.textContent = measurementLabel(ann, _mctx());
   }
+  // The measurement the current calibration was derived from.
+  let calSpan = null;
+  if (ann.calSource) {
+    calSpan = document.createElement("span");
+    calSpan.className = "cal-source-badge";
+    calSpan.textContent = "CAL";
+    calSpan.title = "The current calibration was set from this measurement";
+  }
   // Visibility toggle — hides the annotation in the canvas without deleting it.
   // Useful when a calibration line (or anything else) is cluttering the view
   // but you still want to keep the underlying data.
@@ -91,7 +99,7 @@ function _createMeasurementRow(ann, number) {
   delBtn.className = "del-btn";
   delBtn.dataset.id = ann.id;
   delBtn.textContent = "✕";
-  row.append(numSpan, nameInput, valSpan, visBtn, delBtn);
+  row.append(numSpan, nameInput, valSpan, ...(calSpan ? [calSpan] : []), visBtn, delBtn);
   // Constraint chips
   const annConstraints = constraintsForAnnotation(ann.id);
   if (annConstraints.length > 0) {

@@ -2,7 +2,8 @@ import { state, pushUndo, DETECTION_TYPES, OVERLAY_TYPES, pruneOrphanGroupEntrie
 import { cascadeDeleteConstraints } from './constraints.js';
 import { canvas, showStatus, redraw } from './render.js';
 import { renderSidebar, updateCameraInfo, updateCalibrationButton, renderInspectionTable } from './sidebar.js';
-import { calibrationPixelsPerMm } from './math.js';
+import { calibrationPixelsPerMm, measurementPixelSpan, parseAreaInput,
+         parseDistanceInput, calibrationPpmFromMeasurement } from './math.js';
 import { imageWidth, imageHeight } from './viewport.js';
 
 // ── Annotations management ──────────────────────────────────────────────────────
@@ -328,4 +329,61 @@ export function applyCalibration(ann) {
   state.annotations = state.annotations.filter(a => a.type !== "calibration");
   recalibrateFromAnnotation(ann);
   addAnnotation(ann, { skipUndo: true });
+}
+
+const _CAL_PROMPTS = {
+  length:   "Known length of this measurement (e.g. '1.5 mm' or '500 µm'):",
+  diameter: "Known diameter of this circle (e.g. '5.000 mm' or '200 µm'):",
+  area:     "Known area of this shape (e.g. '25 mm²' or '4000 µm²'):",
+};
+
+/** Calibrate from an existing measurement of known true size.
+ *
+ * No calibration annotation is added — the measurement itself is the visual
+ * record of what was calibrated on, mirroring the elevate-then-calibrate
+ * branch in tools.js. Exactly one annotation carries calSource at a time.
+ *
+ * @param {object} ann
+ * @returns {boolean} true when the calibration was applied
+ */
+export function calibrateFromMeasurement(ann) {
+  const measured = measurementPixelSpan(ann);
+  if (!measured) return false;
+  const entered = prompt(_CAL_PROMPTS[measured.kind]);
+  if (entered === null) return false;                     // cancelled
+  const parsed = measured.kind === "area"
+    ? parseAreaInput(entered)
+    : parseDistanceInput(entered);                        // alerts on bad input
+  if (!parsed) {
+    if (measured.kind === "area") {
+      showStatus("Could not parse area — use a format like '25 mm²' or '4000 µm²'");
+    }
+    return false;
+  }
+  const knownMm = measured.kind === "area" ? parsed.mm2 : parsed.mm;
+  const ppm = calibrationPpmFromMeasurement(measured.span, measured.kind, knownMm);
+  if (ppm == null) {
+    showStatus("Calibration rejected — zero length or zero known value");
+    return false;
+  }
+  // One undoable step: a calibration change rewrites every displayed value.
+  pushUndo();
+  state.annotations = state.annotations.filter(a => a.type !== "calibration");
+  for (const a of state.annotations) delete a.calSource;
+  state.calibration = { pixelsPerMm: ppm, displayUnit: parsed.unit };
+  ann.calSource = true;
+  // Keep a non-manual DXF overlay in step, exactly as recalibrateFromAnnotation does.
+  const dxfAnn = state.annotations.find(a => a.type === "dxf-overlay");
+  if (dxfAnn && !dxfAnn.scaleManual) {
+    dxfAnn.scale = state.calibration.pixelsPerMm;
+    const dxfScaleEl = document.getElementById("dxf-scale");
+    if (dxfScaleEl) dxfScaleEl.value = dxfAnn.scale.toFixed(3);
+  }
+  updateCameraInfo();
+  updateCalibrationButton();
+  document.dispatchEvent(new CustomEvent("dxf-state-changed"));
+  renderSidebar();
+  redraw();
+  showStatus(`Calibration set from measurement — ${(1000 / ppm).toFixed(3)} µm/px`);
+  return true;
 }

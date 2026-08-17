@@ -662,6 +662,18 @@ body.no-camera #stream-img {
   margin-left: 4px;
 }
 
+.cal-source-badge {
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  color: #0a0a0a;
+  background: #fbbf24;
+  border-radius: 3px;
+  padding: 1px 4px;
+  margin-right: 4px;
+  flex: none;
+}
+
 .measurement-delete {
   display: none;
   position: absolute;

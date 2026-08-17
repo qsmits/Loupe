@@ -6,7 +6,8 @@ import { canvas, ctx, img, showStatus, redraw, resizeCanvas,
 import { renderSidebar, renderInspectionTable } from './sidebar.js';
 import { addAnnotation, deleteSelected, elevateSelected, isDetection,
          mergeSelectedLines, clearDetections, clearMeasurements,
-         clearDxfOverlay, clearAll } from './annotations.js';
+         clearDxfOverlay, clearAll, calibrateFromMeasurement } from './annotations.js';
+import { measurementPixelSpan } from './math.js';
 import { setTool, handleToolClick, handleSelectDown, handleDrag,
          canvasPoint, snapPoint, collectDxfSnapPoints,
          hitTestDxfEntity, findSnapLine,
@@ -898,6 +899,13 @@ export function initMouseHandlers() {
       });
       if (hasDetections) {
         items.push({ label: "Elevate to measurement", action: elevateSelected });
+      }
+      // Calibrate from a single measurement of known true size.
+      if (state.selected.size === 1) {
+        const only = state.annotations.find(a => a.id === [...state.selected][0]);
+        if (only && measurementPixelSpan(only)) {
+          items.push({ label: "Use as calibration…", action: () => calibrateFromMeasurement(only) });
+        }
       }
       // Merge lines option (when 2+ line-type annotations selected)
       const lineTypes = new Set(["detected-line", "detected-line-merged", "distance"]);
