@@ -32,7 +32,7 @@ export function calibrationPixelsPerMm(ann) {
 const _SPAN_ENDPOINT_TYPES = new Set(["distance", "perp-dist", "para-dist", "center-dist"]);
 // Types whose known dimension is a diameter (calibration convention: the user
 // enters the diameter, matching the existing circle-calibration flow).
-const _SPAN_RADIUS_TYPES = new Set(["circle", "arc-fit", "arc-measure"]);
+const _SPAN_DIAMETER_TYPES = new Set(["circle", "arc-fit", "arc-measure"]);
 
 /** Pixel magnitude of a measurement, for calibrating from it.
  *
@@ -56,7 +56,7 @@ export function measurementPixelSpan(ann) {
   } else if (ann.type === "spline") {
     span = ann.length_px;
     kind = "length";
-  } else if (_SPAN_RADIUS_TYPES.has(ann.type)) {
+  } else if (_SPAN_DIAMETER_TYPES.has(ann.type)) {
     span = ann.r * 2;
     kind = "diameter";
   } else if (ann.type === "area") {
@@ -71,12 +71,14 @@ export function measurementPixelSpan(ann) {
 }
 
 /** Unit-bearing area input: "25 mm²", "25 mm2", "4000 µm²", "25" (bare → mm²).
- * Unlike parseDistanceInput this never alerts — math.js is imported by Node
- * unit tests, where alert() does not exist. Callers report bad input.
+ * Requires exponent marker (² or 2) when a unit is given; rejects multiple dots,
+ * stray exponents, and units without exponents. Unlike parseDistanceInput this
+ * never alerts — math.js is imported by Node unit tests, where alert() does not
+ * exist. Callers report bad input.
  * @returns {{ value: number, unit: 'mm'|'µm', mm2: number } | null}
  */
 export function parseAreaInput(input) {
-  const m = String(input ?? "").trim().match(/^([0-9.]+)\s*(mm|µm|um)?\s*(?:²|2)?$/i);
+  const m = String(input ?? "").trim().match(/^(\d+(?:\.\d+)?)(?:\s*(mm|µm|um)\s*(?:²|2))?$/i);
   if (!m) return null;
   const value = parseFloat(m[1]);
   if (!Number.isFinite(value) || value <= 0) return null;

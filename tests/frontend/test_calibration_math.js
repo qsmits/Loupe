@@ -273,6 +273,21 @@ describe('parseAreaInput', () => {
     assert.equal(parseAreaInput(''), null);
     assert.equal(parseAreaInput('25 inches'), null);
   });
+
+  it('rejects stray exponent without unit', () => {
+    assert.equal(parseAreaInput('25²'), null);
+    assert.equal(parseAreaInput('25 2'), null);
+  });
+
+  it('rejects unit without exponent', () => {
+    assert.equal(parseAreaInput('25um'), null);
+    assert.equal(parseAreaInput('25 µm'), null);
+    assert.equal(parseAreaInput('25 mm'), null);
+  });
+
+  it('rejects malformed numbers (multiple dots)', () => {
+    assert.equal(parseAreaInput('25.5.5'), null);
+  });
 });
 
 describe('calibrationPpmFromMeasurement', () => {
