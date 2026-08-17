@@ -6,7 +6,7 @@ import { renderSidebar, loadCameraInfo, loadUiConfig, loadTolerances,
          loadCameraList, renderInspectionTable, updateTemplateDisplay,
          updateDxfControlsVisibility, initGlobalVisToggle,
          startCameraStatsPolling, stopCameraStatsPolling } from './sidebar.js';
-import { deleteAnnotation, addAnnotation, elevateSelected, clearDetections, clearMeasurements, clearDxfOverlay, clearAll } from './annotations.js';
+import { deleteAnnotation, addAnnotation, elevateSelected, clearDetections, clearMeasurements, clearDxfOverlay, clearAll, clearCalSource } from './annotations.js';
 import { assembleTemplate, downloadTemplate, readTemplateFile } from './template.js';
 import { setTool } from './tools.js';
 import { initDxfHandlers, measurementsAsDxf } from './dxf.js';
@@ -1484,11 +1484,13 @@ document.getElementById("template-input")?.addEventListener("change", async (e) 
     state.featureModes = {};
     state.featureNames = {};
 
-    // Apply calibration
+    // Apply calibration. The template's calibration replaces whatever was
+    // there, so no measurement may keep claiming to be its source.
     state.calibration = {
       pixelsPerMm: tmpl.calibration.pixelsPerMm,
       displayUnit: tmpl.calibration.displayUnit,
     };
+    clearCalSource();
 
     // Apply tolerances
     state.tolerances.warn = tmpl.tolerances.warn;

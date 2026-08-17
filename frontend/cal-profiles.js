@@ -3,7 +3,8 @@
 // objectives/magnifications without re-calibrating each session.
 // Each profile captures both scale (pixelsPerMm) and lens distortion (lensK1).
 import { state } from './state.js';
-import { updateCalibrationButton } from './sidebar.js';
+import { renderSidebar, updateCalibrationButton } from './sidebar.js';
+import { clearCalSource } from './annotations.js';
 import { redraw } from './render.js';
 import { applyLensCorrection } from './lens-cal.js';
 
@@ -40,7 +41,12 @@ function _renderList(panel, profiles) {
     btn.addEventListener("click", async () => {
       const p = profiles[parseInt(btn.dataset.index)];
       state.calibration = { pixelsPerMm: p.pixelsPerMm, displayUnit: p.displayUnit };
+      // The profile replaces the calibration wholesale — no measurement is its
+      // source any more, so no CAL badge may survive it. renderSidebar() is
+      // needed too: nothing else here re-renders the measurement list.
+      clearCalSource();
       updateCalibrationButton();
+      renderSidebar();
       redraw();
       if (p.lensK1) {
         if (!state.frozenBackground) {

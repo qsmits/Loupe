@@ -315,9 +315,11 @@ export function recalibrateFromAnnotation(ann) {
 }
 
 // Exactly one annotation carries calSource — the measurement the current
-// calibration was derived from. Both calibration entry points clear it, so a
-// CAL badge can never outlive the calibration it describes.
-function _clearCalSource() {
+// calibration was derived from. EVERY path that overwrites state.calibration
+// must call this (the two entry points below, plus cal-profile loading and
+// inspection-template loading), so a CAL badge can never outlive the
+// calibration it describes — a false provenance claim in a metrology tool.
+export function clearCalSource() {
   for (const a of state.annotations) delete a.calSource;
 }
 
@@ -334,7 +336,7 @@ export function applyCalibration(ann) {
   pushUndo();
   // Remove any existing calibration annotation
   state.annotations = state.annotations.filter(a => a.type !== "calibration");
-  _clearCalSource();
+  clearCalSource();
   recalibrateFromAnnotation(ann);
   addAnnotation(ann, { skipUndo: true });
 }
@@ -377,7 +379,7 @@ export function calibrateFromMeasurement(ann) {
   // One undoable step: a calibration change rewrites every displayed value.
   pushUndo();
   state.annotations = state.annotations.filter(a => a.type !== "calibration");
-  _clearCalSource();
+  clearCalSource();
   state.calibration = { pixelsPerMm: ppm, displayUnit: parsed.unit };
   ann.calSource = true;
   // Keep a non-manual DXF overlay in step, exactly as recalibrateFromAnnotation does.
