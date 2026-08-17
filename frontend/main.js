@@ -33,7 +33,7 @@ import { initReticlePanel } from './sidebar.js';
 import { initGear } from './gear.js';
 import { initFringe } from './fringe.js';
 import { enterMaskEditSession, isCrossModeActive } from './cross-mode.js';
-import { captureEpoch, isStale, registerWorkspaceDom } from './workspace.js';
+import { captureEpoch, isStale, registerWorkspaceDom, isUsableViewport } from './workspace.js';
 import { initShell, showToast } from './shell.js';
 import { initTabManager, getActiveTabId, getActiveTab, isHomeVisible, flushAutosave, newProject } from './tab-manager.js';
 import { initProjectIo, offerAutosaveMigration } from './project-io.js';
@@ -81,15 +81,18 @@ onStorageUnavailable(() => {
 });
 
 // DOM side of restoreWorkspace(): re-fit the canvas/viewport and refresh
-// every view after a tab swap. record.viewport === null → fresh project →
-// fit to window; otherwise the restored zoom/pan is kept (clamped).
+// every view after a tab swap. No usable stored viewport (fresh project, or a
+// persisted degenerate one restoreWorkspace refused) → fit to window;
+// otherwise the restored zoom/pan is kept (clamped). The condition must match
+// restoreWorkspace's, or a rejected viewport would only get clampPan — which
+// returns early on zoom === 0 and would leave a black canvas.
 registerWorkspaceDom({
   afterRestore(record) {
     img.style.opacity = state.frozen ? "0" : "1";
     updateFreezeUI();
     resizeCanvas();
     const rect = canvas.getBoundingClientRect();
-    if (record.viewport) clampPan(rect.width, rect.height);
+    if (isUsableViewport(record.viewport)) clampPan(rect.width, rect.height);
     else fitToWindow(rect.width, rect.height);
     if (state.frozenBackground && imageWidth > 0) {
       cacheImageData(state.frozenBackground, imageWidth, imageHeight);

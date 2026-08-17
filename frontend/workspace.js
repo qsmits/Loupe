@@ -242,6 +242,17 @@ let _dom = null;
  *  sidebar refresh. Absent (node tests), restore is state-only. */
 export function registerWorkspaceDom(hooks) { _dom = hooks; }
 
+/** True when a stored viewport can be installed as-is. A record persisted with
+ *  zoom 0 / NaN pan (reachable before the degenerate-canvas guard, and
+ *  structured clone round-trips NaN through IndexedDB verbatim) would restore
+ *  to a black canvas that no refresh can fix — the bad value lives in the DB.
+ *  Callers treat a rejected viewport exactly like `viewport === null`: leave
+ *  the singleton alone and let the DOM hook fit to window. */
+export function isUsableViewport(v) {
+  return !!v && Number.isFinite(v.zoom) && v.zoom > 0
+    && Number.isFinite(v.panX) && Number.isFinite(v.panY);
+}
+
 /** Make `record` the active workspace. Bumps the epoch FIRST so any
  *  in-flight async handler from the outgoing tab sees itself stale. */
 export function restoreWorkspace(record) {
@@ -256,7 +267,7 @@ export function restoreWorkspace(record) {
   redoStack.length = 0;
   redoStack.push(...record.redoStack);
   setImageSize(record.imageWidth, record.imageHeight);
-  if (record.viewport) {
+  if (isUsableViewport(record.viewport)) {
     viewport.zoom = record.viewport.zoom;
     viewport.panX = record.viewport.panX;
     viewport.panY = record.viewport.panY;

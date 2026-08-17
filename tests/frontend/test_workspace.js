@@ -16,7 +16,7 @@ import { viewport, imageWidth, imageHeight, setImageSize } from '../../frontend/
 import {
   STATE_FIELDS, FIELD_DEFAULTS, freshWorkspaceRecord,
   serializeWorkspace, restoreWorkspace, captureEpoch, isStale,
-  registerWorkspaceDom,
+  registerWorkspaceDom, isUsableViewport,
 } from '../../frontend/workspace.js';
 
 const CATEGORIES = new Set(['swapped', 'transient', 'global']);
@@ -156,6 +156,32 @@ describe('serialize → restore round-trip', () => {
     restoreWorkspace(rec);
     // zoom untouched by restore itself — afterRestore hook (main.js) calls fitToWindow
     assert.equal(viewport.zoom, 3);
+  });
+
+  it('a degenerate stored viewport is rejected, not installed', () => {
+    // IndexedDB's structured clone round-trips NaN verbatim, so a workspace
+    // persisted with zoom 0 / NaN pan would otherwise restore to a black
+    // canvas on every open — and clampPan returns early on zoom === 0.
+    viewport.zoom = 1.5; viewport.panX = 7; viewport.panY = 9;
+    const rec = freshWorkspaceRecord();
+    rec.viewport = { zoom: 0, panX: NaN, panY: NaN };
+    restoreWorkspace(rec);
+    assert.ok(viewport.zoom > 0, 'zoom must stay positive');
+    assert.ok(Number.isFinite(viewport.panX) && Number.isFinite(viewport.panY),
+      'pan must stay finite');
+    assert.equal(isUsableViewport(rec.viewport), false,
+      'main.js branches on this to fit-to-window instead of clampPan');
+  });
+
+  it('isUsableViewport accepts healthy viewports and rejects broken ones', () => {
+    assert.equal(isUsableViewport({ zoom: 2.5, panX: 10, panY: -4 }), true);
+    assert.equal(isUsableViewport({ zoom: 0, panX: 0, panY: 0 }), false);
+    assert.equal(isUsableViewport({ zoom: -1, panX: 0, panY: 0 }), false);
+    assert.equal(isUsableViewport({ zoom: NaN, panX: 0, panY: 0 }), false);
+    assert.equal(isUsableViewport({ zoom: Infinity, panX: 0, panY: 0 }), false);
+    assert.equal(isUsableViewport({ zoom: 1, panX: NaN, panY: 0 }), false);
+    assert.equal(isUsableViewport({ zoom: 1, panX: 0, panY: NaN }), false);
+    assert.equal(isUsableViewport(null), false);
   });
 
   it('freshWorkspaceRecord produces independent records', () => {
