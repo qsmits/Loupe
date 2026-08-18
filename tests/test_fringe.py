@@ -5,6 +5,7 @@ import math
 import numpy as np
 import pytest
 import cv2
+import scipy.ndimage as ndimage
 
 from backend.vision.fringe import (
     WAVEFRONT_ORIGINS,
@@ -3228,6 +3229,94 @@ class TestTrustedArea:
         result = analyze_interferogram(img, wavelength_nm=632.8)
         assert len(result["trusted_mask_grid"]) == len(result["mask_grid"])
         assert len(result["trusted_mask_grid"]) == result["grid_rows"] * result["grid_cols"]
+
+
+class TestTrustStatsOnReturnedAperture:
+    """Task 5: trust statistics must describe the aperture actually
+    returned (post quantitative-mask restriction), not the wider
+    pre-restriction mask -- and median-corrected (risk == 1) pixels must
+    stay in the returned aperture rather than being punched out."""
+
+    def test_trusted_area_describes_the_returned_aperture(self):
+        h = w = 256
+        yy, xx = np.mgrid[:h, :w]
+        image = np.clip(128 + 105 * np.cos(2 * np.pi * 10 * xx / w), 0, 255).astype(np.uint8)
+        mask = ((xx - 128) ** 2 + (yy - 128) ** 2) < 100 ** 2
+        result = analyze_interferogram(
+            image, wavelength_nm=589.3, subtract_terms=[1],
+            custom_mask=mask, correct_2pi_jumps=True,
+        )
+        grid = np.array(result["mask_grid"], dtype=bool)
+        returned = int(grid.sum())
+        assert result["n_valid_pixels"] == returned
+        expected_pct = 100.0 * int(np.array(result["trusted_mask_grid"], dtype=bool).sum()) / returned
+        assert result["trusted_area_pct"] == pytest.approx(expected_pct, abs=0.5)
+
+    def test_median_corrected_pixels_are_not_punched_out(self, monkeypatch):
+        """risk==1 pixels are corrected, not untrustworthy; holes in the
+        returned aperture show up as gaps in the surface map and 3D view.
+
+        The real DFT/quality-guided-unwrap pipeline essentially never
+        produces risk==1 pixels on clean synthetic fringes (confirmed
+        empirically across several noise levels: n_corrected stayed 0), so
+        a plain end-to-end call would not exercise the punched-out-holes
+        path at all -- an assertion that can't fail is worse than no
+        assertion. Instead, wrap the real ``unwrap_phase_2d`` and flip a
+        deterministic 30% speckle of otherwise-reliable interior pixels to
+        risk==1, so the test actually forces the condition it claims to
+        guard and can tell the fixed code from the regression.
+        """
+        from backend.vision import fringe as fringe_mod
+
+        h = w = 256
+        yy, xx = np.mgrid[:h, :w]
+        image = np.clip(128 + 105 * np.cos(2 * np.pi * 10 * xx / w), 0, 255).astype(np.uint8)
+        mask = ((xx - 128) ** 2 + (yy - 128) ** 2) < 100 ** 2
+
+        real_unwrap = fringe_mod.unwrap_phase_2d
+        # Captured independently of whatever analyze_interferogram does with
+        # the risk array afterward, so the "did injection land" guard below
+        # can't be satisfied (or defeated) by the very restriction logic
+        # this test exists to check.
+        speckle_count = {"n": 0}
+
+        def speckled_unwrap(wrapped, mask=None, quality=None,
+                             fringe_period_px=None, correct_2pi_jumps=True):
+            unwrapped, risk, qmap = real_unwrap(
+                wrapped, mask, quality=quality,
+                fringe_period_px=fringe_period_px,
+                correct_2pi_jumps=correct_2pi_jumps,
+            )
+            if mask is not None:
+                valid = np.asarray(mask, dtype=bool)
+                rng = np.random.default_rng(0)
+                speckle = rng.random(wrapped.shape) < 0.3
+                risk = risk.copy()
+                # Only flip pixels the real unwrap already called reliable
+                # (risk == 0) -- leave any genuine edge-risk (== 2) alone.
+                flip = valid & speckle & (risk == 0)
+                risk[flip] = 1
+                speckle_count["n"] = int(flip.sum())
+            return unwrapped, risk, qmap
+
+        monkeypatch.setattr(fringe_mod, "unwrap_phase_2d", speckled_unwrap)
+
+        result = fringe_mod.analyze_interferogram(
+            image, wavelength_nm=589.3, subtract_terms=[1],
+            custom_mask=mask, correct_2pi_jumps=True,
+        )
+        # Guard the guard: if the speckle injection itself didn't land, the
+        # hole assertion below would pass vacuously. Checked against the
+        # closure-captured count, not result["unwrap_stats"], so this can't
+        # be short-circuited by the very regression the test targets.
+        assert speckle_count["n"] > 1000, (
+            "speckle injection produced no risk==1 pixels; this test would "
+            "not detect a regression"
+        )
+        grid = np.array(result["mask_grid"], dtype=bool).reshape(
+            result["grid_rows"], result["grid_cols"])
+        filled = ndimage.binary_fill_holes(grid)
+        assert int(filled.sum()) - int(grid.sum()) < 0.01 * int(filled.sum())
 
 
 class TestTrustedOnlyContract:

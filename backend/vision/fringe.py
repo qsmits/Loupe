@@ -2454,7 +2454,6 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 589.3,
         )
     if not mask.any():
         raise ValueError("No connected fringe aperture remains after masking")
-    n_valid = int(mask.sum())
     n_total = int(mask.size)
 
     # Step 2: DFT phase extraction
@@ -2513,32 +2512,6 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 589.3,
     confidence = compute_confidence(carrier_info, modulation, unwrap_risk, mask,
                                     threshold_frac=mask_threshold)
 
-    # Unwrap statistics
-    valid_mask = mask.astype(bool) if mask is not None else np.ones(unwrapped.shape, dtype=bool)
-    n_corrected = int(np.sum(unwrap_risk[valid_mask] == 1))
-    n_edge_risk = int(np.sum(unwrap_risk[valid_mask] == 2))
-    unwrap_stats = {
-        "n_corrected": n_corrected,
-        "n_edge_risk": n_edge_risk,
-        "n_reliable": n_valid - n_corrected - n_edge_risk,
-    }
-
-    # M1.6: trusted-area mask — subset of the analysis mask that is both
-    # well-modulated (>= mask_threshold) AND unwrap-reliable (risk == 0).
-    # Computed on the *full-frame* arrays before cropping so the fraction
-    # reflects the full valid aperture. The grid serialization below uses
-    # the cropped work_mask domain to match mask_grid's geometry.
-    _valid_full = mask.astype(bool) if mask is not None else np.ones(unwrapped.shape, dtype=bool)
-    trusted_mask_full = (
-        _valid_full
-        & (modulation >= mask_threshold)
-        & (unwrap_risk == 0)
-    )
-    _n_valid_full = int(_valid_full.sum())
-    _n_trusted_full = int(trusted_mask_full.sum())
-    trusted_area_pct = round(100.0 * _n_trusted_full / max(_n_valid_full, 1), 1)
-    unwrap_stats["trusted_area_pct"] = trusted_area_pct
-
     # Work in the cropped aperture domain for fitting, rendering, cached masks,
     # and reanalysis. Keeping these in one coordinate system prevents Zernike
     # coefficients fitted on full-frame coordinates from being reconstructed
@@ -2567,11 +2540,13 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 589.3,
         work_risk = unwrap_risk[r0:r1, c0:c1]
         work_quality = quality_map[r0:r1, c0:c1]
 
-    # Pixels explicitly identified as boundary-contaminated or jump-corrected
-    # are diagnostics, not quantitative samples. Exclude them from fitting,
-    # PV/RMS, profiles and serialized measurement masks.
+    # Pixels explicitly identified as boundary-contaminated (risk == 2) are
+    # diagnostics, not quantitative samples, and are excluded. Median-corrected
+    # pixels (risk == 1) are genuinely corrected, not untrustworthy -- punching
+    # them out too left scattered holes in mask_grid and the 3D view even
+    # though every one of them is a good sample (Task 5).
     diagnostic_mask = work_mask.astype(bool).copy()
-    quantitative_mask = diagnostic_mask & (work_risk == 0)
+    quantitative_mask = diagnostic_mask & (work_risk != 2)
     if int(quantitative_mask.sum()) < max(64, n_zernike * 4):
         raise ValueError(
             "Too few reliable interior fringe pixels remain for quantitative "
@@ -2579,6 +2554,31 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 589.3,
         )
     work_mask = quantitative_mask
     n_valid = int(work_mask.sum())
+
+    # Task 5: trust statistics describe the aperture actually returned.
+    # Compute them from the finalized `work_mask` (after the risk == 2
+    # restriction above) rather than the wider pre-restriction mask, so
+    # trusted_area_pct/unwrap_stats agree with n_valid_pixels and mask_grid.
+    n_corrected = int(np.sum(work_risk[work_mask] == 1))
+    # Informational only: pixels excluded above because they were flagged
+    # edge-contamination. Not part of the returned aperture, so not folded
+    # into n_valid/n_reliable.
+    n_edge_risk = int(np.sum(diagnostic_mask & (work_risk == 2)))
+    unwrap_stats = {
+        "n_corrected": n_corrected,
+        "n_edge_risk": n_edge_risk,
+        "n_reliable": n_valid - n_corrected,
+    }
+
+    # M1.6: trusted-area mask — subset of the *returned* aperture that is
+    # both well-modulated (>= mask_threshold) AND unwrap-reliable
+    # (risk == 0). Uses the same work_mask/work_modulation/work_risk domain
+    # as the trusted_grid built below, so trusted_area_pct is exactly the
+    # trusted_mask_grid fraction of mask_grid.
+    trusted_mask_full = work_mask & (work_modulation >= mask_threshold) & (work_risk == 0)
+    _n_trusted_full = int(trusted_mask_full.sum())
+    trusted_area_pct = round(100.0 * _n_trusted_full / max(n_valid, 1), 1)
+    unwrap_stats["trusted_area_pct"] = trusted_area_pct
 
     # Step 4: Zernike fitting
     coeffs, rho, theta = fit_zernike(work_unwrapped, n_terms=n_zernike, mask=work_mask)
