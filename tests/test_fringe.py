@@ -147,8 +147,11 @@ class TestPhysicsCorrections:
     @pytest.mark.xfail(
         reason="Dominated by sub-pixel carrier-estimator bias, not by the "
                "rim. Holding the carrier exact via carrier_override isolates "
-               "the two: the rim residual is now 1.9-10.3 nm across fringe "
-               "counts 5.0-12.37 (was 5.2-23.3), but the auto-detected "
+               "the two: the rim residual is 0.74-23.34 nm before and "
+               "1.35-10.31 nm after over counts 5.0-13.0 -- every "
+               "non-integer count improves, by up to 12x, and every integer "
+               "count regresses 2-3.6x but stays under 3 nm -- while the "
+               "auto-detected "
                "carrier sits up to 0.088 cycles/frame off, and a d-cycle "
                "error is a 2*pi*d phase ramp the demodulator hands to the "
                "specimen -- 0.084 cycles is 25 nm of PV at 589.3 nm, which "

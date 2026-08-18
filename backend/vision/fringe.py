@@ -1303,10 +1303,13 @@ def _carrier_extend(image: np.ndarray, fy: float, fx: float,
     carrier ``f`` when ``2π·f·Δ ≡ 2π·f·w (mod 2π)``, i.e. ``Δ = frac(f·w)/f``,
     so the continuation is the measured frame resampled by a fractional shift.
     Amplitude, background and texture all come from real pixels, and the join
-    at the frame edge is continuous by construction rather than by luck. At an
-    integer fringe count ``Δ`` is 0 and this degenerates exactly to the wrap
-    the unpadded FFT was already doing — the best-measured rule above — so it
-    can only act where there is a discontinuity to remove.
+    at the frame edge is continuous by construction rather than by luck. When
+    the frame already spans a whole number of carrier periods the shift is
+    zero and this degenerates to the wrap the unpadded FFT was doing anyway —
+    the best-measured rule above. That is a statement about ``f·w``, not about
+    the fringe count looking like an integer: the two are not the same, because
+    the carrier estimate carries its own error, and getting them confused costs
+    a full period of displacement. See ``_shift``.
 
     The interior is written back verbatim afterwards, so no measured pixel is
     ever replaced by an interpolated one. The single-sideband transform is
@@ -1315,6 +1318,22 @@ def _carrier_extend(image: np.ndarray, fy: float, fx: float,
     central-60% residual rms goes from 0.36 nm to 0.53 nm. That is the price
     of not handing the transform a step, and it buys 10.8 percentage points of
     PV accuracy.
+
+    Known cost, at the *corners* of a full-frame aperture with an oblique
+    carrier. The continuation is built per axis, so a corner block is
+    displaced in both at once and the two displacements compound, on the one
+    geometry where the low-pass also has the least support to fit a plane
+    through (det 0.132, against 1.0 in the open field). Corner max |err| on
+    320 nm of figure, before -> after, over 18 shape/count/angle
+    combinations: better in 13 (astigmatism 8.5 fringes at 30 deg 23.9 ->
+    11.9; sphere at 0 deg 34.2 -> 8.4), unchanged in 1, worse in 4, worst
+    case astigmatism at 5.37 fringes / 45 deg 30.7 -> 118.4. Interior max
+    |err| and PV improved in all 18. Raising the low-pass degeneracy floor to
+    0.20 halves the worst corner (118 -> 67) but is not a fix: it disables
+    the first-order fit at every legitimate corner and trades the regression
+    onto other geometries (decentred sphere at 0 deg 25.5 -> 43.5, and its PV
+    with it), so the floor stays below any real corner. Tiling the last
+    carrier period instead measures worse still (corner max 158).
     """
     h, w = image.shape
     pad_y = int(max(0, min(pad_y, h - 2)))
@@ -1323,9 +1342,38 @@ def _carrier_extend(image: np.ndarray, fy: float, fx: float,
         return np.array(image, dtype=np.float64)
 
     def _shift(freq: float, n: int) -> float:
+        """Sampling offset that puts the continuation at the right carrier phase.
+
+        ``frac(f·n)/f`` on its own is a trap: it is discontinuous at integer
+        ``f·n``, and a sub-pixel carrier estimate lands just *below* an integer
+        about as often as just above. At five fringes across 256 px
+        ``_find_carrier`` returns f·w = 4.999896, and the naive form then asks
+        for a 51.196 px shift — a whole fringe period — to correct a phase
+        error of 0.0001 cycles. The phase would be right and the continuation
+        would still be wrong, because it would be lifted from a block of the
+        frame one full period further in, whose *surface* is not the surface
+        just past the edge. Measured on a 320 nm astigmatism (full-frame
+        max |err|, auto carrier): 57.6 nm at 5 fringes, 38.4 at 8, 26.8 at 12,
+        against 24.6 / 12.8 / 8.7 once corrected.
+
+        Shifting by a whole period costs nothing (the phase is unchanged), so
+        take the representative nearest zero — but only while it stays on the
+        grid. A negative offset samples off the low end of the frame and the
+        clip below then replaces real columns with the edge value, which is
+        the ``edge`` padding whose failure is tabulated above. So flip to the
+        negative representative only when it is narrower than one sample,
+        where the clip costs a fraction of a pixel. Taking the nearest
+        representative unconditionally instead wrecks the half-period cases it
+        has no business touching: at 8.5 fringes it asks for −13.8 px, and the
+        astigmatism error goes from −5.35% to +10.68% — outside the 10% gate —
+        with flat-part PV 15.6 -> 83.8 nm.
+        """
         if abs(freq) < 1e-12:
             return 0.0
-        return ((freq * n) % 1.0) / freq
+        r = (freq * n) % 1.0
+        if (1.0 - r) < abs(freq):   # negative representative is sub-sample
+            r -= 1.0
+        return r / freq
 
     dy = _shift(fy, h)
     dx = _shift(fx, w)
@@ -1468,8 +1516,15 @@ def _normalized_lowpass(field: np.ndarray, weight: np.ndarray,
     # collapses when the surviving support is degenerate (a line or a point),
     # where there is no slope to estimate and the weighted mean is the best
     # available answer.
+    # Reject degenerate support before it is fitted, not merely before it
+    # divides by zero. det is 1.0 on full support, 0.363 at a straight
+    # boundary and 0.132 at a right-angle corner, so anything under ~0.05 is a
+    # sliver the plane fit cannot see a slope through, and inverting it would
+    # put a gain of up to 1000x on whatever noise is in there. Those pixels
+    # fall back to the weighted mean, which is the best answer available when
+    # there is no usable second moment.
     det = cuu * cvv - cuv * cuv
-    usable = have & (det > 1e-3)
+    usable = have & (det > 0.05)
     inv_det = np.divide(1.0, det, out=np.zeros_like(det), where=usable)
     b = (cvv * gu - cuv * gv) * inv_det
     c = (cuu * gv - cuv * gu) * inv_det
