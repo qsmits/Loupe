@@ -331,10 +331,16 @@ def compute_bearing_ratio(
     ratios = np.linspace(0.0, 1.0, n_levels)
     heights = np.quantile(z, 1.0 - ratios, method="linear")
 
-    # ISO 13565-2 secant method for Spk/Sk/Svk:
-    # Find the 40% secant line that has the smallest slope (flattest part
-    # of the bearing curve = core roughness). The secant spans 40% of the
-    # material ratio axis.
+    # ISO 13565-2 core roughness parameters (Sk, Spk, Svk, Smr1, Smr2):
+    # Slide a 40%-material-ratio secant across the curve and keep the
+    # position with the smallest slope (that span is the flattest part of
+    # the bearing curve = the core). That is only the first step: ISO
+    # 13565-2 defines Sk from the "equivalent straight line" through that
+    # secant EXTRAPOLATED to Mr = 0% and Mr = 100% (2.5x the raw 40% secant
+    # drop, since 1 / 0.4 = 2.5), not the secant's own two-point drop.
+    # Smr1/Smr2 are the material ratios where that extrapolated line meets
+    # the actual curve -- which is generally outside the secant's own
+    # window, not the window's endpoints.
     best_slope = np.inf
     best_center_distance = np.inf
     best_i = 0
@@ -351,30 +357,80 @@ def compute_bearing_ratio(
                 best_slope = slope
                 best_center_distance = center_distance
                 best_i = i
-    # Core band
-    smr1_idx = best_i
-    smr2_idx = min(best_i + window, n_levels - 1)
-    Smr1 = float(ratios[smr1_idx])
-    Smr2 = float(ratios[smr2_idx])
-    core_top = float(heights[smr1_idx])
-    core_bot = float(heights[smr2_idx])
-    Sk = core_top - core_bot
-    # Equivalent-triangle reduced peak/valley heights. Preserve the actual
-    # material area outside the core, rather than returning raw vertical
-    # extents that are dominated by single extrema.
+    idx_lo = best_i
+    idx_hi = min(best_i + window, n_levels - 1)
+
+    # Equivalent line: the straight line through the flattest secant's own
+    # two endpoints, extended across the *entire* 0..1 material-ratio axis.
+    dr_window = ratios[idx_hi] - ratios[idx_lo]
+    slope = (heights[idx_hi] - heights[idx_lo]) / dr_window if dr_window > 1e-12 else 0.0
+    intercept = heights[idx_lo] - slope * ratios[idx_lo]
+
+    def _line(r):
+        return slope * r + intercept
+
+    Sk = float(_line(0.0) - _line(1.0))
+
+    # Smr1/Smr2: search outward from the core window for where the actual
+    # curve departs the extrapolated line -- not the window's own edges,
+    # which only coincide with the line by construction and needn't be
+    # where the real curve actually leaves it.
+    diffs = heights - _line(ratios)
+    tol = max(1e-9, 1e-6 * (z_max - z_min))
+
+    j = idx_lo
+    while j > 0 and diffs[j] <= tol:
+        j -= 1
+    if diffs[j] <= tol:
+        Smr1 = 0.0
+    else:
+        j2 = min(j + 1, idx_lo)
+        d1, d2 = diffs[j], diffs[j2]
+        r1, r2 = ratios[j], ratios[j2]
+        Smr1 = r1 if d1 == d2 else r1 + (d1 / (d1 - d2)) * (r2 - r1)
+        Smr1 = float(np.clip(Smr1, 0.0, ratios[idx_lo]))
+
+    k = idx_hi
+    while k < n_levels - 1 and diffs[k] >= -tol:
+        k += 1
+    if diffs[k] >= -tol:
+        Smr2 = 1.0
+    else:
+        k2 = max(k - 1, idx_hi)
+        d1, d2 = diffs[k2], diffs[k]
+        r1, r2 = ratios[k2], ratios[k]
+        Smr2 = r2 if d1 == d2 else r1 + (d1 / (d1 - d2)) * (r2 - r1)
+        Smr2 = float(np.clip(Smr2, ratios[idx_hi], 1.0))
+
+    core_top = float(_line(Smr1))
+    core_bot = float(_line(Smr2))
+
+    def _area_above(level, upto_ratio):
+        mask = ratios <= upto_ratio
+        r_pts = np.concatenate([ratios[mask], [upto_ratio]])
+        h_pts = np.concatenate([heights[mask], [level]])
+        r_pts, order = np.unique(r_pts, return_index=True)
+        excess = np.maximum(h_pts[order] - level, 0.0)
+        return float(np.trapezoid(excess, r_pts))
+
+    def _area_below(level, from_ratio):
+        mask = ratios >= from_ratio
+        r_pts = np.concatenate([[from_ratio], ratios[mask]])
+        h_pts = np.concatenate([[level], heights[mask]])
+        r_pts, order = np.unique(r_pts, return_index=True)
+        excess = np.maximum(level - h_pts[order], 0.0)
+        return float(np.trapezoid(excess, r_pts))
+
+    # Equivalent-triangle reduced peak/valley heights (Spk = 2*A1/Smr1,
+    # Svk = 2*A2/(1-Smr2) per ISO 13565-2), using the areas between the
+    # actual curve and the core level, out to where the line meets the curve.
     if Smr1 > 1e-12:
-        peak_excess = np.maximum(heights[:smr1_idx + 1] - core_top, 0.0)
-        peak_area = float(np.trapezoid(peak_excess,
-                                       ratios[:smr1_idx + 1]))
-        Spk = 2.0 * peak_area / Smr1
+        Spk = 2.0 * _area_above(core_top, Smr1) / Smr1
     else:
         Spk = 0.0
     valley_base = 1.0 - Smr2
     if valley_base > 1e-12:
-        valley_excess = np.maximum(core_bot - heights[smr2_idx:], 0.0)
-        valley_area = float(np.trapezoid(valley_excess,
-                                         ratios[smr2_idx:]))
-        Svk = 2.0 * valley_area / valley_base
+        Svk = 2.0 * _area_below(core_bot, Smr2) / valley_base
     else:
         Svk = 0.0
 

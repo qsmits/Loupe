@@ -60,7 +60,15 @@ def test_bearing_core_depth_depends_on_distribution():
         normal["Sk"] / np.ptp(np.random.default_rng(7).normal(size=10000)),
         abs=0.05,
     )
-    assert ramp["Spk"] < 100.0 - ramp["Sk"]
+    # A linear ramp's bearing curve is a single straight line, so its ISO
+    # 13565-2 equivalent line *is* the curve itself: Sk covers the full
+    # height range with no peak/valley material left over (Spk = Svk = 0).
+    # Previously this asserted `ramp["Spk"] < 100.0 - ramp["Sk"]`, which
+    # encoded the old (wrong) secant-drop Sk of 40.0: with 100 - Sk = 60,
+    # almost any Spk value trivially satisfied "< 60" and didn't discriminate.
+    assert ramp["Sk"] == pytest.approx(100.0, rel=0.02)
+    assert ramp["Spk"] == pytest.approx(0.0, abs=1.0)
+    assert ramp["Svk"] == pytest.approx(0.0, abs=1.0)
 
 
 def test_texture_direction_is_cartesian_y_up():
@@ -810,6 +818,55 @@ def test_bearing_ratio_step():
     # At height 0.5 (midway), roughly 50% of surface is above
     mid_idx = len(br["heights"]) // 2
     assert 0.3 < br["ratios"][mid_idx] < 0.7
+
+
+def test_linear_bearing_curve_matches_iso_13565_2():
+    """A perfectly linear material-ratio curve is its own equivalent line:
+    Sk spans the full height range and there are no peak/valley portions.
+
+    Smr1/Smr2 are reported as fractions in [0, 1] by ``compute_bearing_ratio``
+    (see the ``ratios`` array and frontend/zstack.js's ``* 100`` display
+    conversion), not the 0-100 percent scale, so the expected values here are
+    0.0 and 1.0 rather than 0 and 100.
+    """
+    z = np.linspace(100.0, 0.0, 1000).reshape(1, -1)
+    params = compute_bearing_ratio(z)
+    assert params["Sk"] == pytest.approx(100.0, rel=0.02)
+    assert params["Spk"] == pytest.approx(0.0, abs=1.0)
+    assert params["Svk"] == pytest.approx(0.0, abs=1.0)
+    assert params["Smr1"] == pytest.approx(0.0, abs=0.02)
+    assert params["Smr2"] == pytest.approx(1.0, abs=0.02)
+
+
+def test_bearing_curve_smr1_smr2_at_core_boundary():
+    """A curve with a distinct steep peak, flat core, and steep valley pins
+    Smr1/Smr2 at the exact corners where the core's equivalent line departs
+    the real curve -- not at the 40% window's own endpoints, and not at 0/1.
+
+    Constructed so the core segment (Mr 0.2-0.8) is exactly linear, so any
+    40%-wide sub-window search reconstructs the same equivalent line, and the
+    peak/valley segments are steeper straight lines meeting the core exactly
+    at Mr=0.2/0.8 -- giving closed-form expected values worked out by hand:
+    Sk=200/3 (the core slope extrapolated over the full 0-1 range), Smr1=0.2,
+    Smr2=0.8, and Spk=Svk=30 (the peak/valley segments' own height drop, a
+    consequence of them being right triangles of base 0.2).
+    """
+    r = np.linspace(0.0, 1.0, 20000)
+    h = np.where(
+        r <= 0.2,
+        100.0 - 150.0 * r,
+        np.where(
+            r <= 0.8,
+            70.0 - (200.0 / 3.0) * (r - 0.2),
+            30.0 - 150.0 * (r - 0.8),
+        ),
+    )
+    br = compute_bearing_ratio(h)
+    assert br["Sk"] == pytest.approx(200.0 / 3.0, rel=0.02)
+    assert br["Spk"] == pytest.approx(30.0, abs=1.5)
+    assert br["Svk"] == pytest.approx(30.0, abs=1.5)
+    assert br["Smr1"] == pytest.approx(0.2, abs=0.02)
+    assert br["Smr2"] == pytest.approx(0.8, abs=0.02)
 
 
 def test_profile_includes_bearing(client: TestClient):
