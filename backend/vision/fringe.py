@@ -1119,7 +1119,11 @@ def compute_fringe_modulation(image: np.ndarray) -> np.ndarray:
 
 
 def create_fringe_mask(image: np.ndarray, modulation: np.ndarray,
-                       threshold_frac: float = 0.15) -> np.ndarray:
+                       threshold_frac: float = 0.15,
+                       carrier_override: tuple[float, float] | None = None,
+                       *,
+                       dc_margin_override: int | None = None,
+                       dc_cutoff_cycles: float | None = 1.5) -> np.ndarray:
     """Create a boolean mask combining brightness and modulation.
 
     For real interferograms the fringe region is the illuminated aperture.
@@ -1136,6 +1140,17 @@ def create_fringe_mask(image: np.ndarray, modulation: np.ndarray,
     modulation : float64 modulation map from compute_fringe_modulation.
     threshold_frac : modulation rejection threshold within the bright
         region, as fraction of the median modulation there.
+    carrier_override : optional (peak_y, peak_x) in the same fftshift
+        coordinate system as ``_find_carrier``'s return. When provided, the
+        mask geometry (illumination blur radius, close/seam kernel sizes) is
+        derived from this carrier instead of re-detecting one, so a manually
+        corrected carrier (see ``extract_phase_dft``/``analyze_interferogram``)
+        governs the aperture the same way it governs the phase map. Passing
+        ``None`` re-detects via ``_find_carrier``, forwarding
+        ``dc_margin_override``/``dc_cutoff_cycles``.
+    dc_margin_override, dc_cutoff_cycles : forwarded to ``_find_carrier`` when
+        ``carrier_override`` is ``None``. Ignored when it is provided, since
+        there is nothing left to detect.
 
     Returns
     -------
@@ -1150,7 +1165,11 @@ def create_fringe_mask(image: np.ndarray, modulation: np.ndarray,
     # Step 1: estimate the illumination envelope before Otsu. Applying Otsu to
     # the raw interferogram segments bright fringe stripes, which creates
     # disconnected components with indeterminate relative fringe order.
-    py, px, _ = _find_carrier(img)
+    if carrier_override is not None:
+        py, px = carrier_override
+    else:
+        py, px, _ = _find_carrier(img, dc_margin_override=dc_margin_override,
+                                  dc_cutoff_cycles=dc_cutoff_cycles)
     fy = (py - img.shape[0] // 2) / img.shape[0]
     fx = (px - img.shape[1] // 2) / img.shape[1]
     period = 1.0 / max(math.hypot(fy, fx), 1e-10)
@@ -2425,7 +2444,10 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 589.3,
         # Intersect the user-drawn region with modulation filtering so
         # non-fringe pixels inside the polygon don't drag down coverage.
         user_region = custom_mask.astype(bool)
-        auto_mask = create_fringe_mask(img, modulation, threshold_frac=mask_threshold)
+        auto_mask = create_fringe_mask(img, modulation, threshold_frac=mask_threshold,
+                                       carrier_override=carrier_override,
+                                       dc_margin_override=dc_margin_override,
+                                       dc_cutoff_cycles=dc_cutoff_cycles)
         mask = user_region & auto_mask
         # Fall back to the raw polygon if intersection is too aggressive
         # (e.g. threshold_frac too high for this image)
@@ -2434,7 +2456,10 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 589.3,
     elif use_full_mask:
         mask = np.ones(img.shape, dtype=bool)
     else:
-        mask = create_fringe_mask(img, modulation, threshold_frac=mask_threshold)
+        mask = create_fringe_mask(img, modulation, threshold_frac=mask_threshold,
+                                  carrier_override=carrier_override,
+                                  dc_margin_override=dc_margin_override,
+                                  dc_cutoff_cycles=dc_cutoff_cycles)
     mask, n_components = _connected_analysis_mask(mask)
     region_warning: str | None = None
     if n_components > 1:

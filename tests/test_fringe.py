@@ -1287,6 +1287,72 @@ class TestCarrierOverride:
         assert result_forced["pv_nm"] >= 0
         assert result_forced["carrier"]["peak_x"] == forced_x
 
+    def test_carrier_override_equal_to_auto_gives_identical_aperture(self):
+        """create_fringe_mask must honour carrier_override, not re-detect.
+
+        A same-value comparison (override == auto-detected carrier, same
+        image) can pass trivially even when the override is fully ignored,
+        because a mask that always re-detects its own carrier is still a
+        pure function of the image alone and gives the same answer to both
+        calls regardless of what's passed in. So this test also forces a
+        carrier that is materially different from the auto-detected one and
+        asserts the aperture actually changes -- that's what proves the
+        override is *used* to build the mask rather than accepted and
+        dropped. See dpx=1 in the exploration this test is derived from:
+        a carrier one bin off center collapses the aperture's illumination
+        contrast estimate and flips `bright` to the full frame, roughly
+        2.5x the true aperture's pixel count.
+        """
+        h = w = 200
+        yy, xx = np.mgrid[:h, :w]
+        cy, cx = h // 2, w // 2
+        aperture = (yy - cy) ** 2 + (xx - cx) ** 2 <= 70 ** 2
+        image = np.zeros((h, w), dtype=np.float64)
+        image[aperture] = 128 + 100 * np.cos(2 * np.pi * 6 * xx[aperture] / w)
+        image += np.random.RandomState(0).randn(h, w) * 3
+        image = np.clip(image, 0, 255).astype(np.uint8)
+        modulation = compute_fringe_modulation(image)
+
+        py, px, _ = _find_carrier(image)
+        mask_auto = create_fringe_mask(image, modulation)
+
+        # Override equal to the auto-detected carrier must be a no-op.
+        mask_same_override = create_fringe_mask(image, modulation, carrier_override=(py, px))
+        assert np.array_equal(mask_same_override, mask_auto)
+
+        # The actual discriminator: a materially different carrier must
+        # change the aperture. If create_fringe_mask silently re-detects its
+        # own carrier instead of using the override, this mask would be
+        # identical to mask_auto no matter what carrier_override says.
+        mask_wrong_carrier = create_fringe_mask(image, modulation, carrier_override=(cy, cx + 1))
+        assert abs(int(mask_wrong_carrier.sum()) - int(mask_auto.sum())) > 5000, (
+            "aperture did not change when given a carrier far from the "
+            "auto-detected one -- create_fringe_mask is still re-detecting "
+            "its own carrier instead of honouring carrier_override"
+        )
+
+        # End-to-end: the same identity must hold through analyze_interferogram.
+        # On its own this comparison (override == the value auto-detection
+        # would have found anyway, same image) can't tell a threaded call
+        # site apart from an un-threaded one either -- both land on the same
+        # carrier by construction. So pin the call site directly: spy on
+        # create_fringe_mask and require analyze_interferogram to actually
+        # forward carrier_override into it, not just use it for the phase map.
+        from unittest.mock import patch
+        import backend.vision.fringe as fringe_module
+        auto = analyze_interferogram(image, wavelength_nm=589.3, subtract_terms=[1],
+                                     correct_2pi_jumps=False)
+        with patch.object(fringe_module, "create_fringe_mask",
+                          wraps=fringe_module.create_fringe_mask) as spy:
+            forced = fringe_module.analyze_interferogram(
+                image, wavelength_nm=589.3, subtract_terms=[1],
+                carrier_override=(py, px), correct_2pi_jumps=False)
+        assert spy.call_args.kwargs.get("carrier_override") == (py, px), (
+            "analyze_interferogram did not forward carrier_override to "
+            "create_fringe_mask's call site"
+        )
+        assert forced["n_valid_pixels"] == auto["n_valid_pixels"]
+
 
 class TestProgressCallback:
     """Tests for the on_progress callback added to analyze_interferogram."""
