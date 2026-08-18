@@ -18,10 +18,19 @@ export function loadFringeLensProfiles() {
   } catch { return []; }
 }
 
-export function saveFringeLensProfile(name, k1) {
+/**
+ * @param {string} name
+ * @param {number} k1
+ * @param {string} coefficientSpace  Space the caller's k1 is ACTUALLY in.
+ *   Defaults to diag_normalized_v1 (every current caller applies an
+ *   already-converted, dimensionless k1 before saving), but is an explicit
+ *   parameter rather than a hardcoded tag so a caller can never save an
+ *   unconverted value mistagged as already converted.
+ */
+export function saveFringeLensProfile(name, k1, coefficientSpace = "diag_normalized_v1") {
   const profiles = loadFringeLensProfiles();
   const existing = profiles.findIndex(p => p.name === name);
-  const profile = { name, k1, coefficient_space: "diag_normalized_v1" };
+  const profile = { name, k1, coefficient_space: coefficientSpace };
   if (existing >= 0) profiles[existing] = profile;
   else profiles.push(profile);
   localStorage.setItem(STORAGE_KEY, JSON.stringify(profiles));

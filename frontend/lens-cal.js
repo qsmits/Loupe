@@ -20,6 +20,7 @@ import { imageWidth, imageHeight } from './viewport.js';
 import { ctx, showStatus, redraw, pw, drawHandle } from './render.js';
 import { cacheImageData } from './subpixel-js.js';
 import { uploadCorrectedFrame } from './api.js';
+import { lensK1ToDiagNormalized } from './math.js';
 
 // ── Module-private state ──────────────────────────────────────────────────────
 let _active    = false;
@@ -31,11 +32,52 @@ let _externalCallback = null;
 // ── Public interface ──────────────────────────────────────────────────────────
 export function isLensCalMode() { return _active; }
 
+// Tracks the coefficient space of whatever value currently sits in
+// state.lensK1. state.lensK1 is a bare number with no room for a unit tag,
+// and STATE_FIELDS (workspace.js) forbids adding a sibling key for one — so
+// the tag lives here instead. Every assignment this module makes to
+// state.lensK1 from a live fit or a completed remap is always already
+// diag_normalized_v1; only setLensK1FromProfile's defer branch can leave it
+// pixel_v0, and only when a legacy profile is loaded before any image has
+// been frozen.
+let _lensK1Space = "diag_normalized_v1";
+
+/** The coefficient space of the value currently in state.lensK1. Consulted
+ *  by cal-profiles.js when saving, so a deferred (still pixel_v0) value is
+ *  never written back tagged diag_normalized_v1. */
+export function getLensK1Space() {
+  return _lensK1Space;
+}
+
+/**
+ * Convert k1 (given in coefficientSpace) into diag_normalized_v1 using the
+ * current image dimensions. Returns null — defer, never guess — when the
+ * diagonal isn't known yet (no image frozen), rather than zeroing the value
+ * or passing it through unconverted.
+ */
 export function normalizeLensK1(k1, coefficientSpace = "diag_normalized_v1") {
-  const value = Number(k1) || 0;
-  if (coefficientSpace !== "pixel_v0") return value;
   const diag2 = (imageWidth ** 2 + imageHeight ** 2) / 4;
-  return diag2 > 0 ? value * diag2 : 0;
+  return lensK1ToDiagNormalized(k1, coefficientSpace, diag2);
+}
+
+/**
+ * Apply a stored lens profile's k1 to state.lensK1 when no image is frozen
+ * yet (so no remap can run). Converts to diag_normalized_v1 when the image
+ * diagonal is already known; otherwise DEFERS — keeps the original
+ * magnitude in state.lensK1 and records (via getLensK1Space()) that it is
+ * still pixel_v0, so a later save records the true space instead of
+ * destroying the value (old behaviour: silently zeroed it) or mistagging it
+ * as already converted.
+ */
+export function setLensK1FromProfile(k1, coefficientSpace) {
+  const converted = normalizeLensK1(k1, coefficientSpace);
+  if (converted === null) {
+    state.lensK1 = Number(k1) || 0;
+    _lensK1Space = "pixel_v0";
+  } else {
+    state.lensK1 = converted;
+    _lensK1Space = "diag_normalized_v1";
+  }
 }
 
 export function initLensCal() {
@@ -127,10 +169,19 @@ export function openLensCalDialog(opts) {
 /** Apply k1 directly to the current frozen frame (used by cal-profiles). */
 export async function applyLensCorrection(k1, coefficientSpace = "diag_normalized_v1") {
   if (!state.frozenBackground || k1 === 0) return;
-  k1 = normalizeLensK1(k1, coefficientSpace);
+  const converted = normalizeLensK1(k1, coefficientSpace);
+  if (converted === null) {
+    // Should not normally happen — freeze always sets imageWidth/imageHeight
+    // before a frozenBackground exists — but never guess a magnitude for an
+    // unknown diagonal.
+    showStatus("Could not apply lens correction — image dimensions unknown");
+    return;
+  }
+  k1 = converted;
   const corrected = _applyK1(state.frozenBackground, k1);
   state.frozenBackground = corrected;
   state.lensK1 = k1;
+  _lensK1Space = "diag_normalized_v1";
   cacheImageData(corrected, imageWidth, imageHeight);
   redraw();
   showStatus(`Lens correction applied (k₁ = ${k1.toExponential(2)}) — syncing to server…`);
@@ -184,6 +235,7 @@ async function _confirmCal() {
   }
 
   state.lensK1 = k1;
+  _lensK1Space = "diag_normalized_v1";
 
   // Disable confirm while remap runs (can be slow on large images)
   const confirmBtn = document.getElementById("btn-lens-cal-confirm");

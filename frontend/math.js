@@ -103,6 +103,35 @@ export function calibrationPpmFromMeasurement(span, kind, knownMm) {
   return null;
 }
 
+/**
+ * Convert a lens-distortion coefficient k1 into the dimensionless
+ * diag_normalized_v1 space used throughout the UI/API.
+ *
+ * A `pixel_v0` value is raw pixel-space and needs the image diagonal to
+ * convert (`k1_normalized = k1_pixel * diag2`); a `diag_normalized_v1` value
+ * is already in that space and passes through unchanged regardless of
+ * `diag2`. A missing/blank space tag is treated as the legacy `pixel_v0`
+ * (profiles saved before the space tag existed).
+ *
+ * When the diagonal is unknown (`diag2` falsy/non-finite) and the value is
+ * pixel-space, conversion is DEFERRED — this returns `null` rather than 0 or
+ * an unconverted value, so the caller can keep the original number and its
+ * `pixel_v0` tag for a later apply instead of destroying or mis-tagging it.
+ * A genuinely zero coefficient still converts to `0` (nothing to lose).
+ *
+ * @param {number} k1
+ * @param {string|undefined} coefficientSpace  "pixel_v0" | "diag_normalized_v1" | undefined
+ * @param {number} diag2  (imageWidth**2 + imageHeight**2) / 4
+ * @returns {number | null}  null means "cannot convert yet, defer"
+ */
+export function lensK1ToDiagNormalized(k1, coefficientSpace, diag2) {
+  const value = Number(k1) || 0;
+  const space = coefficientSpace || "pixel_v0";
+  if (space !== "pixel_v0") return value;
+  if (value === 0) return 0;
+  return Number.isFinite(diag2) && diag2 > 0 ? value * diag2 : null;
+}
+
 export function fitCircle(p1, p2, p3) {
   const ax = p1.x, ay = p1.y;
   const bx = p2.x, by = p2.y;

@@ -22,7 +22,7 @@
 
 import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { calibrationPixelsPerMm, measurementPixelSpan, parseAreaInput, calibrationPpmFromMeasurement } from '../../frontend/math.js';
+import { calibrationPixelsPerMm, measurementPixelSpan, parseAreaInput, calibrationPpmFromMeasurement, lensK1ToDiagNormalized } from '../../frontend/math.js';
 import { state, pushUndo, takeSnapshot, undoStack, redoStack } from '../../frontend/state.js';
 
 // ── Two-point calibration ────────────────────────────────────────────────────
@@ -287,6 +287,32 @@ describe('parseAreaInput', () => {
 
   it('rejects malformed numbers (multiple dots)', () => {
     assert.equal(parseAreaInput('25.5.5'), null);
+  });
+});
+
+describe('lensK1ToDiagNormalized', () => {
+  it('converts a pixel_v0 coefficient using the image diagonal', () => {
+    // diag2 = (640^2 + 480^2)/4 = 160000
+    assert.equal(lensK1ToDiagNormalized(3e-7, 'pixel_v0', 160000), 0.048);
+  });
+
+  it('returns a diag_normalized_v1 value unchanged, whatever the diagonal', () => {
+    assert.equal(lensK1ToDiagNormalized(0.3, 'diag_normalized_v1', 160000), 0.3);
+    assert.equal(lensK1ToDiagNormalized(0.3, 'diag_normalized_v1', 0), 0.3);
+  });
+
+  it('DEFERS a pixel_v0 value when the diagonal is unknown — never zeroes it', () => {
+    // Regression: the old code returned 0 here, destroying the calibration.
+    const r = lensK1ToDiagNormalized(3e-7, 'pixel_v0', 0);
+    assert.equal(r, null, 'unknown diagonal yields null (defer), not 0');
+  });
+
+  it('treats a missing/blank space tag as the legacy pixel_v0', () => {
+    assert.equal(lensK1ToDiagNormalized(3e-7, undefined, 160000), 0.048);
+  });
+
+  it('returns 0 for a genuinely zero coefficient, not null', () => {
+    assert.equal(lensK1ToDiagNormalized(0, 'pixel_v0', 0), 0);
   });
 });
 

@@ -6,7 +6,7 @@ import { state } from './state.js';
 import { renderSidebar, updateCalibrationButton } from './sidebar.js';
 import { clearCalSource } from './annotations.js';
 import { redraw } from './render.js';
-import { applyLensCorrection, normalizeLensK1 } from './lens-cal.js';
+import { applyLensCorrection, setLensK1FromProfile, getLensK1Space } from './lens-cal.js';
 
 const STORAGE_KEY = "loupe_cal_profiles";
 
@@ -51,8 +51,12 @@ function _renderList(panel, profiles) {
       if (p.lensK1) {
         const lensSpace = p.lensK1Space || "pixel_v0";
         if (!state.frozenBackground) {
-          // Store k1 for later — lens warp will be applied when image is frozen
-          state.lensK1 = normalizeLensK1(p.lensK1, lensSpace);
+          // Store k1 for later — lens warp will be applied when image is
+          // frozen. setLensK1FromProfile defers rather than guesses when the
+          // image diagonal isn't known yet: it keeps the original magnitude
+          // AND remembers (via getLensK1Space()) that it is still pixel_v0,
+          // so saving a profile now can't mistag an unconverted value.
+          setLensK1FromProfile(p.lensK1, lensSpace);
         } else {
           await applyLensCorrection(p.lensK1, lensSpace);
         }
@@ -127,6 +131,9 @@ async function _importProfilesFromFile(file, panel) {
       name: _uniqueName(p.name.trim() || "Imported", existing),
       pixelsPerMm: p.pixelsPerMm,
       displayUnit: p.displayUnit || "mm",
+      // Carry the incoming number and its space tag through verbatim — no
+      // conversion happens here, so nothing is ever guessed. A missing tag
+      // is legacy data and defaults to pixel_v0, never diag_normalized_v1.
       lensK1: Number(p.lensK1) || 0,
       lensK1Space: p.lensK1Space || "pixel_v0",
     });
@@ -161,7 +168,10 @@ export function initCalProfiles() {
       pixelsPerMm: state.calibration.pixelsPerMm,
       displayUnit: state.calibration.displayUnit || "mm",
       lensK1: state.lensK1 || 0,
-      lensK1Space: "diag_normalized_v1",
+      // Record the space the stored number is ACTUALLY in — never assume
+      // diag_normalized_v1, or a deferred (still pixel_v0) value gets
+      // mistagged and corrupted on its next load.
+      lensK1Space: getLensK1Space(),
     });
     _saveProfiles(profiles);
     nameInput.value = "";

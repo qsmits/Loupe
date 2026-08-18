@@ -11,6 +11,8 @@ import { analyzeWithProgress, createProgressBar } from './fringe-progress.js';
 import { initCrossMode } from './cross-mode.js';
 import { switchMode } from './modes.js';
 import { imageWidth, imageHeight } from './viewport.js';
+import { lensK1ToDiagNormalized } from './math.js';
+import { showToast } from './shell.js';
 import { loadFringeLensProfiles, renderFringeLensDropdown, saveFringeLensProfile } from './fringe-lens-profiles.js';
 import {
   getActiveCalibration,
@@ -68,6 +70,11 @@ export function getCalibrationPayload() {
 
 function _setAppliedLensK1(k1) {
   fr.lensK1 = Number.isFinite(Number(k1)) ? Number(k1) : 0;
+  // Every caller of _setAppliedLensK1 passes an already-converted,
+  // dimensionless k1 (a fresh fit, 0 for "None", or an already-converted
+  // profile value) — never an unconverted pixel_v0 number. Recorded
+  // explicitly so a later profile save never has to guess.
+  fr.lensK1Space = "diag_normalized_v1";
   const active = getActiveCalibration();
   if (active && active.lens_k1 !== fr.lensK1) {
     try { saveCalibration({ ...active, lens_k1: fr.lensK1 }); }
@@ -663,11 +670,20 @@ export function wirePanelEvents() {
       _setAppliedLensK1(0);
     } else {
       const opt = sel.selectedOptions[0];
-      let k1 = parseFloat(opt.dataset.k1) || 0;
-      if (opt.dataset.coefficientSpace === "pixel_v0") {
-        const w = imageWidth || fr.lastResult?.image_width || 0;
-        const h = imageHeight || fr.lastResult?.image_height || 0;
-        if (w > 0 && h > 0) k1 *= (w * w + h * h) / 4;
+      const rawK1 = parseFloat(opt.dataset.k1) || 0;
+      const w = imageWidth || fr.lastResult?.image_width || 0;
+      const h = imageHeight || fr.lastResult?.image_height || 0;
+      const diag2 = (w * w + h * h) / 4;
+      const k1 = lensK1ToDiagNormalized(rawK1, opt.dataset.coefficientSpace, diag2);
+      if (k1 === null) {
+        // Diagonal unknown (no interferogram captured/frozen yet) — defer
+        // rather than apply an unconverted pixel-space value as if it were
+        // already dimensionless. The stored profile keeps its pixel_v0 tag
+        // untouched, so reselecting it once an image is available converts
+        // it correctly; nothing here overwrites fr.lensK1 in the meantime.
+        sel.value = "";
+        showToast("Capture or freeze an interferogram first, then reselect this lens profile to apply it.");
+        return;
       }
       _setAppliedLensK1(k1);
     }
@@ -679,7 +695,7 @@ export function wirePanelEvents() {
     const nameInput = $("fringe-lens-save-name");
     const name = nameInput?.value.trim();
     if (!name || !fr.lensK1) return;
-    saveFringeLensProfile(name, fr.lensK1);
+    saveFringeLensProfile(name, fr.lensK1, fr.lensK1Space || "diag_normalized_v1");
     renderFringeLensDropdown();
     $("fringe-lens-profile").value = name;
     $("fringe-lens-save-row").hidden = true;
