@@ -108,14 +108,6 @@ class TestPhysicsCorrections:
         assert any("region" in str(m).lower() for m in result.get("warnings", [])), \
             result.get("warnings")
 
-    @pytest.mark.xfail(
-        reason="Aperture-rim underestimate: 320nm recovers as 280.67nm "
-               "(-12.29%), entirely at the four edge midpoints; the interior "
-               "recovers to 1.2%. Predates the single-sideband work, which "
-               "removed the ~19nm rim artefact that had been cancelling it. "
-               "Tracked: Task 12 (normalized-convolution rim fix).",
-        strict=False,
-    )
     def test_default_lpf_avoids_large_five_fringe_pv_bias(self):
         h = w = 256
         yy, xx = np.mgrid[:h, :w]
@@ -153,19 +145,40 @@ class TestPhysicsCorrections:
         assert result["pv_nm"] < 5.0, f'flat part reported {result["pv_nm"]:.1f} nm PV'
 
     @pytest.mark.xfail(
-        reason="Aperture-rim underestimate: 320nm recovers as 280.67nm "
-               "(-12.29%), entirely at the four edge midpoints; the interior "
-               "recovers to 1.2%. Predates the single-sideband work, which "
-               "removed the ~19nm rim artefact that had been cancelling it. "
-               "Tracked: Task 12 (normalized-convolution rim fix).",
+        reason="Dominated by sub-pixel carrier-estimator bias, not by the "
+               "rim. Holding the carrier exact via carrier_override isolates "
+               "the two: the rim residual is now 1.9-10.3 nm across fringe "
+               "counts 5.0-12.37 (was 5.2-23.3), but the auto-detected "
+               "carrier sits up to 0.088 cycles/frame off, and a d-cycle "
+               "error is a 2*pi*d phase ramp the demodulator hands to the "
+               "specimen -- 0.084 cycles is 25 nm of PV at 589.3 nm, which "
+               "is the whole remaining miss here. subtract_terms=[1] is "
+               "piston-only, so unlike the default it does not hide it. "
+               "Fixing that needs an unbiased sub-pixel estimator, and it is "
+               "not a free win: three unbiased estimators were built and "
+               "measured (closed-form Hann inversion, 1-D and 2-D Hann-lobe "
+               "least squares; clean-tone bias 0.0026-0.0030 cycles vs the "
+               "M2.2 log-paraboloid fit\'s 0.149) and all three break "
+               "TestM22SubpixelCarrier::test_subpixel_carrier_unbiased_by_step "
+               "(0.67-0.79 bins vs its 0.5 limit, which the biased fit meets "
+               "at 0.37), while an accurate carrier also absorbs specimen "
+               "tilt entirely -- it reads 8.4999 for a 8-fringe carrier plus "
+               "0.5 fringes of surface tilt -- breaking "
+               "TestDFTPhaseExtraction::"
+               "test_extracts_phase_from_synthetic_interferogram, which "
+               "assumes tilt survives demodulation. Tilt IS the wedge in a "
+               "single interferogram, so that is a semantics decision about "
+               "what the demodulator should hand back, not a bug to fix "
+               "under a rim-artefact task.",
         strict=False,
     )
     def test_default_lpf_keeps_dc_outside_the_passband_non_integer_count(self):
         """Same as the flat-part test above but at a non-integer fringe count.
 
         An integer count makes the frame exactly periodic, which flatters every
-        FFT stage in the demodulator; no real capture is periodic. This pins the
-        rim gap that the periodic case hides — currently ~33 nm.
+        FFT stage in the demodulator; no real capture is periodic. This pins
+        what the periodic case hides — ~33 nm, of which ~25 nm is carrier
+        tilt (see the xfail reason) and the rest is rim.
         """
         h = w = 256
         _yy, xx = np.mgrid[:h, :w]

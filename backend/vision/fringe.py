@@ -1278,6 +1278,204 @@ def _largest_component_mask(mask: np.ndarray) -> np.ndarray:
 from backend.vision.mask_utils import rasterize_polygon_mask  # noqa: F401
 
 
+def _carrier_extend(image: np.ndarray, fy: float, fx: float,
+                    pad_y: int, pad_x: int) -> np.ndarray:
+    """Extend a frame with the carrier-consistent continuation of its own data.
+
+    The fringe field does not stop at the sensor edge; the array does. Every
+    fabricated continuation we measured makes the single-sideband transform
+    *worse* than leaving it alone, because that transform's kernel falls off
+    only as ``1/x`` and so weights the very first invented sample by ``1/π``:
+    mirroring (``reflect``) forces an even symmetry that pins the analytic
+    signal's imaginary part to zero right at the rim; replication, zeros, a
+    ramp to zero and a smoothstep taper all plant a step or a kink there; even
+    filling the pad with the *true* fringe field of the synthetic fixture
+    measured worse, because its envelope did not match the frame's to better
+    than a few percent. Full-frame flat-part PV at five fringes, where there
+    is no discontinuity to fix at all and any honest rule must be a no-op
+    (measured with the first-order low-pass already in place):
+
+        wrap (this) 2.6 nm   reflect 14.6   symmetric 10.6   ramp→0 16.6
+        taper 17.2           zeros   30.3   odd-reflect 91.5
+
+    So do not invent an envelope: reuse the frame's own, at the phase the
+    carrier says the continuation must have. ``e(x + w) = e(x + Δ)`` for a
+    carrier ``f`` when ``2π·f·Δ ≡ 2π·f·w (mod 2π)``, i.e. ``Δ = frac(f·w)/f``,
+    so the continuation is the measured frame resampled by a fractional shift.
+    Amplitude, background and texture all come from real pixels, and the join
+    at the frame edge is continuous by construction rather than by luck. At an
+    integer fringe count ``Δ`` is 0 and this degenerates exactly to the wrap
+    the unpadded FFT was already doing — the best-measured rule above — so it
+    can only act where there is a discontinuity to remove.
+
+    The interior is written back verbatim afterwards, so no measured pixel is
+    ever replaced by an interpolated one. The single-sideband transform is
+    global, though, so the continuation's own resampling error (cubic, ~0.6%
+    of fringe amplitude) does reach the interior: on a 320 nm astigmatism the
+    central-60% residual rms goes from 0.36 nm to 0.53 nm. That is the price
+    of not handing the transform a step, and it buys 10.8 percentage points of
+    PV accuracy.
+    """
+    h, w = image.shape
+    pad_y = int(max(0, min(pad_y, h - 2)))
+    pad_x = int(max(0, min(pad_x, w - 2)))
+    if pad_y <= 0 and pad_x <= 0:
+        return np.array(image, dtype=np.float64)
+
+    def _shift(freq: float, n: int) -> float:
+        if abs(freq) < 1e-12:
+            return 0.0
+        return ((freq * n) % 1.0) / freq
+
+    dy = _shift(fy, h)
+    dx = _shift(fx, w)
+    ys = np.arange(-pad_y, h + pad_y, dtype=np.float64)
+    xs = np.arange(-pad_x, w + pad_x, dtype=np.float64)
+    ys = np.where(ys >= h, (ys - h) + dy, np.where(ys < 0, (ys + h) - dy, ys))
+    xs = np.where(xs >= w, (xs - w) + dx, np.where(xs < 0, (xs + w) - dx, xs))
+    ys = np.clip(ys, 0.0, h - 1.001)
+    xs = np.clip(xs, 0.0, w - 1.001)
+
+    map_x = np.broadcast_to(xs[None, :], (ys.size, xs.size)).astype(np.float32)
+    map_y = np.broadcast_to(ys[:, None], (ys.size, xs.size)).astype(np.float32)
+    out = cv2.remap(np.asarray(image, dtype=np.float32), map_x, map_y,
+                    cv2.INTER_CUBIC).astype(np.float64)
+    out[pad_y:pad_y + h, pad_x:pad_x + w] = image
+    return out
+
+
+def _normalized_lowpass(field: np.ndarray, weight: np.ndarray,
+                        sig_across: float, sig_along: float, theta: float,
+                        pad: int) -> np.ndarray:
+    """First-order normalized convolution with an anisotropic Gaussian.
+
+    Low-passes a complex demodulated field over the region where ``weight``
+    says there is data, and nowhere else. ``weight`` is a validity/certainty
+    map (1 = a real sample, 0 = no sample); the array is zero-extended by
+    ``pad``, so the *frame* boundary is just another place where the data
+    runs out — the same treatment the aperture boundary gets.
+
+    Why first order and not the obvious "divide by the blurred mask".
+    ----------------------------------------------------------------
+    Where the Gaussian's support is cut by a boundary, the surviving half of
+    the kernel is no longer centred on the output pixel: its centroid sits
+    ``σ·sqrt(2/π)`` *inward*. Zeroth-order normalized convolution (divide the
+    filtered signal by the filtered mask) restores the amplitude but still
+    reports the value at that shifted centroid, so a field with a phase
+    gradient ``g`` is read low by ``g·σ·sqrt(2/π)``. Mirroring the field into
+    the missing region (``mode="reflect"``) makes exactly the same error: the
+    even continuation forces a zero outward gradient, and blurring it pulls
+    the boundary phase toward the interior by the same ``g·σ·sqrt(2/π)``.
+    The two rules are not alternatives — to first order they are the same
+    rule, which is why sweeping between them only ever traded one rim
+    artefact for another.
+
+    Fitting a local *plane* (a + b·t_u + c·t_v) by weighted least squares over
+    the valid support and evaluating it at t = 0 removes that term outright:
+    the centroid shift is absorbed by the fitted slope instead of being read
+    as signal. Measured on its own (nothing else in this commit changed), a
+    320 nm astigmatism read across the whole frame recovers as 309.5 nm
+    (−3.3%) instead of 280.7 nm (−12.3%); with the frame extension below it
+    reaches 316.1 nm (−1.2%). At an *interior* circular aperture rim — the
+    normal case, where the frame edge is nowhere near the data — 60 nm of
+    figure gives a p95 phase error of 2.7 nm instead of 11.5 nm, and 30 nm of
+    figure 2.6 nm instead of 6.3 nm: the point of a first-order method is that
+    the error stops scaling with the surface gradient. On a perfectly flat
+    part it costs 0.2 nm of extra variance at the rim, which is the honest
+    price of estimating a slope that is not there.
+
+    Where the support is full (every interior pixel more than ~3σ from any
+    boundary) the fit reduces to the plain Gaussian: the odd moments vanish,
+    the moment matrix is the identity, and the constant term is the ordinary
+    weighted mean. That is exact, not approximate — checked numerically at
+    2.4e-6 of signal scale against a plain Gaussian on the same grid — so this
+    function cannot disturb an interior that was already correct. (The frame
+    extension in ``extract_phase_dft`` is global and does move the interior a
+    little; see there.)
+
+    Parameters
+    ----------
+    field : complex demodulated field, not yet weighted.
+    weight : float validity map in [0, 1], same shape as ``field``.
+    sig_across, sig_along : image-space Gaussian σ in px, across and along
+        the fringes.
+    theta : carrier direction, ``atan2(fy, fx)``.
+    pad : zero-extension in px; must be >= ~3·max(σ) so the circular
+        convolution does not wrap real data back into the frame.
+
+    Returns
+    -------
+    Complex field of the same shape as ``field``.
+    """
+    h, w = field.shape
+    padding = ((pad, pad), (pad, pad))
+    f_pad = np.pad(field * weight, padding, mode="constant")
+    m_pad = np.pad(weight, padding, mode="constant")
+    ph, pw = f_pad.shape
+
+    # Frequency grids, rotated so u runs across the fringes and v along them.
+    fy_axis = (np.arange(ph) - (ph // 2)) / ph
+    fx_axis = (np.arange(pw) - (pw // 2)) / pw
+    fy_grid, fx_grid = np.meshgrid(fy_axis, fx_axis, indexing='ij')
+    ct, st = math.cos(theta), math.sin(theta)
+    u_across = ct * fx_grid + st * fy_grid
+    v_along = -st * fx_grid + ct * fy_grid
+
+    # Q is the frequency coordinate scaled by the Gaussian's own width, so the
+    # basis is (1, t_u/σ_u, t_v/σ_v) and every moment below is O(1). The
+    # low-pass itself is exp(-½(Qu² + Qv²)) — the same Gaussian the isotropic
+    # and anisotropic branches used before, just written in scaled units.
+    Qu = np.fft.ifftshift(2.0 * math.pi * sig_across * u_across)
+    Qv = np.fft.ifftshift(2.0 * math.pi * sig_along * v_along)
+    W = np.exp(-0.5 * (Qu ** 2 + Qv ** 2))
+
+    # Correlating with t_u^p·t_v^q·w is a multiply by the corresponding
+    # derivative of W: FT{t_u·w} = -i·Qu·W and FT{t_u²·w} = (1 - Qu²)·W in
+    # these scaled units, and correlation (not convolution) conjugates the
+    # odd ones back to +i.
+    iQuW = 1j * Qu * W
+    iQvW = 1j * Qv * W
+    crop = (slice(pad, pad + h), slice(pad, pad + w))
+
+    Fm = np.fft.fft2(m_pad)
+    Ff = np.fft.fft2(f_pad)
+
+    def _corr_real(mult):
+        return np.fft.ifft2(Fm * mult).real[crop]
+
+    def _corr_cplx(mult):
+        return np.fft.ifft2(Ff * mult)[crop]
+
+    # Moments of the weight over the surviving support.
+    a00 = _corr_real(W)
+    have = a00 > 1e-3
+    inv = np.divide(1.0, a00, out=np.zeros_like(a00), where=have)
+
+    r0 = _corr_cplx(W)
+    mean = r0 * inv                       # zeroth-order normalized convolution
+
+    mu = _corr_real(iQuW) * inv           # kernel centroid, scaled units
+    mv = _corr_real(iQvW) * inv
+    cuu = _corr_real((1.0 - Qu ** 2) * W) * inv - mu * mu
+    cvv = _corr_real((1.0 - Qv ** 2) * W) * inv - mv * mv
+    cuv = _corr_real(-Qu * Qv * W) * inv - mu * mv
+
+    gu = _corr_cplx(iQuW) * inv - mu * mean
+    gv = _corr_cplx(iQvW) * inv - mv * mean
+
+    # 2x2 weighted-covariance solve for the plane's slopes. det is 1 for full
+    # support and 0.36 for a straight boundary through the pixel; it only
+    # collapses when the surviving support is degenerate (a line or a point),
+    # where there is no slope to estimate and the weighted mean is the best
+    # available answer.
+    det = cuu * cvv - cuv * cuv
+    usable = have & (det > 1e-3)
+    inv_det = np.divide(1.0, det, out=np.zeros_like(det), where=usable)
+    b = (cvv * gu - cuv * gv) * inv_det
+    c = (cuu * gv - cuv * gu) * inv_det
+    return np.where(usable, mean - b * mu - c * mv, mean)
+
+
 def extract_phase_dft(image: np.ndarray, mask: np.ndarray | None = None,
                       carrier_override: tuple[float, float] | None = None,
                       *,
@@ -1289,14 +1487,19 @@ def extract_phase_dft(image: np.ndarray, mask: np.ndarray | None = None,
     """Extract wrapped phase via spatial-domain complex demodulation.
 
     Pipeline:
-    1. Background subtraction (Gaussian blur) to enhance fringe contrast
-    2. Detect carrier frequency via _find_carrier
-    3. Single-sideband (analytic-signal) filter: keep only the half-plane the
+    1. Detect carrier frequency via _find_carrier
+    2. Extend the frame with its own carrier-consistent continuation, so the
+       circular FFT below is not handed a step at the wrap seam
+    3. Background subtraction (Gaussian blur) to enhance fringe contrast
+    4. Single-sideband (analytic-signal) filter: keep only the half-plane the
        carrier lives in, which drops the residual DC/background term and the
        conjugate sideband *before* demodulation
-    4. Multiply by conjugate carrier exp(-j*carrier) to shift fringes to DC
-    5. Low-pass filter (Gaussian) to extract the envelope/phase
-    6. Extract wrapped phase: atan2(Im, Re)
+    5. Multiply by conjugate carrier exp(-j*carrier) to shift fringes to DC
+    6. Crop back to the frame and low-pass filter to extract the
+       envelope/phase, as a first-order normalized convolution so that a
+       boundary — the aperture's or the frame's — is treated as "no data here"
+       rather than as signal
+    7. Extract wrapped phase: atan2(Im, Re)
 
     This approach handles aperture boundaries naturally and works well
     on low-contrast real-world interferograms where FFT sideband isolation
@@ -1305,10 +1508,12 @@ def extract_phase_dft(image: np.ndarray, mask: np.ndarray | None = None,
     Parameters
     ----------
     image : 2D grayscale image (float64 or uint8).
-    mask : optional boolean mask (True = valid). Masked-out pixels are zeroed
-           after background subtraction and after the single-sideband
-           transform, immediately before the low-pass — see the note at the
-           SSB step for why that ordering was measured rather than assumed.
+    mask : optional boolean mask (True = valid). Used as the certainty map of
+           the low-pass's normalized convolution, applied after the
+           single-sideband transform — see the note at the SSB step for why
+           that ordering was measured rather than assumed. When omitted, every
+           pixel in the frame counts as valid and only the frame edge bounds
+           the data.
 
     Returns
     -------
@@ -1319,12 +1524,9 @@ def extract_phase_dft(image: np.ndarray, mask: np.ndarray | None = None,
         img = img.mean(axis=-1)
     h, w = img.shape
 
-    # Step 1: background subtraction to enhance fringe contrast
     bg_sigma = max(50, h // 20)
-    background = cv2.GaussianBlur(img, (0, 0), bg_sigma)
-    enhanced = img - background
 
-    # Step 2: find carrier frequency (use raw image, not background-subtracted,
+    # Step 1: find carrier frequency (use raw image, not background-subtracted,
     # so the peak selection is consistent with compute_fringe_modulation and
     # doesn't flip sign depending on subtle background subtraction differences)
     if carrier_override is not None:
@@ -1336,6 +1538,34 @@ def extract_phase_dft(image: np.ndarray, mask: np.ndarray | None = None,
     fy = (py - h // 2) / h  # cycles per pixel
     fx = (px - w // 2) / w
     fringe_freq = math.sqrt(fy ** 2 + fx ** 2)
+
+    # Step 2: background subtraction to enhance fringe contrast, then extend
+    # the frame with its own carrier-consistent continuation so the circular
+    # FFT below is not handed a step at the wrap seam.
+    enhanced = img - cv2.GaussianBlur(img, (0, 0), bg_sigma)
+    if fringe_freq > 1e-10:
+        lpf_period = 1.0 / fringe_freq
+        lpf_frac = (DEFAULT_LPF_SIGMA_FRAC if lpf_sigma_frac is None
+                    else float(lpf_sigma_frac))
+        # The extension has to outrun the background blur, not just the
+        # low-pass: cv2 mirrors at the array edge, so `enhanced` carries a
+        # band of blur-mirroring error ~3*bg_sigma wide, and an extension
+        # shorter than that just re-seams the transform onto contaminated
+        # pixels. Sizing it to the low-pass alone (3*sigma_across, ~37 px
+        # here) leaves 10-13 nm of flat-part PV even at integer fringe
+        # counts, where there is no seam at all; 3*bg_sigma brings that to
+        # 1.7-2.7 nm.
+        ext = min(256, max(8, int(math.ceil(
+            3.0 * max(lpf_period * lpf_frac * 1.4142, 5.0)))))
+        ext = max(ext, int(math.ceil(3.0 * bg_sigma)))
+        enhanced = _carrier_extend(enhanced, fy, fx, ext, ext)
+        ext_y = (enhanced.shape[0] - h) // 2
+        ext_x = (enhanced.shape[1] - w) // 2
+    else:
+        # Degenerate: no carrier, so no continuation is defined. The low-pass
+        # is the only stage left with a boundary, and it handles its own.
+        ext_y = ext_x = 0
+    eh, ew = enhanced.shape
 
     # Step 3: single-sideband (analytic-signal) filter.
     #
@@ -1376,23 +1606,25 @@ def extract_phase_dft(image: np.ndarray, mask: np.ndarray | None = None,
     # read the raw unmasked frame. SSB does not add contamination — it
     # slightly reduces it.
     if fringe_freq > 1e-10:
-        fy_bins = np.fft.fftfreq(h)[:, None]
-        fx_bins = np.fft.fftfreq(w)[None, :]
+        fy_bins = np.fft.fftfreq(eh)[:, None]
+        fx_bins = np.fft.fftfreq(ew)[None, :]
         along_carrier = fy_bins * fy + fx_bins * fx
         sideband = np.fft.ifft2(np.fft.fft2(enhanced) * (along_carrier > 0) * 2.0)
     else:
         # Degenerate: no carrier was found at all. Nothing to separate.
         sideband = enhanced.astype(np.complex128)
 
-    # Step 4: complex demodulation — shift carrier to DC
-    yy, xx = np.mgrid[0:h, 0:w]
-    carrier = np.exp(-2j * np.pi * (fy * yy + fx * xx))
-    valid_weight = None
-    if mask is not None:
-        valid_weight = mask.astype(np.float64)
-        demod = sideband * carrier * valid_weight
-    else:
-        demod = sideband * carrier
+    # Step 4: complex demodulation — shift carrier to DC, then crop back to the
+    # frame. The continuation was only ever there to keep the FFT above honest;
+    # it is not measurement, so nothing downstream is allowed to see it.
+    yy, xx = np.mgrid[0:eh, 0:ew]
+    carrier = np.exp(-2j * np.pi * (fy * (yy - ext_y) + fx * (xx - ext_x)))
+    demod = (sideband * carrier)[ext_y:ext_y + h, ext_x:ext_x + w]
+    # Validity/certainty for the low-pass below. With no aperture mask every
+    # pixel in the frame is a real sample; the frame's own edge is still a
+    # boundary, because there is no data past it either.
+    valid_weight = (np.ones((h, w), dtype=np.float64) if mask is None
+                    else mask.astype(np.float64))
 
     # Step 5: low-pass filter (envelope extraction)
     # Image-space σ defaults to ``DEFAULT_LPF_SIGMA_FRAC`` (0.18) x the fringe
@@ -1433,85 +1665,33 @@ def extract_phase_dft(image: np.ndarray, mask: np.ndarray | None = None,
         # surface features.
         sig_along_img = max(fringe_period * sigma_frac * 0.7071, 2.0)
         sig_across_img = max(fringe_period * sigma_frac * 1.4142, 5.0)
-        # Convert image-space σ → frequency-space σ. For a normalized FFT grid
-        # of cycles/pixel, the Fourier pair of a Gaussian with image σ_i has
-        # frequency σ_f = 1 / (2π · σ_i).
-        sig_along_f = 1.0 / (2.0 * math.pi * sig_along_img)
-        sig_across_f = 1.0 / (2.0 * math.pi * sig_across_img)
 
         # Carrier direction in cycles/pixel. `_find_carrier` uses atan2(fy, fx)
         # throughout the rest of the pipeline — match it here so rotation-sign
         # stays consistent with the frame note in CLAUDE.md.
         theta = math.atan2(fy, fx)
-        ct, st = math.cos(theta), math.sin(theta)
-
-        # Pad before FFT convolution so the image boundary is not treated as a
-        # periodic phase discontinuity. Reflecting the already-demodulated
-        # complex field preserves a smooth local continuation at the frame rim.
-        #
-        # Replication (mode="edge") measures better on an exactly-periodic
-        # synthetic frame — it halves a known rim bias that costs PV on
-        # low-order aberrations, whose extrema sit at the aperture edge. Do not
-        # switch to it: an integer fringe count is the only case where it wins.
-        # Sweeping the fringe count across 256 px, flat-part PV in nm
-        # (reflect / edge):
-        #     5.00  2.1 / 2.5      5.25  21.9 / 47.0     5.37  32.7 / 125.6
-        #     5.50 37.8 / 96.0     8.50  14.9 /  58.2   12.37  27.6 /  95.6
-        # Every non-integer count — i.e. every real interferogram, since
-        # nothing makes a real capture exactly periodic across the frame —
-        # regresses by 1.5-4x. Blending the two rules just interpolates the
-        # trade-off; there is no setting that wins on both.
-        pad = min(256, max(8, int(math.ceil(
-            3.0 * max(sig_along_img, sig_across_img)
-        ))))
-        demod_work = np.pad(demod, ((pad, pad), (pad, pad)), mode="reflect")
-        ph, pw = demod_work.shape
-
-        # Build fftshift-centered frequency grids in cycles/pixel (matches the
-        # coordinate system used to express fy, fx above).
-        fy_axis = (np.arange(ph) - (ph // 2)) / ph
-        fx_axis = (np.arange(pw) - (pw // 2)) / pw
-        fy_grid, fx_grid = np.meshgrid(fy_axis, fx_axis, indexing='ij')
-
-        # Rotate so u' is along the carrier (across fringes) and v' is
-        # perpendicular (along fringes).
-        u_across = ct * fx_grid + st * fy_grid
-        v_along = -st * fx_grid + ct * fy_grid
-
-        lpf_shifted = np.exp(
-            -0.5 * (u_across / sig_across_f) ** 2
-            - 0.5 * (v_along / sig_along_f) ** 2
-        )
-        lpf = np.fft.ifftshift(lpf_shifted)
-
-        D = np.fft.fft2(demod_work)
-        demod_lp_work = np.fft.ifft2(D * lpf)
-        demod_lp = demod_lp_work[pad:pad + h, pad:pad + w]
-        if valid_weight is not None:
-            weight_work = np.pad(valid_weight, ((pad, pad), (pad, pad)),
-                                 mode="reflect")
-            weight_lp_work = np.fft.ifft2(
-                np.fft.fft2(weight_work) * lpf
-            ).real
-            weight_lp = weight_lp_work[pad:pad + h, pad:pad + w]
-            demod_lp = np.divide(
-                demod_lp, weight_lp,
-                out=np.zeros_like(demod_lp),
-                where=weight_lp > 1e-3,
-            )
     else:
-        # Mirroring at the rim (cv2's BORDER_REFLECT_101 default), to stay on
-        # the same rim rule as the anisotropic branch above — the two are
-        # alternative implementations of one low-pass and must stay comparable.
-        demod_lp = (cv2.GaussianBlur(demod.real, (0, 0), lp_sigma) +
-                    1j * cv2.GaussianBlur(demod.imag, (0, 0), lp_sigma))
-        if valid_weight is not None:
-            weight_lp = cv2.GaussianBlur(valid_weight, (0, 0), lp_sigma)
-            demod_lp = np.divide(
-                demod_lp, weight_lp,
-                out=np.zeros_like(demod_lp),
-                where=weight_lp > 1e-3,
-            )
+        # Degenerate or explicitly isotropic: one σ, no preferred direction.
+        # Same code path as above so the two cannot drift apart — they are
+        # alternative parameterizations of one low-pass, not two filters.
+        sig_along_img = sig_across_img = lp_sigma
+        theta = 0.0
+
+    # Zero-extend far enough that the circular convolution cannot wrap real
+    # data back into the frame (>= 3σ each side puts the opposite edge 6σ
+    # away). The boundary itself is handled by the normalized convolution:
+    # outside the frame the weight is 0, so those samples are treated as
+    # missing rather than invented. There is no padding *mode* to choose any
+    # more, which is the point — sweeping reflect/edge blends only ever
+    # traded the astigmatism rim underestimate against flat-part rim
+    # artefact (worst flat PV 37.8 -> 125.6 nm as astigmatism went -12.3% ->
+    # -7.5%, strictly monotonic), because to first order both rules make the
+    # same error. See ``_normalized_lowpass``.
+    pad = min(256, max(8, int(math.ceil(
+        3.0 * max(sig_along_img, sig_across_img)
+    ))))
+    demod_lp = _normalized_lowpass(demod, valid_weight, sig_across_img,
+                                   sig_along_img, theta, pad)
 
     # Step 6: extract wrapped phase
     # Note: np.angle() is amplitude-insensitive (phase of z doesn't depend
