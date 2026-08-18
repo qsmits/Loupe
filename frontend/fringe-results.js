@@ -613,16 +613,25 @@ function renderResults(data) {
   }
 
   // M1.6: trusted-area badge. Shown independently of data.confidence so
-  // it appears whenever the backend reports it.
-  if (Number.isFinite(data.trusted_area_pct)) {
-    const confRow = $("fringe-confidence-row");
-    if (confRow) confRow.hidden = false;
+  // it appears whenever the backend reports it. Task 8 follow-up: derived
+  // wavefronts (subtract/average) may honestly omit trusted_area_pct when
+  // source trust is unknown -- hide the badge in that case instead of
+  // leaving a stale percentage from a previous result on screen.
+  {
     const trustedBadge = $("fringe-conf-trusted");
     const trustedVal = $("fringe-trusted-area");
-    if (trustedVal) trustedVal.textContent = data.trusted_area_pct.toFixed(1) + "%";
-    if (trustedBadge) {
-      const dot = trustedBadge.querySelector(".fringe-conf-dot");
-      if (dot) dot.style.background = trustedBadgeColor(data.trusted_area_pct);
+    if (Number.isFinite(data.trusted_area_pct)) {
+      const confRow = $("fringe-confidence-row");
+      if (confRow) confRow.hidden = false;
+      if (trustedVal) trustedVal.textContent = data.trusted_area_pct.toFixed(1) + "%";
+      if (trustedBadge) {
+        trustedBadge.hidden = false;
+        const dot = trustedBadge.querySelector(".fringe-conf-dot");
+        if (dot) dot.style.background = trustedBadgeColor(data.trusted_area_pct);
+      }
+    } else {
+      if (trustedVal) trustedVal.textContent = "--";
+      if (trustedBadge) trustedBadge.hidden = true;
     }
   }
 
@@ -632,9 +641,32 @@ function renderResults(data) {
   if (displayGrid) {
     fr.heightGrid = new Float32Array(displayGrid);
     fr.maskGrid = new Uint8Array(data.mask_grid);
-    if (data.trusted_mask_grid) fr.trustedMaskGrid = new Uint8Array(data.trusted_mask_grid);
+    // Task 8 follow-up: explicitly null out (not just "leave untouched")
+    // when this result has no trusted mask, so a derived wavefront that
+    // honestly omits trust doesn't silently inherit a spatially-unrelated
+    // trusted mask cached from a previous, unrelated result.
+    fr.trustedMaskGrid = data.trusted_mask_grid
+      ? new Uint8Array(data.trusted_mask_grid)
+      : null;
     fr.gridRows = data.grid_rows;
     fr.gridCols = data.grid_cols;
+  }
+
+  // The "use trusted pixels only" toggle must never claim to be filtering
+  // when there is nothing to filter by. Keep it in lock-step with whether
+  // *this* result actually has a trusted mask, rather than leaving
+  // whatever state a previous result left the checkbox in. Disabling (not
+  // just unchecking) when unavailable also prevents the user from
+  // re-checking it into a no-op state; it re-enables, unchecked, the next
+  // time a result with real trust data loads.
+  const trustedOnlyEl = $("fringe-use-trusted-only");
+  if (trustedOnlyEl) {
+    const hasTrust = !!fr.trustedMaskGrid;
+    trustedOnlyEl.disabled = !hasTrust;
+    if (!hasTrust && trustedOnlyEl.checked) {
+      trustedOnlyEl.checked = false;
+      fr.useTrustedOnly = false;
+    }
   }
 
   // Surface map
@@ -1502,6 +1534,16 @@ export function mergeReanalyzeResult(data) {
   ]) {
     if (data[key] !== undefined) fr.lastResult[key] = data[key];
   }
+  // Task 8 follow-up: trust fields are sometimes genuinely absent -- a
+  // Zernike-coefficient reanalyze/invert never computes trust, and a
+  // derived subtract/average may omit it honestly when source trust is
+  // unknown. Unlike every other key in the loop above, `fr.lastResult`
+  // here is NOT first replaced wholesale by the caller (doReanalyze /
+  // invertWavefront merge straight into the existing object), so an
+  // absent trust field would otherwise leave whatever stale value a
+  // previous, unrelated result left behind. Clear it explicitly.
+  if (data.trusted_area_pct === undefined) delete fr.lastResult.trusted_area_pct;
+  if (data.trusted_mask_grid === undefined) delete fr.lastResult.trusted_mask_grid;
   if (data.strehl !== undefined) fr.lastResult.strehl = data.strehl;
   if (data.psf !== undefined) fr.lastResult.psf = data.psf;
   if (data.mtf !== undefined) fr.lastResult.mtf = data.mtf;
@@ -1514,7 +1556,9 @@ export function mergeReanalyzeResult(data) {
   if (displayGrid) {
     fr.heightGrid = new Float32Array(displayGrid);
     fr.maskGrid = new Uint8Array(data.mask_grid);
-    if (data.trusted_mask_grid) fr.trustedMaskGrid = new Uint8Array(data.trusted_mask_grid);
+    fr.trustedMaskGrid = data.trusted_mask_grid
+      ? new Uint8Array(data.trusted_mask_grid)
+      : null;
     fr.gridRows = data.grid_rows;
     fr.gridCols = data.grid_cols;
   }
