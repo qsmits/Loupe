@@ -270,6 +270,46 @@ class TestPhysicsCorrections:
                 f"PV with the carrier exact"
             )
 
+    def test_extension_does_not_manufacture_a_seam_at_integer_counts(self):
+        """A frame spanning an integer number of carrier periods is exactly
+        periodic; the unpadded FFT of it has no seam at all (measured
+        1.06-1.17 nm flat PV with the extension disabled). The extension's
+        job is to fix non-periodic frames, so it must not make the already-
+        exact case worse than ~2x that no-extension floor. With the
+        pre-2026-08-19 step-2 ordering (background blur before the extension)
+        this read 6.57 nm at 6 fringes on 512 px; the extend-then-blur
+        ordering keeps it under the 2.0 nm bound, and this test pins that."""
+        h = w = 512
+        n = 6.00
+        _yy, xx = np.mgrid[:h, :w]
+        image = np.clip(
+            128 + 105 * np.cos(2 * np.pi * n * xx / w), 0, 255
+        ).astype(np.uint8)
+        wrapped = extract_phase_dft(image, None, (h // 2, w // 2 + n))
+        err_nm = (wrapped - np.median(wrapped)) * 589.3 / (4 * np.pi)
+        pv = float(err_nm.max() - err_nm.min())
+        assert pv < 2.0, f"integer-count flat reported {pv:.2f} nm PV"
+
+    def test_flat_part_boundary_error_is_carrier_sign_symmetric(self):
+        """_shift(f, n) == _shift(-f, n) is mathematically required (the
+        offset depends only on w mod 1/|f|), and the same must hold for the
+        phase-consistent outer pad: fringes tilting the other way are every
+        second real capture. A sign bug here survived three reviews once
+        because every sweep stayed in the positive-fx half-plane."""
+        h = w = 256
+        n = 5.37
+        _yy, xx = np.mgrid[:h, :w]
+        image = np.clip(
+            128 + 105 * np.cos(2 * np.pi * n * xx / w), 0, 255
+        ).astype(np.uint8)
+        pvs = {}
+        for sign in (+1, -1):
+            wrapped = extract_phase_dft(image, None, (h // 2, w // 2 + sign * n))
+            err_nm = (wrapped - np.median(wrapped)) * 589.3 / (4 * np.pi)
+            pvs[sign] = float(err_nm.max() - err_nm.min())
+        assert pvs[+1] < 5.0 and pvs[-1] < 5.0, pvs
+        assert abs(pvs[+1] - pvs[-1]) < 1.0, f"sign asymmetry: {pvs}"
+
     def test_low_carrier_warns_instead_of_silently_degrading(self):
         h = w = 256
         _yy, xx = np.mgrid[:h, :w]
