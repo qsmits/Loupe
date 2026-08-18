@@ -122,6 +122,47 @@ class TestPhysicsCorrections:
         assert any("carrier" in str(msg).lower() or "fringe" in str(msg).lower()
                    for msg in result.get("warnings", [])), result.get("warnings")
 
+    def test_bandwidth_warning_discriminates_on_wavefront_slope(self):
+        """The bandwidth warning must key on the wavefront's slope relative to
+        the carrier, not merely on a low fringe count. A 320 nm astigmatism at
+        five fringes is recovered faithfully and must stay quiet; quadrupling
+        the aberration at the same fringe count folds the sidebands through DC
+        and must warn, naming the remedy."""
+        h = w = 256
+        yy, xx = np.mgrid[:h, :w]
+        xn = (xx - 127.5) / 127.5
+        yn = (yy - 127.5) / 127.5
+
+        def _analyze(amp_nm):
+            phase = 4 * np.pi * (amp_nm * (xn * xn - yn * yn)) / 589.3
+            image = np.clip(
+                128 + 105 * np.cos(2 * np.pi * 5 * xx / w + phase), 0, 255
+            ).astype(np.uint8)
+            return analyze_interferogram(
+                image, wavelength_nm=589.3, subtract_terms=[1],
+                use_full_mask=True, correct_2pi_jumps=False,
+            )
+
+        def _bandwidth_warnings(result):
+            return [m for m in result.get("warnings", [])
+                    if "departs from the carrier" in str(m)]
+
+        recovered = _analyze(160.0)
+        assert not _bandwidth_warnings(recovered), (
+            "320 nm astigmatism at five fringes is recovered within 10% — the "
+            f"bandwidth warning must not fire: {recovered.get('warnings')}"
+        )
+
+        overdriven = _analyze(400.0)
+        fired = _bandwidth_warnings(overdriven)
+        assert fired, (
+            "800 nm astigmatism at five fringes folds the sidebands through "
+            f"DC and must warn: {overdriven.get('warnings')}"
+        )
+        assert "tilt" in fired[0].lower() or "fringes" in fired[0].lower(), (
+            f"warning must name the remedy: {fired[0]}"
+        )
+
     def test_lens_k1_has_material_effect_at_normal_resolution(self):
         rng = np.random.default_rng(12)
         image = rng.integers(0, 256, size=(480, 640), dtype=np.uint8)

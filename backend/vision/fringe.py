@@ -1264,7 +1264,9 @@ def extract_phase_dft(image: np.ndarray, mask: np.ndarray | None = None,
     ----------
     image : 2D grayscale image (float64 or uint8).
     mask : optional boolean mask (True = valid). Masked-out pixels are zeroed
-           after background subtraction.
+           after background subtraction and after the single-sideband
+           transform, immediately before the low-pass — see the note at the
+           SSB step for why that ordering was measured rather than assumed.
 
     Returns
     -------
@@ -1315,6 +1317,22 @@ def extract_phase_dft(image: np.ndarray, mask: np.ndarray | None = None,
     # search, here applied to the demodulated signal path. The factor 2 keeps
     # the amplitude of the analytic signal equal to that of the real fringes;
     # only the phase is used downstream, so it is cosmetic.
+    # This runs on the unmasked `enhanced`, with the mask applied afterwards.
+    # A half-plane multiplier is a directional Hilbert transform whose kernel
+    # decays only as 1/x, so in principle it can drag out-of-aperture content
+    # (holder, glint, a saturated rim) inward before the mask zeroes it —
+    # masking first was measured instead of assumed. Feeding the transform a
+    # hard-edged masked frame trades that for ringing off the aperture edge
+    # itself, and measures slightly *worse*. Holding the in-ROI pixels fixed
+    # and varying only the exterior (saturated + dark borders outside a 180 px
+    # ROI), the induced in-ROI error at p99 is:
+    #     mask after SSB (this code) 10.1 nm @5.00 fringes, 13.6 nm @5.37
+    #     mask before SSB            11.5 nm            ,  14.8 nm
+    #     no SSB at all (pre-change) 13.6 nm            ,  15.7 nm
+    # The dominant contamination path is upstream of here and unchanged by
+    # either ordering: the sigma=50 background blur and `_find_carrier` both
+    # read the raw unmasked frame. SSB does not add contamination — it
+    # slightly reduces it.
     if fringe_freq > 1e-10:
         fy_bins = np.fft.fftfreq(h)[:, None]
         fx_bins = np.fft.fftfreq(w)[None, :]
@@ -1386,19 +1404,25 @@ def extract_phase_dft(image: np.ndarray, mask: np.ndarray | None = None,
         ct, st = math.cos(theta), math.sin(theta)
 
         # Pad before FFT convolution so the image boundary is not treated as a
-        # periodic phase discontinuity. Step 3 left `demod` a *smooth* complex
-        # envelope rather than an oscillating one, which changes what the right
-        # continuation is: hold the rim value (replicate). Mirroring it, as this
-        # used to do, folds the envelope's phase slope back on itself and drags
-        # the rim estimate toward the interior — and the PV of a low-order
-        # aberration is precisely an edge measurement, so that shows up
-        # directly as PV biased low. Replication is only sane because the
-        # conjugate sideband is gone; replicating a field that still oscillated
-        # would smear the rim fringe into a DC stripe instead.
+        # periodic phase discontinuity. Reflecting the already-demodulated
+        # complex field preserves a smooth local continuation at the frame rim.
+        #
+        # Replication (mode="edge") measures better on an exactly-periodic
+        # synthetic frame — it halves a known rim bias that costs PV on
+        # low-order aberrations, whose extrema sit at the aperture edge. Do not
+        # switch to it: an integer fringe count is the only case where it wins.
+        # Sweeping the fringe count across 256 px, flat-part PV in nm
+        # (reflect / edge):
+        #     5.00  2.1 / 2.5      5.25  21.9 / 47.0     5.37  32.7 / 125.6
+        #     5.50 37.8 / 96.0     8.50  14.9 /  58.2   12.37  27.6 /  95.6
+        # Every non-integer count — i.e. every real interferogram, since
+        # nothing makes a real capture exactly periodic across the frame —
+        # regresses by 1.5-4x. Blending the two rules just interpolates the
+        # trade-off; there is no setting that wins on both.
         pad = min(256, max(8, int(math.ceil(
             3.0 * max(sig_along_img, sig_across_img)
         ))))
-        demod_work = np.pad(demod, ((pad, pad), (pad, pad)), mode="edge")
+        demod_work = np.pad(demod, ((pad, pad), (pad, pad)), mode="reflect")
         ph, pw = demod_work.shape
 
         # Build fftshift-centered frequency grids in cycles/pixel (matches the
@@ -1422,10 +1446,6 @@ def extract_phase_dft(image: np.ndarray, mask: np.ndarray | None = None,
         demod_lp_work = np.fft.ifft2(D * lpf)
         demod_lp = demod_lp_work[pad:pad + h, pad:pad + w]
         if valid_weight is not None:
-            # The 0/1 coverage weight keeps mirroring: where the mask is
-            # locally constant at the rim (the usual case) mirroring and
-            # replicating agree, and where it is not, mirroring reproduces the
-            # aperture's own falloff instead of smearing it outward.
             weight_work = np.pad(valid_weight, ((pad, pad), (pad, pad)),
                                  mode="reflect")
             weight_lp_work = np.fft.ifft2(
@@ -1438,20 +1458,13 @@ def extract_phase_dft(image: np.ndarray, mask: np.ndarray | None = None,
                 where=weight_lp > 1e-3,
             )
     else:
-        # BORDER_REPLICATE, not the cv2 default BORDER_REFLECT_101, for the
-        # same reason the anisotropic branch replicates rather than mirrors:
-        # hold the smooth envelope at the rim instead of folding its slope
-        # back inward. Keeping the two branches on the same rim rule is also
-        # what makes them comparable to each other.
-        demod_lp = (
-            cv2.GaussianBlur(demod.real, (0, 0), lp_sigma,
-                             borderType=cv2.BORDER_REPLICATE)
-            + 1j * cv2.GaussianBlur(demod.imag, (0, 0), lp_sigma,
-                                    borderType=cv2.BORDER_REPLICATE)
-        )
+        # Mirroring at the rim (cv2's BORDER_REFLECT_101 default), to stay on
+        # the same rim rule as the anisotropic branch above — the two are
+        # alternative implementations of one low-pass and must stay comparable.
+        demod_lp = (cv2.GaussianBlur(demod.real, (0, 0), lp_sigma) +
+                    1j * cv2.GaussianBlur(demod.imag, (0, 0), lp_sigma))
         if valid_weight is not None:
-            weight_lp = cv2.GaussianBlur(valid_weight, (0, 0), lp_sigma,
-                                         borderType=cv2.BORDER_REPLICATE)
+            weight_lp = cv2.GaussianBlur(valid_weight, (0, 0), lp_sigma)
             demod_lp = np.divide(
                 demod_lp, weight_lp,
                 out=np.zeros_like(demod_lp),
@@ -2760,7 +2773,14 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 589.3,
     if carrier_cpp > 0 and _bw_mask.any():
         _gy, _gx = np.gradient(work_unwrapped)
         _dev = np.hypot(_gy, _gx) / (2.0 * math.pi)
-        wavefront_bw = float(np.percentile(_dev[_bw_mask], 99.0))
+        # Drop non-finite samples before taking the percentile. A single NaN
+        # anywhere inside the eroded mask would make np.percentile return NaN,
+        # and `NaN > threshold` evaluates False — silently disabling the
+        # warning on exactly the degraded captures it exists to flag.
+        _dev_valid = _dev[_bw_mask]
+        _dev_valid = _dev_valid[np.isfinite(_dev_valid)]
+        wavefront_bw = (float(np.percentile(_dev_valid, 99.0))
+                        if _dev_valid.size else 0.0)
         # Fold-over starts in earnest at 100% of the carrier; warn a little
         # ahead of it. A 320 nm astigmatism across five fringes sits near 50%
         # and is still recovered faithfully, so the threshold has to clear that.
