@@ -4742,6 +4742,61 @@ class TestFringeAverageAPI:
         assert rs2.json()["origin"] == "average"
         assert rs2.json()["source_ids"] == [id_d, id_c]
 
+    def test_average_record_false_does_not_grow_captures(self, client):
+        """Task 9: the frontend's running-average widget recomputes /fringe/average
+        on every capture add/toggle (a live preview, not a save) and passes
+        record=False. Before the fix, every one of those recomputes recorded a
+        new "average" capture -- averaging ~51 frames pushed the session past
+        _CAPTURES_PER_SESSION (100) and evicted the very source captures the
+        next recompute needed, 404ing on itself. N recomputes must not grow
+        the session capture list by N.
+        """
+        b64 = self._b64_image()
+        ids = []
+        for _ in range(2):
+            r = client.post("/fringe/analyze", json={"image_b64": b64})
+            assert r.status_code == 200
+            ids.append(r.json()["id"])
+
+        caps_before = client.get("/fringe/session/captures").json()["captures"]
+        assert len(caps_before) == 2
+
+        n_recomputes = 10
+        for _ in range(n_recomputes):
+            rs = client.post("/fringe/average", json={
+                "source_ids": ids,
+                "record": False,
+            })
+            assert rs.status_code == 200, rs.text
+            assert rs.json()["origin"] == "average"
+
+        caps_after = client.get("/fringe/session/captures").json()["captures"]
+        # Still just the two original analyze captures -- none of the ten
+        # recomputes left a trace, and specifically not +10.
+        assert len(caps_after) == 2
+        assert len(caps_after) != len(caps_before) + n_recomputes
+        assert [c["origin"] for c in caps_after] == ["capture", "capture"]
+
+    def test_average_record_true_still_chains_by_default(self, client):
+        """The explicit-save path (Session tab multi-select average, and
+        chained averaging) must keep recording by default -- record=False is
+        opt-in, not the new default."""
+        b64 = self._b64_image()
+        id_a = client.post("/fringe/analyze", json={"image_b64": b64}).json()["id"]
+        id_b = client.post("/fringe/analyze", json={"image_b64": b64}).json()["id"]
+        rs = client.post("/fringe/average", json={"source_ids": [id_a, id_b]})
+        assert rs.status_code == 200, rs.text
+        avg_id = rs.json()["id"]
+
+        caps = client.get("/fringe/session/captures").json()["captures"]
+        assert len(caps) == 3
+        assert any(c["id"] == avg_id and c["origin"] == "average" for c in caps)
+
+        # And it stays resolvable by id for chaining, per test_average_chain_supported.
+        id_c = client.post("/fringe/analyze", json={"image_b64": b64}).json()["id"]
+        rs2 = client.post("/fringe/average", json={"source_ids": [avg_id, id_c]})
+        assert rs2.status_code == 200, rs2.text
+
 
 # ── M3.5 — register_captures + subtraction with registration ──────────────
 

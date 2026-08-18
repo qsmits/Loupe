@@ -1220,6 +1220,9 @@ function wireCarrierOverride() {
       if (!resp.ok) { console.warn("Carrier override failed"); return; }
       const data = await resp.json();
       fr.lastResult = data;
+      // Fresh carrier reanalysis is unrelated to any pending running-average
+      // orientation toggle (Task 9) — don't let a stale flag auto-invert it.
+      fr.avgInverted = false;
       renderResults(data);
       updateCarrierDisplay(data);
       $("fringe-btn-carrier-reset").hidden = false;
@@ -1605,13 +1608,24 @@ async function doReanalyze() {
 
 // ── Wavefront inversion ─────────────────────────────────────────────────
 
-async function invertWavefront() {
-  if (!fr.lastResult || !fr.lastResult.coefficients) return;
-  // Negate all coefficients
+/**
+ * Negate fr.lastResult's coefficients (and raw grid, when present) and
+ * recompute via /fringe/reanalyze, merging the inverted result back into
+ * fr.lastResult in place. fr.lastResult is left untouched on failure (the
+ * coefficient negation is only committed once the server confirms it, so a
+ * failed reanalyze can't leave coefficients and grid disagreeing on sign).
+ *
+ * Shared by invertWavefront() (the explicit user toggle) and
+ * recomputeAverage() (frontend/fringe-panel.js), which reapplies an active
+ * inversion after every averaging recompute -- the server never inverts
+ * averaging source captures, so recomputeAverage's freshly-fetched result
+ * always starts un-inverted. Task 9.
+ *
+ * Returns true on success, false on failure.
+ */
+export async function applySignFlipToLastResult() {
+  if (!fr.lastResult || !fr.lastResult.coefficients) return false;
   const inverted = fr.lastResult.coefficients.map(c => -c);
-  fr.lastResult.coefficients = inverted;
-
-  // Reanalyze with inverted coefficients
   try {
     const body = {
       coefficients: inverted,
@@ -1634,13 +1648,25 @@ async function invertWavefront() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
-    if (!r.ok) return;
+    if (!r.ok) return false;
     const data = await r.json();
+    fr.lastResult.coefficients = inverted;
     mergeReanalyzeResult(data);
-    renderResults(fr.lastResult);
+    return true;
   } catch (e) {
     console.warn("Invert error:", e);
+    return false;
   }
+}
+
+async function invertWavefront() {
+  if (!fr.lastResult || !fr.lastResult.coefficients) return;
+  const ok = await applySignFlipToLastResult();
+  if (!ok) return;
+  // Remember the user's chosen orientation so it survives recomputeAverage()
+  // (Task 9) — the flag is reapplied there, not re-derived from stale state.
+  fr.avgInverted = !fr.avgInverted;
+  renderResults(fr.lastResult);
 }
 
 // ── Export (CSV + PDF) ──────────────────────────────────────────────────
@@ -2570,6 +2596,9 @@ async function _doSubtract(measurementId, referenceId, panel, close) {
     // Close modal, load result into main view, flash new tile.
     close();
     fr.lastResult = data;
+    // A fresh subtract result is unrelated to any pending running-average
+    // orientation toggle (Task 9) — don't let a stale flag auto-invert it.
+    fr.avgInverted = false;
     renderResults(data);
     await fetchSessionCaptures();
     _scrollAndFlashTile(data.id);
@@ -2835,6 +2864,9 @@ async function _doAverage(sourceIds, method, threshold, wl0, panel, close) {
     const data = await resp.json();
     close();
     fr.lastResult = data;
+    // A fresh explicit average is unrelated to any pending running-average
+    // orientation toggle (Task 9) — don't let a stale flag auto-invert it.
+    fr.avgInverted = false;
     renderResults(data);
     _setSelectMode(false);
     await fetchSessionCaptures();

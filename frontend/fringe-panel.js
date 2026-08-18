@@ -5,7 +5,7 @@
 
 import { fr, $ } from './fringe.js';
 import { state } from './state.js';
-import { getSubtractTerms, getFormModel, mergeReanalyzeResult } from './fringe-results.js';
+import { getSubtractTerms, getFormModel, mergeReanalyzeResult, applySignFlipToLastResult } from './fringe-results.js';
 import { apiFetch } from './api.js';
 import { analyzeWithProgress, createProgressBar } from './fringe-progress.js';
 import { initCrossMode } from './cross-mode.js';
@@ -314,6 +314,9 @@ function _checkRecipeResolution() {
 
 function _onAnalysisResult(data) {
   fr.lastResult = data;
+  // A brand-new capture is unrelated to any pending running-average
+  // orientation toggle (Task 9) — don't let a stale flag auto-invert it.
+  fr.avgInverted = false;
   document.dispatchEvent(new CustomEvent("fringe:analyzed", { detail: data }));
 
   const avgBtn = $("fringe-btn-avg-add");
@@ -444,6 +447,33 @@ async function toggleCapture(idx) {
   await recomputeAverage();
 }
 
+/**
+ * Surface a failed recompute to the user instead of silently freezing the
+ * display (Task 9). Logged to the console, toasted, and appended to the
+ * averaging log so it's visible even after the toast times out.
+ */
+function _reportAvgError(msg) {
+  console.warn("[fringe] average recompute:", msg);
+  showToast(msg);
+  const log = $("fringe-avg-log");
+  if (log) {
+    const el = document.createElement("div");
+    el.style.cssText = "padding:2px 0;color:#ff9f0a;font-weight:600";
+    el.textContent = `⚠ ${msg}`;
+    log.appendChild(el);
+    log.scrollTop = log.scrollHeight;
+  }
+}
+
+async function _extractErrorDetail(resp) {
+  let msg = `HTTP ${resp.status}`;
+  try {
+    const j = await resp.json();
+    if (j && j.detail) msg = typeof j.detail === "string" ? j.detail : JSON.stringify(j.detail);
+  } catch (_e) { /* non-json body */ }
+  return msg;
+}
+
 async function recomputeAverage() {
   const accepted = fr.avgCaptures.filter(c => c.accepted);
   $("fringe-avg-count").textContent = `${accepted.length}/${fr.avgCaptures.length}`;
@@ -456,8 +486,20 @@ async function recomputeAverage() {
     const resp = await apiFetch(
       `/fringe/session/capture/${encodeURIComponent(accepted[0].id)}`
     );
-    if (!resp.ok) return;
+    if (!resp.ok) {
+      const detail = await _extractErrorDetail(resp);
+      _reportAvgError(`Couldn't load the running average (${detail}). Showing the last successful result.`);
+      return;
+    }
     fr.lastResult = await resp.json();
+    // Task 9: reapply an active invert — the fetched capture is server
+    // truth and was never inverted.
+    if (fr.avgInverted) {
+      const ok = await applySignFlipToLastResult();
+      if (!ok) {
+        _reportAvgError("Averaging updated, but the sign flip couldn't be reapplied — check orientation before trusting sign-sensitive readings.");
+      }
+    }
     document.dispatchEvent(new CustomEvent("fringe:analyzed", { detail: fr.lastResult }));
     return;
   }
@@ -466,16 +508,34 @@ async function recomputeAverage() {
     source_ids: accepted.map(c => c.id),
     wavelength_nm: getWavelength(),
     rejection: "none",
+    // Task 9: this is a live-preview recompute (fires on every capture
+    // add/toggle), not an explicit save — don't let it consume FIFO
+    // capture slots. ~51 averaged frames used to push this past
+    // _CAPTURES_PER_SESSION and evict the very source captures the next
+    // recompute needed, 404ing on itself.
+    record: false,
   };
   const resp = await apiFetch("/fringe/average", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
-  if (!resp.ok) return;
+  if (!resp.ok) {
+    const detail = await _extractErrorDetail(resp);
+    _reportAvgError(`Average recompute failed (${detail}). Showing the last successful average.`);
+    return;
+  }
   const avgData = await resp.json();
   fr.lastResult = { ...avgData };
   mergeReanalyzeResult(avgData);
+  // Task 9: reapply an active invert — the server-computed average was
+  // never inverted.
+  if (fr.avgInverted) {
+    const ok = await applySignFlipToLastResult();
+    if (!ok) {
+      _reportAvgError("Averaging updated, but the sign flip couldn't be reapplied — check orientation before trusting sign-sensitive readings.");
+    }
+  }
   document.dispatchEvent(new CustomEvent("fringe:analyzed", { detail: fr.lastResult }));
 }
 
@@ -550,6 +610,7 @@ function resetAverage() {
   fr.avgCaptures = [];
   fr.avgSurfaceHeight = 0;
   fr.avgSurfaceWidth = 0;
+  fr.avgInverted = false;
   $("fringe-avg-count").textContent = "0";
   const log = $("fringe-avg-log");
   if (log) log.textContent = "";

@@ -35,6 +35,14 @@ export const fr = {
   avgRejectThreshold: 3,  // reject if capture RMS > threshold × average RMS
   avgSurfaceHeight: 0,
   avgSurfaceWidth: 0,
+  // Task 9: explicit orientation flag for the running-average widget. The
+  // server never inverts averaging source captures, so every recomputeAverage()
+  // fetch starts un-inverted; when this is true it is reapplied to
+  // fr.lastResult after each recompute so an active invert survives
+  // toggling captures in/out. Reset whenever a fresh, non-recompute result
+  // replaces fr.lastResult (see fringe-panel.js/_onAnalysisResult and the
+  // subtract/average dialogs in fringe-results.js).
+  avgInverted: false,
   carrierOverride: null,   // {y, x} or null
   lensK1: 0,
   droppedImageB64: null,   // base64 string when analyzing a dropped file

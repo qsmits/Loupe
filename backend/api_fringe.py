@@ -355,6 +355,14 @@ class AverageBody(BaseModel):
     wavelength_nm: Optional[float] = Field(default=None, gt=0)
     rejection: Literal["none", "sigma", "mad"] = "none"
     rejection_threshold: float = Field(default=3.0, gt=0, le=10)
+    # Task 9: the frontend's running-average widget recomputes on every
+    # capture add/toggle -- a live preview, not a save. Recording each of
+    # those recomputes as a new capture let ~51 averaged frames push past
+    # _CAPTURES_PER_SESSION, evicting the very source captures the next
+    # recompute needed and 404ing on itself. Explicit "save this average"
+    # flows (the Session tab's multi-select average, and chained averaging)
+    # leave this at the default True so the result stays resolvable by id.
+    record: bool = True
 
 
 def _resolve_request_wavelength(body: BaseModel) -> tuple[float, str | None]:
@@ -831,8 +839,11 @@ def make_fringe_router(camera: BaseCamera) -> APIRouter:
 
         See :func:`backend.vision.fringe.average_wavefronts`.  All inputs must
         already exist in the session's capture cache.  Returns the full wrapped
-        averaged result and records it as a new capture so it can be chained
-        into further averages or subtractions.
+        averaged result.  When ``body.record`` is True (the default), also
+        records it as a new capture so it can be chained into further
+        averages or subtractions.  The frontend's running-average widget
+        passes ``record=False`` for its live-preview recomputes (Task 9) so
+        that toggling captures in/out doesn't consume FIFO capture slots.
         """
         sources: list[dict] = []
         for sid in body.source_ids:
@@ -861,8 +872,9 @@ def make_fringe_router(camera: BaseCamera) -> APIRouter:
                 f"({', '.join(non_capture_origins)}) — derived wavefronts "
                 f"inherit any residual errors from their sources."
             ]
-        _record_capture(session_id, result)
-        _fringe_cache.put_full_result(session_id, result["id"], result)
+        if body.record:
+            _record_capture(session_id, result)
+            _fringe_cache.put_full_result(session_id, result["id"], result)
         return result
 
     @router.get("/fringe/session/captures")
