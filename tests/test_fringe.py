@@ -4596,24 +4596,40 @@ class TestAverageWavefronts:
         # trusted_area_pct=100 regardless of the sources' actual trust.
         # With 3 sources, the result must be the intersection across ALL
         # of them, not just the first two.
+        #
+        # The three regions are deliberately mutually non-nested 2-D
+        # shapes (a row-band, a column-band, and a corner block) rather
+        # than nested row-ranges. With nested ranges a bug that silently
+        # drops one source can still land on the same percentage as the
+        # correct 3-way answer (e.g. if b's range were a strict subset of
+        # a's, a∩c and a∩b∩c coincide and the test can't tell them apart
+        # -- a 1-D interval version of this test could not be made
+        # airtight against *every* single-source-dropped bug: Helly's
+        # theorem guarantees that any two pairwise-overlapping intervals
+        # on a line already share the triple intersection point). These
+        # three 2-D regions are constructed so dropping ANY ONE of them
+        # changes the result.
         rows, cols = 8, 8
         a = _fake_wrapped_result(rows, cols)
         b = _fake_wrapped_result(rows, cols)
         c = _fake_wrapped_result(rows, cols)
 
-        def rows_trusted(lo, hi):
-            return [1 if lo <= (i // cols) < hi else 0
+        def region(pred):
+            return [1 if pred(i // cols, i % cols) else 0
                     for i in range(rows * cols)]
 
-        a["trusted_mask_grid"] = rows_trusted(0, 6)  # rows 0-5
-        b["trusted_mask_grid"] = rows_trusted(0, 4)  # rows 0-3
-        c["trusted_mask_grid"] = rows_trusted(2, 8)  # rows 2-7
+        a["trusted_mask_grid"] = region(lambda r, c: r < 6)              # rows 0-5, all cols
+        b["trusted_mask_grid"] = region(lambda r, c: c < 6)              # all rows, cols 0-5
+        c["trusted_mask_grid"] = region(lambda r, c: r >= 2 and c >= 2)  # bottom-right 6x6 block
         out = average_wavefronts([a, b, c])
-        # a ∩ b ∩ c = rows 2-3 only: 16 of 64 pixels = 25%.
+        # a ∩ b ∩ c = rows 2-5 x cols 2-5 = 16 of 64 pixels = 25%.
         assert out["trusted_area_pct"] == pytest.approx(25.0, abs=1.0)
-        # a ∩ b alone (ignoring c) would be rows 0-3 = 50%: proves c's
-        # trust region actually participated in the intersection.
-        assert out["trusted_area_pct"] != pytest.approx(50.0, abs=1.0)
+        # Any single source dropped gives a different, larger answer:
+        # b ∩ c alone (drop a) = rows 2-7 x cols 2-5 = 24/64 = 37.5%.
+        # a ∩ c alone (drop b) = rows 2-5 x cols 2-7 = 24/64 = 37.5%.
+        # a ∩ b alone (drop c) = rows 0-5 x cols 0-5 = 36/64 = 56.25%.
+        assert out["trusted_area_pct"] != pytest.approx(37.5, abs=1.0)
+        assert out["trusted_area_pct"] != pytest.approx(56.25, abs=1.0)
 
     def test_average_trust_omitted_when_any_source_unavailable(self):
         # If ANY of the N sources lacks trust info, the honest result
