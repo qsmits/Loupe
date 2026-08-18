@@ -1547,9 +1547,6 @@ export function mergeReanalyzeResult(data) {
   // previous, unrelated result left behind. Clear it explicitly.
   if (data.trusted_area_pct === undefined) delete fr.lastResult.trusted_area_pct;
   if (data.trusted_mask_grid === undefined) delete fr.lastResult.trusted_mask_grid;
-  if (data.strehl !== undefined) fr.lastResult.strehl = data.strehl;
-  if (data.psf !== undefined) fr.lastResult.psf = data.psf;
-  if (data.mtf !== undefined) fr.lastResult.mtf = data.mtf;
 
   // Refresh cached typed arrays so the Step tool and 3D view see the
   // post-subtraction surface, not the stale pre-reanalyze grid. M1.3:
