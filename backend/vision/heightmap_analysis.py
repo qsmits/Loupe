@@ -382,14 +382,46 @@ def compute_bearing_ratio(
     Sk = h1 - h2
 
     # Smr1/Smr2: the material ratios where *horizontal* lines at the fixed
-    # reference heights h1/h2 cross the actual (non-increasing) curve.
-    # np.interp needs its x-array ascending, so flip both heights and
-    # ratios together (they stay index-paired) before interpolating; targets
-    # outside the curve's own height range clamp to Mr=0%/100% respectively.
-    heights_asc = heights[::-1]
-    ratios_desc = ratios[::-1]
-    Smr1 = float(np.clip(np.interp(h1, heights_asc, ratios_desc), 0.0, 1.0))
-    Smr2 = float(np.clip(np.interp(h2, heights_asc, ratios_desc), 0.0, 1.0))
+    # reference heights h1/h2 cross the actual curve. The search MUST be
+    # directional -- anchored at the flattest window's own edges (idx_lo for
+    # Smr1, idx_hi for Smr2) and walked outward -- rather than a bare
+    # nearest-match lookup (e.g. np.interp against the whole curve). When the
+    # equivalent line is exactly flat (h1 == h2, which happens whenever the
+    # flattest 40% window itself sits on a genuinely flat plateau -- the
+    # defining case for a plateau-honed surface, exactly what Rk/Mr1/Mr2 was
+    # standardised to characterise) an undirected lookup queries the *same*
+    # target against the *same* tied plateau from both ends and Smr1/Smr2
+    # collapse onto the same ratio. Anchoring each walk at its own window
+    # edge and scanning in its own direction keeps them distinct even when
+    # h1 == h2 bit-for-bit, because the two walks start from different
+    # positions and stop at different boundaries of the plateau.
+    tol = max(1e-9, 1e-6 * (z_max - z_min))
+    diffs1 = heights - h1
+    diffs2 = heights - h2
+
+    j = idx_lo
+    while j > 0 and diffs1[j] <= tol:
+        j -= 1
+    if diffs1[j] <= tol:
+        Smr1 = 0.0
+    else:
+        j2 = min(j + 1, idx_lo)
+        d1, d2 = diffs1[j], diffs1[j2]
+        r1, r2 = ratios[j], ratios[j2]
+        Smr1 = r1 if d1 == d2 else r1 + (d1 / (d1 - d2)) * (r2 - r1)
+        Smr1 = float(np.clip(Smr1, 0.0, ratios[idx_lo]))
+
+    k = idx_hi
+    while k < n_levels - 1 and diffs2[k] >= -tol:
+        k += 1
+    if diffs2[k] >= -tol:
+        Smr2 = 1.0
+    else:
+        k2 = max(k - 1, idx_hi)
+        d1, d2 = diffs2[k2], diffs2[k]
+        r1, r2 = ratios[k2], ratios[k]
+        Smr2 = r2 if d1 == d2 else r1 + (d1 / (d1 - d2)) * (r2 - r1)
+        Smr2 = float(np.clip(Smr2, ratios[idx_hi], 1.0))
 
     core_top = h1
     core_bot = h2

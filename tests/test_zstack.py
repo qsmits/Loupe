@@ -891,6 +891,59 @@ def test_bearing_curve_smr1_smr2_at_core_boundary():
     assert br["Smr2"] == pytest.approx(8.0 / 9.0, abs=0.02)
 
 
+def test_bearing_curve_flat_top_plateau_keeps_smr1_smr2_distinct():
+    """A tied plateau (h1 == h2 bit-for-bit) must not collapse Smr1/Smr2
+    onto the same ratio.
+
+    Curve: flat at 100 for Mr in [0, 0.5] (wider than the 40% search
+    window), then a linear descent to 0 over [0.5, 1.0]. The flattest
+    40%-wide window locks onto the flat plateau (slope 0 beats any window
+    that includes part of the descent), so the equivalent line is itself
+    flat: h1 = line(0) = 100 = h2 = line(1) -- both reference heights are
+    bit-for-bit identical.
+
+    Derived by hand from the ISO horizontal-crossing construction (not read
+    off the code): walking from the window's own edges outward, Smr1 walks
+    left toward Mr=0 and never leaves the plateau (the curve *starts* flat
+    at Mr=0, so there is no peak content) -> Smr1 = 0.0. Smr2 walks right
+    toward Mr=1 and stays on the plateau only until the curve leaves it,
+    which happens at exactly Mr=0.5 by construction -> Smr2 = 0.5. An
+    undirected nearest-match lookup of the same target height against the
+    same tied plateau from both queries would instead return the same
+    ratio for both (observed regression: Smr2 = 0.0, collapsing onto
+    Smr1's correct value).
+    """
+    r = np.linspace(0.0, 1.0, 20000)
+    h = np.where(r <= 0.5, 100.0, 100.0 - 200.0 * (r - 0.5))
+    br = compute_bearing_ratio(h)
+    assert br["Sk"] == pytest.approx(0.0, abs=1.0)
+    assert br["Smr1"] == pytest.approx(0.0, abs=0.02)
+    assert br["Smr2"] == pytest.approx(0.5, abs=0.02)
+
+
+def test_bearing_curve_flat_bottom_plateau_keeps_smr1_smr2_distinct():
+    """Mirror of the flat-top case: the tied plateau sits at the bottom.
+
+    Curve: a linear descent from 100 to 0 over Mr in [0, 0.5], then flat at
+    0 for [0.5, 1.0]. The flattest 40%-wide window locks onto the flat
+    plateau, so h1 = line(0) = 0 = h2 = line(1) -- again bit-for-bit tied.
+
+    Derived by hand: walking left from the window's own edge, Smr1 stays on
+    the plateau until the curve leaves it at exactly Mr=0.5 -> Smr1 = 0.5.
+    Walking right from the window's edge, Smr2 stays on the plateau all the
+    way to Mr=1 (the curve *ends* flat, so there is no valley content) ->
+    Smr2 = 1.0. An undirected lookup would instead collapse Smr2 onto
+    Smr1's correct value (observed regression: Smr2 = 0.502, matching
+    Smr1 instead of the correct 1.0).
+    """
+    r = np.linspace(0.0, 1.0, 20000)
+    h = np.where(r <= 0.5, 100.0 - 200.0 * r, 0.0)
+    br = compute_bearing_ratio(h)
+    assert br["Sk"] == pytest.approx(0.0, abs=1.0)
+    assert br["Smr1"] == pytest.approx(0.5, abs=0.02)
+    assert br["Smr2"] == pytest.approx(1.0, abs=0.02)
+
+
 def test_profile_includes_bearing(client: TestClient):
     _compute_for_calib(client)
     body = {"x0": 0, "y0": 100, "x1": 639, "y1": 100, "detrend": "none"}
