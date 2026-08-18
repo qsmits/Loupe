@@ -20,6 +20,7 @@ from backend.vision.fringe import (
     _fit_plane,
     _find_carrier,
     _shift_masked_grid,
+    _connected_analysis_mask,
     compute_fringe_modulation,
     create_fringe_mask,
     extract_phase_dft,
@@ -62,15 +63,21 @@ class TestPhysicsCorrections:
             assert n - 1 == 1
             assert mask.mean() > 0.9
 
-    def test_disconnected_quantitative_aperture_is_rejected(self):
+    def test_disconnected_quantitative_aperture_falls_back_to_largest_and_warns(self):
+        """A disconnected aperture no longer aborts the analysis: the
+        indeterminate-fringe-order components are excluded, the largest
+        surviving region is measured, and the exclusion is reported via
+        ``warnings`` rather than raising."""
         h = w = 192
         _yy, xx = np.mgrid[:h, :w]
         image = (128 + 100 * np.cos(2 * np.pi * 10 * xx / w)).astype(np.uint8)
         mask = np.zeros((h, w), dtype=bool)
         mask[20:80, 20:80] = True
         mask[110:170, 110:170] = True
-        with pytest.raises(ValueError, match="relative fringe orders"):
-            analyze_interferogram(image, custom_mask=mask)
+        result = analyze_interferogram(image, custom_mask=mask)
+        assert isinstance(result["pv_nm"], float)
+        assert any("region" in str(m).lower() for m in result.get("warnings", [])), \
+            result.get("warnings")
 
     @pytest.mark.xfail(
         reason="Aperture-rim underestimate: 320nm recovers as 280.67nm "
@@ -403,6 +410,59 @@ class TestFringeMask:
         mod = np.zeros((50, 50))
         mask = create_fringe_mask(img, mod, threshold_frac=0.15)
         assert not mask.any()
+
+
+class TestConnectedAnalysisMask:
+    def test_diagonally_touching_lobes_are_two_regions(self):
+        """8-connectivity called them one aperture while the 4-connected unwrap
+        treated them as two, giving each an arbitrary piston."""
+        mask = np.zeros((64, 64), dtype=bool)
+        mask[10:30, 10:30] = True
+        mask[30:50, 30:50] = True   # touches the first only at a corner
+        assert _connected_analysis_mask(mask)[1] == 2
+
+    def test_two_region_mask_measures_the_largest_and_warns(self):
+        """Previously raised ValueError -> 422, so masking two lapped pads
+        returned nothing where it used to measure."""
+        h = w = 256
+        _yy, xx = np.mgrid[:h, :w]
+        image = np.clip(128 + 105 * np.cos(2 * np.pi * 12 * xx / w), 0, 255).astype(np.uint8)
+        mask = np.zeros((h, w), dtype=bool)
+        mask[40:120, 40:120] = True      # 80x80 = 6400 px, the larger
+        mask[170:210, 170:210] = True    # 40x40 = 1600 px
+        result = analyze_interferogram(
+            image, wavelength_nm=589.3, subtract_terms=[1],
+            custom_mask=mask, correct_2pi_jumps=False,
+        )
+        assert isinstance(result["pv_nm"], float), "response shape unchanged"
+        # Only the larger region is measured.
+        assert result["n_valid_pixels"] <= 6400
+        assert result["n_valid_pixels"] > 1600
+        assert any("region" in str(m).lower() for m in result.get("warnings", [])), \
+            result.get("warnings")
+
+    def test_dust_glint_does_not_abort_the_analysis(self):
+        h = w = 256
+        _yy, xx = np.mgrid[:h, :w]
+        image = np.clip(128 + 105 * np.cos(2 * np.pi * 12 * xx / w), 0, 255).astype(np.uint8)
+        mask = np.zeros((h, w), dtype=bool)
+        mask[30:220, 30:220] = True      # the real aperture
+        mask[5:20, 5:20] = True          # a 225 px glint, above the 131 px min_area
+        result = analyze_interferogram(
+            image, wavelength_nm=589.3, subtract_terms=[1],
+            custom_mask=mask, correct_2pi_jumps=False,
+        )
+        assert isinstance(result["pv_nm"], float)
+
+    def test_single_region_result_keeps_its_scalar_pv(self):
+        h = w = 256
+        _yy, xx = np.mgrid[:h, :w]
+        image = np.clip(128 + 105 * np.cos(2 * np.pi * 12 * xx / w), 0, 255).astype(np.uint8)
+        result = analyze_interferogram(
+            image, wavelength_nm=589.3, subtract_terms=[1],
+            use_full_mask=True, correct_2pi_jumps=False,
+        )
+        assert isinstance(result["pv_nm"], float)
 
 
 class TestDFTPhaseExtraction:

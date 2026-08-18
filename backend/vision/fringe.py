@@ -1200,8 +1200,9 @@ def create_fringe_mask(image: np.ndarray, modulation: np.ndarray,
         mask = aperture
 
     # Reconnect narrow low-modulation seams but do not bridge genuinely
-    # separate illuminated objects. A later safety gate rejects any remaining
-    # meaningful disconnected components rather than inventing fringe orders.
+    # separate illuminated objects. A later safety gate falls back to the
+    # largest remaining meaningful component (with a warning) rather than
+    # inventing fringe orders across disconnected ones.
     seam_size = max(3, min(15, (int(round(period * 0.2)) | 1)))
     seam_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE,
                                             (seam_size, seam_size))
@@ -1211,16 +1212,20 @@ def create_fringe_mask(image: np.ndarray, modulation: np.ndarray,
 
 
 def _connected_analysis_mask(mask: np.ndarray) -> tuple[np.ndarray, int]:
-    """Drop tiny specks and require one physically connected aperture.
+    """Drop tiny specks and count physically connected aperture regions.
 
     Separate components have an independent integer fringe order in a
-    single-wavelength interferogram. Returning global PV/RMS across them would
-    therefore be physically unjustified. Tiny components are treated as mask
-    noise; two or more meaningful components are rejected by the caller.
+    single-wavelength interferogram, so a caller that measures across more
+    than one meaningful component without accounting for that would be
+    physically unjustified. Tiny components are treated as mask noise. Uses
+    4-connectivity to match ``_quality_guided_unwrap``'s flood fill — a mask
+    whose lobes touch only diagonally must count as two regions here, or the
+    gate that depends on this count would pass mask topology the unwrap
+    itself treats as disconnected.
     """
     valid = np.asarray(mask, dtype=bool)
     n_labels, labels, stats, _ = cv2.connectedComponentsWithStats(
-        valid.astype(np.uint8), 8
+        valid.astype(np.uint8), connectivity=4
     )
     if n_labels <= 1:
         return valid, 0
@@ -1231,6 +1236,24 @@ def _connected_analysis_mask(mask: np.ndarray) -> tuple[np.ndarray, int]:
     for label in meaningful:
         cleaned |= labels == label
     return cleaned, len(meaningful)
+
+
+def _largest_component_mask(mask: np.ndarray) -> np.ndarray:
+    """Restrict ``mask`` to its single largest 4-connected component.
+
+    Used when ``_connected_analysis_mask`` finds more than one meaningful
+    region: rather than aborting, the caller measures the largest region
+    (matching the 4-connected unwrap flood) and reports the rest as excluded.
+    """
+    valid = np.asarray(mask, dtype=bool)
+    n_labels, labels, stats, _ = cv2.connectedComponentsWithStats(
+        valid.astype(np.uint8), connectivity=4
+    )
+    if n_labels <= 1:
+        return valid
+    areas = stats[1:, cv2.CC_STAT_AREA]
+    largest_label = 1 + int(np.argmax(areas))
+    return labels == largest_label
 
 
 from backend.vision.mask_utils import rasterize_polygon_mask  # noqa: F401
@@ -1516,9 +1539,10 @@ def _quality_guided_unwrap(wrapped: np.ndarray, quality: np.ndarray,
     # A user mask may contain multiple disconnected illuminated regions.
     # Unwrap every component instead of leaving all but the first at zero.
     # Each component retains an independent piston (unavoidable without a
-    # connected phase path). The quantitative analysis entry point rejects
-    # multiple meaningful components because no global form fit can recover
-    # their relative integer fringe orders.
+    # connected phase path). The quantitative analysis entry point restricts
+    # itself to the single largest meaningful component (4-connected, matching
+    # this flood) because no global form fit can recover the relative integer
+    # fringe orders between multiple components.
     while np.any(valid & ~visited):
         remaining = valid & ~visited
         q_masked = np.where(remaining, quality, -np.inf)
@@ -2412,11 +2436,21 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 589.3,
     else:
         mask = create_fringe_mask(img, modulation, threshold_frac=mask_threshold)
     mask, n_components = _connected_analysis_mask(mask)
+    region_warning: str | None = None
     if n_components > 1:
-        raise ValueError(
-            "Analysis aperture has multiple disconnected components. "
-            "Their relative fringe orders are indeterminate at one wavelength; "
-            "adjust the mask or illumination to create one connected aperture."
+        # Separate components have independent, indeterminate relative fringe
+        # orders at one wavelength — measuring across them would be as
+        # physically unjustified as the check above says. Rather than
+        # aborting (which turned legitimate multi-polygon masks and stray
+        # dust glints into a hard failure), keep the largest region and warn
+        # so the operator knows part of the mask was excluded.
+        excluded_px = int(mask.sum())
+        mask = _largest_component_mask(mask)
+        excluded_px -= int(mask.sum())
+        region_warning = (
+            f"Analysis aperture had {n_components} disconnected regions; "
+            f"measured the largest ({int(mask.sum())} px) and excluded the "
+            f"other {n_components - 1} region(s) ({excluded_px} px total)."
         )
     if not mask.any():
         raise ValueError("No connected fringe aperture remains after masking")
@@ -2745,7 +2779,7 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 589.3,
     mod_resized[~grid_mask] = 0.0
     modulation_grid_list = [round(float(v), 3) for v in mod_resized.ravel()]
 
-    analysis_warnings: list[str] = []
+    analysis_warnings: list[str] = [region_warning] if region_warning else []
     carrier_cycles = float(carrier_info.get("distance_px", 0.0))
     if carrier_cycles < 8.0:
         analysis_warnings.append(
