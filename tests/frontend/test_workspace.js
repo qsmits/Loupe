@@ -80,6 +80,11 @@ describe('swap-completeness gate', () => {
     assert.equal(STATE_FIELDS.frozenBlob, 'swapped');
     assert.equal(STATE_FIELDS.calibration, 'swapped');
     assert.equal(STATE_FIELDS._dirty, 'swapped');
+    // lensK1Space must travel with the tab exactly like lensK1 itself, or a
+    // deferred (still pixel_v0) coefficient in one tab can desync from a
+    // genuinely-converted one in another and get mistagged on save.
+    assert.equal(STATE_FIELDS.lensK1, 'swapped');
+    assert.equal(STATE_FIELDS.lensK1Space, 'swapped');
     assert.equal(STATE_FIELDS.pendingPoints, 'transient');
     assert.equal(STATE_FIELDS.dragState, 'transient');
     assert.equal(STATE_FIELDS._epoch, 'global');

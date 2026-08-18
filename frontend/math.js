@@ -111,13 +111,18 @@ export function calibrationPpmFromMeasurement(span, kind, knownMm) {
  * convert (`k1_normalized = k1_pixel * diag2`); a `diag_normalized_v1` value
  * is already in that space and passes through unchanged regardless of
  * `diag2`. A missing/blank space tag is treated as the legacy `pixel_v0`
- * (profiles saved before the space tag existed).
+ * (profiles saved before the space tag existed). Only these two tags are
+ * recognized — an unrecognized tag (typo'd or from a future format) is
+ * DEFERRED rather than assumed to be already-converted pass-through, which
+ * would silently apply a wrong-magnitude value exactly like the bug this
+ * function exists to prevent.
  *
  * When the diagonal is unknown (`diag2` falsy/non-finite) and the value is
- * pixel-space, conversion is DEFERRED — this returns `null` rather than 0 or
- * an unconverted value, so the caller can keep the original number and its
- * `pixel_v0` tag for a later apply instead of destroying or mis-tagging it.
- * A genuinely zero coefficient still converts to `0` (nothing to lose).
+ * pixel-space, conversion is also DEFERRED — this returns `null` rather than
+ * 0 or an unconverted value, so the caller can keep the original number and
+ * its `pixel_v0` tag for a later apply instead of destroying or mis-tagging
+ * it. A genuinely zero coefficient always converts to `0` (nothing to lose,
+ * regardless of tag).
  *
  * @param {number} k1
  * @param {string|undefined} coefficientSpace  "pixel_v0" | "diag_normalized_v1" | undefined
@@ -126,9 +131,10 @@ export function calibrationPpmFromMeasurement(span, kind, knownMm) {
  */
 export function lensK1ToDiagNormalized(k1, coefficientSpace, diag2) {
   const value = Number(k1) || 0;
-  const space = coefficientSpace || "pixel_v0";
-  if (space !== "pixel_v0") return value;
   if (value === 0) return 0;
+  const space = coefficientSpace || "pixel_v0";
+  if (space === "diag_normalized_v1") return value;
+  if (space !== "pixel_v0") return null; // unrecognized tag — defer, never guess
   return Number.isFinite(diag2) && diag2 > 0 ? value * diag2 : null;
 }
 

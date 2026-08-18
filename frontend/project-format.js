@@ -5,7 +5,7 @@
 //  * workspace v4           (JSON-safe; stored in the IDB project record and
 //                            in .loupe files; v3 session fields + viewport +
 //                            tool + frozen + imageSize + tolerances +
-//                            showDeviations + lensK1)
+//                            showDeviations + lensK1 + lensK1Space)
 //  * .loupe file            (single JSON: project metadata + workspace v4 +
 //                            image as data URL)
 //
@@ -60,6 +60,10 @@ export function buildWorkspaceV4(record) {
     tolerances: { ...s.tolerances },
     showDeviations: !!s.showDeviations,
     lensK1: s.lensK1 ?? 0,
+    // The coefficient space lensK1 is actually in — must travel with it or
+    // a deferred (still pixel_v0) value silently reverts to the
+    // diag_normalized_v1 default on the next load and gets mistagged.
+    lensK1Space: s.lensK1Space ?? "diag_normalized_v1",
     featureTolerances: { ...s.featureTolerances },
     featureModes: { ...s.featureModes },
     featureNames: { ...s.featureNames },
@@ -99,6 +103,11 @@ export function applyWorkspaceV4(v4) {
   }
   s.showDeviations = !!v4.showDeviations;
   s.lensK1 = v4.lensK1 ?? 0;
+  // Missing lensK1Space means a workspace saved before this field existed —
+  // every such record's lensK1 is guaranteed already-converted (the old
+  // defer bug stored 0, never a raw magnitude), so diag_normalized_v1 is the
+  // correct, safe default here, not a guess.
+  s.lensK1Space = v4.lensK1Space ?? "diag_normalized_v1";
   s.featureTolerances = { ...(v4.featureTolerances ?? {}) };
   s.featureModes = { ...(v4.featureModes ?? {}) };
   s.featureNames = { ...(v4.featureNames ?? {}) };
@@ -160,6 +169,7 @@ export function migrateV3ToV4(data) {
     tolerances: { warn: 0.10, fail: 0.25 },
     showDeviations: false,
     lensK1: 0,
+    lensK1Space: "diag_normalized_v1", // v3 sessions never carried lens correction
     featureTolerances: { ...(data.featureTolerances ?? {}) },
     featureModes: { ...(data.featureModes ?? {}) },
     featureNames: { ...(data.featureNames ?? {}) },

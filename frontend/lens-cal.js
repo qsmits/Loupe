@@ -32,21 +32,13 @@ let _externalCallback = null;
 // ── Public interface ──────────────────────────────────────────────────────────
 export function isLensCalMode() { return _active; }
 
-// Tracks the coefficient space of whatever value currently sits in
-// state.lensK1. state.lensK1 is a bare number with no room for a unit tag,
-// and STATE_FIELDS (workspace.js) forbids adding a sibling key for one — so
-// the tag lives here instead. Every assignment this module makes to
-// state.lensK1 from a live fit or a completed remap is always already
-// diag_normalized_v1; only setLensK1FromProfile's defer branch can leave it
-// pixel_v0, and only when a legacy profile is loaded before any image has
-// been frozen.
-let _lensK1Space = "diag_normalized_v1";
-
-/** The coefficient space of the value currently in state.lensK1. Consulted
- *  by cal-profiles.js when saving, so a deferred (still pixel_v0) value is
- *  never written back tagged diag_normalized_v1. */
+/** The coefficient space of the value currently in state.lensK1
+ *  (state.lensK1Space — "swapped" in STATE_FIELDS, so it travels with the
+ *  tab exactly like lensK1 itself and can't desync across tab switches).
+ *  Consulted by cal-profiles.js when saving, so a deferred (still
+ *  pixel_v0) value is never written back tagged diag_normalized_v1. */
 export function getLensK1Space() {
-  return _lensK1Space;
+  return state.lensK1Space;
 }
 
 /**
@@ -73,10 +65,10 @@ export function setLensK1FromProfile(k1, coefficientSpace) {
   const converted = normalizeLensK1(k1, coefficientSpace);
   if (converted === null) {
     state.lensK1 = Number(k1) || 0;
-    _lensK1Space = "pixel_v0";
+    state.lensK1Space = "pixel_v0";
   } else {
     state.lensK1 = converted;
-    _lensK1Space = "diag_normalized_v1";
+    state.lensK1Space = "diag_normalized_v1";
   }
 }
 
@@ -181,7 +173,7 @@ export async function applyLensCorrection(k1, coefficientSpace = "diag_normalize
   const corrected = _applyK1(state.frozenBackground, k1);
   state.frozenBackground = corrected;
   state.lensK1 = k1;
-  _lensK1Space = "diag_normalized_v1";
+  state.lensK1Space = "diag_normalized_v1";
   cacheImageData(corrected, imageWidth, imageHeight);
   redraw();
   showStatus(`Lens correction applied (k₁ = ${k1.toExponential(2)}) — syncing to server…`);
@@ -235,7 +227,7 @@ async function _confirmCal() {
   }
 
   state.lensK1 = k1;
-  _lensK1Space = "diag_normalized_v1";
+  state.lensK1Space = "diag_normalized_v1";
 
   // Disable confirm while remap runs (can be slow on large images)
   const confirmBtn = document.getElementById("btn-lens-cal-confirm");

@@ -314,6 +314,15 @@ describe('lensK1ToDiagNormalized', () => {
   it('returns 0 for a genuinely zero coefficient, not null', () => {
     assert.equal(lensK1ToDiagNormalized(0, 'pixel_v0', 0), 0);
   });
+
+  it('DEFERS on an unrecognized coefficient space tag — never treats it as already converted', () => {
+    // A typo'd or future third tag must not silently pass through as if
+    // already in diag_normalized_v1 space — that is the same class of
+    // silent-wrong-magnitude bug this function exists to prevent.
+    assert.equal(lensK1ToDiagNormalized(3e-7, 'some_future_tag', 160000), null);
+    // Still nothing to lose for a genuine zero, regardless of tag.
+    assert.equal(lensK1ToDiagNormalized(0, 'some_future_tag', 160000), 0);
+  });
 });
 
 describe('calibrationPpmFromMeasurement', () => {

@@ -21,6 +21,7 @@ function sampleRecord() {
   rec.state.origin = { x: 10, y: 20, angle: 0 };
   rec.state.tolerances = { warn: 0.05, fail: 0.2 };
   rec.state.lensK1 = -0.02;
+  rec.state.lensK1Space = 'pixel_v0';
   rec.state.featureModes = { A1: 'punch' };
   rec.state.measurementGroups = { 3: 'Slot' };
   rec.state.annotations = [
@@ -46,6 +47,14 @@ describe('buildWorkspaceV4', () => {
     assert.deepEqual(v4.imageSize, { w: 1920, h: 1080 });
     assert.deepEqual(v4.tolerances, { warn: 0.05, fail: 0.2 });
     assert.equal(v4.lensK1, -0.02);
+    assert.equal(v4.lensK1Space, 'pixel_v0');
+  });
+
+  it('defaults lensK1Space to diag_normalized_v1 when state omits it', () => {
+    const rec = sampleRecord();
+    delete rec.state.lensK1Space;
+    const v4 = buildWorkspaceV4(rec);
+    assert.equal(v4.lensK1Space, 'diag_normalized_v1');
   });
 
   it('strips live-image overlays but keeps detections and dxf-overlay', () => {
@@ -129,11 +138,24 @@ describe('applyWorkspaceV4', () => {
     assert.equal(rec.state.calibration.pixelsPerMm, 42.5);
     assert.deepEqual(rec.state.tolerances, { warn: 0.05, fail: 0.2 });
     assert.equal(rec.state.lensK1, -0.02);
+    assert.equal(rec.state.lensK1Space, 'pixel_v0');
     assert.deepEqual(rec.viewport, { zoom: 2, panX: 3, panY: 4 });
     assert.equal(rec.imageWidth, 1920);
     assert.equal(rec.imageHeight, 1080);
     assert.deepEqual(rec.undoStack, []);
     assert.deepEqual(rec.state.measurementGroups, { 3: 'Slot' });
+  });
+
+  it('defaults lensK1Space to diag_normalized_v1 for a workspace saved before the field existed', () => {
+    // Regression: a pre-fix v4 record has no lensK1Space key at all. Every
+    // such record's lensK1 is guaranteed already-converted (the pre-fix
+    // defer bug stored 0, never a raw magnitude) — so this default is safe,
+    // not a guess. A missing key must never be read as "pixel_v0" (which
+    // would make a genuinely-converted value look deferred).
+    const v4 = buildWorkspaceV4(sampleRecord());
+    delete v4.lensK1Space;
+    const rec = applyWorkspaceV4(JSON.parse(JSON.stringify(v4)));
+    assert.equal(rec.state.lensK1Space, 'diag_normalized_v1');
   });
 
   it('rejects wrong versions with a clear message', () => {
@@ -216,10 +238,13 @@ describe('migrateV3ToV4', () => {
     assert.equal(v4.frozen, false);
     assert.equal(v4.viewport, null);
     assert.equal(v4.imageSize, null);
+    assert.equal(v4.lensK1, 0);
+    assert.equal(v4.lensK1Space, 'diag_normalized_v1');
     const rec = applyWorkspaceV4(v4);
     assert.equal(rec.state.nextId, 12);
     assert.equal(rec.state.dxfFilename, 'part.dxf');
     assert.equal(rec.state.calibration.pixelsPerMm, 33.3);
+    assert.equal(rec.state.lensK1Space, 'diag_normalized_v1');
   });
 
   it('rejects sessions newer than v3 and invalid shapes', () => {

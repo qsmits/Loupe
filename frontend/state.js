@@ -70,6 +70,8 @@ export const state = {
   _subpixelSnapTarget: null, // { x, y } — live preview of where sub-pixel snap would place a point
   _previewCursor: null,      // { x, y } — snapped cursor (image space) while a measurement is in progress
   lensK1: 0,                 // radial distortion coefficient (applied in-place to frozenBackground)
+  lensK1Space: "diag_normalized_v1", // coefficient space of lensK1: "pixel_v0" (raw, unconverted — a
+                              // deferred legacy profile load) | "diag_normalized_v1" (dimensionless, ready)
   arcMeasureMode: "sequential", // "sequential" | "ends-first"
   arcFitMode: "arc",           // "arc" | "circle" — whether Best-fit yields a partial arc or full circle
   angleMode: "two-lines",      // "two-lines" | "three-points"
