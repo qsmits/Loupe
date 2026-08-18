@@ -3586,6 +3586,62 @@ class TestSubtractWavefronts:
         expected_rms_nm *= wavelength_nm / (4.0 * np.pi)
         assert out["zernike_rms_nm"][1] == pytest.approx(expected_rms_nm)
 
+    def test_derived_wavefront_trust_is_the_intersection_of_sources(self):
+        # Regression: subtract_wavefronts used to hardcode
+        # trusted_area_pct=100 and trusted_mask_grid=mask_grid regardless
+        # of the sources' actual trust. A difference built from two
+        # partially-trusted captures must report the *intersection* of
+        # their trusted regions, not a blanket 100%.
+        rows, cols = 8, 8
+        m = _fake_wrapped_result(rows, cols)
+        r = _fake_wrapped_result(rows, cols)
+        # m trusted on rows 0-3 (top half); r trusted on rows 2-7 (lower
+        # 6 rows). Intersection is rows 2-3 only: 16 of 64 pixels = 25%.
+        m["trusted_mask_grid"] = [
+            1 if (i // cols) < 4 else 0 for i in range(rows * cols)
+        ]
+        r["trusted_mask_grid"] = [
+            1 if (i // cols) >= 2 else 0 for i in range(rows * cols)
+        ]
+        out = subtract_wavefronts(m, r, register=False)
+        assert out["trusted_area_pct"] == pytest.approx(25.0, abs=1.0)
+        assert out["trusted_area_pct"] < 100.0
+        out_trusted = np.asarray(
+            out["trusted_mask_grid"], dtype=bool
+        ).reshape(rows, cols)
+        assert out_trusted[:2, :].sum() == 0
+        assert out_trusted[2:4, :].all()
+        assert out_trusted[4:, :].sum() == 0
+
+    def test_derived_wavefront_trust_omitted_when_unavailable(self):
+        # If either source's trust info is unavailable, the honest thing
+        # to do is omit trusted_area_pct/trusted_mask_grid entirely (as
+        # subtract_wavefronts did before the M1.6/M3.x trust fields
+        # existed) rather than assert a number that can't be
+        # substantiated. Three distinct "unavailable" shapes: missing
+        # key, explicit None, and a grid whose length disagrees with
+        # grid_rows*grid_cols.
+        rows, cols = 8, 8
+        m = _fake_wrapped_result(rows, cols)
+        m["trusted_mask_grid"] = [1] * (rows * cols)
+
+        r_missing = _fake_wrapped_result(rows, cols)  # no key at all
+        out_missing = subtract_wavefronts(m, r_missing, register=False)
+        assert "trusted_area_pct" not in out_missing
+        assert "trusted_mask_grid" not in out_missing
+
+        r_none = _fake_wrapped_result(rows, cols)
+        r_none["trusted_mask_grid"] = None
+        out_none = subtract_wavefronts(m, r_none, register=False)
+        assert "trusted_area_pct" not in out_none
+        assert "trusted_mask_grid" not in out_none
+
+        r_bad_shape = _fake_wrapped_result(rows, cols)
+        r_bad_shape["trusted_mask_grid"] = [1] * (rows * cols - 1)
+        out_bad_shape = subtract_wavefronts(m, r_bad_shape, register=False)
+        assert "trusted_area_pct" not in out_bad_shape
+        assert "trusted_mask_grid" not in out_bad_shape
+
 
 class TestSubtractRawDomainCorrectness:
     """Fix 1 (P1b): subtract_wavefronts must operate on raw grids so
@@ -4534,6 +4590,45 @@ class TestAverageWavefronts:
             dtype=np.uint8,
         )
         assert mask.tolist() == expected.tolist()
+
+    def test_average_trust_is_the_intersection_of_all_n_sources(self):
+        # Regression: average_wavefronts used to hardcode
+        # trusted_area_pct=100 regardless of the sources' actual trust.
+        # With 3 sources, the result must be the intersection across ALL
+        # of them, not just the first two.
+        rows, cols = 8, 8
+        a = _fake_wrapped_result(rows, cols)
+        b = _fake_wrapped_result(rows, cols)
+        c = _fake_wrapped_result(rows, cols)
+
+        def rows_trusted(lo, hi):
+            return [1 if lo <= (i // cols) < hi else 0
+                    for i in range(rows * cols)]
+
+        a["trusted_mask_grid"] = rows_trusted(0, 6)  # rows 0-5
+        b["trusted_mask_grid"] = rows_trusted(0, 4)  # rows 0-3
+        c["trusted_mask_grid"] = rows_trusted(2, 8)  # rows 2-7
+        out = average_wavefronts([a, b, c])
+        # a ∩ b ∩ c = rows 2-3 only: 16 of 64 pixels = 25%.
+        assert out["trusted_area_pct"] == pytest.approx(25.0, abs=1.0)
+        # a ∩ b alone (ignoring c) would be rows 0-3 = 50%: proves c's
+        # trust region actually participated in the intersection.
+        assert out["trusted_area_pct"] != pytest.approx(50.0, abs=1.0)
+
+    def test_average_trust_omitted_when_any_source_unavailable(self):
+        # If ANY of the N sources lacks trust info, the honest result
+        # omits trusted_area_pct/trusted_mask_grid rather than asserting
+        # a number computed from a subset of the sources.
+        rows, cols = 8, 8
+        a = _fake_wrapped_result(rows, cols)
+        b = _fake_wrapped_result(rows, cols)
+        c = _fake_wrapped_result(rows, cols)
+        a["trusted_mask_grid"] = [1] * (rows * cols)
+        b["trusted_mask_grid"] = [1] * (rows * cols)
+        # c has no trusted_mask_grid key at all.
+        out = average_wavefronts([a, b, c])
+        assert "trusted_area_pct" not in out
+        assert "trusted_mask_grid" not in out
 
 
 class TestFringeAverageAPI:

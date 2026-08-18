@@ -3285,6 +3285,26 @@ def _integer_shift_mask(mask: np.ndarray, dy: int, dx: int) -> np.ndarray:
     return out
 
 
+def _reshape_trust_mask(source: dict, rows: int, cols: int) -> np.ndarray | None:
+    """Reshape a source result's ``trusted_mask_grid`` to ``(rows, cols)``.
+
+    Returns ``None`` when the source's trust information is unavailable:
+    the key is absent, its value is ``None``, or the flattened grid's
+    length doesn't match ``rows * cols``. Callers must treat ``None`` as
+    "unknown" and omit any derived trust fields rather than assume a
+    default — asserting trust the code cannot substantiate is exactly the
+    bug this helper exists to prevent (see subtract_wavefronts /
+    average_wavefronts).
+    """
+    grid = source.get("trusted_mask_grid")
+    if grid is None:
+        return None
+    try:
+        return np.asarray(grid, dtype=np.uint8).reshape(rows, cols).astype(bool)
+    except (ValueError, TypeError):
+        return None
+
+
 def subtract_wavefronts(
     measurement: dict,
     reference: dict,
@@ -3374,6 +3394,13 @@ def subtract_wavefronts(
     r_mask = np.asarray(reference["mask_grid"],
                         dtype=np.uint8).reshape(mh, mw).astype(bool)
 
+    # Trust regions (may be None -- see _reshape_trust_mask). Reference's
+    # trusted mask travels through the same sub-pixel registration shift
+    # as r_mask/r_disp/r_raw below so it stays spatially aligned with the
+    # measurement's trusted mask before the intersection is computed.
+    m_trusted = _reshape_trust_mask(measurement, mh, mw)
+    r_trusted = _reshape_trust_mask(reference, mh, mw)
+
     # ── M3.5: Registration (optional) ────────────────────────────────
     if register:
         reg_info = register_captures(measurement, reference, hosted=hosted)
@@ -3396,6 +3423,14 @@ def subtract_wavefronts(
             r_raw_arr, shifted_raw_mask = _shift_masked_grid(
                 r_raw_arr, r_mask, dy, dx
             )
+            if r_trusted is not None:
+                # Shift the trusted mask the same way r_mask itself is
+                # effectively shifted above: treat it as its own weight
+                # channel so the zero-filled boundary can't manufacture
+                # spurious trust at the shifted edge.
+                _, r_trusted = _shift_masked_grid(
+                    r_trusted.astype(np.float64), r_trusted, dy, dx
+                )
             r_mask = shifted_mask & shifted_raw_mask
         warnings_list.append(
             f"Registered with method={reg_info['method']}, "
@@ -3411,8 +3446,23 @@ def subtract_wavefronts(
 
     combined_mask = m_mask & r_mask
 
+    # A derived wavefront's trusted region is the intersection of its
+    # sources' trusted regions, restricted to the aperture actually
+    # returned (combined_mask) -- never the full aperture. When either
+    # source's trust info is unavailable, trusted_mask/trusted_area_pct
+    # stay None so the result omits the fields entirely instead of
+    # asserting a number it cannot substantiate.
+    if m_trusted is not None and r_trusted is not None:
+        trusted_mask = m_trusted & r_trusted & combined_mask
+    else:
+        trusted_mask = None
+
     m_valid = int(m_mask.sum())
     combined_valid = int(combined_mask.sum())
+    trusted_area_pct = (
+        round(100.0 * int(trusted_mask.sum()) / max(combined_valid, 1), 1)
+        if trusted_mask is not None else None
+    )
     if m_valid > 0:
         overlap_frac = combined_valid / m_valid
         if overlap_frac < 0.30:
@@ -3572,14 +3622,17 @@ def subtract_wavefronts(
         "raw_height_grid_nm": raw_height_grid_list,
         "raw_wavelength_nm": eff_wl,
         "mask_grid": mask_list,
-        "trusted_mask_grid": mask_list,
-        "trusted_area_pct": 100.0,
         "raw_mask_grid": mask_list,
         "grid_rows": mh,
         "grid_cols": mw,
         "carrier": measurement.get("carrier"),
         "tuning": measurement.get("tuning"),
     }
+    if trusted_mask is not None:
+        result["trusted_mask_grid"] = [
+            int(v) for v in trusted_mask.ravel().astype(np.uint8)
+        ]
+        result["trusted_area_pct"] = trusted_area_pct
 
     wrap_wavefront_result(
         result,
@@ -3679,6 +3732,11 @@ def average_wavefronts(
     disp_stack = np.empty((n, gh0, gw0), dtype=np.float32)
     raw_stack = np.empty((n, gh0, gw0), dtype=np.float32)
     mask_stack = np.empty((n, gh0, gw0), dtype=bool)
+    # Trust is only defined when every one of the N sources reports it;
+    # a single source with unavailable trust info makes the intersection
+    # unknown, not "trust everyone else". See _reshape_trust_mask.
+    trusted_available = True
+    trusted_list: list[np.ndarray] = []
     for i, r in enumerate(results):
         disp_stack[i] = np.asarray(
             r["display_height_grid_nm"], dtype=np.float32
@@ -3689,6 +3747,13 @@ def average_wavefronts(
         mask_stack[i] = np.asarray(
             r["mask_grid"], dtype=np.uint8
         ).reshape(gh0, gw0).astype(bool)
+        if trusted_available:
+            t = _reshape_trust_mask(r, gh0, gw0)
+            if t is None:
+                trusted_available = False
+                trusted_list = []
+            else:
+                trusted_list.append(t)
 
     # Per-pixel count of valid inputs (before rejection).
     n_valid_per_pixel = mask_stack.sum(axis=0)  # shape (gh0, gw0)
@@ -3813,6 +3878,21 @@ def average_wavefronts(
     raw_height_grid_list = [round(float(v), 2) for v in raw_out.ravel()]
     mask_list = [int(v) for v in combined_mask.ravel().astype(np.uint8)]
 
+    # A derived wavefront's trusted region is the intersection of ALL N
+    # sources' trusted regions (not just the first two), restricted to the
+    # aperture actually returned (combined_mask). When any source's trust
+    # info is unavailable, trusted_mask/trusted_area_pct stay None so the
+    # result omits the fields entirely instead of asserting a number it
+    # cannot substantiate.
+    if trusted_available and trusted_list:
+        trusted_mask = np.logical_and.reduce(trusted_list) & combined_mask
+        trusted_area_pct = round(
+            100.0 * int(trusted_mask.sum()) / max(combined_valid, 1), 1
+        )
+    else:
+        trusted_mask = None
+        trusted_area_pct = None
+
     result: dict = {
         "surface_map": surface_map_b64,
         "profile_x": profile_x,
@@ -3841,8 +3921,6 @@ def average_wavefronts(
         "raw_height_grid_nm": raw_height_grid_list,
         "raw_wavelength_nm": eff_wl,
         "mask_grid": mask_list,
-        "trusted_mask_grid": mask_list,
-        "trusted_area_pct": 100.0,
         "raw_mask_grid": mask_list,
         "grid_rows": gh0,
         "grid_cols": gw0,
@@ -3855,6 +3933,11 @@ def average_wavefronts(
             "n_inputs": n,
         },
     }
+    if trusted_mask is not None:
+        result["trusted_mask_grid"] = [
+            int(v) for v in trusted_mask.ravel().astype(np.uint8)
+        ]
+        result["trusted_area_pct"] = trusted_area_pct
 
     wrap_wavefront_result(
         result,
