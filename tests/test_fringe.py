@@ -244,6 +244,32 @@ class TestPhysicsCorrections:
         )
         assert result["pv_nm"] < 5.0, f'flat part reported {result["pv_nm"]:.1f} nm PV'
 
+    def test_flat_part_boundary_artifact_stays_under_limit_carrier_exact(self):
+        """The background blur's implicit mirror continuation only agrees with
+        a fringe field whose edge lands on a cosine extremum; at quarter/odd
+        fractional fringe counts it kinks, and the demodulator used to hand
+        the resulting ~3*bg_sigma edge band to the surface as ripple
+        (measured 7.42/10.31/6.96 nm PV at 5.25/5.37/5.75 fringes, 256 px,
+        carrier exact). The 5.0 nm limit is the product property the flat
+        tests in this class already assert; holding the carrier exact via
+        carrier_override isolates the boundary term from the separate (and
+        still open) sub-pixel carrier-estimator bias."""
+        h = w = 256
+        _yy, xx = np.mgrid[:h, :w]
+        for n in (5.25, 5.37, 5.75):
+            image = np.clip(
+                128 + 105 * np.cos(2 * np.pi * n * xx / w), 0, 255
+            ).astype(np.uint8)
+            result = analyze_interferogram(
+                image, wavelength_nm=589.3, subtract_terms=[1],
+                use_full_mask=True, correct_2pi_jumps=False,
+                carrier_override=(h // 2, w // 2 + n),
+            )
+            assert result["pv_nm"] < 5.0, (
+                f"flat part at {n} fringes reported {result['pv_nm']:.2f} nm "
+                f"PV with the carrier exact"
+            )
+
     def test_low_carrier_warns_instead_of_silently_degrading(self):
         h = w = 256
         _yy, xx = np.mgrid[:h, :w]
