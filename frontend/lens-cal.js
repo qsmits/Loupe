@@ -7,9 +7,12 @@
  * any feature of repeating known size works (grid, holes, slots, …).
  *
  * Distortion model (Brown–Conrady, first-order radial only):
- *   undistort: p_u = center + (p_d - center) / (1 + k1 * r_d²)
+ *   undistort: p_u = center + (p_d - center) /
+ *              (1 + k1 * r_d² / (diag/2)²)
  *   remap:     for each undistorted pixel, sample distorted source at
- *              src = center + (dst - center) * (1 + k1 * r²)
+ *              src = center + (dst - center) *
+ *                    (1 + k1 * r² / (diag/2)²)
+ * k1 is dimensionless and resolution-independent throughout the UI/API.
  */
 
 import { state } from './state.js';
@@ -27,6 +30,13 @@ let _externalCallback = null;
 
 // ── Public interface ──────────────────────────────────────────────────────────
 export function isLensCalMode() { return _active; }
+
+export function normalizeLensK1(k1, coefficientSpace = "diag_normalized_v1") {
+  const value = Number(k1) || 0;
+  if (coefficientSpace !== "pixel_v0") return value;
+  const diag2 = (imageWidth ** 2 + imageHeight ** 2) / 4;
+  return diag2 > 0 ? value * diag2 : 0;
+}
 
 export function initLensCal() {
   // btn-lens-cal-open is wired in main.js via closeAllDropdowns + _openDialog;
@@ -115,8 +125,9 @@ export function openLensCalDialog(opts) {
 }
 
 /** Apply k1 directly to the current frozen frame (used by cal-profiles). */
-export async function applyLensCorrection(k1) {
+export async function applyLensCorrection(k1, coefficientSpace = "diag_normalized_v1") {
   if (!state.frozenBackground || k1 === 0) return;
+  k1 = normalizeLensK1(k1, coefficientSpace);
   const corrected = _applyK1(state.frozenBackground, k1);
   state.frozenBackground = corrected;
   state.lensK1 = k1;
@@ -207,9 +218,10 @@ async function _confirmCal() {
 // ── Fitting ───────────────────────────────────────────────────────────────────
 function _correctedLength(s, k1) {
   const cx = imageWidth / 2, cy = imageHeight / 2;
+  const diag2 = (imageWidth ** 2 + imageHeight ** 2) / 4;
   const ud = p => {
     const dx = p.x - cx, dy = p.y - cy;
-    const sc = 1 / (1 + k1 * (dx * dx + dy * dy));
+    const sc = 1 / (1 + k1 * (dx * dx + dy * dy) / diag2);
     return { x: cx + dx * sc, y: cy + dy * sc };
   };
   const u1 = ud(s.p1), u2 = ud(s.p2);
@@ -224,13 +236,9 @@ function _variance(k1, samples) {
 
 function _fitK1(samples) {
   if (samples.length < 2) return 0;
-  // Normalise so search range is resolution-independent: k1_norm ∈ [-0.8, 0.8]
-  // where k1_raw = k1_norm / (diag/2)²
-  const diag2 = (imageWidth ** 2 + imageHeight ** 2) / 4;
-  const toRaw = n => n / diag2;
-
+  // Search the dimensionless half-diagonal-normalized coefficient directly.
   const phi = (Math.sqrt(5) - 1) / 2;
-  let a = toRaw(-0.8), b = toRaw(0.8);
+  let a = -0.8, b = 0.8;
   for (let i = 0; i < 120; i++) {
     const c = b - phi * (b - a);
     const d = a + phi * (b - a);
@@ -263,14 +271,15 @@ function _applyK1(srcImg, k1) {
   const dst    = dstImg.data;
 
   const cx = w / 2, cy = h / 2;
+  const diag2 = (w ** 2 + h ** 2) / 4;
 
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
       const dx = x - cx, dy = y - cy;
       const r2 = dx * dx + dy * dy;
       // Sample distorted source for this undistorted destination pixel
-      const sx = cx + dx * (1 + k1 * r2);
-      const sy = cy + dy * (1 + k1 * r2);
+      const sx = cx + dx * (1 + k1 * r2 / diag2);
+      const sy = cy + dy * (1 + k1 * r2 / diag2);
 
       const ix = sx | 0, iy = sy | 0;
       const di = (y * w + x) * 4;

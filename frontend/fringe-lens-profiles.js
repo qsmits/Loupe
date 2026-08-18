@@ -9,15 +9,21 @@ const STORAGE_KEY = "loupe_fringe_lens_profiles";
 export function loadFringeLensProfiles() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    return raw ? JSON.parse(raw) : [];
+    const profiles = raw ? JSON.parse(raw) : [];
+    return profiles.map(p => ({
+      ...p,
+      // Profiles written by the old implementation stored pixel-space k1.
+      coefficient_space: p.coefficient_space || "pixel_v0",
+    }));
   } catch { return []; }
 }
 
 export function saveFringeLensProfile(name, k1) {
   const profiles = loadFringeLensProfiles();
   const existing = profiles.findIndex(p => p.name === name);
-  if (existing >= 0) profiles[existing].k1 = k1;
-  else profiles.push({ name, k1 });
+  const profile = { name, k1, coefficient_space: "diag_normalized_v1" };
+  if (existing >= 0) profiles[existing] = profile;
+  else profiles.push(profile);
   localStorage.setItem(STORAGE_KEY, JSON.stringify(profiles));
 }
 
@@ -42,8 +48,10 @@ export function renderFringeLensDropdown() {
   for (const p of profiles) {
     const opt = document.createElement("option");
     opt.value = p.name;
-    opt.textContent = `${p.name} (k\u2081=${p.k1.toFixed(3)})`;
+    const legacy = p.coefficient_space === "pixel_v0" ? ", legacy" : "";
+    opt.textContent = `${p.name} (k\u2081=${p.k1.toFixed(3)}${legacy})`;
     opt.dataset.k1 = p.k1;
+    opt.dataset.coefficientSpace = p.coefficient_space;
     sel.appendChild(opt);
   }
 

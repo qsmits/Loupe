@@ -6,7 +6,7 @@ import { state } from './state.js';
 import { renderSidebar, updateCalibrationButton } from './sidebar.js';
 import { clearCalSource } from './annotations.js';
 import { redraw } from './render.js';
-import { applyLensCorrection } from './lens-cal.js';
+import { applyLensCorrection, normalizeLensK1 } from './lens-cal.js';
 
 const STORAGE_KEY = "loupe_cal_profiles";
 
@@ -49,11 +49,12 @@ function _renderList(panel, profiles) {
       renderSidebar();
       redraw();
       if (p.lensK1) {
+        const lensSpace = p.lensK1Space || "pixel_v0";
         if (!state.frozenBackground) {
           // Store k1 for later — lens warp will be applied when image is frozen
-          state.lensK1 = p.lensK1;
+          state.lensK1 = normalizeLensK1(p.lensK1, lensSpace);
         } else {
-          await applyLensCorrection(p.lensK1);
+          await applyLensCorrection(p.lensK1, lensSpace);
         }
       }
     });
@@ -127,6 +128,7 @@ async function _importProfilesFromFile(file, panel) {
       pixelsPerMm: p.pixelsPerMm,
       displayUnit: p.displayUnit || "mm",
       lensK1: Number(p.lensK1) || 0,
+      lensK1Space: p.lensK1Space || "pixel_v0",
     });
     added++;
   }
@@ -159,6 +161,7 @@ export function initCalProfiles() {
       pixelsPerMm: state.calibration.pixelsPerMm,
       displayUnit: state.calibration.displayUnit || "mm",
       lensK1: state.lensK1 || 0,
+      lensK1Space: "diag_normalized_v1",
     });
     _saveProfiles(profiles);
     nameInput.value = "";
