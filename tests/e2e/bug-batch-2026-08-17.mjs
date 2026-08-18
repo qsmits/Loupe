@@ -29,6 +29,12 @@
  * loudly), and context-menu gating of "Use as calibration…" (absent for
  * dimensionless measurements like angle, absent when 2+ annotations are
  * selected).
+ *
+ * 8 checks total. The last (Task 10: browser camera must not restretch a
+ * frozen image) launches its own Chromium instance with
+ * --use-fake-device-for-media-stream / --use-fake-ui-for-media-stream and a
+ * `permissions: ['camera']` context, so the other seven checks' shared
+ * `browser` keeps its plain launch options untouched.
  */
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -312,6 +318,76 @@ await check('menu gating: "Use as calibration…" absent when two annotations ar
   const useCal = await page.locator('#context-menu .ctx-item', { hasText: 'Use as calibration' }).count();
   assert.equal(useCal, 0, '"Use as calibration…" must not appear when 2+ annotations are selected');
   await ctx.close();
+});
+
+// ── Task 10: browser camera must not restretch a frozen image ───────────────
+// Needs a fake media device + auto-granted camera permission, which must not
+// apply to the other seven checks — so this gets its own browser instance
+// rather than changing `browser`'s launch options.
+await check('browser camera does not restretch a frozen image', async () => {
+  const camBrowser = await chromium.launch({
+    executablePath: EXEC,
+    headless: true,
+    args: ['--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream'],
+  });
+  try {
+    const ctx = await camBrowser.newContext({
+      viewport: { width: 1440, height: 900 },
+      permissions: ['camera'],
+    });
+    const page = await ctx.newPage();
+    await page.goto(APP, { waitUntil: 'networkidle' });
+    await page.waitForSelector('.home-type-card');
+    await page.locator('.home-type-card').first().click();
+    await page.waitForTimeout(400);
+    await page.setInputFiles('#file-input', SAMPLE);
+    await page.waitForTimeout(1200);
+    // CSP blocks addScriptTag with inline content; dynamic import is allowed.
+    await page.evaluate(async () => {
+      const s = await import('/state.js');
+      const v = await import('/viewport.js');
+      window.__state = s.state;
+      window.__iw = () => v.imageWidth;
+      window.__ih = () => v.imageHeight;
+    });
+
+    const before = await page.evaluate(() => ({
+      iw: window.__iw(), ih: window.__ih(), frozen: window.__state.frozen,
+    }));
+    assert.equal(before.iw, 1400, 'fixture loaded at its own size');
+    assert.equal(before.ih, 900, 'fixture loaded at its own size');
+    assert.equal(before.frozen, true, 'file load freezes the image');
+
+    // Drive startBrowserCamera() directly rather than the camera-select
+    // dropdown — same entry point switchHardwareCamera() uses, no extra UI
+    // coupling.
+    const started = await page.evaluate(async () => {
+      const bc = await import('/browser-camera.js');
+      await bc.startBrowserCamera();
+      const v = document.getElementById('browser-cam-video');
+      return {
+        active: window.__state.browserCamera?.active === true,
+        videoW: v?.videoWidth, videoH: v?.videoHeight,
+      };
+    });
+    assert.equal(started.active, true, 'fake device camera actually started');
+    assert.ok(started.videoW > 0 && started.videoH > 0, 'fake device reports real dimensions');
+    // Sanity: the fake device's dims must differ from the fixture, or a
+    // restretch bug would go undetected below.
+    assert.notEqual(`${started.videoW}x${started.videoH}`, `${before.iw}x${before.ih}`,
+      `sanity: fake device dims (${started.videoW}x${started.videoH}) must differ from the fixture (${before.iw}x${before.ih})`);
+
+    const after = await page.evaluate(() => ({
+      iw: window.__iw(), ih: window.__ih(), frozen: window.__state.frozen,
+    }));
+    assert.equal(after.iw, before.iw,
+      `imageWidth changed: ${before.iw} -> ${after.iw} (fake device reported ${started.videoW}x${started.videoH})`);
+    assert.equal(after.ih, before.ih,
+      `imageHeight changed: ${before.ih} -> ${after.ih} (fake device reported ${started.videoW}x${started.videoH})`);
+    await ctx.close();
+  } finally {
+    await camBrowser.close();
+  }
 });
 
 await browser.close();
