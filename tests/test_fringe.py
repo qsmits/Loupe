@@ -89,6 +89,39 @@ class TestPhysicsCorrections:
         )
         assert abs(result["pv_nm"] / 320.0 - 1.0) < 0.10
 
+    def test_default_lpf_keeps_dc_outside_the_passband(self):
+        """DC leaking into the demodulation passband beats against the carrier
+        and adds ripple at exactly the fringe pitch. On a mathematically flat
+        part the recovered surface must stay flat."""
+        h = w = 256
+        _yy, xx = np.mgrid[:h, :w]
+        wavelength_nm = 589.3
+        # Perfectly flat specimen, 5 fringes across the aperture (low carrier).
+        image = np.clip(
+            128 + 105 * np.cos(2 * np.pi * 5 * xx / w), 0, 255
+        ).astype(np.uint8)
+        result = analyze_interferogram(
+            image, wavelength_nm=wavelength_nm, subtract_terms=[1],
+            use_full_mask=True, correct_2pi_jumps=False,
+        )
+        # A flat part must not manufacture surface structure. Before the fix
+        # this produced ~19 nm of PV out of pure demodulation artefact.
+        assert result["pv_nm"] < 5.0, f'flat part reported {result["pv_nm"]:.1f} nm PV'
+
+    def test_low_carrier_warns_instead_of_silently_degrading(self):
+        h = w = 256
+        _yy, xx = np.mgrid[:h, :w]
+        # Two fringes across the aperture: too low to separate DC from signal.
+        image = np.clip(
+            128 + 105 * np.cos(2 * np.pi * 2 * xx / w), 0, 255
+        ).astype(np.uint8)
+        result = analyze_interferogram(
+            image, wavelength_nm=589.3, subtract_terms=[1],
+            use_full_mask=True, correct_2pi_jumps=False,
+        )
+        assert any("carrier" in str(msg).lower() or "fringe" in str(msg).lower()
+                   for msg in result.get("warnings", [])), result.get("warnings")
+
     def test_lens_k1_has_material_effect_at_normal_resolution(self):
         rng = np.random.default_rng(12)
         image = rng.integers(0, 256, size=(480, 640), dtype=np.uint8)
@@ -5001,17 +5034,23 @@ class TestReanalyzeGridFidelityPath:
             _fringe_cache._full_results.clear()
 
     def _b64_fringes_with_highfreq_bump(self, h=128, w=128, fx=8):
-        """Tilted fringes plus a sharp localised Gaussian bump. The narrow
-        support of the bump contains spatial frequencies that the 36
-        Zernike terms used by analyze cannot fully represent, so the
-        legacy coefficient-only reanalyze path discards content that the
-        grid-fidelity path preserves."""
+        """Tilted fringes plus a localised Gaussian bump on the *surface*.
+
+        The bump is modulated into the fringe phase, not added to the
+        intensity: it is a real air-gap feature the demodulator can recover,
+        rather than a bright spot that only ever showed up as demodulation
+        artefact. Its narrow support contains spatial frequencies a truncated
+        Zernike basis cannot represent, so the legacy coefficient-only
+        reanalyze path discards content the grid-fidelity path preserves —
+        which is the contract under test. sigma is kept wide enough that the
+        bump's own bandwidth stays well inside the carrier frequency, so the
+        feature is genuinely measurable at this fringe count."""
         yy, xx = np.mgrid[0:h, 0:w]
-        phase = 2 * np.pi * (fx * xx / w + 0.5 * yy / w)
         cy, cx = h / 2, w / 2
-        sigma = 2.5
-        bump = 35.0 * np.exp(-((xx - cx) ** 2 + (yy - cy) ** 2) / (2 * sigma ** 2))
-        img = np.clip(128 + 80 * np.cos(phase) + bump, 0, 255).astype(np.uint8)
+        sigma = 6.0
+        bump_rad = 1.5 * np.exp(-((xx - cx) ** 2 + (yy - cy) ** 2) / (2 * sigma ** 2))
+        phase = 2 * np.pi * (fx * xx / w + 0.5 * yy / w) + bump_rad
+        img = np.clip(128 + 80 * np.cos(phase), 0, 255).astype(np.uint8)
         _, buf = cv2.imencode(".png", img)
         return base64.b64encode(buf.tobytes()).decode("ascii")
 

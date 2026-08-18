@@ -1249,9 +1249,12 @@ def extract_phase_dft(image: np.ndarray, mask: np.ndarray | None = None,
     Pipeline:
     1. Background subtraction (Gaussian blur) to enhance fringe contrast
     2. Detect carrier frequency via _find_carrier
-    3. Multiply by conjugate carrier exp(-j*carrier) to shift fringes to DC
-    4. Low-pass filter (Gaussian) to extract the envelope/phase
-    5. Extract wrapped phase: atan2(Im, Re)
+    3. Single-sideband (analytic-signal) filter: keep only the half-plane the
+       carrier lives in, which drops the residual DC/background term and the
+       conjugate sideband *before* demodulation
+    4. Multiply by conjugate carrier exp(-j*carrier) to shift fringes to DC
+    5. Low-pass filter (Gaussian) to extract the envelope/phase
+    6. Extract wrapped phase: atan2(Im, Re)
 
     This approach handles aperture boundaries naturally and works well
     on low-contrast real-world interferograms where FFT sideband isolation
@@ -1288,23 +1291,57 @@ def extract_phase_dft(image: np.ndarray, mask: np.ndarray | None = None,
                                      dc_cutoff_cycles=dc_cutoff_cycles)
     fy = (py - h // 2) / h  # cycles per pixel
     fx = (px - w // 2) / w
+    fringe_freq = math.sqrt(fy ** 2 + fx ** 2)
 
-    # Step 3: complex demodulation — shift carrier to DC
+    # Step 3: single-sideband (analytic-signal) filter.
+    #
+    # A real interferogram carries three things: the illumination background at
+    # DC, the +1 sideband (which holds the surface), and its conjugate at −1.
+    # Demodulating by exp(−j·carrier) moves the +1 sideband to DC but also
+    # parks the background at −f_c and the conjugate at −2·f_c — both inside
+    # the tails of any Gaussian passband wide enough to pass the surface
+    # itself. At low fringe counts those tails are not negligible: the
+    # background beats against the carrier and manufactures ripple at exactly
+    # the fringe pitch, which reads as real lapping texture. Narrowing the
+    # passband to reject them is not an option, because at ~5 fringes across
+    # the aperture the surface's own sidebands sit only ~2x the carrier away.
+    #
+    # So drop the unwanted terms *before* demodulation instead: keep only the
+    # half-plane on the carrier's side of the frequency origin. That kills the
+    # conjugate sideband exactly and takes DC (and any background structure
+    # that varies only along the fringes, which lies on the perpendicular line
+    # through the origin) with it — the same "reject the neighbourhood of DC"
+    # idea that ``_find_carrier``'s dc_margin/dc_cutoff already applies to peak
+    # search, here applied to the demodulated signal path. The factor 2 keeps
+    # the amplitude of the analytic signal equal to that of the real fringes;
+    # only the phase is used downstream, so it is cosmetic.
+    if fringe_freq > 1e-10:
+        fy_bins = np.fft.fftfreq(h)[:, None]
+        fx_bins = np.fft.fftfreq(w)[None, :]
+        along_carrier = fy_bins * fy + fx_bins * fx
+        sideband = np.fft.ifft2(np.fft.fft2(enhanced) * (along_carrier > 0) * 2.0)
+    else:
+        # Degenerate: no carrier was found at all. Nothing to separate.
+        sideband = enhanced.astype(np.complex128)
+
+    # Step 4: complex demodulation — shift carrier to DC
     yy, xx = np.mgrid[0:h, 0:w]
     carrier = np.exp(-2j * np.pi * (fy * yy + fx * xx))
     valid_weight = None
     if mask is not None:
         valid_weight = mask.astype(np.float64)
-        demod = enhanced * carrier * valid_weight
+        demod = sideband * carrier * valid_weight
     else:
-        demod = enhanced * carrier
+        demod = sideband * carrier
 
-    # Step 4: low-pass filter (envelope extraction)
-    # Image-space σ defaults to 0.5x the fringe period. This is sufficient
-    # to reject the conjugate sideband after demodulation without erasing the
-    # localized air-gap variations that optical-flat inspection is intended
-    # to measure. M2.5 ``lpf_sigma_frac`` overrides this scalar.
-    fringe_freq = math.sqrt(fy ** 2 + fx ** 2)
+    # Step 5: low-pass filter (envelope extraction)
+    # Image-space σ defaults to ``DEFAULT_LPF_SIGMA_FRAC`` (0.18) x the fringe
+    # period — an intentionally *wide* frequency passband, chosen so that the
+    # localized air-gap variations optical-flat inspection is meant to measure
+    # survive instead of being blurred away. It is deliberately not tight
+    # enough to reject DC or the conjugate sideband; step 3 removed those
+    # already, which is what lets this stay wide. M2.5 ``lpf_sigma_frac``
+    # overrides this scalar.
     fringe_period = 1.0 / max(fringe_freq, 1e-10)
     sigma_frac = DEFAULT_LPF_SIGMA_FRAC if lpf_sigma_frac is None else float(lpf_sigma_frac)
     lp_sigma = max(fringe_period * sigma_frac, 5.0)
@@ -1349,12 +1386,19 @@ def extract_phase_dft(image: np.ndarray, mask: np.ndarray | None = None,
         ct, st = math.cos(theta), math.sin(theta)
 
         # Pad before FFT convolution so the image boundary is not treated as a
-        # periodic phase discontinuity. Reflecting the already-demodulated
-        # complex field preserves a smooth local continuation at the frame rim.
+        # periodic phase discontinuity. Step 3 left `demod` a *smooth* complex
+        # envelope rather than an oscillating one, which changes what the right
+        # continuation is: hold the rim value (replicate). Mirroring it, as this
+        # used to do, folds the envelope's phase slope back on itself and drags
+        # the rim estimate toward the interior — and the PV of a low-order
+        # aberration is precisely an edge measurement, so that shows up
+        # directly as PV biased low. Replication is only sane because the
+        # conjugate sideband is gone; replicating a field that still oscillated
+        # would smear the rim fringe into a DC stripe instead.
         pad = min(256, max(8, int(math.ceil(
             3.0 * max(sig_along_img, sig_across_img)
         ))))
-        demod_work = np.pad(demod, ((pad, pad), (pad, pad)), mode="reflect")
+        demod_work = np.pad(demod, ((pad, pad), (pad, pad)), mode="edge")
         ph, pw = demod_work.shape
 
         # Build fftshift-centered frequency grids in cycles/pixel (matches the
@@ -1378,6 +1422,10 @@ def extract_phase_dft(image: np.ndarray, mask: np.ndarray | None = None,
         demod_lp_work = np.fft.ifft2(D * lpf)
         demod_lp = demod_lp_work[pad:pad + h, pad:pad + w]
         if valid_weight is not None:
+            # The 0/1 coverage weight keeps mirroring: where the mask is
+            # locally constant at the rim (the usual case) mirroring and
+            # replicating agree, and where it is not, mirroring reproduces the
+            # aperture's own falloff instead of smearing it outward.
             weight_work = np.pad(valid_weight, ((pad, pad), (pad, pad)),
                                  mode="reflect")
             weight_lp_work = np.fft.ifft2(
@@ -1390,17 +1438,27 @@ def extract_phase_dft(image: np.ndarray, mask: np.ndarray | None = None,
                 where=weight_lp > 1e-3,
             )
     else:
-        demod_lp = (cv2.GaussianBlur(demod.real, (0, 0), lp_sigma) +
-                    1j * cv2.GaussianBlur(demod.imag, (0, 0), lp_sigma))
+        # BORDER_REPLICATE, not the cv2 default BORDER_REFLECT_101, for the
+        # same reason the anisotropic branch replicates rather than mirrors:
+        # hold the smooth envelope at the rim instead of folding its slope
+        # back inward. Keeping the two branches on the same rim rule is also
+        # what makes them comparable to each other.
+        demod_lp = (
+            cv2.GaussianBlur(demod.real, (0, 0), lp_sigma,
+                             borderType=cv2.BORDER_REPLICATE)
+            + 1j * cv2.GaussianBlur(demod.imag, (0, 0), lp_sigma,
+                                    borderType=cv2.BORDER_REPLICATE)
+        )
         if valid_weight is not None:
-            weight_lp = cv2.GaussianBlur(valid_weight, (0, 0), lp_sigma)
+            weight_lp = cv2.GaussianBlur(valid_weight, (0, 0), lp_sigma,
+                                         borderType=cv2.BORDER_REPLICATE)
             demod_lp = np.divide(
                 demod_lp, weight_lp,
                 out=np.zeros_like(demod_lp),
                 where=weight_lp > 1e-3,
             )
 
-    # Step 5: extract wrapped phase
+    # Step 6: extract wrapped phase
     # Note: np.angle() is amplitude-insensitive (phase of z doesn't depend
     # on |z|), so envelope normalization is unnecessary here. Illumination
     # gradients affect the input amplitude before demodulation but cannot
@@ -2682,6 +2740,38 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 589.3,
             "analysis frame): spatial resolution is limited and PV near "
             "aperture boundaries may be underestimated."
         )
+
+    # Carrier vs. the bandwidth the wavefront actually occupies. Demodulation
+    # separates the surface from the background by frequency, so it only works
+    # while the surface's own sidebands stay clear of DC. ``work_unwrapped`` is
+    # the residual phase *after* the carrier was demodulated away, so
+    # |∇φ| / 2π is exactly how far the local fringe frequency departs from the
+    # carrier, in cycles/px. As that approaches the carrier itself the fringes
+    # locally flatten out and then reverse, the sidebands fold through DC, and
+    # the sign of the surface slope stops being recoverable from one exposure —
+    # no amount of DC rejection fixes that. Say so rather than returning
+    # confident-looking detail that is really fold-over.
+    carrier_cpp = 0.0
+    _period_px = float(carrier_info.get("fringe_period_px", 0.0) or 0.0)
+    if math.isfinite(_period_px) and _period_px > 0:
+        carrier_cpp = 1.0 / _period_px
+    _bw_mask = cv2.erode(work_mask.astype(np.uint8),
+                         np.ones((3, 3), np.uint8)).astype(bool)
+    if carrier_cpp > 0 and _bw_mask.any():
+        _gy, _gx = np.gradient(work_unwrapped)
+        _dev = np.hypot(_gy, _gx) / (2.0 * math.pi)
+        wavefront_bw = float(np.percentile(_dev[_bw_mask], 99.0))
+        # Fold-over starts in earnest at 100% of the carrier; warn a little
+        # ahead of it. A 320 nm astigmatism across five fringes sits near 50%
+        # and is still recovered faithfully, so the threshold has to clear that.
+        if wavefront_bw > 0.8 * carrier_cpp:
+            analysis_warnings.append(
+                f"Carrier is marginal for the wavefront slope present: the "
+                f"local fringe frequency departs from the carrier by up to "
+                f"{wavefront_bw / carrier_cpp:.0%} of the carrier itself, so "
+                f"the surface sidebands run into DC. Add tilt (more fringes "
+                f"across the aperture) until the fringes stay monotonic."
+            )
 
     return {
         "surface_map": surface_map_b64,

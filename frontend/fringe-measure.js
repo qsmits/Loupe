@@ -401,18 +401,21 @@ export function computeAreaStats(p1, p2) {
 // Uncertainty: the ±σ we report is an "effective-N" standard error of the
 // mean, derived from the region RMS and the number of *independent* grid
 // cells (not the raw cell count). The demodulation LPF correlates neighbor
-// pixels over roughly π·(0.5·fringe_period_px)² of original-image area, so
-// the naive RMS/√N would be wildly over-optimistic. We divide N by the
-// number of grid cells per LPF correlation area to get an effective N,
-// then compute σ_mean = RMS / √N_eff and σ_step = √(σ_A² + σ_B²).
+// pixels over roughly π·(LPF_SIGMA_FACTOR_AUTO·fringe_period_px)² of
+// original-image area, so the naive RMS/√N would be wildly over-optimistic.
+// We divide N by the number of grid cells per LPF correlation area to get an
+// effective N, then compute σ_mean = RMS / √N_eff and σ_step = √(σ_A² + σ_B²).
 // This is still just a scatter-based indicator — it doesn't include
 // carrier-estimation bias, unwrap errors, or systematic tilt/curvature.
 
 const STEP_COLORS = ["#00d4ff", "#ff9944"];
 
 // Gaussian LPF σ used by the backend demodulator (in original-image pixels)
-// is roughly `lpf_sigma_frac` × fringe_period_px. The optical-flat auto
-// value is 0.5; M2.5 lets the user override via the analyze body.
+// is roughly `lpf_sigma_frac` × fringe_period_px. The optical-flat auto value
+// is 0.18 — deliberately narrow in image space (i.e. a wide frequency
+// passband) so localized air-gap detail survives; the backend rejects the
+// background and the conjugate sideband before demodulating instead of
+// relying on filter width. M2.5 lets the user override via the analyze body.
 //
 // M2.6 — anisotropic LPF preserves correlation-area geometric mean, so the
 // isotropic-equivalent area (π·σ_iso²) is the right input here.
@@ -612,7 +615,7 @@ export function updateStepReadout() {
     warnHtml = `  <span style="background:#ff453a;color:#fff;font-weight:700;padding:2px 6px;border-radius:3px;margin-left:6px" title="Single-shot single-wavelength interferometry cannot distinguish this from a step of step \u00b1 n\u00b7\u03bb/2. The reported number is whatever the 2D unwrap happened to produce; it is not traceable to the true step.">\u26a0 |step| &gt; \u03bb/4 (${quarterWl.toFixed(0)} nm) \u2014 may be aliased by 2\u03c0 ambiguity</span>`;
   }
 
-  const aSemTitle = `Effective-N SEM: RMS / \u221aN_eff where N_eff corrects for the demodulation LPF (\u03c3 \u2248 0.5\u00b7fringe_period in auto mode) correlating neighbor cells. Scatter-only; excludes carrier/unwrap/tilt bias.`;
+  const aSemTitle = `Effective-N SEM: RMS / \u221aN_eff where N_eff corrects for the demodulation LPF (\u03c3 \u2248 0.18\u00b7fringe_period in auto mode) correlating neighbor cells. Scatter-only; excludes carrier/unwrap/tilt bias.`;
   const bSemTitle = aSemTitle;
   const stepSemTitle = `Effective-N uncertainty: \u221a(\u03c3_A\u00b2 + \u03c3_B\u00b2), each using RMS / \u221aN_eff. Scatter-only \u2014 not a full metrology uncertainty.`;
 
