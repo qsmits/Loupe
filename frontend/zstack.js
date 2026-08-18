@@ -698,7 +698,7 @@ function computeRoughness1d(z) {
   let Rsk = 0, Rku = 0;
   if (Rq > 1e-15) {
     Rsk = (s3 / n) / (Rq ** 3);
-    Rku = (s4 / n) / (Rq ** 4) - 3.0;
+    Rku = (s4 / n) / (Rq ** 4);
   }
   return { Ra, Rq, Rp, Rv, Rt, Rz: Rt, Rsk, Rku, count: n };
 }

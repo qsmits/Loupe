@@ -23,6 +23,7 @@ from backend.vision.heightmap_analysis import (
     compute_psd_2d,
     compute_roughness_1d,
     compute_roughness_2d,
+    compute_texture_params,
     detrend as detrend_height_map,
     fit_plane,
     fit_poly2,
@@ -30,6 +31,48 @@ from backend.vision.heightmap_analysis import (
     gaussian_filter_surface,
     sample_profile,
 )
+
+
+def test_profile_kurtosis_uses_plain_fourth_moment():
+    z = np.tile(np.array([-1.0, 1.0]), 1000)
+    assert compute_roughness_1d(z)["Rku"] == pytest.approx(1.0)
+
+
+def test_gaussian_cutoff_has_half_amplitude_transfer():
+    cutoff = 2.0
+    spacing = 0.01
+    x = np.arange(0.0, 20.0, spacing)
+    signal = np.cos(2 * np.pi * x / cutoff).astype(np.float32)
+    filtered = gaussian_filter_profile(signal, cutoff, spacing)
+    # Ignore finite-kernel boundary handling and project onto the source tone.
+    interior = slice(400, -400)
+    gain = (np.dot(filtered[interior], signal[interior]) /
+            np.dot(signal[interior], signal[interior]))
+    assert gain == pytest.approx(0.5, abs=0.03)
+
+
+def test_bearing_core_depth_depends_on_distribution():
+    ramp = compute_bearing_ratio(np.linspace(0.0, 100.0, 10000))
+    normal = compute_bearing_ratio(
+        np.random.default_rng(7).normal(size=10000)
+    )
+    assert ramp["Sk"] / 100.0 != pytest.approx(
+        normal["Sk"] / np.ptp(np.random.default_rng(7).normal(size=10000)),
+        abs=0.05,
+    )
+    assert ramp["Spk"] < 100.0 - ramp["Sk"]
+
+
+def test_texture_direction_is_cartesian_y_up():
+    h = w = 256
+    yy, xx = np.mgrid[:h, :w]
+    theta = np.deg2rad(30.0)
+    y_up = -(yy - h / 2)
+    x_right = xx - w / 2
+    normal = -np.sin(theta) * x_right + np.cos(theta) * y_up
+    surface = np.cos(2 * np.pi * normal / 24.0)
+    std = compute_texture_params(surface, 1.0)["Std"]
+    assert std == pytest.approx(30.0, abs=2.0)
 
 
 def _make_textured(h: int, w: int, seed: int) -> np.ndarray:

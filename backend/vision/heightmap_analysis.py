@@ -154,7 +154,9 @@ def compute_roughness_1d(z: np.ndarray) -> dict:
     sigma = Rq
     if sigma > 1e-15:
         Rsk = float((d ** 3).mean() / (sigma ** 3))
-        Rku = float((d ** 4).mean() / (sigma ** 4) - 3.0)
+        # ISO profile kurtosis is the standardized fourth moment (Gaussian=3),
+        # not excess kurtosis (Gaussian=0).
+        Rku = float((d ** 4).mean() / (sigma ** 4))
     else:
         Rsk = 0.0
         Rku = 0.0
@@ -207,12 +209,12 @@ def gaussian_filter_surface(
     """ISO 25178-3 Gaussian filter on a 2D height map.
 
     The Gaussian transfer function at the cutoff wavelength λc is 50%,
-    which corresponds to σ = λc / (2π × √(2 ln 2)) ≈ λc / 2.9477.
+    which corresponds to σ = λc × √(2 ln 2) / (2π).
     ``spacing_mm`` is the lateral distance per pixel (1 / px_per_mm).
     """
     if cutoff_mm <= 0 or spacing_mm <= 0:
         return z.copy()
-    sigma_mm = cutoff_mm / (2.0 * np.pi * np.sqrt(2.0 * np.log(2.0)))
+    sigma_mm = cutoff_mm * np.sqrt(2.0 * np.log(2.0)) / (2.0 * np.pi)
     sigma_px = sigma_mm / spacing_mm
     if sigma_px < 0.5:
         return z.copy()
@@ -227,7 +229,7 @@ def gaussian_filter_profile(
     """ISO 25178-3 Gaussian filter on a 1D profile array."""
     if cutoff_mm <= 0 or spacing_mm <= 0:
         return z.copy()
-    sigma_mm = cutoff_mm / (2.0 * np.pi * np.sqrt(2.0 * np.log(2.0)))
+    sigma_mm = cutoff_mm * np.sqrt(2.0 * np.log(2.0)) / (2.0 * np.pi)
     sigma_px = sigma_mm / spacing_mm
     if sigma_px < 0.5:
         return z.copy()
@@ -322,23 +324,32 @@ def compute_bearing_ratio(
             "Sk": 0.0,
             "Svk": 0.0,
         }
-    heights = np.linspace(z_max, z_min, n_levels)
-    ratios = np.array([float(np.count_nonzero(z >= h) / z.size) for h in heights])
+    # Represent height as a function of material ratio. The legacy
+    # implementation sampled uniformly in height, then mistakenly treated a
+    # 40% *height-index* window as a 40% material-ratio window, forcing
+    # Sk = 0.4*PV for every surface.
+    ratios = np.linspace(0.0, 1.0, n_levels)
+    heights = np.quantile(z, 1.0 - ratios, method="linear")
 
     # ISO 13565-2 secant method for Spk/Sk/Svk:
     # Find the 40% secant line that has the smallest slope (flattest part
     # of the bearing curve = core roughness). The secant spans 40% of the
     # material ratio axis.
     best_slope = np.inf
+    best_center_distance = np.inf
     best_i = 0
-    window = max(1, int(0.4 * n_levels))
+    window = max(1, int(round(0.4 * (n_levels - 1))))
     for i in range(n_levels - window):
         dh = heights[i] - heights[i + window]
         dr = ratios[i + window] - ratios[i]
         if dr > 0:
             slope = abs(dh / dr)
-            if slope < best_slope:
+            center_distance = abs(0.5 * (ratios[i] + ratios[i + window]) - 0.5)
+            if (slope < best_slope - 1e-12 or
+                    (abs(slope - best_slope) <= 1e-12 and
+                     center_distance < best_center_distance)):
                 best_slope = slope
+                best_center_distance = center_distance
                 best_i = i
     # Core band
     smr1_idx = best_i
@@ -348,10 +359,24 @@ def compute_bearing_ratio(
     core_top = float(heights[smr1_idx])
     core_bot = float(heights[smr2_idx])
     Sk = core_top - core_bot
-    # Peak height: area above Smr1 line
-    Spk = float(heights[0]) - core_top
-    # Valley depth: area below Smr2 line
-    Svk = core_bot - float(heights[-1])
+    # Equivalent-triangle reduced peak/valley heights. Preserve the actual
+    # material area outside the core, rather than returning raw vertical
+    # extents that are dominated by single extrema.
+    if Smr1 > 1e-12:
+        peak_excess = np.maximum(heights[:smr1_idx + 1] - core_top, 0.0)
+        peak_area = float(np.trapezoid(peak_excess,
+                                       ratios[:smr1_idx + 1]))
+        Spk = 2.0 * peak_area / Smr1
+    else:
+        Spk = 0.0
+    valley_base = 1.0 - Smr2
+    if valley_base > 1e-12:
+        valley_excess = np.maximum(core_bot - heights[smr2_idx:], 0.0)
+        valley_area = float(np.trapezoid(valley_excess,
+                                         ratios[smr2_idx:]))
+        Svk = 2.0 * valley_area / valley_base
+    else:
+        Svk = 0.0
 
     return {
         "heights": [round(float(h), 9) for h in heights],
@@ -516,7 +541,9 @@ def compute_texture_params(
     # strongest.
     slowest_angle = max(decay_dists, key=lambda x: x[0])[1]
     # Convert to degrees (0–180, measured from X axis)
-    Std = float(np.degrees(slowest_angle)) % 180.0
+    # Convert the image-row (Y-down) sampling direction to Cartesian Y-up at
+    # the reporting boundary.
+    Std = float(-np.degrees(slowest_angle)) % 180.0
 
     return {
         "Sal": round(Sal, 6),
