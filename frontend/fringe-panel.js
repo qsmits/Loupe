@@ -527,7 +527,11 @@ async function recomputeAverage() {
   }
   const avgData = await resp.json();
   fr.lastResult = { ...avgData };
-  mergeReanalyzeResult(avgData);
+  // Task 12: this is the wholesale-replace path -- fr.lastResult was just
+  // set fresh from avgData above, a genuinely different derived result
+  // from doReanalyze/invertWavefront's same-measurement merges. Let an
+  // absent trust field clear rather than inherit anything stale.
+  mergeReanalyzeResult(avgData, { clearTrust: true });
   // Task 9: reapply an active invert — the server-computed average was
   // never inverted.
   if (fr.avgInverted) {
@@ -606,7 +610,7 @@ async function addToAverage() {
   }
 }
 
-function resetAverage() {
+export function resetAverage() {
   fr.avgCaptures = [];
   fr.avgSurfaceHeight = 0;
   fr.avgSurfaceWidth = 0;

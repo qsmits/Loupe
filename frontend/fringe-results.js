@@ -5,7 +5,7 @@
 
 import { fr, $ } from './fringe.js';
 import { apiFetch } from './api.js';
-import { getWavelength, getMaskThreshold, getLpfSigmaFrac, getDcMarginOverride, getCorrect2piJumps, getCalibrationPayload, getAperturePayload } from './fringe-panel.js';
+import { getWavelength, getMaskThreshold, getLpfSigmaFrac, getDcMarginOverride, getCorrect2piJumps, getCalibrationPayload, getAperturePayload, resetAverage } from './fringe-panel.js';
 import { getActiveRecipe, recipeToMaskPolygons } from './fringe-geometry.js';
 import { drawPeakValleyMarkers, resetSurfaceZoom, refreshLastMeasurement } from './fringe-measure.js';
 import {
@@ -666,6 +666,10 @@ function renderResults(data) {
     if (!hasTrust && trustedOnlyEl.checked) {
       trustedOnlyEl.checked = false;
       fr.useTrustedOnly = false;
+      // Keep a committed Step/Area readout's "(trusted)" tag and filtered
+      // numbers in lock-step with the toggle we just disabled -- only the
+      // checkbox's own change handler called this otherwise.
+      refreshLastMeasurement();
     }
   }
 
@@ -1520,8 +1524,18 @@ export function wavefrontView(result) {
 /**
  * Merge reanalyze API response fields into fr.lastResult.
  * Used by doReanalyze, invertWavefront, and recomputeAverage (in fringe-panel.js).
+ *
+ * `clearTrust` controls whether an absent trust field in `data` clears the
+ * corresponding field on fr.lastResult (see comment below). Callers that
+ * merge into the existing fr.lastResult (doReanalyze, invertWavefront /
+ * applySignFlipToLastResult) leave this false by default: the surviving
+ * trust data is from the same measurement (a Zernike re-projection or sign
+ * flip changes neither the aperture nor grid_rows/cols), so a reanalyze
+ * response that doesn't recompute trust must not erase it. Callers that
+ * wholesale-replace fr.lastResult with a genuinely different derived result
+ * (recomputeAverage's multi-capture average) pass `clearTrust: true`.
  */
-export function mergeReanalyzeResult(data) {
+export function mergeReanalyzeResult(data, { clearTrust = false } = {}) {
   for (const key of [
     "surface_map", "zernike_chart", "profile_x", "profile_y",
     "coefficients", "coefficient_names", "zernike_norm_weights", "zernike_rms_nm",
@@ -1537,16 +1551,22 @@ export function mergeReanalyzeResult(data) {
   ]) {
     if (data[key] !== undefined) fr.lastResult[key] = data[key];
   }
-  // Task 8 follow-up: trust fields are sometimes genuinely absent -- a
-  // Zernike-coefficient reanalyze/invert never computes trust, and a
-  // derived subtract/average may omit it honestly when source trust is
-  // unknown. Unlike every other key in the loop above, `fr.lastResult`
-  // here is NOT first replaced wholesale by the caller (doReanalyze /
-  // invertWavefront merge straight into the existing object), so an
-  // absent trust field would otherwise leave whatever stale value a
-  // previous, unrelated result left behind. Clear it explicitly.
-  if (data.trusted_area_pct === undefined) delete fr.lastResult.trusted_area_pct;
-  if (data.trusted_mask_grid === undefined) delete fr.lastResult.trusted_mask_grid;
+  // Task 8 follow-up, scoped by Task 12: trust fields are sometimes
+  // genuinely absent -- a Zernike-coefficient reanalyze/invert never
+  // computes trust, and a derived subtract/average may omit it honestly
+  // when source trust is unknown. When the caller has just wholesale
+  // -replaced fr.lastResult with such a derived result (clearTrust: true),
+  // an absent trust field must not inherit whatever stale value a
+  // previous, unrelated result left behind -- clear it explicitly. But
+  // doReanalyze / invertWavefront merge straight into the existing
+  // fr.lastResult for the SAME measurement (a coefficient reanalyze or
+  // sign flip changes neither the aperture nor grid_rows/cols), so for
+  // those callers (clearTrust: false, the default) the surviving trust
+  // data is still valid and must be left alone.
+  if (clearTrust) {
+    if (data.trusted_area_pct === undefined) delete fr.lastResult.trusted_area_pct;
+    if (data.trusted_mask_grid === undefined) delete fr.lastResult.trusted_mask_grid;
+  }
 
   // Refresh cached typed arrays so the Step tool and 3D view see the
   // post-subtraction surface, not the stale pre-reanalyze grid. M1.3:
@@ -2056,6 +2076,11 @@ async function clearSession() {
       return;
     }
     fr.selectedCaptureId = null;
+    // The running-average source captures just got wiped server-side --
+    // drop the dangling ids (and any active invert flag) so a later
+    // subtract-pill/invert toggle doesn't POST /fringe/average against
+    // captures that 404. Also clears and re-renders the averaging log.
+    resetAverage();
   } catch (e) {
     console.warn("Clear session error:", e);
   }
