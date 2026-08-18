@@ -108,6 +108,55 @@ class TestPhysicsCorrections:
         assert any("region" in str(m).lower() for m in result.get("warnings", [])), \
             result.get("warnings")
 
+    def test_carrier_tilted_the_other_way_measures_the_same(self):
+        """A capture and its mirror image must measure the same specimen.
+
+        ``_find_carrier`` pins ``fy >= 0`` but leaves ``fx`` free, so fringes
+        tilting one way give ``fx > 0`` and the other way ``fx < 0``. Nothing
+        downstream is entitled to care -- it is the same part, photographed
+        with the wedge the other way round, which is a coin flip in practice.
+
+        This pins the frame-continuation shift in ``_carrier_extend`` being
+        derived for both signs instead of assuming ``fx > 0``. Under that
+        assumption the shift came out negative for a left-tilted carrier, so
+        roughly 40 of ~150 continuation columns collapsed onto clip-replicated
+        edge padding, and this fixture's 320 nm of astigmatism came back as
+        560.6 nm (+75.2%) at -30 deg while its +30 deg mirror measured
+        -2.7%. Every
+        sweep in the task that introduced it used positive-fx carriers, which
+        is exactly why it survived to be caught in review.
+        """
+        h = w = 256
+        yy, xx = np.mgrid[:h, :w]
+        xn = (xx - 127.5) / 127.5
+        yn = (yy - 127.5) / 127.5
+        # Even in x, so the mirrored capture describes an identical specimen.
+        truth_nm = 160.0 * (xn * xn - yn * yn)
+        wavelength_nm = 589.3
+        pv_by_angle = {}
+        for angle_deg in (30.0, 150.0):
+            a = math.radians(angle_deg)
+            carrier = 2 * np.pi * 5.0 * (xx * math.cos(a)
+                                         + yy * math.sin(a)) / w
+            image = np.clip(
+                128 + 105 * np.cos(carrier + 4 * np.pi * truth_nm / wavelength_nm),
+                0, 255,
+            ).astype(np.uint8)
+            result = analyze_interferogram(
+                image, wavelength_nm=wavelength_nm, subtract_terms=[1],
+                use_full_mask=True, correct_2pi_jumps=False,
+            )
+            pv_by_angle[angle_deg] = result["pv_nm"]
+        # The fx < 0 branch has to hold the same tolerance as fx > 0 does.
+        for angle_deg, pv in pv_by_angle.items():
+            assert abs(pv / 320.0 - 1.0) < 0.10, \
+                f"{angle_deg:.0f} deg carrier reported {pv:.1f} nm for 320 nm"
+        # And the two must agree with each other, which is the real invariant:
+        # a tolerance both happen to sit inside would not catch a sign bug that
+        # merely degrades one branch.
+        assert abs(pv_by_angle[150.0] - pv_by_angle[30.0]) < 0.05 * 320.0, \
+            f"mirrored captures disagree: {pv_by_angle}"
+
     def test_default_lpf_avoids_large_five_fringe_pv_bias(self):
         h = w = 256
         yy, xx = np.mgrid[:h, :w]
@@ -150,7 +199,7 @@ class TestPhysicsCorrections:
                "the two: the rim residual is 0.74-23.34 nm before and "
                "1.35-10.31 nm after over counts 5.0-13.0 -- every "
                "non-integer count improves, by up to 12x, and every integer "
-               "count regresses 2-3.6x but stays under 3 nm -- while the "
+               "count regresses 1.7-3.7x but stays under 3 nm -- while the "
                "auto-detected "
                "carrier sits up to 0.088 cycles/frame off, and a d-cycle "
                "error is a 2*pi*d phase ramp the demodulator hands to the "

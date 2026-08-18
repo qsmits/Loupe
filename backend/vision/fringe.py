@@ -1327,13 +1327,23 @@ def _carrier_extend(image: np.ndarray, fy: float, fx: float,
     320 nm of figure, before -> after, over 18 shape/count/angle
     combinations: better in 13 (astigmatism 8.5 fringes at 30 deg 23.9 ->
     11.9; sphere at 0 deg 34.2 -> 8.4), unchanged in 1, worse in 4, worst
-    case astigmatism at 5.37 fringes / 45 deg 30.7 -> 118.4. Interior max
-    |err| and PV improved in all 18. Raising the low-pass degeneracy floor to
-    0.20 halves the worst corner (118 -> 67) but is not a fix: it disables
-    the first-order fit at every legitimate corner and trades the regression
-    onto other geometries (decentred sphere at 0 deg 25.5 -> 43.5, and its PV
-    with it), so the floor stays below any real corner. Tiling the last
-    carrier period instead measures worse still (corner max 158).
+    case astigmatism at 5.37 fringes / 45 deg 30.7 -> 118.4. PV improved in
+    all 18 and the interior stayed sub-3 nm throughout, though how many of
+    the 18 interiors strictly improve is metric- and shape-dependent: an
+    independent re-measurement with its own shape definitions had 12
+    improving and 6 rising slightly, worst 0.72 -> 1.11 nm. Raising the
+    low-pass degeneracy floor to 0.20 halves the worst corner (118 -> 67) but
+    is not a fix: it disables the first-order fit at every legitimate corner
+    and trades the regression onto other geometries (decentred sphere at
+    0 deg 25.5 -> 43.5, and its PV with it), so the floor stays below any
+    real corner. Tiling the last carrier period instead measures worse still
+    (corner max 158).
+
+    This is reachable on the default path, not only under ``use_full_mask``.
+    ``create_fringe_mask`` does discard the frame corners when there is an
+    aperture to find (0.0% of them survive on a round, vignetted aperture),
+    but a uniformly illuminated or gently vignetted frame takes its
+    "full-frame interferogram" branch and keeps 100% of them.
     """
     h, w = image.shape
     pad_y = int(max(0, min(pad_y, h - 2)))
@@ -1344,36 +1354,50 @@ def _carrier_extend(image: np.ndarray, fy: float, fx: float,
     def _shift(freq: float, n: int) -> float:
         """Sampling offset that puts the continuation at the right carrier phase.
 
-        ``frac(f·n)/f`` on its own is a trap: it is discontinuous at integer
-        ``f·n``, and a sub-pixel carrier estimate lands just *below* an integer
-        about as often as just above. At five fringes across 256 px
-        ``_find_carrier`` returns f·w = 4.999896, and the naive form then asks
-        for a 51.196 px shift — a whole fringe period — to correct a phase
-        error of 0.0001 cycles. The phase would be right and the continuation
-        would still be wrong, because it would be lifted from a block of the
-        frame one full period further in, whose *surface* is not the surface
-        just past the edge. Measured on a 320 nm astigmatism (full-frame
-        max |err|, auto carrier): 57.6 nm at 5 fringes, 38.4 at 8, 26.8 at 12,
-        against 24.6 / 12.8 / 8.7 once corrected.
+        The continuation must satisfy ``f·Δ ≡ f·n (mod 1)``, so with
+        ``q = frac(f·n)`` the whole family is ``Δ = (q + k)/f`` for integer
+        ``k`` — every member phase-correct, so the choice is free and is made
+        on where it lands. The right pad samples ``x' = t + Δ``, and a
+        negative ``Δ`` runs off the low end of the frame, where the clip below
+        substitutes the edge value; that is the ``edge`` padding tabulated
+        above as one of the worst rules. So take the smallest **non-negative**
+        member, which is ``q/f`` when ``f > 0`` and ``(q − 1)/f`` when
+        ``f < 0``. Both land in ``[0, period]``.
 
-        Shifting by a whole period costs nothing (the phase is unchanged), so
-        take the representative nearest zero — but only while it stays on the
-        grid. A negative offset samples off the low end of the frame and the
-        clip below then replaces real columns with the edge value, which is
-        the ``edge`` padding whose failure is tabulated above. So flip to the
-        negative representative only when it is narrower than one sample,
-        where the clip costs a fraction of a pixel. Taking the nearest
-        representative unconditionally instead wrecks the half-period cases it
-        has no business touching: at 8.5 fringes it asks for −13.8 px, and the
-        astigmatism error goes from −5.35% to +10.68% — outside the 10% gate —
-        with flat-part PV 15.6 -> 83.8 nm.
+        ``_find_carrier`` pins ``fy ≥ 0`` but leaves ``fx`` free, so ``f < 0``
+        is not exotic — it is every capture whose fringes tilt the other way.
+        Writing ``q/f`` for both signs (as this did until the sign was
+        measured rather than assumed) gives ``Δ ∈ (−period, 0]`` for negative
+        carriers, so ~40 of ~150 pad columns became clip-replicated edge
+        padding: at 5 fringes on a −30° carrier a 320 nm astigmatism was
+        reported as 549 nm, +71.6%.
+
+        Second, ``frac`` is discontinuous at integer ``f·n``, and a sub-pixel
+        carrier estimate lands just below an integer about as often as just
+        above. At five fringes across 256 px ``_find_carrier`` returns
+        f·w = 4.999896, so the smallest non-negative member is 51.196 px — a
+        whole fringe period — to correct a phase error of 0.0001 cycles. The
+        phase is right and the continuation is still wrong, lifted from a
+        block one period further in whose *surface* is not the surface just
+        past the edge. Measured on a 320 nm astigmatism (full-frame max |err|,
+        auto carrier): 57.6 nm at 5 fringes, 38.4 at 8, 26.8 at 12, against
+        24.6 / 12.8 / 8.7 once corrected.
+
+        So step down one period when that leaves an offset narrower than a
+        single sample, where the clip costs a fraction of a pixel. Stepping
+        down whenever it merely shortens the offset instead wrecks the
+        half-period cases it has no business touching: at 8.5 fringes it asks
+        for −13.8 px and the astigmatism error goes −5.35% → +10.68%, outside
+        the 10% gate, with flat-part PV 15.6 → 83.8 nm.
         """
         if abs(freq) < 1e-12:
             return 0.0
-        r = (freq * n) % 1.0
-        if (1.0 - r) < abs(freq):   # negative representative is sub-sample
-            r -= 1.0
-        return r / freq
+        period = 1.0 / abs(freq)
+        q = (freq * n) % 1.0
+        offset = q / freq if freq > 0.0 else (q - 1.0) / freq
+        if offset > period - 1.0:      # the step down is sub-sample
+            offset -= period
+        return offset
 
     dy = _shift(fy, h)
     dx = _shift(fx, w)
