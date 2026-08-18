@@ -22,7 +22,7 @@ import { loadSpcParts, loadSpcFeatures, loadSpcData } from './spc.js';
 import { initLensCal, openLensCalDialog } from './lens-cal.js';
 import { initTiltCal, openTiltCalDialog, hasPerspectiveCorrection, undoPerspectiveCorrection } from './tilt-cal.js';
 import { initCalProfiles, openCalProfiles } from './cal-profiles.js';
-import { isBrowserCameraActive, startBrowserCamera, stopBrowserCamera } from './browser-camera.js';
+import { isBrowserCameraActive, startBrowserCamera, stopBrowserCamera, adoptBrowserCameraSize } from './browser-camera.js';
 import { finalizeArcFit } from './tools.js';
 import { initZstack } from './zstack.js';
 import { initStitch } from './stitch.js';
@@ -295,9 +295,11 @@ document.getElementById("btn-freeze").addEventListener("click", async () => {
     // every live measurement silently at the wrong scale. Re-read now that
     // state.frozen is false. Deliberately last: its adopt branch runs its own
     // resizeCanvas + fitToWindow, so the final fit is against the camera's
-    // real dimensions. Only for the server camera — hosted has none, and the
-    // browser camera already reports its own dimensions.
+    // real dimensions. Only for the server camera — hosted has none. The
+    // browser camera reports its own dimensions via adoptBrowserCameraSize,
+    // which applies the same never-adopt-while-frozen guard.
     if (!state._hosted && !isBrowserCameraActive()) await loadCameraInfo();
+    else if (isBrowserCameraActive()) adoptBrowserCameraSize();
   } else {
     await doFreeze();
   }

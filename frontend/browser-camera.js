@@ -1,6 +1,6 @@
 import { state } from './state.js';
 import { apiFetch } from './api.js';
-import { setImageSize, imageWidth, imageHeight, fitToWindow } from './viewport.js';
+import { setImageSize, imageWidth, imageHeight, fitToWindow, shouldAdoptCameraImageSize } from './viewport.js';
 import { img, showStatus, resizeCanvas, canvas, redraw } from './render.js';
 import { updateDropOverlay } from './sidebar.js';
 
@@ -8,6 +8,23 @@ const videoEl = document.getElementById("browser-cam-video");
 
 export function isBrowserCameraActive() {
   return state.browserCamera?.active === true;
+}
+
+/** Adopt the video element's current dimensions as the workspace image size,
+ * gated by the same frozen-image guard as the server camera path
+ * (shouldAdoptCameraImageSize, c02cec4) — a frozen image owns the coordinate
+ * frame and must never be restretched under its annotations. Called both
+ * right after a stream starts and from the freeze button's unfreeze branch,
+ * which deliberately skips loadCameraInfo() for browser cameras (they
+ * already report their own dimensions via this function). No-op when the
+ * video's dimensions already match, or when frozen. */
+export function adoptBrowserCameraSize() {
+  if (!shouldAdoptCameraImageSize(videoEl.videoWidth, videoEl.videoHeight, imageWidth, imageHeight, state.frozen)) return;
+  setImageSize(videoEl.videoWidth, videoEl.videoHeight);
+  resizeCanvas();
+  const rect = canvas.getBoundingClientRect();
+  fitToWindow(rect.width, rect.height);
+  redraw();
 }
 
 // Enumerate video input devices and store in state.browserCameraDevices.
@@ -46,14 +63,8 @@ export async function startBrowserCamera(deviceId = null) {
     videoEl.hidden = false;
     img.style.display = "none";
     document.body.classList.remove("no-camera");
-    const dimsChanged = videoEl.videoWidth !== imageWidth || videoEl.videoHeight !== imageHeight;
-    setImageSize(videoEl.videoWidth, videoEl.videoHeight);
+    adoptBrowserCameraSize();
     resizeCanvas();
-    if (dimsChanged) {
-      const rect = canvas.getBoundingClientRect();
-      fitToWindow(rect.width, rect.height);
-      redraw();
-    }
     const label = stream.getVideoTracks()[0]?.label || "Browser camera";
     showStatus(`${label} active`);
     updateDropOverlay();
