@@ -310,7 +310,9 @@ def compute_bearing_ratio(
     Returns heights from top to bottom and the cumulative material ratio
     at each height (0 = no material above, 1 = all material above).
     Also returns Smr1, Smr2 (material ratios at the core roughness
-    boundaries) using the ISO 13565-2 secant method.
+    boundaries) per ISO 13565-2: the equivalent line through the flattest
+    40% span, extrapolated to two fixed reference heights at Mr=0%/100%,
+    with Smr1/Smr2 read off the actual curve at those heights.
     """
     z = np.asarray(z, dtype=np.float64).ravel()
     z_min, z_max = float(z.min()), float(z.max())
@@ -338,9 +340,15 @@ def compute_bearing_ratio(
     # 13565-2 defines Sk from the "equivalent straight line" through that
     # secant EXTRAPOLATED to Mr = 0% and Mr = 100% (2.5x the raw 40% secant
     # drop, since 1 / 0.4 = 2.5), not the secant's own two-point drop.
-    # Smr1/Smr2 are the material ratios where that extrapolated line meets
-    # the actual curve -- which is generally outside the secant's own
-    # window, not the window's endpoints.
+    #
+    # The line's job ends there: extrapolating it to Mr=0%/100% produces two
+    # fixed reference HEIGHTS, h1 and h2. Smr1/Smr2 are then where
+    # *horizontal* lines at h1/h2 cross the actual bearing curve -- NOT
+    # where the sloped equivalent line itself crosses the curve. (A DIN
+    # 4776/ISO 13565-2 leaflet states this explicitly: Rpk is measured down
+    # to "the intersection line of the surface ratio Mr1", i.e. a fixed
+    # horizontal reference, not a sloped one.) Since the bearing curve
+    # height(ratio) is non-increasing, each horizontal crossing is unique.
     best_slope = np.inf
     best_center_distance = np.inf
     best_i = 0
@@ -369,41 +377,22 @@ def compute_bearing_ratio(
     def _line(r):
         return slope * r + intercept
 
-    Sk = float(_line(0.0) - _line(1.0))
+    h1 = float(_line(0.0))
+    h2 = float(_line(1.0))
+    Sk = h1 - h2
 
-    # Smr1/Smr2: search outward from the core window for where the actual
-    # curve departs the extrapolated line -- not the window's own edges,
-    # which only coincide with the line by construction and needn't be
-    # where the real curve actually leaves it.
-    diffs = heights - _line(ratios)
-    tol = max(1e-9, 1e-6 * (z_max - z_min))
+    # Smr1/Smr2: the material ratios where *horizontal* lines at the fixed
+    # reference heights h1/h2 cross the actual (non-increasing) curve.
+    # np.interp needs its x-array ascending, so flip both heights and
+    # ratios together (they stay index-paired) before interpolating; targets
+    # outside the curve's own height range clamp to Mr=0%/100% respectively.
+    heights_asc = heights[::-1]
+    ratios_desc = ratios[::-1]
+    Smr1 = float(np.clip(np.interp(h1, heights_asc, ratios_desc), 0.0, 1.0))
+    Smr2 = float(np.clip(np.interp(h2, heights_asc, ratios_desc), 0.0, 1.0))
 
-    j = idx_lo
-    while j > 0 and diffs[j] <= tol:
-        j -= 1
-    if diffs[j] <= tol:
-        Smr1 = 0.0
-    else:
-        j2 = min(j + 1, idx_lo)
-        d1, d2 = diffs[j], diffs[j2]
-        r1, r2 = ratios[j], ratios[j2]
-        Smr1 = r1 if d1 == d2 else r1 + (d1 / (d1 - d2)) * (r2 - r1)
-        Smr1 = float(np.clip(Smr1, 0.0, ratios[idx_lo]))
-
-    k = idx_hi
-    while k < n_levels - 1 and diffs[k] >= -tol:
-        k += 1
-    if diffs[k] >= -tol:
-        Smr2 = 1.0
-    else:
-        k2 = max(k - 1, idx_hi)
-        d1, d2 = diffs[k2], diffs[k]
-        r1, r2 = ratios[k2], ratios[k]
-        Smr2 = r2 if d1 == d2 else r1 + (d1 / (d1 - d2)) * (r2 - r1)
-        Smr2 = float(np.clip(Smr2, ratios[idx_hi], 1.0))
-
-    core_top = float(_line(Smr1))
-    core_bot = float(_line(Smr2))
+    core_top = h1
+    core_bot = h2
 
     def _area_above(level, upto_ratio):
         mask = ratios <= upto_ratio
@@ -423,7 +412,8 @@ def compute_bearing_ratio(
 
     # Equivalent-triangle reduced peak/valley heights (Spk = 2*A1/Smr1,
     # Svk = 2*A2/(1-Smr2) per ISO 13565-2), using the areas between the
-    # actual curve and the core level, out to where the line meets the curve.
+    # actual curve and the fixed reference height (h1/h2), out to where
+    # that horizontal line meets the curve (Smr1/Smr2).
     if Smr1 > 1e-12:
         Spk = 2.0 * _area_above(core_top, Smr1) / Smr1
     else:

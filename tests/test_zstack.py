@@ -840,16 +840,38 @@ def test_linear_bearing_curve_matches_iso_13565_2():
 
 def test_bearing_curve_smr1_smr2_at_core_boundary():
     """A curve with a distinct steep peak, flat core, and steep valley pins
-    Smr1/Smr2 at the exact corners where the core's equivalent line departs
-    the real curve -- not at the 40% window's own endpoints, and not at 0/1.
+    Smr1/Smr2 where *horizontal* lines at the core's two extrapolated
+    reference heights (Mr=0%/100%) cross the real curve -- not where the
+    sloped equivalent line itself crosses the curve, and not at the 40%
+    window's own endpoints or at 0/1.
 
     Constructed so the core segment (Mr 0.2-0.8) is exactly linear, so any
-    40%-wide sub-window search reconstructs the same equivalent line, and the
-    peak/valley segments are steeper straight lines meeting the core exactly
-    at Mr=0.2/0.8 -- giving closed-form expected values worked out by hand:
-    Sk=200/3 (the core slope extrapolated over the full 0-1 range), Smr1=0.2,
-    Smr2=0.8, and Spk=Svk=30 (the peak/valley segments' own height drop, a
-    consequence of them being right triangles of base 0.2).
+    40%-wide sub-window search reconstructs the same equivalent line:
+    line(r) = 250/3 - (200/3)*r (passes through (0.2, 70) and (0.8, 30),
+    matching the core segment's own equation). That gives two fixed
+    reference heights h1 = line(0) = 250/3, h2 = line(1) = 50/3, hence
+    Sk = h1 - h2 = 200/3 (the core slope extrapolated over the full 0-1
+    range -- unaffected by this test's correction, since it depends only on
+    the line, not on how Smr1/Smr2 are found).
+
+    Smr1/Smr2 are then where the *horizontal* lines at h1/h2 cross the
+    curve, solved by hand against the peak/valley segments (not the core
+    line):
+      peak:   100 - 150*r = h1 = 250/3  =>  r = 1/9
+      valley:  30 - 150*(r-0.8) = h2 = 50/3  =>  r = 8/9
+    Spk/Svk are then 2*area/base over a right triangle, which collapses to
+    the triangle's own apex height: the excess above h1 on [0, 1/9] runs
+    from 100 - 250/3 = 50/3 at r=0 down to 0 at r=1/9, so Spk = 50/3;
+    symmetrically Svk = 50/3.
+
+    (An earlier version of this test asserted Smr1=0.2, Smr2=0.8, Spk=Svk=30
+    -- those were the *sloped*-line crossing points, i.e. where line(r)
+    itself meets the curve, which is wrong per ISO 13565-2: Smr1/Smr2 use a
+    fixed horizontal reference height, not the sloped equivalent line. Both
+    sets of values were confirmed to reproduce their own construction
+    exactly, which is exactly why the linear-curve test above cannot
+    distinguish them -- on a single global line, sloped and horizontal
+    crossings coincide.)
     """
     r = np.linspace(0.0, 1.0, 20000)
     h = np.where(
@@ -863,10 +885,10 @@ def test_bearing_curve_smr1_smr2_at_core_boundary():
     )
     br = compute_bearing_ratio(h)
     assert br["Sk"] == pytest.approx(200.0 / 3.0, rel=0.02)
-    assert br["Spk"] == pytest.approx(30.0, abs=1.5)
-    assert br["Svk"] == pytest.approx(30.0, abs=1.5)
-    assert br["Smr1"] == pytest.approx(0.2, abs=0.02)
-    assert br["Smr2"] == pytest.approx(0.8, abs=0.02)
+    assert br["Spk"] == pytest.approx(50.0 / 3.0, abs=1.0)
+    assert br["Svk"] == pytest.approx(50.0 / 3.0, abs=1.0)
+    assert br["Smr1"] == pytest.approx(1.0 / 9.0, abs=0.02)
+    assert br["Smr2"] == pytest.approx(8.0 / 9.0, abs=0.02)
 
 
 def test_profile_includes_bearing(client: TestClient):
