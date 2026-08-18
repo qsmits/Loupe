@@ -451,7 +451,20 @@ class TestConnectedAnalysisMask:
 
     def test_two_region_mask_measures_the_largest_and_warns(self):
         """Previously raised ValueError -> 422, so masking two lapped pads
-        returned nothing where it used to measure."""
+        returned nothing where it used to measure.
+
+        ``n_valid_pixels`` alone does not pin "the largest region was
+        selected" -- it sits downstream of risk/jump-based quantitative
+        filtering that trims it independently of which raw region(s) fed the
+        pipeline. A fault-injected no-op in region selection (measuring the
+        union of both components instead of just the larger one) was
+        confirmed to still land ``n_valid_pixels`` at 4000, inside this
+        test's own (1600, 6400] bound -- so that bound alone would not have
+        caught it. ``surface_height``/``surface_width`` are the mask's own
+        bounding-box crop (plus 5% pad), computed directly from the mask
+        that region-selection produced, before any such downstream dilution:
+        88px when correct vs. 186px under the same fault injection, so
+        bounding it below 130px is what actually catches that regression."""
         h = w = 256
         _yy, xx = np.mgrid[:h, :w]
         image = np.clip(128 + 105 * np.cos(2 * np.pi * 12 * xx / w), 0, 255).astype(np.uint8)
@@ -463,7 +476,13 @@ class TestConnectedAnalysisMask:
             custom_mask=mask, correct_2pi_jumps=False,
         )
         assert isinstance(result["pv_nm"], float), "response shape unchanged"
-        # Only the larger region is measured.
+        # The working crop is bounded to the larger region alone (~88px with
+        # padding), not the ~186px bounding box the union of both regions
+        # would produce -- this is what actually proves only the larger
+        # region was selected.
+        assert result["surface_height"] < 130
+        assert result["surface_width"] < 130
+        # Coarser sanity check on measured pixel count.
         assert result["n_valid_pixels"] <= 6400
         assert result["n_valid_pixels"] > 1600
         assert any("region" in str(m).lower() for m in result.get("warnings", [])), \
