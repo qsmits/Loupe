@@ -65,17 +65,45 @@ class TestPhysicsCorrections:
 
     def test_disconnected_quantitative_aperture_falls_back_to_largest_and_warns(self):
         """A disconnected aperture no longer aborts the analysis: the
-        indeterminate-fringe-order components are excluded, the largest
-        surviving region is measured, and the exclusion is reported via
-        ``warnings`` rather than raising."""
+        indeterminate-fringe-order components are excluded, the *largest*
+        surviving region is the one measured (not merely "some" region), and
+        the exclusion is reported via ``warnings`` rather than raising.
+
+        The two blocks are deliberately unequal (3600 px vs. 576 px, a 6.25x
+        margin) rather than tied, so this pins the largest-region selection
+        contract instead of merely re-checking "no exception, some warning".
+
+        ``n_valid_pixels`` alone is not a reliable witness for that contract:
+        it is several steps downstream of region selection (risk/jump-based
+        quantitative filtering trims it independently of which raw region(s)
+        fed the pipeline), and a manual fault injection making
+        ``_largest_component_mask`` a no-op — measuring the union of both
+        components instead of just the larger one — was confirmed to still
+        land ``n_valid_pixels`` inside a same-order-of-magnitude range,
+        silently. ``surface_width``/``surface_height`` are the mask's own
+        bounding-box crop (plus 5% pad), computed directly from the mask
+        that region-selection produced, before any such downstream dilution —
+        that fault injection produces a 66px box when correct and a 146px box
+        under the no-op, so bounding it below 100px is what actually catches
+        that regression. The ``n_valid_pixels`` bound is kept alongside it as
+        a coarser sanity check."""
         h = w = 192
         _yy, xx = np.mgrid[:h, :w]
         image = (128 + 100 * np.cos(2 * np.pi * 10 * xx / w)).astype(np.uint8)
         mask = np.zeros((h, w), dtype=bool)
-        mask[20:80, 20:80] = True
-        mask[110:170, 110:170] = True
+        mask[20:80, 20:80] = True        # 60x60 = 3600 px, the larger
+        mask[130:154, 130:154] = True    # 24x24 = 576 px, the smaller
         result = analyze_interferogram(image, custom_mask=mask)
         assert isinstance(result["pv_nm"], float)
+        # The working crop is bounded to the larger region alone (~66px with
+        # padding), not the ~146px bounding box the union of both regions
+        # would produce -- this is what actually proves only the larger
+        # region was selected.
+        assert result["surface_height"] < 100
+        assert result["surface_width"] < 100
+        # Coarser sanity check on measured pixel count.
+        assert result["n_valid_pixels"] <= 3600
+        assert result["n_valid_pixels"] > 576
         assert any("region" in str(m).lower() for m in result.get("warnings", [])), \
             result.get("warnings")
 
