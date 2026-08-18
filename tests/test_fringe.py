@@ -17,13 +17,16 @@ from backend.vision.fringe import (
     zernike_noll_index,
     zernike_polynomial,
     _make_polar_coords,
+    _fit_plane,
     _find_carrier,
+    _shift_masked_grid,
     compute_fringe_modulation,
     create_fringe_mask,
     extract_phase_dft,
     unwrap_phase_2d,
     focus_quality,
     phase_to_height,
+    height_to_phase,
     surface_stats,
     render_surface_map,
     render_profile,
@@ -35,6 +38,86 @@ from backend.vision.fringe import (
     subtract_wavefronts,
     wrap_wavefront_result,
 )
+
+
+def _with_synthetic_fringes(camera, h=480, w=640):
+    xx = np.arange(w, dtype=np.float64)
+    row = np.clip(128 + 90 * np.cos(2 * np.pi * 12 * xx / w),
+                  0, 255).astype(np.uint8)
+    gray = np.tile(row, (h, 1))
+    frame = np.repeat(gray[:, :, None], 3, axis=2)
+    camera.get_frame = lambda: frame.copy()
+    return camera
+
+
+class TestPhysicsCorrections:
+    def test_coarse_full_frame_fringes_make_one_aperture(self):
+        h = w = 256
+        _yy, xx = np.mgrid[:h, :w]
+        for period in (30, 40, 50, 60):
+            image = (128 + 100 * np.cos(2 * np.pi * xx / period)).astype(np.uint8)
+            modulation = compute_fringe_modulation(image)
+            mask = create_fringe_mask(image, modulation)
+            n, _labels = cv2.connectedComponents(mask.astype(np.uint8))
+            assert n - 1 == 1
+            assert mask.mean() > 0.9
+
+    def test_disconnected_quantitative_aperture_is_rejected(self):
+        h = w = 192
+        _yy, xx = np.mgrid[:h, :w]
+        image = (128 + 100 * np.cos(2 * np.pi * 10 * xx / w)).astype(np.uint8)
+        mask = np.zeros((h, w), dtype=bool)
+        mask[20:80, 20:80] = True
+        mask[110:170, 110:170] = True
+        with pytest.raises(ValueError, match="relative fringe orders"):
+            analyze_interferogram(image, custom_mask=mask)
+
+    def test_default_lpf_avoids_large_five_fringe_pv_bias(self):
+        h = w = 256
+        yy, xx = np.mgrid[:h, :w]
+        xn = (xx - 127.5) / 127.5
+        yn = (yy - 127.5) / 127.5
+        truth_nm = 160.0 * (xn * xn - yn * yn)
+        wavelength_nm = 589.3
+        phase = 4 * np.pi * truth_nm / wavelength_nm
+        image = np.clip(
+            128 + 105 * np.cos(2 * np.pi * 5 * xx / w + phase), 0, 255
+        ).astype(np.uint8)
+        result = analyze_interferogram(
+            image, wavelength_nm=wavelength_nm, subtract_terms=[1],
+            use_full_mask=True, correct_2pi_jumps=False,
+        )
+        assert abs(result["pv_nm"] / 320.0 - 1.0) < 0.10
+
+    def test_lens_k1_has_material_effect_at_normal_resolution(self):
+        rng = np.random.default_rng(12)
+        image = rng.integers(0, 256, size=(480, 640), dtype=np.uint8)
+        corrected = undistort_frame(image, 0.3)
+        assert np.count_nonzero(corrected != image) > image.size * 0.1
+
+    def test_plane_tilt_fields_are_nanometers(self):
+        wavelength_nm = 589.3
+        h, w = 40, 80
+        _yy, xx = np.mgrid[:h, :w]
+        phase = xx / w  # one radian across the reported width
+        fit = _fit_plane(phase, wavelength_nm=wavelength_nm)
+        assert fit["tilt_x_nm"] == pytest.approx(
+            wavelength_nm / (4 * np.pi), rel=1e-6
+        )
+
+    def test_zernike_coordinates_report_cartesian_y_up(self):
+        rho, theta = _make_polar_coords((31, 31))
+        tilt_y = zernike_polynomial(3, rho, theta)
+        assert tilt_y[2, 15] > 0
+        assert tilt_y[-3, 15] < 0
+
+    def test_masked_fractional_shift_does_not_ring_constant_surface(self):
+        grid = np.zeros((128, 128), dtype=np.float64)
+        mask = np.zeros_like(grid, dtype=bool)
+        mask[20:108, 20:108] = True
+        grid[mask] = 100.0
+        shifted, shifted_mask = _shift_masked_grid(grid, mask, 0.5, -0.5)
+        np.testing.assert_allclose(shifted[shifted_mask], 100.0, atol=1e-10)
 
 
 class TestZernikeNollIndex:
@@ -164,6 +247,14 @@ class TestZernikeNames:
                     f"Group '{group_name}' references j={idx} not in ZERNIKE_NAMES"
                 )
 
+    def test_higher_order_names_match_noll_families(self):
+        assert ZERNIKE_NAMES[14] == "Tetrafoil X"
+        assert ZERNIKE_NAMES[16] == "2nd Coma X"
+        assert ZERNIKE_NAMES[18] == "2nd Trefoil X"
+        assert ZERNIKE_NAMES[20] == "Pentafoil X"
+        assert ZERNIKE_NAMES[23] == "3rd Astigmatism 45"
+        assert ZERNIKE_NAMES[35] == "Heptafoil Y"
+
 
 class TestFringeModulation:
     def test_modulation_shape_and_range(self):
@@ -280,6 +371,24 @@ class TestUnwrap2D:
         unwrapped, _, _ = unwrap_phase_2d(wrapped, mask, quality=None)
         corr = np.corrcoef(unwrapped[mask], true_phase[mask])[0, 1]
         assert corr > 0.98
+
+    def test_quality_guided_unwraps_every_disconnected_mask_component(self):
+        wrapped = np.zeros((12, 20), dtype=np.float64)
+        mask = np.zeros_like(wrapped, dtype=bool)
+        quality = np.zeros_like(wrapped)
+        mask[1:5, 1:5] = True
+        mask[7:11, 15:19] = True
+        wrapped[1:5, 1:5] = 0.4
+        wrapped[7:11, 15:19] = 1.1
+        quality[1:5, 1:5] = 1.0
+        quality[7:11, 15:19] = 0.8
+
+        unwrapped, _, _ = unwrap_phase_2d(
+            wrapped, mask, quality=quality, correct_2pi_jumps=False
+        )
+
+        assert np.allclose(unwrapped[1:5, 1:5], 0.4)
+        assert np.allclose(unwrapped[7:11, 15:19], 1.1)
 
     def test_correct_2pi_jumps_flag_off_preserves_step(self, monkeypatch):
         """The flag must skip the 9x9 median-filter 2π snap when False, and
@@ -413,6 +522,13 @@ class TestPhaseToHeight:
         height = phase_to_height(phase, 589.0)
         np.testing.assert_allclose(height, 0.0)
 
+    def test_height_to_phase_is_inverse(self):
+        phase = np.array([-2.1, 0.0, 0.75, 2 * np.pi])
+        height = phase_to_height(phase, 632.8)
+        np.testing.assert_allclose(
+            height_to_phase(height, 632.8), phase, rtol=1e-12, atol=1e-12
+        )
+
 
 class TestSurfaceStats:
     def test_ramp_stats(self):
@@ -485,6 +601,15 @@ class TestRenderZernikeChart:
         decoded = base64.b64decode(b64)
         assert decoded[:4] == b'\x89PNG'
 
+    def test_chart_labels_phase_cycles_as_fringes(self):
+        # The rendered-image regression above exercises matplotlib. This
+        # explicit source contract prevents 2*pi phase cycles from being
+        # mislabeled as gap wavelengths (they are fringe intervals).
+        import inspect
+        source = inspect.getsource(render_zernike_chart)
+        assert 'set_ylabel("Coefficient (fringes)"' in source
+        assert "Coefficient (waves)" not in source
+
 
 def _make_fringe_image(h, w, n_fringes=10):
     """Create a synthetic interferogram with horizontal fringes."""
@@ -532,12 +657,22 @@ class TestAnalyzeInterferogram:
         assert result["rms_nm"] >= 0
         assert 0 <= result["focus_score"] <= 100
 
-    def test_strehl_in_range(self):
-        """Strehl ratio should be between 0 and 1."""
+    def test_optical_flat_metrics_do_not_infer_strehl(self):
+        """Air-gap metrology reports fringes, not imaging performance."""
         image = _make_fringe_image(128, 128)
         result = analyze_interferogram(image, wavelength_nm=632.8)
-        assert "strehl" in result
-        assert 0 < result["strehl"] <= 1.0
+        assert result["measurement_model"] == "optical_flat_air_gap"
+        assert result["incidence_model"] == "normal_air"
+        assert result["height_semantics"] == "air_gap_departure"
+        assert result["absolute_sign_known"] is False
+        assert result["specimen_surface_relative_sign"] == -1
+        assert result["reference_flat_error_included"] is True
+        assert result["optical_performance_applicable"] is False
+        assert result["strehl"] is None
+        assert result["psf"] == ""
+        assert result["mtf"] == {}
+        assert result["pv_fringes"] == pytest.approx(2 * result["pv_waves"])
+        assert result["rms_fringes"] == pytest.approx(2 * result["rms_waves"])
 
 
 class TestCarrierDiagnostics:
@@ -775,9 +910,8 @@ class TestReanalyze:
         assert r2["pv_nm"] >= 0
         assert "surface_map" in r1
         assert "surface_map" in r2
-        # Strehl should be present and valid
-        assert 0 < r1["strehl"] <= 1.0
-        assert 0 < r2["strehl"] <= 1.0
+        assert r1["strehl"] is None
+        assert r2["strehl"] is None
 
 
 class TestPolygonMask:
@@ -854,7 +988,7 @@ class TestFringeAPI:
         from tests.conftest import FakeCamera
         from fastapi.testclient import TestClient
 
-        camera = FakeCamera()
+        camera = _with_synthetic_fringes(FakeCamera())
         app = create_app(camera)
         with TestClient(app) as c:
             yield c
@@ -1243,7 +1377,7 @@ class TestFringeAPIV2:
         from tests.conftest import FakeCamera
         from fastapi.testclient import TestClient
 
-        camera = FakeCamera()
+        camera = _with_synthetic_fringes(FakeCamera())
         app = create_app(camera)
         with TestClient(app) as c:
             yield c
@@ -1275,8 +1409,7 @@ class TestUndistortFrame:
         # Place bright blob near the corner (off both axes)
         cv2.circle(img, (100, 10), 3, 255, -1)
         cx, cy = sz / 2, sz / 2
-        # Use large normalized k1 — at 128x128, diag_sq=8192 so k1_raw = k1/8192;
-        # need large normalized value to produce visible shift on tiny images.
+        # Use a deliberately large normalized value to produce a visible shift.
         result = undistort_frame(img, 10.0)
         orig_ys, orig_xs = np.where(img > 0)
         res_ys, res_xs = np.where(result > 0)
@@ -1968,7 +2101,7 @@ class TestPipelineDiagnostics:
         sigmas = [1.0, 2.0, 3.0, 4.0, 5.0,
                   carrier_period_px,                      # ~8.5
                   carrier_period_px * 1.5,                # ~12.8
-                  carrier_period_px * 2.5,                # ~21.3 (current default)
+                  carrier_period_px * 2.5,                # ~21.3 (strong smoothing)
                   carrier_period_px * 4.0]                # ~34.1
 
         results = []
@@ -2038,7 +2171,8 @@ class TestWavefrontResultEnvelope:
 
         assert result["origin"] == "capture"
         assert result["source_ids"] == []
-        assert result["warnings"] == []
+        assert any("Low carrier density" in warning
+                   for warning in result["warnings"])
         assert result["calibration_snapshot"] is None
         assert result["aperture_recipe"] is None
         # Timestamp looks like an ISO-8601 UTC string.
@@ -2131,7 +2265,8 @@ class TestFringeAPIWavefrontEnvelope:
         data = r.json()
         assert data["origin"] == "capture"
         assert data["source_ids"] == []
-        assert data["warnings"] == []
+        assert any("Low carrier density" in warning
+                   for warning in data["warnings"])
         assert data["calibration_snapshot"] is None
         assert data["aperture_recipe"] is None
         assert isinstance(data["id"], str) and len(data["id"]) == 32
@@ -2473,15 +2608,8 @@ class TestCalibrationPayloadContract:
         assert snap["uncertainty_nm"] == pytest.approx(cal["uncertainty_nm"])
         assert snap["notes"] == cal["notes"]
 
-    def test_analyze_uses_calibration_wavelength(self, client):
-        """Top-level `wavelength_nm` drives the analysis math; the
-        `calibration.wavelength_nm` field is metadata only. The backend
-        must NOT silently swap them.
-
-        When the two disagree, the response's top-level `wavelength_nm`
-        stays at the request's top-level value, while the snapshot
-        preserves the client-supplied calibration wavelength verbatim.
-        """
+    def test_analyze_rejects_calibration_wavelength_mismatch(self, client):
+        """Physics and provenance may not claim different wavelengths."""
         r = client.post("/fringe/analyze", json={
             "wavelength_nm": 632.8,
             "image_b64": self._b64_image(),
@@ -2496,12 +2624,34 @@ class TestCalibrationPayloadContract:
                 "notes": "",
             },
         })
-        assert r.status_code == 200
+        assert r.status_code == 400
+        assert "disagrees" in r.json()["detail"]
+
+    def test_applied_lens_k1_is_synchronized_into_snapshot(self, client):
+        r = client.post("/fringe/analyze", json={
+            "wavelength_nm": 589.3,
+            "image_b64": self._b64_image(),
+            "lens_k1": 0.25,
+            "calibration": {
+                "wavelength_nm": 589.3,
+                "lens_k1": 0.0,
+                "mm_per_pixel": 0.004,
+            },
+        })
+        assert r.status_code == 200, r.text
         data = r.json()
-        # Analysis used the top-level wavelength:
-        assert data["wavelength_nm"] == pytest.approx(632.8)
-        # Snapshot preserves the client's (possibly-stale) calibration wl:
-        assert data["calibration_snapshot"]["wavelength_nm"] == pytest.approx(589.3)
+        assert data["lens_k1"] == pytest.approx(0.25)
+        assert data["calibration_snapshot"]["lens_k1"] == pytest.approx(0.25)
+
+    def test_omitted_wavelength_uses_sodium_default_and_warns(self, client):
+        r = client.post("/fringe/analyze", json={
+            "image_b64": self._b64_image(),
+        })
+        assert r.status_code == 200, r.text
+        data = r.json()
+        assert data["wavelength_nm"] == pytest.approx(589.3)
+        assert any("Wavelength omitted" in warning
+                   for warning in data["warnings"])
 
 
 class TestRawDisplayGridSeparation:
@@ -2586,7 +2736,7 @@ class TestRawDisplayGridSeparation:
             f"raw_std={raw_std:.2f} should exceed disp_std={disp_std:.2f}")
 
     def test_reanalyze_with_raw_grid_path(self):
-        """Providing the raw grid + shape routes to the full-fidelity path.
+        """Providing the raw grid + shape routes to the grid-fidelity path.
 
         Changing subtract_terms must change the display grid; the raw grid
         must come back unchanged.
@@ -2621,8 +2771,60 @@ class TestRawDisplayGridSeparation:
         assert re_out["grid_cols"] == grid_cols
         # Standard reanalyze return fields still present.
         for key in ("surface_map", "zernike_chart", "profile_x", "profile_y",
-                    "pv_nm", "rms_nm", "pv_waves", "rms_waves", "strehl"):
+                    "pv_nm", "rms_nm", "pv_waves", "rms_waves", "strehl",
+                    "coefficients", "zernike_norm_weights", "zernike_rms_nm"):
             assert key in re_out
+        assert re_out["coefficient_unit"] == "phase_rad"
+
+    def test_reanalyze_raw_grid_rescales_when_wavelength_changes(self):
+        rows, cols = 8, 8
+        raw = np.linspace(-50.0, 50.0, rows * cols, dtype=np.float64)
+        source_wavelength = 632.8
+        target_wavelength = 532.0
+
+        out = reanalyze(
+            coefficients=[0.0] * 4,
+            subtract_terms=[],
+            wavelength_nm=target_wavelength,
+            surface_shape=(rows, cols),
+            mask_serialized=[1] * (rows * cols),
+            n_zernike=4,
+            raw_height_grid_nm=raw.tolist(),
+            raw_wavelength_nm=source_wavelength,
+            raw_grid_rows=rows,
+            raw_grid_cols=cols,
+        )
+
+        expected_scale = target_wavelength / source_wavelength
+        assert out["pv_nm"] == pytest.approx(100.0 * expected_scale)
+        assert out["raw_wavelength_nm"] == pytest.approx(target_wavelength)
+        np.testing.assert_allclose(
+            np.asarray(out["raw_height_grid_nm"]), raw * expected_scale
+        )
+
+    def test_reanalyze_resizes_cached_full_resolution_mask_to_raw_grid(self):
+        raw_rows, raw_cols = 8, 8
+        surface_rows, surface_cols = 16, 16
+        full_mask = np.zeros((surface_rows, surface_cols), dtype=np.uint8)
+        full_mask[:surface_rows // 2, :] = 1
+
+        out = reanalyze(
+            coefficients=[0.0] * 4,
+            subtract_terms=[],
+            wavelength_nm=632.8,
+            surface_shape=(surface_rows, surface_cols),
+            mask_serialized=full_mask.ravel().tolist(),
+            n_zernike=4,
+            raw_height_grid_nm=[0.0] * (raw_rows * raw_cols),
+            raw_wavelength_nm=632.8,
+            raw_grid_rows=raw_rows,
+            raw_grid_cols=raw_cols,
+        )
+
+        assert out["grid_rows"] == raw_rows
+        assert out["grid_cols"] == raw_cols
+        assert len(out["mask_grid"]) == raw_rows * raw_cols
+        assert sum(out["mask_grid"]) == (raw_rows // 2) * raw_cols
 
     def test_reanalyze_legacy_path_unchanged(self):
         """Without raw-grid args, reanalyze behaves exactly like before."""
@@ -2657,12 +2859,12 @@ class TestRawDisplayGridSeparation:
         assert "raw_height_grid_nm" not in result
         # display_height_grid_nm is a sibling of height_grid.
         assert result["display_height_grid_nm"] == result["height_grid"]
-        assert 0 < result["strehl"] <= 1.0
+        assert result["strehl"] is None
 
 
 class TestRawDisplayGridAPI:
     """M1.3 API-level: POST /fringe/reanalyze with raw_height_grid_nm
-    routes to the full-fidelity path, and the display grid differs from
+    routes to the grid-fidelity path, and the display grid differs from
     the legacy coefficient-only reconstruction."""
 
     @pytest.fixture
@@ -2710,7 +2912,7 @@ class TestRawDisplayGridAPI:
         assert "height_grid" in legacy_data
         assert "raw_height_grid_nm" not in legacy_data
 
-        # Full-fidelity path with raw grid.
+        # Grid-fidelity path with raw grid.
         r_full = client.post("/fringe/reanalyze", json={
             "coefficients": analyze_out["coefficients"],
             "subtract_terms": [1, 2, 3, 4],
@@ -2727,7 +2929,7 @@ class TestRawDisplayGridAPI:
         assert "raw_height_grid_nm" in full_data
         # Raw echoed back unchanged.
         assert full_data["raw_height_grid_nm"] == raw_grid
-        # Full-fidelity display grid differs from the legacy coefficient
+        # Grid-fidelity display grid differs from the legacy coefficient
         # path's display grid — the former refits on actual cached heights;
         # the latter uses only the Zernike model.
         assert full_data["height_grid"] != legacy_data["height_grid"]
@@ -2985,6 +3187,33 @@ class TestSubtractWavefronts:
             f"measurement_rms={measurement_rms:.2f}, "
             f"subtracted_rms={out['rms_nm']:.2f}"
         )
+
+    def test_subtract_refit_coefficients_are_phase_radians(self):
+        rows, cols = 24, 24
+        wavelength_nm = 632.8
+        amplitude_nm = 40.0
+        rho, theta = _make_polar_coords((rows, cols))
+        z2_nm = amplitude_nm * zernike_polynomial(2, rho, theta)
+
+        measurement = _fake_wrapped_result(rows, cols,
+                                           wavelength_nm=wavelength_nm)
+        reference = _fake_wrapped_result(rows, cols,
+                                         wavelength_nm=wavelength_nm)
+        measurement["subtracted_terms"] = []
+        for key in ("display_height_grid_nm", "height_grid",
+                    "raw_height_grid_nm"):
+            measurement[key] = z2_nm.astype(np.float32).ravel().tolist()
+
+        out = subtract_wavefronts(measurement, reference, register=False)
+
+        expected_phase_rad = amplitude_nm * 4.0 * np.pi / wavelength_nm
+        assert out["coefficient_unit"] == "phase_rad"
+        assert out["coefficients"][1] == pytest.approx(
+            expected_phase_rad, rel=0.02, abs=1e-3
+        )
+        expected_rms_nm = abs(out["coefficients"][1]) * out["zernike_norm_weights"][1]
+        expected_rms_nm *= wavelength_nm / (4.0 * np.pi)
+        assert out["zernike_rms_nm"][1] == pytest.approx(expected_rms_nm)
 
 
 class TestSubtractRawDomainCorrectness:
@@ -3391,7 +3620,7 @@ class TestTunableParams:
         from backend.main import create_app
         from tests.conftest import FakeCamera
         from fastapi.testclient import TestClient
-        camera = FakeCamera()
+        camera = _with_synthetic_fringes(FakeCamera())
         app = create_app(camera)
         return TestClient(app)
 
@@ -3776,6 +4005,34 @@ class TestAverageWavefronts:
         mask = np.asarray(out["mask_grid"], dtype=bool)
         assert mask.sum() >= 1
         assert np.allclose(a, b, atol=1e-6)
+
+    def test_average_refit_coefficients_are_phase_radians(self):
+        rows, cols = 24, 24
+        wavelength_nm = 632.8
+        amplitude_nm = 25.0
+        rho, theta = _make_polar_coords((rows, cols))
+        z2_nm = amplitude_nm * zernike_polynomial(2, rho, theta)
+
+        results = []
+        for _ in range(2):
+            result = _fake_wrapped_result(rows, cols,
+                                          wavelength_nm=wavelength_nm)
+            values = z2_nm.astype(np.float32).ravel().tolist()
+            result["display_height_grid_nm"] = values
+            result["height_grid"] = values
+            result["raw_height_grid_nm"] = values
+            results.append(result)
+
+        out = average_wavefronts(results)
+
+        expected_phase_rad = amplitude_nm * 4.0 * np.pi / wavelength_nm
+        assert out["coefficient_unit"] == "phase_rad"
+        assert out["coefficients"][1] == pytest.approx(
+            expected_phase_rad, rel=0.02, abs=1e-3
+        )
+        expected_rms_nm = abs(out["coefficients"][1]) * out["zernike_norm_weights"][1]
+        expected_rms_nm *= wavelength_nm / (4.0 * np.pi)
+        assert out["zernike_rms_nm"][1] == pytest.approx(expected_rms_nm)
 
     def test_average_reduces_rms_noise(self):
         # 5 flat surfaces plus independent Gaussian noise → averaged RMS ≈
@@ -4709,14 +4966,14 @@ class TestTrendContract:
             assert "captured_at" in c, "trend chart needs captured_at"
 
 
-class TestReanalyzeFullFidelityPath:
-    """Frontend wired the raw-grid full-fidelity path into every
+class TestReanalyzeGridFidelityPath:
+    """Frontend wired the raw-grid grid-fidelity path into every
     /fringe/reanalyze call site (M1.3 frontend wiring). When the request
     body includes raw_height_grid_nm + raw_grid_rows + raw_grid_cols, the
     backend should refit Zernike on the cached raw heightmap and return a
     fresh display grid that preserves content the legacy coefficient-only
     reconstruction discards. This test exercises both paths against the
-    same /fringe/analyze output and asserts that the full-fidelity path
+    same /fringe/analyze output and asserts that the grid-fidelity path
     is observably distinct: the response carries the raw grid back, and
     the display surface differs from the coefficient-only reconstruction
     by a non-trivial amount."""
@@ -4748,7 +5005,7 @@ class TestReanalyzeFullFidelityPath:
         support of the bump contains spatial frequencies that the 36
         Zernike terms used by analyze cannot fully represent, so the
         legacy coefficient-only reanalyze path discards content that the
-        full-fidelity path preserves."""
+        grid-fidelity path preserves."""
         yy, xx = np.mgrid[0:h, 0:w]
         phase = 2 * np.pi * (fx * xx / w + 0.5 * yy / w)
         cy, cx = h / 2, w / 2
@@ -4762,7 +5019,7 @@ class TestReanalyzeFullFidelityPath:
         b64 = self._b64_fringes_with_highfreq_bump()
         # Use a low n_zernike (4) so the legacy coefficient-only
         # reconstruction is forced to discard meaningful content from the
-        # bump — exactly the case the full-fidelity path is designed to
+        # bump — exactly the case the grid-fidelity path is designed to
         # rescue. With the production default n_zernike=36, the basis
         # captures most well-behaved synthetic test surfaces and the
         # difference between the paths shrinks to numerical jitter; a
@@ -4773,6 +5030,9 @@ class TestReanalyzeFullFidelityPath:
             "image_b64": b64,
             "subtract_terms": [1],
             "n_zernike": n_zernike,
+            # Preserve the high-frequency bump so the grid-fidelity path has
+            # information that a four-term coefficient reconstruction cannot.
+            "lpf_sigma_frac": 0.18,
         })
         assert r.status_code == 200
         analyze_out = r.json()
@@ -4798,11 +5058,11 @@ class TestReanalyzeFullFidelityPath:
         legacy_rms = legacy_data["rms_nm"]
         assert legacy_rms is not None and legacy_rms > 0
         # Sentinel: the legacy path must NOT echo a raw grid back. If this
-        # ever flips, the full-fidelity path may be silently engaged for
+        # ever flips, the grid-fidelity path may be silently engaged for
         # the legacy comparison and the test loses its meaning.
         assert "raw_height_grid_nm" not in legacy_data
 
-        # Full-fidelity path — frontend now sends raw_height_grid_nm +
+        # Grid-fidelity path — frontend now sends raw_height_grid_nm +
         # raw_grid_rows + raw_grid_cols on every reanalyze call.
         r_full = client.post("/fringe/reanalyze", json={
             **common,
@@ -4815,21 +5075,21 @@ class TestReanalyzeFullFidelityPath:
         full_rms = full_data["rms_nm"]
         assert full_rms is not None and full_rms > 0
 
-        # Contract: full-fidelity path returns the raw grid back so the
+        # Contract: grid-fidelity path returns the raw grid back so the
         # frontend can chain subsequent reanalyze calls without losing it.
         assert "raw_height_grid_nm" in full_data
         assert "display_height_grid_nm" in full_data
 
-        # Significant relative RMS difference — high-frequency content
-        # preserved by the full-fidelity path is dropped by the legacy
+        # Measurable relative RMS difference — high-frequency content
+        # preserved by the grid-fidelity path is dropped by the legacy
         # coefficient reconstruction, so the two paths must disagree by a
         # non-trivial margin on a deliberately broadband test surface
-        # truncated to a small Zernike basis. Empirically with a 4-term
-        # basis on this image the gap is ~27%; use 15% as the safety
-        # margin to absorb minor pipeline drift.
+        # truncated to a small Zernike basis. The edge-corrected LPF retains
+        # more of the low-order fit too, so 2% is sufficient to prove the raw
+        # grid path is active rather than silently reconstructing coefficients.
         rel_diff = abs(full_rms - legacy_rms) / max(legacy_rms, 1e-9)
-        assert rel_diff > 0.15, (
-            f"full-fidelity vs legacy RMS too close to call "
+        assert rel_diff > 0.02, (
+            f"grid-fidelity vs legacy RMS too close to call "
             f"(full={full_rms:.3f} nm, legacy={legacy_rms:.3f} nm, "
             f"rel_diff={rel_diff:.4f})"
         )
@@ -4843,7 +5103,7 @@ class TestReanalyzeFullFidelityPath:
 # per-region effective-N correction from the *applied* LPF σ. After M2.5
 # the user can override lpf_sigma_frac, so the frontend must read the
 # echoed value from data.tuning.lpf_sigma_frac instead of hard-coding the
-# legacy 2.5×fringe_period default. These tests guard the contract on the
+# optical-flat auto multiplier. These tests guard the contract on the
 # field that the frontend reads.
 
 
@@ -4858,7 +5118,7 @@ class TestEffectiveNUsesTuning:
         from backend.main import create_app
         from tests.conftest import FakeCamera
         from fastapi.testclient import TestClient
-        camera = FakeCamera()
+        camera = _with_synthetic_fringes(FakeCamera())
         app = create_app(camera)
         return TestClient(app)
 
@@ -4876,7 +5136,7 @@ class TestEffectiveNUsesTuning:
 
     def test_lpf_sigma_frac_auto_returns_none(self):
         """POST without lpf_sigma_frac => data.tuning.lpf_sigma_frac is None
-        so the frontend falls back to the legacy 2.5 multiplier."""
+        so the frontend falls back to the optical-flat 0.18 multiplier."""
         with self._api_client() as client:
             r = client.post("/fringe/analyze", json={"wavelength_nm": 632.8})
             assert r.status_code == 200, r.text
@@ -4887,13 +5147,12 @@ class TestEffectiveNUsesTuning:
 
 
 # ──────────────────────────────────────────────────────────────────────
-# Fix 1 — Derived results (subtract/average) carry PSF and MTF
+# Optical-flat results do not claim imaging-system metrics
 # ──────────────────────────────────────────────────────────────────────
 
 
 class TestDerivedPSFMTF:
-    """Subtract and average results expose PSF/MTF for the residual surface
-    so the user can judge imaging quality of the difference / mean."""
+    """Subtract and average results leave PSF/MTF/Strehl unavailable."""
 
     @pytest.fixture
     def client(self):
@@ -4924,7 +5183,7 @@ class TestDerivedPSFMTF:
         _, buf = cv2.imencode(".png", img)
         return base64.b64encode(buf.tobytes()).decode("ascii")
 
-    def test_subtract_result_has_psf_mtf(self, client):
+    def test_subtract_result_omits_imaging_metrics(self, client):
         b64 = self._b64_image()
         r1 = client.post("/fringe/analyze", json={"image_b64": b64})
         r2 = client.post("/fringe/analyze", json={"image_b64": b64})
@@ -4935,13 +5194,12 @@ class TestDerivedPSFMTF:
         })
         assert rs.status_code == 200, rs.text
         data = rs.json()
-        # PSF is a base64 PNG payload — non-empty string.
-        assert isinstance(data.get("psf"), str)
-        assert len(data["psf"]) > 0
-        # MTF is a structured payload (dict).
-        assert isinstance(data.get("mtf"), dict)
+        assert data["optical_performance_applicable"] is False
+        assert data["strehl"] is None
+        assert data["psf"] == ""
+        assert data["mtf"] == {}
 
-    def test_average_result_has_psf_mtf(self, client):
+    def test_average_result_omits_imaging_metrics(self, client):
         b64 = self._b64_image()
         r1 = client.post("/fringe/analyze", json={"image_b64": b64})
         r2 = client.post("/fringe/analyze", json={"image_b64": b64})
@@ -4951,9 +5209,10 @@ class TestDerivedPSFMTF:
         })
         assert ra.status_code == 200, ra.text
         data = ra.json()
-        assert isinstance(data.get("psf"), str)
-        assert len(data["psf"]) > 0
-        assert isinstance(data.get("mtf"), dict)
+        assert data["optical_performance_applicable"] is False
+        assert data["strehl"] is None
+        assert data["psf"] == ""
+        assert data["mtf"] == {}
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -5094,7 +5353,8 @@ class TestUncalibratedSentinel:
         snap = data.get("calibration_snapshot") or {}
         assert snap.get("mm_per_pixel") == 0
         # Numeric stats are finite (no NaN/Inf leaked through a guarded path).
-        for key in ("pv_nm", "rms_nm", "pv_waves", "rms_waves", "strehl"):
+        for key in ("pv_nm", "rms_nm", "pv_waves", "rms_waves",
+                    "pv_fringes", "rms_fringes"):
             v = data.get(key)
             assert v is not None
             assert math.isfinite(float(v)), f"{key} not finite: {v!r}"

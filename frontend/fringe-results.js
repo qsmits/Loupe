@@ -84,7 +84,7 @@ export function buildResultsHtml() {
   }).join("\n          ");
 
   return `
-        <div class="fringe-summary-bar" id="fringe-summary-bar" hidden title="PV = total range of surface error. RMS = average deviation. Lower = flatter.">
+        <div class="fringe-summary-bar" id="fringe-summary-bar" hidden title="Optical-flat air-gap departure. Absolute sign requires a known wedge/contact direction; once oriented, the specimen contribution has opposite sign. Reference-flat error is included.">
           <div class="fringe-stat" style="margin-right:4px">
             <select id="fringe-mode-select" title="Workflow mode \u2014 gates which tools show. UI-only; backend ignores it." style="font-size:11px;padding:2px 4px">
               <option value="surface">Surface</option>
@@ -94,22 +94,22 @@ export function buildResultsHtml() {
             </select>
           </div>
           <div class="fringe-stat">
-            <span class="fringe-stat-label" title="Peak-to-Valley: worst-case surface error">PV</span>
+            <span class="fringe-stat-label" title="Peak-to-valley air-gap departure">Gap PV</span>
             <span class="fringe-stat-value" id="fringe-pv-waves">--</span>
             <span class="fringe-stat-unit">\u03bb</span>
             <span class="fringe-stat-value fringe-stat-nm" id="fringe-pv-nm">--</span>
             <span class="fringe-stat-unit">nm</span>
           </div>
           <div class="fringe-stat">
-            <span class="fringe-stat-label">RMS</span>
+            <span class="fringe-stat-label" title="RMS air-gap departure">Gap RMS</span>
             <span class="fringe-stat-value" id="fringe-rms-waves">--</span>
             <span class="fringe-stat-unit">\u03bb</span>
             <span class="fringe-stat-value fringe-stat-nm" id="fringe-rms-nm">--</span>
             <span class="fringe-stat-unit">nm</span>
           </div>
           <div class="fringe-stat">
-            <span class="fringe-stat-label" title="Strehl ratio: 1.0 = diffraction-limited. Computed as exp(-(2\u03c0\u00b7RMS)\u00b2)">Strehl</span>
-            <span class="fringe-stat-value" id="fringe-strehl">--</span>
+            <span class="fringe-stat-label" title="Same-order fringe intervals; one fringe equals \u03bb/2 air-gap departure">PV fringes</span>
+            <span class="fringe-stat-value" id="fringe-pv-fringes">--</span>
           </div>
           <div class="fringe-stat" style="margin-left:auto">
             <span class="fringe-stat-label" style="min-width:auto">\u03bb</span>
@@ -171,7 +171,7 @@ export function buildResultsHtml() {
             ${pillButtons}
           </span>
           <div class="fringe-pill-divider"></div>
-          <button class="fringe-pill" id="fringe-btn-invert" disabled>\u2195 Invert</button>
+          <button class="fringe-pill" id="fringe-btn-invert" disabled title="Flip the displayed sign after orienting the interferogram from a known wedge/contact direction">\u2195 Invert</button>
         </div>
 
         <div class="fringe-tab-bar" id="fringe-tab-bar">
@@ -179,7 +179,6 @@ export function buildResultsHtml() {
           <button class="fringe-tab" data-tab="3d">3D View</button>
           <button class="fringe-tab" data-tab="zernike">Zernike</button>
           <button class="fringe-tab" data-tab="profiles">Profiles</button>
-          <button class="fringe-tab" data-tab="psf">PSF / MTF</button>
           <button class="fringe-tab" data-tab="diagnostics">Diagnostics</button>
           <button class="fringe-tab" data-tab="session">Session</button>
           <button class="fringe-tab" data-tab="trend" title="Per-capture PV/RMS trend over the session">Trend</button>
@@ -238,7 +237,7 @@ export function buildResultsHtml() {
         <div class="fringe-tab-panel" id="fringe-panel-3d" hidden>
           <div class="fringe-empty-state" id="fringe-3d-empty">Analyze an image first.</div>
           <div id="fringe-3d-content" hidden style="display:flex;flex-direction:column;flex:1;min-height:0">
-            <p style="font-size:11px;opacity:0.6;margin:4px 12px">Drag to rotate, scroll to zoom. Z exaggeration amplifies height differences for visibility.</p>
+            <p style="font-size:11px;opacity:0.6;margin:4px 12px">Drag to rotate, scroll to zoom. Z exaggeration amplifies air-gap differences for visibility.</p>
             <div class="fringe-3d-host" id="fringe-3d-host">
               <div class="fringe-3d-controls" id="fringe-3d-controls">
                 <label style="font-size:12px">Z exaggeration:
@@ -253,7 +252,7 @@ export function buildResultsHtml() {
         <div class="fringe-tab-panel" id="fringe-panel-zernike" hidden>
           <div class="fringe-empty-state" id="fringe-zernike-empty">Analyze an image first.</div>
           <div id="fringe-zernike-content" hidden>
-            <p style="font-size:11px;opacity:0.6;margin:0 0 6px">Each bar = one type of surface error (tilt, curvature, astigmatism, etc). Taller bars = more of that error. Gray bars have been subtracted from the surface map.</p>
+            <p style="font-size:11px;opacity:0.6;margin:0 0 6px">Each bar describes one smooth component of the recovered air-gap map (tilt, curvature, astigmatism, etc). Gray bars have been subtracted.</p>
             <img id="fringe-zernike-chart" style="width:100%;max-width:900px" />
             <div id="fringe-zernike-table-container" style="margin-top:12px;max-height:400px;overflow-y:auto"></div>
           </div>
@@ -262,23 +261,9 @@ export function buildResultsHtml() {
         <div class="fringe-tab-panel" id="fringe-panel-profiles" hidden>
           <div class="fringe-empty-state" id="fringe-profiles-empty">Analyze an image first.</div>
           <div id="fringe-profiles-content" hidden>
-            <p style="font-size:11px;opacity:0.6;margin:0 0 6px">Cross-sections through the center of the surface. Shows height (nm) across the part horizontally and vertically.</p>
+            <p style="font-size:11px;opacity:0.6;margin:0 0 6px">Cross-sections through the recovered air-gap departure (nm). Absolute sign requires orienting the interferogram.</p>
             <canvas id="fringe-profile-x-canvas" width="800" height="200"></canvas>
             <canvas id="fringe-profile-y-canvas" width="800" height="200"></canvas>
-          </div>
-        </div>
-
-        <div class="fringe-tab-panel" id="fringe-panel-psf" hidden>
-          <div class="fringe-empty-state" id="fringe-psf-empty">Analyze an image first.</div>
-          <div id="fringe-psf-content" hidden style="display:flex;gap:16px;flex-wrap:wrap;align-items:flex-start">
-            <div>
-              <p style="font-size:11px;opacity:0.6;margin:0 0 6px">Point Spread Function (log scale)</p>
-              <img id="fringe-psf-img" style="width:256px;height:256px;image-rendering:pixelated" />
-            </div>
-            <div style="flex:1;min-width:300px">
-              <p style="font-size:11px;opacity:0.6;margin:0 0 6px">Modulation Transfer Function</p>
-              <canvas id="fringe-mtf-canvas" width="400" height="250" style="width:100%;max-width:500px"></canvas>
-            </div>
           </div>
         </div>
 
@@ -411,10 +396,12 @@ function applyStatsDisplay({ pv_nm, rms_nm, useTrusted }) {
   const pvNmEl = $("fringe-pv-nm");
   const rmsWavesEl = $("fringe-rms-waves");
   const rmsNmEl = $("fringe-rms-nm");
+  const pvFringesEl = $("fringe-pv-fringes");
   if (pvWavesEl) pvWavesEl.textContent = fmt(pvWaves);
   if (pvNmEl) pvNmEl.textContent = fmtNm(pv_nm);
   if (rmsWavesEl) rmsWavesEl.textContent = fmt(rmsWaves);
   if (rmsNmEl) rmsNmEl.textContent = fmtNm(rms_nm);
+  if (pvFringesEl) pvFringesEl.textContent = fmt(2 * pvWaves);
   // Tint amber + tooltip when showing trusted-only stats.
   const tint = useTrusted ? "#ff9f0a" : "";
   const title = useTrusted ? "Computed from trusted pixels only" : "";
@@ -557,8 +544,8 @@ function renderResults(data) {
   $("fringe-pv-nm").textContent = fmtNm(data.pv_nm);
   $("fringe-rms-waves").textContent = fmt(data.rms_waves);
   $("fringe-rms-nm").textContent = fmtNm(data.rms_nm);
-  const strehlEl = $("fringe-strehl");
-  if (strehlEl) strehlEl.textContent = Number.isFinite(data.strehl) ? data.strehl.toFixed(3) : "--";
+  const fringeEl = $("fringe-pv-fringes");
+  if (fringeEl) fringeEl.textContent = Number.isFinite(data.pv_fringes) ? data.pv_fringes.toFixed(3) : "--";
 
   // Standard pass/fail coloring
   const stdSel = $("fringe-standard");
@@ -705,18 +692,6 @@ function renderResults(data) {
     drawProfile($("fringe-profile-y-canvas"), data.profile_y, "Vertical Profile (center col)");
   }
 
-  // PSF / MTF
-  const psfContent = $("fringe-psf-content");
-  const psfEmpty = $("fringe-psf-empty");
-  if (psfContent && data.psf) {
-    psfContent.hidden = false;
-    if (psfEmpty) psfEmpty.hidden = true;
-    $("fringe-psf-img").src = "data:image/png;base64," + data.psf;
-    if (data.mtf) {
-      drawMtfChart(data.mtf);
-    }
-  }
-
   // Hide 3D empty state if we have results
   if (fr.lastResult) {
     const empty3d = $("fringe-3d-empty");
@@ -835,7 +810,7 @@ function _renderZernikeTable(result) {
         <th style="text-align:left;padding:4px 8px">Noll</th>
         <th style="text-align:left;padding:4px 8px">Term</th>
         <th style="text-align:right;padding:4px 8px">Coeff (rad)</th>
-        <th style="text-align:right;padding:4px 8px">Surface (nm)</th>
+        <th style="text-align:right;padding:4px 8px">Gap (nm)</th>
         <th style="text-align:right;padding:4px 8px" title="Per-term RMS on the current aperture.">RMS (nm)</th>
         <th style="text-align:center;padding:4px 8px" title="Toggle to subtract / restore this term">Subtract</th>
       </tr>
@@ -1308,88 +1283,6 @@ function drawProfile(canvas, profile, title) {
   ctx.stroke();
 }
 
-// ── MTF chart ───────────────────────────────────────────────────────────
-
-function drawMtfChart(mtfData) {
-  const canvas = $("fringe-mtf-canvas");
-  if (!canvas) return;
-  const ctx = canvas.getContext("2d");
-  const W = canvas.width, H = canvas.height;
-  const pad = { top: 20, right: 20, bottom: 35, left: 45 };
-  const pw = W - pad.left - pad.right;
-  const ph = H - pad.top - pad.bottom;
-
-  ctx.clearRect(0, 0, W, H);
-  ctx.fillStyle = "#1a1a2e";
-  ctx.fillRect(0, 0, W, H);
-
-  // Grid lines
-  ctx.strokeStyle = "rgba(255,255,255,0.1)";
-  ctx.lineWidth = 0.5;
-  for (let i = 0; i <= 4; i++) {
-    const y = pad.top + ph * (1 - i / 4);
-    ctx.beginPath(); ctx.moveTo(pad.left, y); ctx.lineTo(pad.left + pw, y); ctx.stroke();
-  }
-
-  // Axes labels
-  ctx.fillStyle = "rgba(255,255,255,0.5)";
-  ctx.font = "10px sans-serif";
-  ctx.textAlign = "center";
-  ctx.fillText("Normalized spatial frequency", pad.left + pw / 2, H - 5);
-  ctx.save();
-  ctx.translate(12, pad.top + ph / 2);
-  ctx.rotate(-Math.PI / 2);
-  ctx.fillText("Contrast", 0, 0);
-  ctx.restore();
-
-  // Y-axis tick labels
-  ctx.textAlign = "right";
-  for (let i = 0; i <= 4; i++) {
-    const y = pad.top + ph * (1 - i / 4);
-    ctx.fillText((i * 0.25).toFixed(2), pad.left - 4, y + 3);
-  }
-
-  // X-axis tick labels
-  ctx.textAlign = "center";
-  for (let i = 0; i <= 4; i++) {
-    const x = pad.left + pw * i / 4;
-    ctx.fillText((i * 0.25).toFixed(2), x, pad.top + ph + 15);
-  }
-
-  const n = mtfData.freq.length;
-
-  // Diffraction limit (dashed, white)
-  ctx.strokeStyle = "rgba(255,255,255,0.5)";
-  ctx.setLineDash([4, 3]);
-  ctx.lineWidth = 1.5;
-  ctx.beginPath();
-  for (let i = 0; i < n; i++) {
-    const x = pad.left + mtfData.freq[i] * pw;
-    const y = pad.top + ph * (1 - mtfData.mtf_diff[i]);
-    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
-  }
-  ctx.stroke();
-  ctx.setLineDash([]);
-
-  // Measured MTF (solid, colored)
-  ctx.strokeStyle = "#4fc3f7";
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  for (let i = 0; i < n; i++) {
-    const x = pad.left + mtfData.freq[i] * pw;
-    const y = pad.top + ph * (1 - mtfData.mtf[i]);
-    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
-  }
-  ctx.stroke();
-
-  // Legend
-  ctx.font = "10px sans-serif";
-  ctx.fillStyle = "#4fc3f7";
-  ctx.fillText("Measured", pad.left + pw - 60, pad.top + 12);
-  ctx.fillStyle = "rgba(255,255,255,0.5)";
-  ctx.fillText("Diffraction limit", pad.left + pw - 60, pad.top + 24);
-}
-
 // ── 3D View ─────────────────────────────────────────────────────────────
 
 async function render3dView() {
@@ -1569,14 +1462,23 @@ export function wavefrontView(result) {
     warnings: Array.isArray(result.warnings) ? result.warnings : [],
     aperture_recipe: result.aperture_recipe ?? null,
     raw_height_grid_nm: result.raw_height_grid_nm ?? result.height_grid ?? null,
+    raw_wavelength_nm: result.raw_wavelength_nm ?? result.wavelength_nm ?? null,
     raw_mask_grid: result.raw_mask_grid ?? result.mask_grid ?? null,
     grid_rows: result.grid_rows ?? null,
     grid_cols: result.grid_cols ?? null,
     surface_height: result.surface_height ?? null,
     surface_width: result.surface_width ?? null,
     wavelength_nm: result.wavelength_nm ?? null,
+    measurement_model: result.measurement_model ?? null,
+    incidence_model: result.incidence_model ?? null,
+    height_semantics: result.height_semantics ?? null,
+    absolute_sign_known: result.absolute_sign_known ?? null,
+    specimen_surface_relative_sign: result.specimen_surface_relative_sign ?? null,
+    reference_flat_error_included: result.reference_flat_error_included ?? null,
     pv_nm: result.pv_nm ?? null,
     rms_nm: result.rms_nm ?? null,
+    pv_fringes: result.pv_fringes ?? null,
+    rms_fringes: result.rms_fringes ?? null,
   };
 }
 
@@ -1587,7 +1489,13 @@ export function wavefrontView(result) {
 export function mergeReanalyzeResult(data) {
   for (const key of [
     "surface_map", "zernike_chart", "profile_x", "profile_y",
-    "pv_nm", "rms_nm", "pv_waves", "rms_waves", "subtracted_terms",
+    "coefficients", "coefficient_names", "zernike_norm_weights", "zernike_rms_nm",
+    "pv_nm", "rms_nm", "pv_waves", "rms_waves", "pv_fringes", "rms_fringes",
+    "measurement_model", "incidence_model", "height_semantics", "absolute_sign_known",
+    "specimen_surface_relative_sign", "reference_flat_error_included",
+    "optical_performance_applicable", "coefficient_unit",
+    "wavelength_nm", "raw_wavelength_nm",
+    "subtracted_terms", "form_model", "plane_fit",
     "height_grid", "display_height_grid_nm", "raw_height_grid_nm",
     "mask_grid", "trusted_mask_grid", "trusted_area_pct",
     "grid_rows", "grid_cols",
@@ -1595,8 +1503,8 @@ export function mergeReanalyzeResult(data) {
     if (data[key] !== undefined) fr.lastResult[key] = data[key];
   }
   if (data.strehl !== undefined) fr.lastResult.strehl = data.strehl;
-  if (data.psf) fr.lastResult.psf = data.psf;
-  if (data.mtf) fr.lastResult.mtf = data.mtf;
+  if (data.psf !== undefined) fr.lastResult.psf = data.psf;
+  if (data.mtf !== undefined) fr.lastResult.mtf = data.mtf;
 
   // Refresh cached typed arrays so the Step tool and 3D view see the
   // post-subtraction surface, not the stale pre-reanalyze grid. M1.3:
@@ -1625,15 +1533,17 @@ async function doReanalyze() {
       surface_width: fr.lastResult.surface_width || 128,
       form_model: formModel,
     };
-    // Full-fidelity path: supply the raw height grid so the backend refits
-    // Zernike on the real data and preserves high-frequency content in the
-    // displayed surface map. Without these, the backend falls back to the
+    // Grid-fidelity path: supply the serialized raw height grid so the backend
+    // refits Zernike without discarding non-Zernike detail. Without these it
+    // falls back to the
     // legacy coefficient-only reconstruction which discards detail beyond
     // what the Zernike basis can represent. See M1.3.
     if (fr.lastResult.raw_height_grid_nm && fr.lastResult.grid_rows && fr.lastResult.grid_cols) {
       body.raw_height_grid_nm = fr.lastResult.raw_height_grid_nm;
+      body.raw_wavelength_nm = fr.lastResult.raw_wavelength_nm || fr.lastResult.wavelength_nm;
       body.raw_grid_rows = fr.lastResult.grid_rows;
       body.raw_grid_cols = fr.lastResult.grid_cols;
+      body.mask = fr.lastResult.mask_grid;
     }
     const r = await apiFetch("/fringe/reanalyze", {
       method: "POST",
@@ -1657,13 +1567,6 @@ async function invertWavefront() {
   const inverted = fr.lastResult.coefficients.map(c => -c);
   fr.lastResult.coefficients = inverted;
 
-  // If averaging, also negate all stored capture coefficients
-  for (const cap of fr.avgCaptures) {
-    for (let i = 0; i < cap.coefficients.length; i++) {
-      cap.coefficients[i] = -cap.coefficients[i];
-    }
-  }
-
   // Reanalyze with inverted coefficients
   try {
     const body = {
@@ -1674,12 +1577,13 @@ async function invertWavefront() {
       surface_width: fr.lastResult.surface_width || 128,
       form_model: formModel,
     };
-    // Full-fidelity path — invert the raw grid too so high-frequency content
-    // is preserved in the displayed (inverted) surface map.
+    // Grid-fidelity path — invert the serialized raw grid too.
     if (fr.lastResult.raw_height_grid_nm && fr.lastResult.grid_rows && fr.lastResult.grid_cols) {
       body.raw_height_grid_nm = fr.lastResult.raw_height_grid_nm.map(v => -v);
+      body.raw_wavelength_nm = fr.lastResult.raw_wavelength_nm || fr.lastResult.wavelength_nm;
       body.raw_grid_rows = fr.lastResult.grid_rows;
       body.raw_grid_cols = fr.lastResult.grid_cols;
+      body.mask = fr.lastResult.mask_grid;
     }
     const r = await apiFetch("/fringe/reanalyze", {
       method: "POST",
@@ -1704,7 +1608,7 @@ function exportFringeCsv() {
   const wl = fr.lastResult.wavelength_nm || 632.8;
   const sub = fr.lastResult.subtracted_terms || [];
 
-  let csv = "Index,Name,Coefficient (rad),Surface Error (nm),Subtracted\n";
+  let csv = "Index,Name,Coefficient (rad),Air-gap departure (nm),Subtracted\n";
   for (let i = 0; i < coeffs.length; i++) {
     const j = i + 1;
     const name = names[String(j)] || `Z${j}`;
@@ -1715,12 +1619,15 @@ function exportFringeCsv() {
 
   // Add summary
   csv += `\nSummary\n`;
-  csv += `PV (nm),${fr.lastResult.pv_nm?.toFixed(1)}\n`;
-  csv += `RMS (nm),${fr.lastResult.rms_nm?.toFixed(1)}\n`;
+  csv += `Gap PV (nm),${fr.lastResult.pv_nm?.toFixed(1)}\n`;
+  csv += `Gap RMS (nm),${fr.lastResult.rms_nm?.toFixed(1)}\n`;
   csv += `PV (waves),${fr.lastResult.pv_waves?.toFixed(4)}\n`;
   csv += `RMS (waves),${fr.lastResult.rms_waves?.toFixed(4)}\n`;
-  csv += `Strehl,${fr.lastResult.strehl?.toFixed(4)}\n`;
+  csv += `PV (fringes),${fr.lastResult.pv_fringes?.toFixed(4)}\n`;
+  csv += `RMS (fringes),${fr.lastResult.rms_fringes?.toFixed(4)}\n`;
   csv += `Wavelength (nm),${wl}\n`;
+  csv += "Absolute sign known,no\n";
+  csv += "Reference-flat error included,yes\n";
 
   const blob = new Blob([csv], { type: "text/csv" });
   const url = URL.createObjectURL(blob);
@@ -1762,10 +1669,10 @@ function exportFringePdf() {
 
   // Stats box
   doc.setFontSize(11);
-  const pvStr = `PV: ${data.pv_nm?.toFixed(1)} nm (${data.pv_waves?.toFixed(3)} \u03bb)`;
-  const rmsStr = `RMS: ${data.rms_nm?.toFixed(1)} nm (${data.rms_waves?.toFixed(3)} \u03bb)`;
-  const strehlStr = `Strehl: ${data.strehl?.toFixed(3)}`;
-  doc.text(`${pvStr}     ${rmsStr}     ${strehlStr}`, margin, y);
+  const pvStr = `Gap PV: ${data.pv_nm?.toFixed(1)} nm (${data.pv_waves?.toFixed(3)} \u03bb)`;
+  const rmsStr = `Gap RMS: ${data.rms_nm?.toFixed(1)} nm (${data.rms_waves?.toFixed(3)} \u03bb)`;
+  const fringeStr = `Gap PV: ${data.pv_fringes?.toFixed(3)} fringes`;
+  doc.text(`${pvStr}     ${rmsStr}     ${fringeStr}`, margin, y);
 
   // Standard pass/fail
   if (stdSel && stdSel.value) {
@@ -1775,7 +1682,10 @@ function exportFringePdf() {
     doc.text(pass ? "  PASS" : "  FAIL", margin + 180, y);
     doc.setTextColor(0);
   }
-  y += 8;
+  y += 5;
+  doc.setFontSize(8);
+  doc.text("Air-gap departure; absolute sign needs wedge/contact orientation. Reference-flat error included.", margin, y);
+  y += 6;
 
   // Surface map image
   if (data.surface_map) {
@@ -1785,14 +1695,6 @@ function exportFringePdf() {
       const imgW = 130;
       const imgH = 100;
       doc.addImage(imgData, "PNG", margin, y, imgW, imgH);
-
-      // PSF in the right area (smaller)
-      if (data.psf) {
-        const psfData = "data:image/png;base64," + data.psf;
-        doc.setFontSize(8);
-        doc.text("PSF", margin + imgW + 10, y);
-        doc.addImage(psfData, "PNG", margin + imgW + 10, y + 3, 50, 50);
-      }
 
       y += imgH + 5;
     } catch (e) {
@@ -1835,7 +1737,7 @@ function exportFringePdf() {
   doc.text("#", margin, y);
   doc.text("Term", margin + 8, y);
   doc.text("Coeff (rad)", margin + 50, y);
-  doc.text("Surface (nm)", margin + 80, y);
+  doc.text("Gap (nm)", margin + 80, y);
   doc.text("Status", margin + 110, y);
   doc.setFont(undefined, "normal");
   y += 4;
@@ -2352,7 +2254,8 @@ function _renderCaptureDetail(cap) {
   // Prefer a sensible field ordering for the table.
   const order = [
     "id", "origin", "captured_at", "source_ids",
-    "pv_nm", "rms_nm", "pv_waves", "rms_waves", "strehl",
+    "pv_nm", "rms_nm", "pv_waves", "rms_waves", "pv_fringes", "rms_fringes",
+    "height_semantics", "absolute_sign_known", "reference_flat_error_included",
     "wavelength_nm", "n_valid_pixels", "n_total_pixels",
     "surface_height", "surface_width", "calibration_snapshot",
   ];
@@ -2367,7 +2270,9 @@ function _renderCaptureDetail(cap) {
       catch (_e) { return _escapeHtml(String(v)); }
     }
     if (typeof v === "number") {
-      if (k.endsWith("_nm") || k.endsWith("_waves") || k === "strehl") return _fmtNum(v, k.endsWith("_waves") ? 4 : 3);
+      if (k.endsWith("_nm") || k.endsWith("_waves") || k.endsWith("_fringes")) {
+        return _fmtNum(v, (k.endsWith("_waves") || k.endsWith("_fringes")) ? 4 : 3);
+      }
       return String(v);
     }
     return _escapeHtml(String(v));

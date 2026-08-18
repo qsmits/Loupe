@@ -27,7 +27,7 @@
           <select id="fringe-wavelength" style="width:100%;margin-top:4px;padding:4px"></select>
           <div id="fringe-custom-wl-label" hidden style="margin-top:4px">
             <label style="font-size:11px">Custom (nm)
-              <input type="number" id="fringe-custom-wl" min="200" max="2000" step="0.1" value="589.0" style="width:80px;margin-left:4px" />
+              <input type="number" id="fringe-custom-wl" min="200" max="2000" step="0.1" value="589.3" style="width:80px;margin-left:4px" />
             </label>
           </div>
         </div>
@@ -54,7 +54,7 @@
                   <input type="checkbox" id="fringe-lpf-sigma-auto" checked />
                   auto
                 </label>
-                <input type="range" id="fringe-lpf-sigma" min="0.05" max="3.0" step="0.05" value="2.5" style="flex:1" disabled />
+                <input type="range" id="fringe-lpf-sigma" min="0.05" max="3.0" step="0.01" value="0.18" style="flex:1" disabled />
                 <span id="fringe-lpf-sigma-val" class="detect-val" style="min-width:34px">auto</span>
               </div>
               <div style="font-size:10px;opacity:0.55;margin-top:2px;line-height:1.3">
@@ -1004,13 +1004,14 @@
             <h2 class="help-page-title">How It Works</h2>
             <p class="help-page-sub">Monochromatic interferometric fringe analysis for quantitative surface flatness measurement.</p>
             <div class="help-section-label">Principle</div>
-            <p class="help-p">When a flat optical reference (an optical flat) is placed on a lapped surface and illuminated with monochromatic light, interference fringes form. Each fringe is a contour of constant air gap, spaced at half the wavelength of light (~295 nm for sodium). The image shows gap geometry first; Loupe then converts that recovered phase into a signed surface-height map using the selected wavelength and form-removal model.</p>
+            <p class="help-p">When a flat optical reference (an optical flat) is placed on a lapped surface and illuminated with monochromatic light, interference fringes form. Each fringe is a contour of constant air gap, spaced at half the wavelength of light (~295 nm for sodium). Loupe converts the recovered phase into an air-gap-departure map. A single intensity image does not reveal absolute high/low sign by itself; orient it from a known wedge or contact direction and use <strong>Invert</strong> if needed. Once oriented, the specimen contribution has the opposite sign.</p>
             <div class="help-section-label">Digital analysis</div>
-            <p class="help-p">Loupe analyzes a single interferogram using spatial-carrier Fourier phase extraction. It detects the carrier peak in the 2D FFT, demodulates the sideband, unwraps the recovered phase, and converts it to height. The resulting surface can then be shown raw or with low-order form removed using Zernike, plane, or low-order polynomial models.</p>
+            <p class="help-p">Loupe analyzes a single interferogram using spatial-carrier Fourier phase extraction. It detects the carrier peak in the 2D FFT, demodulates the sideband, unwraps the recovered phase, and converts it to air-gap departure. The map can then be shown raw or with low-order form removed using Zernike, plane, or low-order polynomial models. Any figure error in the optical flat remains included unless it is measured and subtracted as a reference.</p>
             <div class="help-section-label">What this mode is best at</div>
             <p class="help-p">Fringe mode is strongest on smooth, continuous surfaces: optical flats, lapped faces, gentle wear patterns, curvature, and low-order form. Small region-to-region comparisons also work well when the step is comfortably below the single-wavelength ambiguity limit.</p>
             <div class="help-section-label">Important limit</div>
             <p class="help-p">Single-shot single-wavelength analysis cannot uniquely determine large discontinuous steps. If a step exceeds about &lambda;/4, the displayed value may be aliased by integer multiples of &lambda;/2. Loupe warns about this in the Step tool, but the underlying physics limit is still real.</p>
+            <p class="help-p">The nanometer conversion assumes an air film viewed near normal incidence. A deliberately oblique setup or a non-air gap needs the corresponding angle or refractive-index correction.</p>
             <div class="help-section-label">What you need</div>
             <p class="help-p">A monochromatic light source (sodium lamp, HeNe laser, or narrow-band LED), an optical flat, the part to be measured, and a camera to photograph the fringes. No iPad or multi-frame capture is required, unlike deflectometry.</p>
             <div class="help-tip">New to fringe analysis? Open <strong>Terminology</strong> in this help menu for plain-language explanations of terms like wavelength, &lambda;/4, carrier, unwrap, PV, and RMS.</div>
@@ -1024,7 +1025,7 @@
               <thead><tr><th>Term</th><th>Plain-language meaning</th></tr></thead>
               <tbody>
                 <tr><td><strong>Optical flat</strong></td><td>A very flat reference surface placed on or near the part so the tiny air gap between them produces interference fringes.</td></tr>
-                <tr><td><strong>Air gap</strong></td><td>The tiny spacing between the optical flat and the part. The fringes describe this gap first; the app then converts that into a surface-height map.</td></tr>
+                <tr><td><strong>Air gap</strong></td><td>The tiny spacing between the optical flat and the part. The displayed height values are departures of this gap. After the sign is oriented, the specimen contribution is opposite; optical-flat error remains included.</td></tr>
                 <tr><td><strong>Wavelength (&lambda;)</strong></td><td>The color of the monochromatic light, measured in nanometers. It sets the height scale. Shorter wavelengths make the same phase change correspond to a smaller physical height.</td></tr>
                 <tr><td><strong>&lambda;/2</strong></td><td>Half a wavelength. In reflection interferometry, moving from one fringe to the next usually corresponds to about this much air-gap change.</td></tr>
                 <tr><td><strong>&lambda;/4</strong></td><td>A quarter wavelength. This matters because a single image cannot uniquely resolve every larger step. For sodium light, &lambda;/4 is about 147 nm. Once a discontinuous step gets larger than that, a single-shot reading can be ambiguous by multiples of &lambda;/2.</td></tr>
@@ -1036,15 +1037,15 @@
                 <tr><td><strong>2&pi; jump correction</strong></td><td>An extra cleanup step that can fix isolated unwrap mistakes on smooth surfaces. For step measurements it can also hide real discontinuities, so it is often better to disable it there.</td></tr>
                 <tr><td><strong>Modulation</strong></td><td>How strong or visible the fringes are at each pixel. High modulation usually means a more trustworthy phase measurement; low modulation means weak or noisy fringes.</td></tr>
                 <tr><td><strong>Trusted pixels / trusted area</strong></td><td>Pixels that pass both the modulation checks and the unwrap-risk checks. Measurements restricted to trusted pixels are less likely to be polluted by weak data.</td></tr>
-                <tr><td><strong>PV</strong></td><td>Peak-to-valley. The full height range of the displayed surface: highest point minus lowest point.</td></tr>
-                <tr><td><strong>RMS</strong></td><td>Root mean square. A summary of how much the surface varies overall, not just the single highest and lowest spots.</td></tr>
+                <tr><td><strong>PV</strong></td><td>Peak-to-valley. The full range of the displayed air-gap departure: highest value minus lowest value.</td></tr>
+                <tr><td><strong>RMS</strong></td><td>Root mean square. A summary of how much the displayed air-gap departure varies overall, not just its two extremes.</td></tr>
                 <tr><td><strong>Form removal</strong></td><td>Subtracting broad shape like tilt or curvature so smaller features are easier to inspect. This changes the displayed map and its PV/RMS, so it should always be interpreted consciously.</td></tr>
                 <tr><td><strong>Zernike</strong></td><td>A standard set of smooth shape terms used in optics. They are handy for describing tilt, curvature, astigmatism, coma, and related low-order form.</td></tr>
                 <tr><td><strong>Aliasing</strong></td><td>When different physical surfaces can produce the same single-image phase result. In step measurements this is why a large step can masquerade as a smaller one shifted by multiples of &lambda;/2.</td></tr>
             </tbody>
             </table>
             <div class="help-section-label">Two common mental traps</div>
-            <div class="help-tip"><strong>Fringes show gap first:</strong> By eye, it is easy to think a fringe pattern directly labels surface highs and lows. What it directly shows is the air-gap shape between the part and the optical flat.</div>
+            <div class="help-tip"><strong>Fringes show gap first:</strong> By eye, it is easy to think a fringe pattern directly labels specimen highs and lows. What it directly shows is the air-gap shape between the part and the optical flat. Its absolute sign needs an external orientation cue.</div>
             <div class="help-tip"><strong>The displayed map depends on what was removed:</strong> A surface map after tilt or curvature removal can look very different from the raw recovered shape. Always note the active form-removal setting before interpreting numbers.</div>
           </div>
 
@@ -1198,17 +1199,15 @@
             <h2 class="help-page-title">Results &amp; Tabs</h2>
             <p class="help-page-sub">Understanding the output of a fringe analysis.</p>
             <div class="help-section-label">Summary bar</div>
-            <p class="help-p">Shows PV and RMS in both waves and nanometers, plus the active workflow mode, calibration, recipe badge, and current form-removal description. PV is the total range of the displayed surface. RMS is the statistical spread of that same displayed surface.</p>
+            <p class="help-p">Shows air-gap PV and RMS in waves and nanometers, plus PV in same-order fringe intervals (one fringe = λ/2 gap departure). Absolute sign requires a known wedge/contact direction; after orientation, the specimen contribution is opposite. Optical-flat figure error is included. The bar also shows the active workflow mode, calibration, recipe badge, and form-removal description.</p>
             <div class="help-section-label">Surface Map tab</div>
-            <p class="help-p">False-color height map of the displayed surface. Use the overlay buttons to switch between the surface map, confidence composite, and modulation image. The “use trusted pixels only” checkbox restricts measurements to pixels that are both well-modulated and unwrap-reliable.</p>
+            <p class="help-p">False-color map of the displayed air-gap departure. Use the overlay buttons to switch between the gap map, confidence composite, and modulation image. The “use trusted pixels only” checkbox restricts measurements to pixels that are both well-modulated and unwrap-reliable.</p>
             <div class="help-section-label">3D View tab</div>
             <p class="help-p">Interactive 3D surface visualization. Drag to rotate, scroll to zoom, right-drag to pan. The Z exaggeration slider amplifies the height for visibility.</p>
             <div class="help-section-label">Zernike tab</div>
             <p class="help-p">Bar chart plus per-term table for the fitted Zernike coefficients. Subtracted terms are grayed out. The table also shows per-term RMS contribution and normalization weights for the current aperture.</p>
             <div class="help-section-label">Profiles tab</div>
-            <p class="help-p">Cross-section height profiles through the center of the surface: one horizontal, one vertical. Useful for identifying whether errors are primarily in one direction.</p>
-            <div class="help-section-label">PSF / MTF tab</div>
-            <p class="help-p">Optics-style visualization derived from the displayed surface. Useful when fringe mode is being used as a wavefront-analysis tool rather than only as a flatness map.</p>
+            <p class="help-p">Cross-sections through the center of the air-gap map: one horizontal, one vertical. Useful for identifying whether departures are primarily in one direction.</p>
             <div class="help-section-label">Session tab</div>
             <p class="help-p">In-session capture browser. Every new analysis, average, subtraction, and import appears here with origin tags, source links, export buttons, and a details panel.</p>
             <div class="help-section-label">Trend tab</div>

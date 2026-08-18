@@ -401,7 +401,7 @@ export function computeAreaStats(p1, p2) {
 // Uncertainty: the ±σ we report is an "effective-N" standard error of the
 // mean, derived from the region RMS and the number of *independent* grid
 // cells (not the raw cell count). The demodulation LPF correlates neighbor
-// pixels over roughly π·(2.5·fringe_period_px)² of original-image area, so
+// pixels over roughly π·(0.5·fringe_period_px)² of original-image area, so
 // the naive RMS/√N would be wildly over-optimistic. We divide N by the
 // number of grid cells per LPF correlation area to get an effective N,
 // then compute σ_mean = RMS / √N_eff and σ_step = √(σ_A² + σ_B²).
@@ -411,8 +411,8 @@ export function computeAreaStats(p1, p2) {
 const STEP_COLORS = ["#00d4ff", "#ff9944"];
 
 // Gaussian LPF σ used by the backend demodulator (in original-image pixels)
-// is roughly `lpf_sigma_frac` × fringe_period_px. Legacy default (and
-// "auto" mode) is 2.5; M2.5 lets the user override via the analyze body.
+// is roughly `lpf_sigma_frac` × fringe_period_px. The optical-flat auto
+// value is 0.5; M2.5 lets the user override via the analyze body.
 //
 // M2.6 — anisotropic LPF preserves correlation-area geometric mean, so the
 // isotropic-equivalent area (π·σ_iso²) is the right input here.
@@ -423,7 +423,7 @@ const STEP_COLORS = ["#00d4ff", "#ff9944"];
 // The shape is now elliptical along the carrier, but for SEM-of-mean over
 // a rectangular ROI the area-based effective-N estimate remains correct
 // (within the worst-case orientation we already tolerate).
-const LPF_SIGMA_FACTOR_LEGACY = 2.5;
+const LPF_SIGMA_FACTOR_AUTO = 0.18;
 
 function _normRect(p1, p2) {
   return {
@@ -443,22 +443,27 @@ function _corrCellsPerLpf() {
   const lr = fr.lastResult;
   if (!lr || !lr.carrier || !fr.gridCols || !fr.gridRows) return 1.0;
   const period = Number(lr.carrier.fringe_period_px);
-  const imgW = Number(lr.image_width || lr.surface_width);
-  const imgH = Number(lr.image_height || lr.surface_height);
-  if (!(period > 1) || !(imgW > 0) || !(imgH > 0)) return 1.0;
+  const surfaceW = Number(lr.surface_width);
+  const surfaceH = Number(lr.surface_height);
+  if (!(period > 1) || !(surfaceW > 0) || !(surfaceH > 0)) return 1.0;
 
   // M2.5/M2.6: read the actually-applied LPF multiplier from the server
-  // echo. tuning.lpf_sigma_frac === null means "auto" (legacy 2.5). The
+  // echo. tuning.lpf_sigma_frac === null means the optical-flat auto value.
   // anisotropic LPF preserves correlation-area geometric mean, so this
   // isotropic-equivalent computation remains correct.
   const tuning = lr.tuning || {};
   const sigmaFrac = (tuning.lpf_sigma_frac != null && Number.isFinite(Number(tuning.lpf_sigma_frac)))
     ? Number(tuning.lpf_sigma_frac)
-    : LPF_SIGMA_FACTOR_LEGACY;
+    : LPF_SIGMA_FACTOR_AUTO;
 
-  const sigma = sigmaFrac * period;                    // original-image px (σ_iso)
-  const corrAreaPx = Math.PI * sigma * sigma;          // original-image px²
-  const cellArea = (imgW * imgH) / (fr.gridCols * fr.gridRows);
+  // Match the backend anisotropic Gaussian and its per-axis noise floors.
+  // For normalized Gaussian smoothing, 1/sum(kernel²) approaches
+  // 4πσxσy independent samples, not πσ².
+  const sigmaAlong = Math.max(sigmaFrac * period * 0.7071, 2.0);
+  const sigmaAcross = Math.max(sigmaFrac * period * 1.4142, 5.0);
+  const corrAreaPx = 4 * Math.PI * sigmaAlong * sigmaAcross;
+  // The grid spans the cropped work surface, not the original camera frame.
+  const cellArea = (surfaceW * surfaceH) / (fr.gridCols * fr.gridRows);
   if (!(cellArea > 0)) return 1.0;
   return Math.max(1, corrAreaPx / cellArea);
 }
@@ -591,7 +596,9 @@ export function updateStepReadout() {
   // — excludes carrier/unwrap/tilt bias.
   const sigmaStep = Math.sqrt(sA.sem * sA.sem + sB.sem * sB.sem);
   const wl = (fr.lastResult && fr.lastResult.wavelength_nm) || 0;
-  const inWaves = wl > 0 ? ` [${(step / wl).toFixed(3)} \u03bb]` : "";
+  const inWaves = wl > 0
+    ? ` [${(step / wl).toFixed(3)} gap \u03bb \u00b7 ${(2 * step / wl).toFixed(3)} fringes]`
+    : "";
 
   // λ/4 aliasing warning. Single-shot single-wavelength interferometry
   // can't distinguish step from step ± n·λ/2. The warning fires on |step|
@@ -605,7 +612,7 @@ export function updateStepReadout() {
     warnHtml = `  <span style="background:#ff453a;color:#fff;font-weight:700;padding:2px 6px;border-radius:3px;margin-left:6px" title="Single-shot single-wavelength interferometry cannot distinguish this from a step of step \u00b1 n\u00b7\u03bb/2. The reported number is whatever the 2D unwrap happened to produce; it is not traceable to the true step.">\u26a0 |step| &gt; \u03bb/4 (${quarterWl.toFixed(0)} nm) \u2014 may be aliased by 2\u03c0 ambiguity</span>`;
   }
 
-  const aSemTitle = `Effective-N SEM: RMS / \u221aN_eff where N_eff corrects for the demodulation LPF (\u03c3 \u2248 2.5\u00b7fringe_period) correlating neighbor cells. Scatter-only; excludes carrier/unwrap/tilt bias.`;
+  const aSemTitle = `Effective-N SEM: RMS / \u221aN_eff where N_eff corrects for the demodulation LPF (\u03c3 \u2248 0.5\u00b7fringe_period in auto mode) correlating neighbor cells. Scatter-only; excludes carrier/unwrap/tilt bias.`;
   const bSemTitle = aSemTitle;
   const stepSemTitle = `Effective-N uncertainty: \u221a(\u03c3_A\u00b2 + \u03c3_B\u00b2), each using RMS / \u221aN_eff. Scatter-only \u2014 not a full metrology uncertainty.`;
 

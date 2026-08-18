@@ -31,7 +31,7 @@ export const fr = {
   useTrustedOnly: false,   // M1.6 — measurement tools may honor this flag
   gridRows: 0,
   gridCols: 0,
-  avgCaptures: [],        // [{coefficients: Float64Array, rms_nm: number, accepted: bool, reason: string}]
+  avgCaptures: [],        // [{id, rms_nm, accepted, reason}]
   avgRejectThreshold: 3,  // reject if capture RMS > threshold × average RMS
   avgSurfaceHeight: 0,
   avgSurfaceWidth: 0,
@@ -55,7 +55,7 @@ export function $(id) { return document.getElementById(id); }
 // "custom" is a UI-only entry, always appended by rebuildWavelengthSelect().
 
 let WAVELENGTHS = [
-  { id: "sodium", label: "Sodium (589 nm)",   nm: 589.0 },
+  { id: "sodium", label: "Sodium (589.3 nm)", nm: 589.3 },
   { id: "hene",   label: "HeNe (632.8 nm)",   nm: 632.8 },
   { id: "green",  label: "Green LED (532 nm)", nm: 532.0 },
 ];

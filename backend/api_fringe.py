@@ -189,7 +189,14 @@ def _record_capture(session_id: str, result: dict) -> None:
         "rms_nm": result.get("rms_nm"),
         "pv_waves": result.get("pv_waves"),
         "rms_waves": result.get("rms_waves"),
-        "strehl": result.get("strehl"),
+        "pv_fringes": result.get("pv_fringes"),
+        "rms_fringes": result.get("rms_fringes"),
+        "measurement_model": result.get("measurement_model"),
+        "incidence_model": result.get("incidence_model"),
+        "height_semantics": result.get("height_semantics"),
+        "absolute_sign_known": result.get("absolute_sign_known"),
+        "specimen_surface_relative_sign": result.get("specimen_surface_relative_sign"),
+        "reference_flat_error_included": result.get("reference_flat_error_included"),
         "wavelength_nm": result.get("wavelength_nm"),
         "n_valid_pixels": result.get("n_valid_pixels"),
         "n_total_pixels": result.get("n_total_pixels"),
@@ -272,7 +279,7 @@ class ApertureRecipe(BaseModel):
 
 
 class AnalyzeBody(BaseModel):
-    wavelength_nm: float = Field(default=632.8, gt=0, le=2000)
+    wavelength_nm: float = Field(default=589.3, gt=0, le=2000)
     mask_threshold: float = Field(default=0.15, ge=0.0, le=1.0)
     subtract_terms: list[int] = Field(default=[1, 2, 3])
     n_zernike: int = Field(default=36, ge=1, le=66)
@@ -284,7 +291,7 @@ class AnalyzeBody(BaseModel):
     correct_2pi_jumps: bool = Field(default=True)
     calibration: Optional[CalibrationSnapshot] = Field(default=None)
     aperture_recipe: Optional[ApertureRecipe] = Field(default=None)
-    # M2.5 — user-tunable DFT parameters. None = auto (preserve legacy defaults).
+    # M2.5 — user-tunable DFT parameters. None = optical-flat auto default.
     lpf_sigma_frac: Optional[float] = Field(default=None, gt=0, le=5.0)
     dc_margin_override: Optional[int] = Field(default=None, ge=0, le=32)
     # M2.1 — exponential DC high-pass cutoff (FFT bins). Default 1.5 matches
@@ -295,7 +302,7 @@ class AnalyzeBody(BaseModel):
 class ReanalyzeBody(BaseModel):
     coefficients: list[float]
     subtract_terms: list[int] = Field(default=[1, 2, 3])
-    wavelength_nm: float = Field(default=632.8, gt=0, le=2000)
+    wavelength_nm: float = Field(default=589.3, gt=0, le=2000)
     surface_height: int = Field(gt=0)
     surface_width: int = Field(gt=0)
     mask: Optional[list[int]] = Field(default=None)
@@ -305,6 +312,7 @@ class ReanalyzeBody(BaseModel):
     # on the cached pre-form-removal heightmap instead of reconstructing
     # from Zernike coefficients alone.
     raw_height_grid_nm: Optional[list[float]] = Field(default=None)
+    raw_wavelength_nm: Optional[float] = Field(default=None, gt=0, le=2000)
     raw_grid_rows: Optional[int] = Field(default=None, gt=0)
     raw_grid_cols: Optional[int] = Field(default=None, gt=0)
 
@@ -313,7 +321,7 @@ class ReanalyzeCarrierBody(BaseModel):
     carrier_y: float
     carrier_x: float
     image_b64: Optional[str] = Field(default=None)
-    wavelength_nm: float = Field(default=632.8, gt=0, le=2000)
+    wavelength_nm: float = Field(default=589.3, gt=0, le=2000)
     mask_threshold: float = Field(default=0.15, ge=0.0, le=1.0)
     subtract_terms: list[int] = Field(default=[1, 2, 3])
     n_zernike: int = Field(default=36, ge=1, le=66)
@@ -322,7 +330,7 @@ class ReanalyzeCarrierBody(BaseModel):
     correct_2pi_jumps: bool = Field(default=True)
     calibration: Optional[CalibrationSnapshot] = Field(default=None)
     aperture_recipe: Optional[ApertureRecipe] = Field(default=None)
-    # M2.5 — user-tunable DFT parameters. None = auto (preserve legacy defaults).
+    # M2.5 — user-tunable DFT parameters. None = optical-flat auto default.
     lpf_sigma_frac: Optional[float] = Field(default=None, gt=0, le=5.0)
     dc_margin_override: Optional[int] = Field(default=None, ge=0, le=32)
     # M2.1 — exponential DC high-pass cutoff (FFT bins). Default 1.5.
@@ -347,6 +355,46 @@ class AverageBody(BaseModel):
     wavelength_nm: Optional[float] = Field(default=None, gt=0)
     rejection: Literal["none", "sigma", "mad"] = "none"
     rejection_threshold: float = Field(default=3.0, gt=0, le=10)
+
+
+def _resolve_request_wavelength(body: BaseModel) -> tuple[float, str | None]:
+    """Resolve wavelength without allowing computation/metadata mismatch."""
+    wavelength = float(getattr(body, "wavelength_nm"))
+    calibration = getattr(body, "calibration", None)
+    calibration_wavelength = getattr(calibration, "wavelength_nm", None)
+    explicitly_sent = "wavelength_nm" in body.model_fields_set
+    if calibration_wavelength is not None:
+        calibration_wavelength = float(calibration_wavelength)
+        if explicitly_sent and abs(wavelength - calibration_wavelength) > 1e-9:
+            raise HTTPException(
+                400,
+                detail=(
+                    "wavelength_nm disagrees with calibration.wavelength_nm; "
+                    "send one consistent physical wavelength"
+                ),
+            )
+        if not explicitly_sent:
+            wavelength = calibration_wavelength
+            setattr(body, "wavelength_nm", wavelength)
+            return wavelength, None
+    if not explicitly_sent:
+        return wavelength, (
+            f"Wavelength omitted; assumed {wavelength:.1f} nm. "
+            "Set the calibrated source wavelength for quantitative results."
+        )
+    return wavelength, None
+
+
+def _applied_calibration_snapshot(body: BaseModel) -> dict | None:
+    """Return provenance synchronized to the parameters actually applied."""
+    calibration = getattr(body, "calibration", None)
+    if calibration is None:
+        return None
+    snapshot = calibration.model_dump()
+    snapshot["wavelength_nm"] = float(getattr(body, "wavelength_nm"))
+    if hasattr(body, "lens_k1"):
+        snapshot["lens_k1"] = float(getattr(body, "lens_k1"))
+    return snapshot
 
 
 # M3.7 — Capture export/import
@@ -390,6 +438,7 @@ def make_fringe_router(camera: BaseCamera) -> APIRouter:
         - image_b64: base64-encoded image (drag-drop or file upload)
         - No image: uses the current frozen camera frame
         """
+        _, wavelength_warning = _resolve_request_wavelength(body)
         if body.image_b64:
             # Decode uploaded image
             try:
@@ -433,30 +482,35 @@ def make_fringe_router(camera: BaseCamera) -> APIRouter:
 
         _fringe_cache.put(session_id, "last_image", image.copy())
 
-        result = analyze_interferogram(
-            image,
-            wavelength_nm=body.wavelength_nm,
-            mask_threshold=body.mask_threshold,
-            subtract_terms=body.subtract_terms,
-            n_zernike=body.n_zernike,
-            use_full_mask=body.roi is not None and not body.mask_polygons,
-            custom_mask=custom_mask,
-            form_model=body.form_model,
-            lens_k1=body.lens_k1,
-            correct_2pi_jumps=body.correct_2pi_jumps,
-            lpf_sigma_frac=body.lpf_sigma_frac,
-            dc_margin_override=body.dc_margin_override,
-            dc_cutoff_cycles=body.dc_cutoff_cycles,
-        )
+        try:
+            result = analyze_interferogram(
+                image,
+                wavelength_nm=body.wavelength_nm,
+                mask_threshold=body.mask_threshold,
+                subtract_terms=body.subtract_terms,
+                n_zernike=body.n_zernike,
+                use_full_mask=body.roi is not None and not body.mask_polygons,
+                custom_mask=custom_mask,
+                form_model=body.form_model,
+                lens_k1=body.lens_k1,
+                correct_2pi_jumps=body.correct_2pi_jumps,
+                lpf_sigma_frac=body.lpf_sigma_frac,
+                dc_margin_override=body.dc_margin_override,
+                dc_cutoff_cycles=body.dc_cutoff_cycles,
+            )
+        except ValueError as exc:
+            raise HTTPException(422, detail=str(exc)) from exc
         # Cache full-res mask for reanalyze/invert (mask_grid is downsampled)
         if "_mask_full" in result:
             _fringe_cache.put(session_id, "last_mask", result.pop("_mask_full"))
         wrap_wavefront_result(
             result,
             origin="capture",
-            calibration=body.calibration.model_dump() if body.calibration else None,
+            calibration=_applied_calibration_snapshot(body),
             aperture_recipe=body.aperture_recipe.model_dump() if body.aperture_recipe else None,
         )
+        if wavelength_warning:
+            result["warnings"].append(wavelength_warning)
         # M2.5 + M2.1: echo applied tuning so the UI can display server-resolved
         # values (including the new dc_cutoff_cycles knob).
         result["tuning"] = {
@@ -482,6 +536,7 @@ def make_fringe_router(camera: BaseCamera) -> APIRouter:
         Final event:     {"stage": "done", "progress": 1.0, "result": {...}}
         Error event:     {"stage": "error", "message": str}
         """
+        _, wavelength_warning = _resolve_request_wavelength(body)
         loop = asyncio.get_running_loop()
         queue: asyncio.Queue = asyncio.Queue()
 
@@ -566,9 +621,11 @@ def make_fringe_router(camera: BaseCamera) -> APIRouter:
                 wrap_wavefront_result(
                     result,
                     origin="capture",
-                    calibration=body.calibration.model_dump() if body.calibration else None,
+                    calibration=_applied_calibration_snapshot(body),
                     aperture_recipe=body.aperture_recipe.model_dump() if body.aperture_recipe else None,
                 )
+                if wavelength_warning:
+                    result["warnings"].append(wavelength_warning)
                 # M2.5 + M2.1: echo applied tuning so the UI can display server-resolved values.
                 result["tuning"] = {
                     "mask_threshold": body.mask_threshold,
@@ -603,6 +660,7 @@ def make_fringe_router(camera: BaseCamera) -> APIRouter:
     async def fringe_reanalyze(body: ReanalyzeBody,
                                session_id: str = Depends(get_session_id_dep)):
         """Re-analyze with different Zernike subtraction (no FFT, fast)."""
+        _, wavelength_warning = _resolve_request_wavelength(body)
         mask = body.mask
         if mask is None:
             mask = _fringe_cache.get(session_id, "last_mask")
@@ -615,9 +673,12 @@ def make_fringe_router(camera: BaseCamera) -> APIRouter:
             n_zernike=body.n_zernike,
             form_model=body.form_model,
             raw_height_grid_nm=body.raw_height_grid_nm,
+            raw_wavelength_nm=body.raw_wavelength_nm,
             raw_grid_rows=body.raw_grid_rows,
             raw_grid_cols=body.raw_grid_cols,
         )
+        if wavelength_warning:
+            result.setdefault("warnings", []).append(wavelength_warning)
         return result
 
     @router.get("/fringe/focus-quality", dependencies=[Depends(_reject_hosted)])  # camera-only
@@ -633,6 +694,7 @@ def make_fringe_router(camera: BaseCamera) -> APIRouter:
     async def fringe_reanalyze_carrier(body: ReanalyzeCarrierBody, request: Request,
                                        session_id: str = Depends(get_session_id_dep)):
         """Re-analyze with a manually selected carrier peak."""
+        _, wavelength_warning = _resolve_request_wavelength(body)
         if body.image_b64:
             try:
                 img_bytes = base64.b64decode(body.image_b64)
@@ -659,20 +721,23 @@ def make_fringe_router(camera: BaseCamera) -> APIRouter:
                 ih, iw,
             )
 
-        result = analyze_interferogram(
-            image,
-            wavelength_nm=body.wavelength_nm,
-            mask_threshold=body.mask_threshold,
-            subtract_terms=body.subtract_terms,
-            n_zernike=body.n_zernike,
-            custom_mask=custom_mask,
-            carrier_override=(body.carrier_y, body.carrier_x),
-            lens_k1=body.lens_k1,
-            correct_2pi_jumps=body.correct_2pi_jumps,
-            lpf_sigma_frac=body.lpf_sigma_frac,
-            dc_margin_override=body.dc_margin_override,
-            dc_cutoff_cycles=body.dc_cutoff_cycles,
-        )
+        try:
+            result = analyze_interferogram(
+                image,
+                wavelength_nm=body.wavelength_nm,
+                mask_threshold=body.mask_threshold,
+                subtract_terms=body.subtract_terms,
+                n_zernike=body.n_zernike,
+                custom_mask=custom_mask,
+                carrier_override=(body.carrier_y, body.carrier_x),
+                lens_k1=body.lens_k1,
+                correct_2pi_jumps=body.correct_2pi_jumps,
+                lpf_sigma_frac=body.lpf_sigma_frac,
+                dc_margin_override=body.dc_margin_override,
+                dc_cutoff_cycles=body.dc_cutoff_cycles,
+            )
+        except ValueError as exc:
+            raise HTTPException(422, detail=str(exc)) from exc
         if "_mask_full" in result:
             _fringe_cache.put(session_id, "last_mask", result.pop("_mask_full"))
         # Fix 2: link the override back to the most recent cached capture
@@ -687,10 +752,12 @@ def make_fringe_router(camera: BaseCamera) -> APIRouter:
         wrap_wavefront_result(
             result,
             origin="capture",
-            calibration=body.calibration.model_dump() if body.calibration else None,
+            calibration=_applied_calibration_snapshot(body),
             aperture_recipe=body.aperture_recipe.model_dump() if body.aperture_recipe else None,
             source_ids=source_ids,
         )
+        if wavelength_warning:
+            result["warnings"].append(wavelength_warning)
         # M2.5 + M2.1: echo applied tuning so the UI can display server-resolved values.
         result["tuning"] = {
             "mask_threshold": body.mask_threshold,

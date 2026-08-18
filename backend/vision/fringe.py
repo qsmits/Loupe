@@ -32,18 +32,22 @@ def undistort_frame(img: np.ndarray, lens_k1: float) -> np.ndarray:
     """Apply Brown-Conrady k1 radial undistortion.
 
     img : 2D grayscale or 3D color image (any dtype supported by cv2.remap).
-    lens_k1 : normalized k1. Denormalized via k1_raw = lens_k1 / ((w²+h²)/4).
-              Range typically [-0.8, 0.8] in normalized units.
+    lens_k1 : dimensionless coefficient for radius normalized by half the
+              image diagonal. Range typically [-0.8, 0.8].
+
+    OpenCV applies k1 to focal-normalized camera coordinates. If the client
+    model is ``1 + k_diag * r_px² / diag_radius²``, the equivalent OpenCV
+    coefficient is ``k_diag * f² / diag_radius²``.
     """
     if lens_k1 == 0.0:
         return img
     h, w = img.shape[:2]
     cx, cy = w / 2, h / 2
     diag_sq = (w * w + h * h) / 4
-    k1_raw = lens_k1 / diag_sq
     f = max(w, h)
+    k1_opencv = lens_k1 * (f * f) / diag_sq
     K = np.array([[f, 0, cx], [0, f, cy], [0, 0, 1]], dtype=np.float64)
-    dist = np.array([k1_raw, 0, 0, 0, 0], dtype=np.float64)
+    dist = np.array([k1_opencv, 0, 0, 0, 0], dtype=np.float64)
     map1, map2 = cv2.initUndistortRectifyMap(K, dist, None, K, (w, h), cv2.CV_32FC1)
     return cv2.remap(img, map1, map2, cv2.INTER_LINEAR)
 
@@ -64,30 +68,36 @@ ZERNIKE_NAMES: dict[int, str] = {
     11: "Spherical",
     12: "2nd Astigmatism 0",
     13: "2nd Astigmatism 45",
-    14: "2nd Coma X",
-    15: "2nd Coma Y",
-    16: "Tetrafoil X",
-    17: "Tetrafoil Y",
-    18: "2nd Trefoil Y",
-    19: "2nd Trefoil X",
-    20: "3rd Coma Y",
-    21: "3rd Coma X",
+    14: "Tetrafoil X",
+    15: "Tetrafoil Y",
+    16: "2nd Coma X",
+    17: "2nd Coma Y",
+    18: "2nd Trefoil X",
+    19: "2nd Trefoil Y",
+    20: "Pentafoil X",
+    21: "Pentafoil Y",
     22: "2nd Spherical",
-    23: "Pentafoil X",
-    24: "Pentafoil Y",
-    25: "3rd Astigmatism 45",
-    26: "3rd Astigmatism 0",
-    27: "3rd Trefoil Y",
-    28: "3rd Trefoil X",
+    23: "3rd Astigmatism 45",
+    24: "3rd Astigmatism 0",
+    25: "2nd Tetrafoil Y",
+    26: "2nd Tetrafoil X",
+    27: "Hexafoil Y",
+    28: "Hexafoil X",
     29: "3rd Coma Y",
     30: "3rd Coma X",
-    31: "3rd Spherical",
-    32: "Hexafoil X",
-    33: "Hexafoil Y",
-    34: "4th Astigmatism 0",
-    35: "4th Astigmatism 45",
-    36: "4th Spherical",
+    31: "3rd Trefoil Y",
+    32: "3rd Trefoil X",
+    33: "2nd Pentafoil Y",
+    34: "2nd Pentafoil X",
+    35: "Heptafoil Y",
+    36: "Heptafoil X",
 }
+
+
+# Optical-flat air-film analysis defaults. A narrower demodulation filter
+# preserves specimen detail while still rejecting the conjugate sideband.
+DEFAULT_LPF_SIGMA_FRAC = 0.18
+MEASUREMENT_MODEL = "optical_flat_air_gap"
 
 # Mapping from common UI group names to Noll indices for the subtraction panel.
 ZERNIKE_GROUPS: dict[str, list[int]] = {
@@ -234,7 +244,9 @@ def _make_polar_coords(shape: tuple[int, int], mask: np.ndarray | None = None
     yy, xx = np.mgrid[0:h, 0:w]
     cx, cy = w / 2.0, h / 2.0
     dx = (xx - cx).astype(np.float64)
-    dy = (yy - cy).astype(np.float64)
+    # Reporting convention is Cartesian: +Y points upward. Image rows grow
+    # downward, so introduce the one deliberate Y flip at this boundary.
+    dy = (cy - yy).astype(np.float64)
     r = np.sqrt(dx ** 2 + dy ** 2)
     if mask is not None and mask.any():
         r_max = float(r[mask].max())
@@ -339,8 +351,15 @@ def _subtract_plane(surface: np.ndarray, mask: np.ndarray | None = None
     return result
 
 
-def _fit_plane(surface: np.ndarray, mask: np.ndarray | None = None) -> dict:
-    """Fit a least-squares plane and return coefficients for diagnostics."""
+def _fit_plane(surface: np.ndarray, mask: np.ndarray | None = None,
+               wavelength_nm: float | None = None) -> dict:
+    """Fit a least-squares plane and return coefficients for diagnostics.
+
+    ``surface`` may be height in nanometers or phase in radians. Passing
+    ``wavelength_nm`` declares phase input and converts the reported tilts to
+    nanometers. The raw ``a``, ``b`` and ``c`` coefficients retain the input
+    unit for backward compatibility.
+    """
     h, w = surface.shape
     yy, xx = np.mgrid[0:h, 0:w]
     if mask is not None:
@@ -354,12 +373,18 @@ def _fit_plane(surface: np.ndarray, mask: np.ndarray | None = None) -> dict:
 
     A = np.column_stack([xs, ys, np.ones(len(xs))])
     coeffs, _, _, _ = np.linalg.lstsq(A, zs, rcond=None)
+    tilt_x = float(coeffs[0] * w)
+    tilt_y = float(coeffs[1] * h)
+    if wavelength_nm is not None:
+        scale = float(wavelength_nm) / (4.0 * np.pi)
+        tilt_x *= scale
+        tilt_y *= scale
     return {
         "a": float(coeffs[0]),
         "b": float(coeffs[1]),
         "c": float(coeffs[2]),
-        "tilt_x_nm": float(coeffs[0] * w),
-        "tilt_y_nm": float(coeffs[1] * h),
+        "tilt_x_nm": tilt_x,
+        "tilt_y_nm": tilt_y,
     }
 
 
@@ -489,6 +514,15 @@ def _dominant_brightness_bbox(image: np.ndarray) -> tuple[int, int, int, int] | 
     # Reject thin outlines/text/edges; the carrier crop is meant for filled
     # illuminated regions.
     if best_area / max(bw * bh, 1) < 0.35:
+        return None
+    # A dominant bright patch is often glare. Require actual repeated texture
+    # inside the proposed carrier crop before allowing it to replace the
+    # full-frame FFT. A nearly uniform crop has no defensible carrier.
+    candidate = img[y:y + bh, x:x + bw]
+    local_bg = cv2.GaussianBlur(candidate, (0, 0), 3.0)
+    texture_rms = float(np.sqrt(np.mean((candidate - local_bg) ** 2)))
+    dynamic = float(np.percentile(img, 99.0) - np.percentile(img, 1.0))
+    if texture_rms < max(1.0, 0.02 * dynamic):
         return None
     # A small component clipped by the image border is commonly a lighting
     # gradient tail, not a stable analysis aperture.
@@ -1050,16 +1084,25 @@ def compute_fringe_modulation(image: np.ndarray) -> np.ndarray:
     fy = (py - h // 2) / h  # cycles per pixel
     fx = (px - w // 2) / w
 
+    fringe_freq = math.sqrt(fy ** 2 + fx ** 2)
+    fringe_period = 1.0 / max(fringe_freq, 1e-10)
+
+    # Remove the slowly varying illumination/DC term before demodulation.
+    # Without this subtraction, low-frequency carriers shift ordinary
+    # brightness into the envelope passband and glare can look like excellent
+    # fringe modulation.
+    bg_sigma = max(3.0, 0.5 * fringe_period)
+    background = cv2.GaussianBlur(img, (0, 0), bg_sigma)
+    enhanced = img - background
+
     # Step 2: complex demodulation — shift carrier to DC
     yy, xx = np.mgrid[0:h, 0:w]
-    demod = img * np.exp(-2j * np.pi * (fy * yy + fx * xx))
+    demod = enhanced * np.exp(-2j * np.pi * (fy * yy + fx * xx))
 
     # Low-pass filter (envelope extraction)
     # Window size ~2x the true fringe period for good locality. Compute this
     # from cycles/pixel, not from the FFT distance in pixels; h/dist is only
     # correct for square images with a purely vertical carrier.
-    fringe_freq = math.sqrt(fy ** 2 + fx ** 2)
-    fringe_period = 1.0 / max(fringe_freq, 1e-10)
     from scipy.ndimage import uniform_filter
     ksize = max(5, int(fringe_period * 2)) | 1  # odd
     ksize = min(ksize, 61)  # cap for efficiency
@@ -1067,7 +1110,9 @@ def compute_fringe_modulation(image: np.ndarray) -> np.ndarray:
                       1j * uniform_filter(demod.imag, size=ksize))
 
     # Normalize to [0, 1]
-    emax = envelope.max()
+    # A robust high percentile prevents a tiny glare/edge artifact from
+    # compressing the useful modulation range over the whole aperture.
+    emax = float(np.percentile(envelope, 99.5))
     if emax > 0:
         envelope = envelope / emax
     return np.clip(envelope, 0.0, 1.0)
@@ -1099,14 +1144,44 @@ def create_fringe_mask(image: np.ndarray, modulation: np.ndarray,
     img = np.asarray(image, dtype=np.float64)
     if img.ndim == 3:
         img = img.mean(axis=-1)
+    if float(np.ptp(img)) < 1e-9 or float(np.max(modulation)) <= 0:
+        return np.zeros(img.shape, dtype=bool)
 
-    # Step 1: Otsu brightness threshold to find illuminated aperture
-    img_u8 = np.clip(img / max(img.max(), 1) * 255, 0, 255).astype(np.uint8)
-    _, bright_mask = cv2.threshold(img_u8, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    bright = bright_mask > 0
+    # Step 1: estimate the illumination envelope before Otsu. Applying Otsu to
+    # the raw interferogram segments bright fringe stripes, which creates
+    # disconnected components with indeterminate relative fringe order.
+    py, px, _ = _find_carrier(img)
+    fy = (py - img.shape[0] // 2) / img.shape[0]
+    fx = (px - img.shape[1] // 2) / img.shape[1]
+    period = 1.0 / max(math.hypot(fy, fx), 1e-10)
+    illum_sigma = max(3.0, 0.75 * period)
+    illumination = cv2.GaussianBlur(img, (0, 0), illum_sigma)
+    lo, hi = np.percentile(illumination, [5.0, 95.0])
+    raw_lo, raw_hi = np.percentile(img, [1.0, 99.0])
+    if (hi - lo) < max(2.0, 0.03 * (raw_hi - raw_lo)):
+        # Uniformly illuminated full-frame interferogram: there is no
+        # brightness-defined aperture to discover.
+        bright = np.ones(img.shape, dtype=bool)
+    else:
+        illum_u8 = cv2.normalize(illumination, None, 0, 255,
+                                 cv2.NORM_MINMAX).astype(np.uint8)
+        _, bright_mask = cv2.threshold(
+            illum_u8, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU
+        )
+        bright = bright_mask > 0
+        # If the rejected area has essentially the same carrier modulation as
+        # the accepted area, Otsu has split the fringe waveform rather than
+        # found an aperture. In that case illumination is full-frame.
+        if bright.any() and (~bright).any():
+            mod_in = float(np.median(modulation[bright]))
+            mod_out = float(np.median(modulation[~bright]))
+            if mod_in > 0 and mod_out >= 0.5 * mod_in:
+                bright = np.ones(img.shape, dtype=bool)
 
     # Step 2: morphological cleanup — close gaps, then erode edges
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (15, 15))
+    close_size = max(15, min(61, (int(round(period)) | 1)))
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE,
+                                       (close_size, close_size))
     bright_closed = cv2.morphologyEx(bright.astype(np.uint8), cv2.MORPH_CLOSE, kernel)
     # Erode by ~5px to pull away from the rim
     kernel_erode = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (11, 11))
@@ -1124,7 +1199,38 @@ def create_fringe_mask(image: np.ndarray, modulation: np.ndarray,
     else:
         mask = aperture
 
+    # Reconnect narrow low-modulation seams but do not bridge genuinely
+    # separate illuminated objects. A later safety gate rejects any remaining
+    # meaningful disconnected components rather than inventing fringe orders.
+    seam_size = max(3, min(15, (int(round(period * 0.2)) | 1)))
+    seam_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE,
+                                            (seam_size, seam_size))
+    mask = cv2.morphologyEx(mask.astype(np.uint8), cv2.MORPH_CLOSE,
+                            seam_kernel).astype(bool)
     return mask
+
+
+def _connected_analysis_mask(mask: np.ndarray) -> tuple[np.ndarray, int]:
+    """Drop tiny specks and require one physically connected aperture.
+
+    Separate components have an independent integer fringe order in a
+    single-wavelength interferogram. Returning global PV/RMS across them would
+    therefore be physically unjustified. Tiny components are treated as mask
+    noise; two or more meaningful components are rejected by the caller.
+    """
+    valid = np.asarray(mask, dtype=bool)
+    n_labels, labels, stats, _ = cv2.connectedComponentsWithStats(
+        valid.astype(np.uint8), 8
+    )
+    if n_labels <= 1:
+        return valid, 0
+    min_area = max(64, int(0.002 * valid.size))
+    meaningful = [label for label in range(1, n_labels)
+                  if int(stats[label, cv2.CC_STAT_AREA]) >= min_area]
+    cleaned = np.zeros_like(valid)
+    for label in meaningful:
+        cleaned |= labels == label
+    return cleaned, len(meaningful)
 
 
 from backend.vision.mask_utils import rasterize_polygon_mask  # noqa: F401
@@ -1170,8 +1276,6 @@ def extract_phase_dft(image: np.ndarray, mask: np.ndarray | None = None,
     bg_sigma = max(50, h // 20)
     background = cv2.GaussianBlur(img, (0, 0), bg_sigma)
     enhanced = img - background
-    if mask is not None:
-        enhanced[~mask.astype(bool)] = 0
 
     # Step 2: find carrier frequency (use raw image, not background-subtracted,
     # so the peak selection is consistent with compute_fringe_modulation and
@@ -1188,16 +1292,21 @@ def extract_phase_dft(image: np.ndarray, mask: np.ndarray | None = None,
     # Step 3: complex demodulation — shift carrier to DC
     yy, xx = np.mgrid[0:h, 0:w]
     carrier = np.exp(-2j * np.pi * (fy * yy + fx * xx))
-    demod = enhanced * carrier
+    valid_weight = None
+    if mask is not None:
+        valid_weight = mask.astype(np.float64)
+        demod = enhanced * carrier * valid_weight
+    else:
+        demod = enhanced * carrier
 
     # Step 4: low-pass filter (envelope extraction)
-    # Image-space σ ~2.5x the fringe period smooths inter-fringe noise well
-    # enough to prevent phase-unwrap artifacts (the "clouds with hard lines"
-    # 2π-jump pattern). M2.5 ``lpf_sigma_frac`` overrides this scalar; ``None``
-    # keeps the legacy 2.5× default.
+    # Image-space σ defaults to 0.5x the fringe period. This is sufficient
+    # to reject the conjugate sideband after demodulation without erasing the
+    # localized air-gap variations that optical-flat inspection is intended
+    # to measure. M2.5 ``lpf_sigma_frac`` overrides this scalar.
     fringe_freq = math.sqrt(fy ** 2 + fx ** 2)
     fringe_period = 1.0 / max(fringe_freq, 1e-10)
-    sigma_frac = 2.5 if lpf_sigma_frac is None else float(lpf_sigma_frac)
+    sigma_frac = DEFAULT_LPF_SIGMA_FRAC if lpf_sigma_frac is None else float(lpf_sigma_frac)
     lp_sigma = max(fringe_period * sigma_frac, 5.0)
 
     if anisotropic_lpf and fringe_freq > 1e-10:
@@ -1239,10 +1348,19 @@ def extract_phase_dft(image: np.ndarray, mask: np.ndarray | None = None,
         theta = math.atan2(fy, fx)
         ct, st = math.cos(theta), math.sin(theta)
 
+        # Pad before FFT convolution so the image boundary is not treated as a
+        # periodic phase discontinuity. Reflecting the already-demodulated
+        # complex field preserves a smooth local continuation at the frame rim.
+        pad = min(256, max(8, int(math.ceil(
+            3.0 * max(sig_along_img, sig_across_img)
+        ))))
+        demod_work = np.pad(demod, ((pad, pad), (pad, pad)), mode="reflect")
+        ph, pw = demod_work.shape
+
         # Build fftshift-centered frequency grids in cycles/pixel (matches the
         # coordinate system used to express fy, fx above).
-        fy_axis = (np.arange(h) - (h // 2)) / h
-        fx_axis = (np.arange(w) - (w // 2)) / w
+        fy_axis = (np.arange(ph) - (ph // 2)) / ph
+        fx_axis = (np.arange(pw) - (pw // 2)) / pw
         fy_grid, fx_grid = np.meshgrid(fy_axis, fx_axis, indexing='ij')
 
         # Rotate so u' is along the carrier (across fringes) and v' is
@@ -1256,11 +1374,31 @@ def extract_phase_dft(image: np.ndarray, mask: np.ndarray | None = None,
         )
         lpf = np.fft.ifftshift(lpf_shifted)
 
-        D = np.fft.fft2(demod)
-        demod_lp = np.fft.ifft2(D * lpf)
+        D = np.fft.fft2(demod_work)
+        demod_lp_work = np.fft.ifft2(D * lpf)
+        demod_lp = demod_lp_work[pad:pad + h, pad:pad + w]
+        if valid_weight is not None:
+            weight_work = np.pad(valid_weight, ((pad, pad), (pad, pad)),
+                                 mode="reflect")
+            weight_lp_work = np.fft.ifft2(
+                np.fft.fft2(weight_work) * lpf
+            ).real
+            weight_lp = weight_lp_work[pad:pad + h, pad:pad + w]
+            demod_lp = np.divide(
+                demod_lp, weight_lp,
+                out=np.zeros_like(demod_lp),
+                where=weight_lp > 1e-3,
+            )
     else:
         demod_lp = (cv2.GaussianBlur(demod.real, (0, 0), lp_sigma) +
                     1j * cv2.GaussianBlur(demod.imag, (0, 0), lp_sigma))
+        if valid_weight is not None:
+            weight_lp = cv2.GaussianBlur(valid_weight, (0, 0), lp_sigma)
+            demod_lp = np.divide(
+                demod_lp, weight_lp,
+                out=np.zeros_like(demod_lp),
+                where=weight_lp > 1e-3,
+            )
 
     # Step 5: extract wrapped phase
     # Note: np.angle() is amplitude-insensitive (phase of z doesn't depend
@@ -1302,39 +1440,46 @@ def _quality_guided_unwrap(wrapped: np.ndarray, quality: np.ndarray,
     if not valid.any():
         return unwrapped
 
-    # Seed: highest-quality valid pixel
-    q_masked = quality.copy()
-    q_masked[~valid] = -1
-    seed = np.unravel_index(np.argmax(q_masked), q_masked.shape)
-    unwrapped[seed] = wrapped[seed]
-    visited[seed] = True
-
-    # Heap-based flood fill from seed outward, prioritized by edge quality.
-    # Each heap entry: (-quality, neighbor_y, neighbor_x, source_y, source_x)
-    # Negative quality because heapq is a min-heap.
-    heap: list[tuple[float, int, int, int, int]] = []
     TWO_PI = 2.0 * np.pi
-    sy, sx = int(seed[0]), int(seed[1])
-    for dy, dx in ((-1, 0), (1, 0), (0, -1), (0, 1)):
-        ny, nx = sy + dy, sx + dx
-        if 0 <= ny < h and 0 <= nx < w and valid[ny, nx]:
-            eq = min(quality[sy, sx], quality[ny, nx])
-            heapq.heappush(heap, (-eq, ny, nx, sy, sx))
 
-    while heap:
-        neg_q, ny, nx, fy, fx = heapq.heappop(heap)
-        if visited[ny, nx]:
-            continue
-        # Unwrap relative to the already-visited source pixel
-        diff = wrapped[ny, nx] - wrapped[fy, fx]
-        unwrapped[ny, nx] = unwrapped[fy, fx] + diff - TWO_PI * round(diff / TWO_PI)
-        visited[ny, nx] = True
-        # Push unvisited valid neighbors
+    # A user mask may contain multiple disconnected illuminated regions.
+    # Unwrap every component instead of leaving all but the first at zero.
+    # Each component retains an independent piston (unavoidable without a
+    # connected phase path). The quantitative analysis entry point rejects
+    # multiple meaningful components because no global form fit can recover
+    # their relative integer fringe orders.
+    while np.any(valid & ~visited):
+        remaining = valid & ~visited
+        q_masked = np.where(remaining, quality, -np.inf)
+        seed = np.unravel_index(np.argmax(q_masked), q_masked.shape)
+        unwrapped[seed] = wrapped[seed]
+        visited[seed] = True
+
+        # Heap-based flood fill from this seed, prioritized by edge quality.
+        # Each entry: (-quality, neighbor_y, neighbor_x, source_y, source_x).
+        heap: list[tuple[float, int, int, int, int]] = []
+        sy, sx = int(seed[0]), int(seed[1])
         for dy, dx in ((-1, 0), (1, 0), (0, -1), (0, 1)):
-            my, mx = ny + dy, nx + dx
-            if 0 <= my < h and 0 <= mx < w and valid[my, mx] and not visited[my, mx]:
-                eq = min(quality[ny, nx], quality[my, mx])
-                heapq.heappush(heap, (-eq, my, mx, ny, nx))
+            ny, nx = sy + dy, sx + dx
+            if 0 <= ny < h and 0 <= nx < w and valid[ny, nx] and not visited[ny, nx]:
+                eq = min(quality[sy, sx], quality[ny, nx])
+                heapq.heappush(heap, (-eq, ny, nx, sy, sx))
+
+        while heap:
+            _neg_q, ny, nx, fy, fx = heapq.heappop(heap)
+            if visited[ny, nx]:
+                continue
+            diff = wrapped[ny, nx] - wrapped[fy, fx]
+            unwrapped[ny, nx] = (
+                unwrapped[fy, fx] + diff - TWO_PI * round(diff / TWO_PI)
+            )
+            visited[ny, nx] = True
+            for dy, dx in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+                my, mx = ny + dy, nx + dx
+                if (0 <= my < h and 0 <= mx < w and valid[my, mx]
+                        and not visited[my, mx]):
+                    eq = min(quality[ny, nx], quality[my, mx])
+                    heapq.heappush(heap, (-eq, my, mx, ny, nx))
 
     unwrapped[~valid] = 0.0
     return unwrapped
@@ -1538,7 +1683,7 @@ def focus_quality(image: np.ndarray) -> float:
 def phase_to_height(phase: np.ndarray, wavelength_nm: float) -> np.ndarray:
     """Convert phase (radians) to physical height (nanometers).
 
-    For a double-pass interferometer (reflection):
+    For a near-normal-incidence air film in reflection:
       height = phase * lambda / (4 * pi)
 
     Parameters
@@ -1551,6 +1696,65 @@ def phase_to_height(phase: np.ndarray, wavelength_nm: float) -> np.ndarray:
     Height map in nanometers.
     """
     return phase * wavelength_nm / (4.0 * np.pi)
+
+
+def height_to_phase(height_nm: np.ndarray, wavelength_nm: float) -> np.ndarray:
+    """Convert optical-flat air-gap departure (nm) to phase radians."""
+    return np.asarray(height_nm, dtype=np.float64) * (4.0 * np.pi / wavelength_nm)
+
+
+def _zernike_term_metrics(coefficients_phase: np.ndarray,
+                           rho: np.ndarray, theta: np.ndarray,
+                           mask: np.ndarray | None,
+                           wavelength_nm: float) -> tuple[list[float], list[float]]:
+    """Return aperture RMS weights and per-term air-gap RMS in nanometers."""
+    coeffs = np.asarray(coefficients_phase, dtype=np.float64)
+    valid = (np.asarray(mask, dtype=bool) if mask is not None
+             else np.ones(rho.shape, dtype=bool))
+    weights = [0.0] * len(coeffs)
+    rms_nm = [0.0] * len(coeffs)
+    if not valid.any():
+        return weights, rms_nm
+    for j, coefficient in enumerate(coeffs, start=1):
+        values = zernike_polynomial(j, rho, theta)[valid]
+        weight = float(np.sqrt(np.mean(values * values)))
+        weights[j - 1] = weight
+        rms_phase = abs(float(coefficient)) * weight
+        rms_nm[j - 1] = float(phase_to_height(
+            np.asarray([rms_phase]), wavelength_nm
+        )[0])
+    return weights, rms_nm
+
+
+def _optical_flat_metrics(pv_nm: float, rms_nm: float,
+                          wavelength_nm: float) -> dict[str, float | bool | None | str]:
+    """Return unambiguous optical-flat surface and fringe metrics.
+
+    A same-order fringe interval represents lambda/2 of air-gap departure,
+    hence fringe count is 2*h/lambda. Strehl/PSF/MTF are intentionally not
+    inferred: this workflow measures an air film, not an imaging wavefront.
+    """
+    if wavelength_nm <= 0:
+        pv_waves = rms_waves = pv_fringes = rms_fringes = 0.0
+    else:
+        pv_waves = pv_nm / wavelength_nm
+        rms_waves = rms_nm / wavelength_nm
+        pv_fringes = 2.0 * pv_waves
+        rms_fringes = 2.0 * rms_waves
+    return {
+        "measurement_model": MEASUREMENT_MODEL,
+        "incidence_model": "normal_air",
+        "height_semantics": "air_gap_departure",
+        "absolute_sign_known": False,
+        "specimen_surface_relative_sign": -1,
+        "reference_flat_error_included": True,
+        "pv_waves": float(pv_waves),
+        "rms_waves": float(rms_waves),
+        "pv_fringes": float(pv_fringes),
+        "rms_fringes": float(rms_fringes),
+        "optical_performance_applicable": False,
+        "strehl": None,
+    }
 
 
 def surface_stats(surface: np.ndarray, mask: np.ndarray | None = None
@@ -1677,15 +1881,17 @@ def render_zernike_chart(coefficients: list[float],
     """Render a bar chart of Zernike coefficients as a PNG, base64-encoded.
 
     Bars are colored: blue for included terms, gray for subtracted terms.
-    Values are shown in both waves (lambda) and nm.
+    The ordinate is phase cycles, which equal same-order fringe intervals
+    for an optical-flat air film. Gap departure in wavelength units would
+    be half this value.
 
     Returns base64 string (no 'data:' prefix).
     """
     n_terms = len(coefficients)
     indices = list(range(1, n_terms + 1))
 
-    # Convert coefficients to waves (1 wave = 2*pi radians)
-    coeff_waves = [c / (2 * np.pi) for c in coefficients]
+    # Convert phase radians to same-order fringe intervals (2*pi per fringe).
+    coeff_fringes = [c / (2 * np.pi) for c in coefficients]
 
     colors = []
     for j in indices:
@@ -1699,9 +1905,9 @@ def render_zernike_chart(coefficients: list[float],
     fig.patch.set_facecolor("#1c1c1e")
     ax.set_facecolor("#1c1c1e")
 
-    ax.bar(indices, coeff_waves, color=colors, edgecolor="none", width=0.7)
+    ax.bar(indices, coeff_fringes, color=colors, edgecolor="none", width=0.7)
     ax.set_xlabel("Zernike term (Noll index)", color="#e8e8e8", fontsize=9)
-    ax.set_ylabel("Coefficient (waves)", color="#e8e8e8", fontsize=9)
+    ax.set_ylabel("Coefficient (fringes)", color="#e8e8e8", fontsize=9)
     ax.set_title("Zernike Coefficients", color="#e8e8e8", fontsize=11)
     ax.tick_params(colors="#ababab", labelsize=8)
     ax.spines["bottom"].set_color("#3a3a3c")
@@ -2057,7 +2263,7 @@ def wrap_wavefront_result(
     return result
 
 
-def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 632.8,
+def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 589.3,
                           mask_threshold: float = 0.15,
                           subtract_terms: list[int] | None = None,
                           n_zernike: int = 36,
@@ -2134,6 +2340,15 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 632.8,
         mask = np.ones(img.shape, dtype=bool)
     else:
         mask = create_fringe_mask(img, modulation, threshold_frac=mask_threshold)
+    mask, n_components = _connected_analysis_mask(mask)
+    if n_components > 1:
+        raise ValueError(
+            "Analysis aperture has multiple disconnected components. "
+            "Their relative fringe orders are indeterminate at one wavelength; "
+            "adjust the mask or illumination to create one connected aperture."
+        )
+    if not mask.any():
+        raise ValueError("No connected fringe aperture remains after masking")
     n_valid = int(mask.sum())
     n_total = int(mask.size)
 
@@ -2247,6 +2462,19 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 632.8,
         work_risk = unwrap_risk[r0:r1, c0:c1]
         work_quality = quality_map[r0:r1, c0:c1]
 
+    # Pixels explicitly identified as boundary-contaminated or jump-corrected
+    # are diagnostics, not quantitative samples. Exclude them from fitting,
+    # PV/RMS, profiles and serialized measurement masks.
+    diagnostic_mask = work_mask.astype(bool).copy()
+    quantitative_mask = diagnostic_mask & (work_risk == 0)
+    if int(quantitative_mask.sum()) < max(64, n_zernike * 4):
+        raise ValueError(
+            "Too few reliable interior fringe pixels remain for quantitative "
+            "analysis; improve aperture continuity or fringe coverage."
+        )
+    work_mask = quantitative_mask
+    n_valid = int(work_mask.sum())
+
     # Step 4: Zernike fitting
     coeffs, rho, theta = fit_zernike(work_unwrapped, n_terms=n_zernike, mask=work_mask)
     _progress("zernike", 0.70, "Fitting Zernike polynomials...")
@@ -2261,21 +2489,9 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 632.8,
     # clean circular aperture each `norm_weight` is ≈ 1. For non-circular
     # apertures these deviate and the RMS contribution is aperture-dependent,
     # which is exactly what the UI surfaces in the table.
-    _zern_norm_weights = [0.0] * n_zernike
-    _zern_rms_nm = [0.0] * n_zernike
-    _aperture_valid = (work_mask.astype(bool) if work_mask is not None
-                       else np.ones(work_unwrapped.shape, dtype=bool))
-    _n_aperture = int(_aperture_valid.sum())
-    if _n_aperture > 0:
-        for _j in range(1, n_zernike + 1):
-            _Zj = zernike_polynomial(_j, rho, theta)
-            _vals = _Zj[_aperture_valid]
-            _norm = float(np.sqrt(np.mean(_vals * _vals)))
-            _zern_norm_weights[_j - 1] = _norm
-            # Per-term RMS in phase radians, then convert to nm.
-            _rms_phase = abs(float(coeffs[_j - 1])) * _norm
-            _zern_rms_nm[_j - 1] = float(phase_to_height(
-                np.asarray([_rms_phase]), wavelength_nm)[0])
+    _zern_norm_weights, _zern_rms_nm = _zernike_term_metrics(
+        coeffs, rho, theta, work_mask, wavelength_nm
+    )
 
     # Capture the raw (pre-form-removal) heightmap so downstream reanalysis
     # has access to the full surface — including any tilt/curvature that
@@ -2287,17 +2503,20 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 632.8,
     effective_subtract_terms = list(subtract_terms)
     if form_model == "plane":
         corrected = _subtract_plane(work_unwrapped, work_mask)
-        plane_coeffs = _fit_plane(work_unwrapped, work_mask)
+        plane_coeffs = _fit_plane(work_unwrapped, work_mask,
+                                  wavelength_nm=wavelength_nm)
         # M4.3: for non-Zernike form removal, subtracted_terms is semantically
         # meaningless — the UI surfaces `form_model` instead.
         effective_subtract_terms = []
     elif form_model == "poly2":
         corrected = _subtract_poly(work_unwrapped, work_mask, degree=2)
-        plane_coeffs = _fit_plane(work_unwrapped, work_mask)
+        plane_coeffs = _fit_plane(work_unwrapped, work_mask,
+                                  wavelength_nm=wavelength_nm)
         effective_subtract_terms = []
     elif form_model == "poly3":
         corrected = _subtract_poly(work_unwrapped, work_mask, degree=3)
-        plane_coeffs = _fit_plane(work_unwrapped, work_mask)
+        plane_coeffs = _fit_plane(work_unwrapped, work_mask,
+                                  wavelength_nm=wavelength_nm)
         effective_subtract_terms = []
     else:
         corrected = subtract_zernike(work_unwrapped, coeffs, subtract_terms,
@@ -2334,8 +2553,7 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 632.8,
     stats = surface_stats(height_nm, work_mask)
     pv_nm = stats["pv"]
     rms_nm = stats["rms"]
-    pv_waves = pv_nm / wavelength_nm
-    rms_waves = rms_nm / wavelength_nm
+    optical_flat_metrics = _optical_flat_metrics(pv_nm, rms_nm, wavelength_nm)
 
     # Step 8: Focus quality
     f_score = focus_quality(image)
@@ -2350,15 +2568,12 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 632.8,
     # as the surface map so overlay toggles do not change image geometry.
     fft_b64 = render_fft_image(img, carrier_info["peak_y"], carrier_info["peak_x"])
     mod_map_b64 = render_modulation_map(work_modulation, work_mask)
-    confidence_maps = render_confidence_maps(work_modulation, work_risk, work_mask,
+    confidence_maps = render_confidence_maps(work_modulation, work_risk,
+                                             diagnostic_mask,
                                              quality_map=work_quality)
 
-    # Step 10: PSF and MTF
-    surface_waves = height_nm / wavelength_nm
-    psf_b64 = render_psf(surface_waves, work_mask)
-    mtf_data = render_mtf(surface_waves, work_mask)
-
-    # Step 11: Zernike chart
+    # Step 10: Zernike chart. PSF/MTF/Strehl are not inferred because an
+    # optical-flat air-gap map is not itself an imaging wavefront.
     zernike_chart_b64 = render_zernike_chart(
         coeffs.tolist(), subtract_terms, wavelength_nm
     )
@@ -2459,16 +2674,26 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 632.8,
     mod_resized[~grid_mask] = 0.0
     modulation_grid_list = [round(float(v), 3) for v in mod_resized.ravel()]
 
+    analysis_warnings: list[str] = []
+    carrier_cycles = float(carrier_info.get("distance_px", 0.0))
+    if carrier_cycles < 8.0:
+        analysis_warnings.append(
+            f"Low carrier density ({carrier_cycles:.1f} cycles across the "
+            "analysis frame): spatial resolution is limited and PV near "
+            "aperture boundaries may be underestimated."
+        )
+
     return {
         "surface_map": surface_map_b64,
         "zernike_chart": zernike_chart_b64,
         "profile_x": profile_x,
         "profile_y": profile_y,
-        "psf": psf_b64,
-        "mtf": mtf_data,
+        "psf": "",
+        "mtf": {},
         "fft_image": fft_b64,
         "modulation_map": mod_map_b64,
         "coefficients": coeffs.tolist(),
+        "coefficient_unit": "phase_rad",
         "coefficient_names": {str(j): ZERNIKE_NAMES.get(j, f"Z{j}")
                               for j in range(1, n_zernike + 1)},
         # M4.2: per-Zernike-term normalization weights (RMS of Z_j over the
@@ -2477,13 +2702,12 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 632.8,
         "zernike_rms_nm": _zern_rms_nm,
         "pv_nm": pv_nm,
         "rms_nm": rms_nm,
-        "pv_waves": pv_waves,
-        "rms_waves": rms_waves,
-        "strehl": float(np.exp(-(2.0 * np.pi * rms_waves) ** 2)),
+        **optical_flat_metrics,
         "modulation_stats": mod_stats,
         "focus_score": f_score,
         "subtracted_terms": effective_subtract_terms,
         "wavelength_nm": wavelength_nm,
+        "lens_k1": float(lens_k1),
         "n_valid_pixels": n_valid,
         "n_total_pixels": n_total,
         "surface_height": int(height_nm.shape[0]),
@@ -2493,6 +2717,7 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 632.8,
         "height_grid": height_grid_list,
         "display_height_grid_nm": height_grid_list,
         "raw_height_grid_nm": raw_height_grid_list,
+        "raw_wavelength_nm": wavelength_nm,
         "mask_grid": [int(v) for v in grid_mask.ravel()],
         "trusted_mask_grid": [int(v) for v in trusted_grid.ravel()],
         "trusted_area_pct": trusted_area_pct,
@@ -2515,6 +2740,7 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 632.8,
         # P2b: numeric modulation grid at mask_grid resolution for
         # registration (primary correlation source when available).
         "modulation_grid": modulation_grid_list,
+        "warnings": analysis_warnings,
         # Cropped mask for server-side caching (stripped by API before response)
         "_mask_full": [int(v) for v in work_mask.ravel()],
     }
@@ -2832,6 +3058,32 @@ def _fourier_shift_2d(grid: np.ndarray, dy: float, dx: float) -> np.ndarray:
     return shifted.astype(grid.dtype, copy=False)
 
 
+def _shift_masked_grid(grid: np.ndarray, mask: np.ndarray,
+                       dy: float, dx: float) -> tuple[np.ndarray, np.ndarray]:
+    """Shift a masked grid without ringing at its hard-zero boundary."""
+    from scipy.ndimage import shift as spatial_shift
+
+    valid = np.asarray(mask, dtype=bool)
+    values = np.where(valid, np.asarray(grid, dtype=np.float64), 0.0)
+    weights = valid.astype(np.float64)
+    shifted_values = spatial_shift(
+        values, shift=(dy, dx), order=1, mode="constant", cval=0.0,
+        prefilter=False,
+    )
+    shifted_weights = spatial_shift(
+        weights, shift=(dy, dx), order=1, mode="constant", cval=0.0,
+        prefilter=False,
+    )
+    shifted = np.divide(
+        shifted_values, shifted_weights,
+        out=np.zeros_like(shifted_values),
+        where=shifted_weights > 1e-9,
+    )
+    shifted_mask = shifted_weights >= (1.0 - 1e-6)
+    shifted[~shifted_mask] = 0.0
+    return shifted.astype(np.asarray(grid).dtype, copy=False), shifted_mask
+
+
 def _integer_shift_mask(mask: np.ndarray, dy: int, dx: int) -> np.ndarray:
     """Explicit integer-index mask shift with zero-fill (NO np.roll).
 
@@ -2879,17 +3131,16 @@ def subtract_wavefronts(
     dict with ``origin='subtracted'`` and ``source_ids`` set to
     ``[measurement['id'], reference['id']]``.
 
-    When ``register=True`` (default) the reference grids are shifted by
-    the detected sub-pixel offset before subtraction. The height grids
-    are shifted via :func:`scipy.ndimage.fourier_shift`; the boolean
-    masks are shifted by the rounded integer offset with explicit
-    zero-fill slicing (NOT ``np.roll``) to avoid wrap-around.
+    When ``register=True`` (default) the reference grids and masks are shifted
+    together with normalized, zero-filled interpolation. Invalid zero values
+    therefore cannot create Fourier/Gibbs ringing at the aperture boundary.
 
     When ``register=False`` the behavior matches M3.4 (pixel-aligned).
 
     Display grid = measurement − reference_shifted; mask is the
     element-wise AND of both masks; raw grid is differenced similarly.
-    Stats (PV/RMS/Strehl, Zernike) are recomputed on the residual.
+    Optical-flat PV/RMS/fringe metrics and Zernike terms are recomputed on
+    the residual. Imaging metrics such as Strehl are not inferred.
 
     Compatibility issues (wavelength mismatch, calibration mismatch, low
     overlap, low registration confidence, residual-RMS amplification)
@@ -2967,16 +3218,16 @@ def subtract_wavefronts(
         if reg_info.get("method") == "none":
             dy = 0.0
             dx = 0.0
-        # Shift the reference grids to align with the measurement.
-        # Fourier shift on heights; explicit integer-index slicing on masks.
+        # Shift values and support together so masked zeros cannot ring into
+        # the valid surface during a fractional-pixel registration.
         if abs(dy) > 1e-6 or abs(dx) > 1e-6:
-            r_disp = _fourier_shift_2d(r_disp.astype(np.float64),
-                                       dy, dx).astype(np.float32)
-            r_raw_arr = _fourier_shift_2d(r_raw_arr.astype(np.float64),
-                                          dy, dx).astype(np.float32)
-            dy_int = int(round(dy))
-            dx_int = int(round(dx))
-            r_mask = _integer_shift_mask(r_mask, dy_int, dx_int)
+            r_disp, shifted_mask = _shift_masked_grid(
+                r_disp, r_mask, dy, dx
+            )
+            r_raw_arr, shifted_raw_mask = _shift_masked_grid(
+                r_raw_arr, r_mask, dy, dx
+            )
+            r_mask = shifted_mask & shifted_raw_mask
         warnings_list.append(
             f"Registered with method={reg_info['method']}, "
             f"confidence={reg_info['confidence']:.2f}, "
@@ -3063,9 +3314,7 @@ def subtract_wavefronts(
     stats = surface_stats(display_diff, combined_mask)
     pv_nm = stats["pv"]
     rms_nm = stats["rms"]
-    pv_waves = pv_nm / eff_wl if eff_wl > 0 else 0.0
-    rms_waves = rms_nm / eff_wl if eff_wl > 0 else 0.0
-    strehl = float(np.exp(-(2.0 * np.pi * rms_waves) ** 2))
+    optical_flat_metrics = _optical_flat_metrics(pv_nm, rms_nm, eff_wl)
 
     # ── Residual RMS sanity check (M3.5) ─────────────────────────────
     # If the subtraction *amplified* the residual vs the measurement's
@@ -3096,13 +3345,6 @@ def subtract_wavefronts(
     profile_x = render_profile(full_surface, full_mask, axis="x")
     profile_y = render_profile(full_surface, full_mask, axis="y")
 
-    # PSF/MTF on the residual surface — matches the call sites used by
-    # analyze_interferogram (same render_psf/render_mtf with surface waves
-    # and the full-resolution mask).
-    surface_waves = full_surface / eff_wl if eff_wl > 0 else full_surface * 0.0
-    psf_b64 = render_psf(surface_waves, full_mask)
-    mtf_data = render_mtf(surface_waves, full_mask)
-
     # ── Zernike refit on the residual (so the chart still works) ──
     n_zernike = max(1, len(measurement.get("coefficients") or []) or 36)
     n_zernike = min(n_zernike, 66)
@@ -3112,13 +3354,20 @@ def subtract_wavefronts(
                 display_diff.astype(np.float64), n_terms=n_zernike,
                 mask=combined_mask
             )
-            coeffs_list = coeffs.tolist()
+            coeffs_list = height_to_phase(coeffs, eff_wl).tolist()
         except Exception:
             coeffs_list = [0.0] * n_zernike
+            _rho, _theta = _make_polar_coords(display_diff.shape, combined_mask)
     else:
         coeffs_list = [0.0] * n_zernike
     coefficient_names = {str(j): ZERNIKE_NAMES.get(j, f"Z{j}")
                          for j in range(1, n_zernike + 1)}
+    zernike_norm_weights, zernike_rms_nm = _zernike_term_metrics(
+        np.asarray(coeffs_list), _rho, _theta, combined_mask, eff_wl
+    ) if combined_mask.any() else ([0.0] * n_zernike, [0.0] * n_zernike)
+    zernike_chart_b64 = render_zernike_chart(
+        coeffs_list, subtract_terms, eff_wl
+    )
 
     # ── Assemble result ──────────────────────────────────────────────
     n_total = int(combined_mask.size)
@@ -3130,29 +3379,37 @@ def subtract_wavefronts(
         "surface_map": surface_map_b64,
         "profile_x": profile_x,
         "profile_y": profile_y,
-        "psf": psf_b64,
-        "mtf": mtf_data,
-        "zernike_chart": "",
+        "psf": "",
+        "mtf": {},
+        "zernike_chart": zernike_chart_b64,
         "coefficients": coeffs_list,
+        "coefficient_unit": "phase_rad",
         "coefficient_names": coefficient_names,
+        "zernike_norm_weights": zernike_norm_weights,
+        "zernike_rms_nm": zernike_rms_nm,
         "pv_nm": pv_nm,
         "rms_nm": rms_nm,
-        "pv_waves": pv_waves,
-        "rms_waves": rms_waves,
-        "strehl": strehl,
+        **optical_flat_metrics,
         "subtracted_terms": list(measurement.get("subtracted_terms") or []),
         "wavelength_nm": eff_wl,
         "n_valid_pixels": combined_valid,
         "n_total_pixels": n_total,
         "surface_height": surf_h,
         "surface_width": surf_w,
+        "image_height": int(measurement.get("image_height", surf_h)),
+        "image_width": int(measurement.get("image_width", surf_w)),
         "height_grid": height_grid_list,
         "display_height_grid_nm": height_grid_list,
         "raw_height_grid_nm": raw_height_grid_list,
+        "raw_wavelength_nm": eff_wl,
         "mask_grid": mask_list,
+        "trusted_mask_grid": mask_list,
+        "trusted_area_pct": 100.0,
         "raw_mask_grid": mask_list,
         "grid_rows": mh,
         "grid_cols": mw,
+        "carrier": measurement.get("carrier"),
+        "tuning": measurement.get("tuning"),
     }
 
     wrap_wavefront_result(
@@ -3183,7 +3440,8 @@ def average_wavefronts(
     Output: new WavefrontResult with origin='average', source_ids=[r.id for r in results],
     display_height_grid_nm = per-pixel (robust) mean, raw_height_grid_nm similarly,
     mask_grid = intersection of input mask_grids AND pixels with at least 2 valid
-    contributors after rejection. Stats (PV/RMS/Strehl) recomputed on the averaged
+    contributors after rejection. Optical-flat PV/RMS/fringe metrics are
+    recomputed on the averaged
     display grid. Zernike coefficients refit. Surface map and profiles rendered.
 
     Rejection methods:
@@ -3336,9 +3594,7 @@ def average_wavefronts(
     stats = surface_stats(display_out, combined_mask)
     pv_nm = stats["pv"]
     rms_nm = stats["rms"]
-    pv_waves = pv_nm / eff_wl if eff_wl > 0 else 0.0
-    rms_waves = rms_nm / eff_wl if eff_wl > 0 else 0.0
-    strehl = float(np.exp(-(2.0 * np.pi * rms_waves) ** 2))
+    optical_flat_metrics = _optical_flat_metrics(pv_nm, rms_nm, eff_wl)
 
     # ── Renderings ───────────────────────────────────────────────────
     surf_h = int(results[0].get("surface_height", gh0))
@@ -3356,12 +3612,6 @@ def average_wavefronts(
     profile_x = render_profile(full_surface, full_mask, axis="x")
     profile_y = render_profile(full_surface, full_mask, axis="y")
 
-    # PSF/MTF on the averaged surface — matches analyze_interferogram's
-    # call signature (surface in waves + full-resolution mask).
-    surface_waves = full_surface / eff_wl if eff_wl > 0 else full_surface * 0.0
-    psf_b64 = render_psf(surface_waves, full_mask)
-    mtf_data = render_mtf(surface_waves, full_mask)
-
     # ── Zernike refit on the averaged display grid ──────────────────
     first_coeffs = results[0].get("coefficients") or []
     n_zernike = max(1, len(first_coeffs) or 36)
@@ -3372,13 +3622,20 @@ def average_wavefronts(
                 display_out.astype(np.float64), n_terms=n_zernike,
                 mask=combined_mask,
             )
-            coeffs_list = coeffs.tolist()
+            coeffs_list = height_to_phase(coeffs, eff_wl).tolist()
         except Exception:
             coeffs_list = [0.0] * n_zernike
+            _rho, _theta = _make_polar_coords(display_out.shape, combined_mask)
     else:
         coeffs_list = [0.0] * n_zernike
     coefficient_names = {str(j): ZERNIKE_NAMES.get(j, f"Z{j}")
                          for j in range(1, n_zernike + 1)}
+    zernike_norm_weights, zernike_rms_nm = _zernike_term_metrics(
+        np.asarray(coeffs_list), _rho, _theta, combined_mask, eff_wl
+    ) if combined_mask.any() else ([0.0] * n_zernike, [0.0] * n_zernike)
+    zernike_chart_b64 = render_zernike_chart(
+        coeffs_list, list(results[0].get("subtracted_terms") or []), eff_wl
+    )
 
     # ── Assemble result ──────────────────────────────────────────────
     n_total = int(combined_mask.size)
@@ -3391,29 +3648,37 @@ def average_wavefronts(
         "surface_map": surface_map_b64,
         "profile_x": profile_x,
         "profile_y": profile_y,
-        "psf": psf_b64,
-        "mtf": mtf_data,
-        "zernike_chart": "",
+        "psf": "",
+        "mtf": {},
+        "zernike_chart": zernike_chart_b64,
         "coefficients": coeffs_list,
+        "coefficient_unit": "phase_rad",
         "coefficient_names": coefficient_names,
+        "zernike_norm_weights": zernike_norm_weights,
+        "zernike_rms_nm": zernike_rms_nm,
         "pv_nm": pv_nm,
         "rms_nm": rms_nm,
-        "pv_waves": pv_waves,
-        "rms_waves": rms_waves,
-        "strehl": strehl,
+        **optical_flat_metrics,
         "subtracted_terms": list(results[0].get("subtracted_terms") or []),
         "wavelength_nm": eff_wl,
         "n_valid_pixels": combined_valid,
         "n_total_pixels": n_total,
         "surface_height": surf_h,
         "surface_width": surf_w,
+        "image_height": int(results[0].get("image_height", surf_h)),
+        "image_width": int(results[0].get("image_width", surf_w)),
         "height_grid": height_grid_list,
         "display_height_grid_nm": height_grid_list,
         "raw_height_grid_nm": raw_height_grid_list,
+        "raw_wavelength_nm": eff_wl,
         "mask_grid": mask_list,
+        "trusted_mask_grid": mask_list,
+        "trusted_area_pct": 100.0,
         "raw_mask_grid": mask_list,
         "grid_rows": gh0,
         "grid_cols": gw0,
+        "carrier": results[0].get("carrier"),
+        "tuning": results[0].get("tuning"),
         "rejection_method": rejection,
         "rejection_threshold": float(rejection_threshold),
         "rejection_stats": {
@@ -3440,17 +3705,19 @@ def reanalyze(coefficients: list[float], subtract_terms: list[int],
               n_zernike: int = 36,
               form_model: str = "zernike",
               raw_height_grid_nm: list[float] | None = None,
+              raw_wavelength_nm: float | None = None,
               raw_grid_rows: int | None = None,
               raw_grid_cols: int | None = None) -> dict:
     """Re-analyze with different Zernike subtraction without redoing FFT.
 
     Two paths:
 
-    1. **Full-fidelity (preferred)** — when ``raw_height_grid_nm``,
+    1. **Grid-fidelity (preferred)** — when ``raw_height_grid_nm``,
        ``raw_grid_rows`` and ``raw_grid_cols`` are all provided, refit
        Zernike on the cached raw heightmap and subtract the requested
-       terms directly. Surface detail at spatial frequencies higher than
-       ``n_zernike`` is preserved.
+       terms directly. Detail present in the serialized client grid is
+       preserved; captures larger than the client-grid limit were already
+       area-downsampled during initial analysis.
 
     2. **Legacy coefficient path** — when the raw grid is not supplied,
        reconstruct the surface from the fit coefficients alone. Surface
@@ -3483,15 +3750,28 @@ def reanalyze(coefficients: list[float], subtract_terms: list[int],
                     and raw_grid_cols is not None)
 
     if use_raw_grid:
-        # Full-fidelity path: operate on the cached raw heightmap, refit
-        # Zernike at its native resolution, and subtract the requested
-        # terms directly. The raw grid is already in nanometers, so no
-        # wavelength conversion is needed.
+        # Grid-fidelity path: operate on the cached raw heightmap. The grid
+        # is stored in nanometers at raw_wavelength_nm, so rescale it when
+        # the active monochromatic source wavelength changes.
         rh, rw = int(raw_grid_rows), int(raw_grid_cols)
         raw_height_nm = np.array(raw_height_grid_nm, dtype=np.float64).reshape(rh, rw)
+        source_wavelength = (float(raw_wavelength_nm)
+                             if raw_wavelength_nm is not None else wavelength_nm)
+        raw_height_nm *= wavelength_nm / source_wavelength
 
         if mask_serialized is not None:
-            mask = np.array(mask_serialized, dtype=bool).reshape(rh, rw)
+            mask_flat = np.array(mask_serialized, dtype=np.uint8)
+            if mask_flat.size == rh * rw:
+                mask = mask_flat.reshape(rh, rw).astype(bool)
+            elif mask_flat.size == surface_shape[0] * surface_shape[1]:
+                full_mask = mask_flat.reshape(surface_shape).astype(np.uint8)
+                mask = cv2.resize(full_mask, (rw, rh),
+                                  interpolation=cv2.INTER_NEAREST).astype(bool)
+            else:
+                raise ValueError(
+                    f"Mask length {mask_flat.size} matches neither raw grid "
+                    f"{rh}x{rw} nor surface {surface_shape[0]}x{surface_shape[1]}"
+                )
         else:
             mask = np.ones((rh, rw), dtype=bool)
 
@@ -3520,7 +3800,7 @@ def reanalyze(coefficients: list[float], subtract_terms: list[int],
         # `corrected` is already in nm (the raw grid is height, not phase).
         height_nm = corrected
 
-        coeffs_out = fit_coeffs
+        coeffs_out = height_to_phase(fit_coeffs, wavelength_nm)
     else:
         # Legacy path: reconstruct from fit coefficients alone.
         h, w = surface_shape
@@ -3543,13 +3823,16 @@ def reanalyze(coefficients: list[float], subtract_terms: list[int],
         # Form removal
         if form_model == "plane":
             corrected = _subtract_plane(full_surface, mask)
-            plane_coeffs = _fit_plane(full_surface, mask)
+            plane_coeffs = _fit_plane(full_surface, mask,
+                                      wavelength_nm=wavelength_nm)
         elif form_model == "poly2":
             corrected = _subtract_poly(full_surface, mask, degree=2)
-            plane_coeffs = _fit_plane(full_surface, mask)
+            plane_coeffs = _fit_plane(full_surface, mask,
+                                      wavelength_nm=wavelength_nm)
         elif form_model == "poly3":
             corrected = _subtract_poly(full_surface, mask, degree=3)
-            plane_coeffs = _fit_plane(full_surface, mask)
+            plane_coeffs = _fit_plane(full_surface, mask,
+                                      wavelength_nm=wavelength_nm)
         else:
             corrected = subtract_zernike(full_surface, coeffs, subtract_terms,
                                          rho, theta, mask)
@@ -3561,9 +3844,19 @@ def reanalyze(coefficients: list[float], subtract_terms: list[int],
         height_nm = phase_to_height(corrected, wavelength_nm)
         coeffs_out = coeffs
 
+    zernike_norm_weights, zernike_rms_nm = _zernike_term_metrics(
+        coeffs_out, rho, theta, mask, wavelength_nm
+    )
+    coefficient_names = {
+        str(j): ZERNIKE_NAMES.get(j, f"Z{j}")
+        for j in range(1, len(coeffs_out) + 1)
+    }
+
     # Stats
     stats = surface_stats(height_nm, mask)
-    rms_waves = stats["rms"] / wavelength_nm
+    optical_flat_metrics = _optical_flat_metrics(
+        stats["pv"], stats["rms"], wavelength_nm
+    )
 
     # Renderings
     surface_map_b64 = render_surface_map(height_nm, mask)
@@ -3572,11 +3865,6 @@ def reanalyze(coefficients: list[float], subtract_terms: list[int],
     )
     profile_x = render_profile(height_nm, mask, axis="x")
     profile_y = render_profile(height_nm, mask, axis="y")
-
-    # PSF and MTF
-    surface_waves = height_nm / wavelength_nm
-    psf_b64 = render_psf(surface_waves, mask)
-    mtf_data = render_mtf(surface_waves, mask)
 
     # Downsample height grid for client-side measurements (max 256x256)
     # Matches the algorithm used by analyze_interferogram so the Step tool
@@ -3611,15 +3899,19 @@ def reanalyze(coefficients: list[float], subtract_terms: list[int],
     response = {
         "surface_map": surface_map_b64,
         "zernike_chart": zernike_chart_b64,
+        "coefficient_unit": "phase_rad",
+        "coefficients": coeffs_out.tolist(),
+        "coefficient_names": coefficient_names,
+        "zernike_norm_weights": zernike_norm_weights,
+        "zernike_rms_nm": zernike_rms_nm,
         "profile_x": profile_x,
         "profile_y": profile_y,
-        "psf": psf_b64,
-        "mtf": mtf_data,
+        "psf": "",
+        "mtf": {},
         "pv_nm": stats["pv"],
         "rms_nm": stats["rms"],
-        "pv_waves": stats["pv"] / wavelength_nm,
-        "rms_waves": rms_waves,
-        "strehl": float(np.exp(-(2.0 * np.pi * rms_waves) ** 2)),
+        **optical_flat_metrics,
+        "wavelength_nm": wavelength_nm,
         # M4.3: only Zernike form-removal carries meaningful subtracted_terms.
         "subtracted_terms": subtract_terms if form_model == "zernike" else [],
         "form_model": form_model,
@@ -3632,8 +3924,9 @@ def reanalyze(coefficients: list[float], subtract_terms: list[int],
     }
 
     if use_raw_grid:
-        # Echo the raw grid back unchanged so the frontend can keep using
-        # it for subsequent reanalyze calls without a round-trip.
-        response["raw_height_grid_nm"] = list(raw_height_grid_nm)
+        # Echo the wavelength-rescaled raw grid so subsequent reanalysis
+        # uses the current wavelength as its source, avoiding compounded scale.
+        response["raw_height_grid_nm"] = [float(v) for v in raw_height_nm.ravel()]
+        response["raw_wavelength_nm"] = wavelength_nm
 
     return response

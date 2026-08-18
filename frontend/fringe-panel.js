@@ -10,6 +10,7 @@ import { apiFetch } from './api.js';
 import { analyzeWithProgress, createProgressBar } from './fringe-progress.js';
 import { initCrossMode } from './cross-mode.js';
 import { switchMode } from './modes.js';
+import { imageWidth, imageHeight } from './viewport.js';
 import { loadFringeLensProfiles, renderFringeLensDropdown, saveFringeLensProfile } from './fringe-lens-profiles.js';
 import {
   getActiveCalibration,
@@ -48,20 +49,30 @@ export function getWavelength() {
   }
   // Fallback to the input box if the active calibration is somehow malformed.
   const sel = $("fringe-wavelength");
-  if (!sel) return 589.0;
+  if (!sel) return 589.3;
   if (sel.value === "custom") {
     const el = $("fringe-custom-wl");
-    const v = parseFloat(el?.value || "589.0");
-    return Number.isFinite(v) && v > 0 ? v : 589.0;
+    const v = parseFloat(el?.value || "589.3");
+    return Number.isFinite(v) && v > 0 ? v : 589.3;
   }
   const opt = sel.selectedOptions[0];
   if (opt && opt.dataset.nm) return parseFloat(opt.dataset.nm);
-  return 589.0;
+  return 589.3;
 }
 
 /** Build the `calibration` payload for /fringe/analyze* requests. */
 export function getCalibrationPayload() {
-  return calibrationPayload(getActiveCalibration());
+  const payload = calibrationPayload(getActiveCalibration());
+  return payload ? { ...payload, lens_k1: fr.lensK1 } : payload;
+}
+
+function _setAppliedLensK1(k1) {
+  fr.lensK1 = Number.isFinite(Number(k1)) ? Number(k1) : 0;
+  const active = getActiveCalibration();
+  if (active && active.lens_k1 !== fr.lensK1) {
+    try { saveCalibration({ ...active, lens_k1: fr.lensK1 }); }
+    catch (_) { /* validated above; persistence failure is non-fatal */ }
+  }
 }
 
 /**
@@ -392,18 +403,6 @@ export function clearDroppedImage() {
 
 // ── Averaging helpers ──────────────────────────────────────────────────
 
-function computeAverage() {
-  const accepted = fr.avgCaptures.filter(c => c.accepted);
-  if (accepted.length === 0) return null;
-  const n = accepted[0].coefficients.length;
-  const avg = new Float64Array(n);
-  for (const cap of accepted) {
-    for (let i = 0; i < n; i++) avg[i] += cap.coefficients[i];
-  }
-  for (let i = 0; i < n; i++) avg[i] /= accepted.length;
-  return Array.from(avg);
-}
-
 function renderAvgLog() {
   const log = $("fringe-avg-log");
   if (!log) return;
@@ -443,35 +442,33 @@ async function recomputeAverage() {
   $("fringe-avg-count").textContent = `${accepted.length}/${fr.avgCaptures.length}`;
 
   if (accepted.length < 1) return;
-  const avgCoeffs = computeAverage();
-  if (!avgCoeffs || accepted.length < 2) return;
+
+  // A one-item "average" is exactly that capture. Load its full cached
+  // result instead of leaving a stale multi-capture average on screen.
+  if (accepted.length === 1) {
+    const resp = await apiFetch(
+      `/fringe/session/capture/${encodeURIComponent(accepted[0].id)}`
+    );
+    if (!resp.ok) return;
+    fr.lastResult = await resp.json();
+    document.dispatchEvent(new CustomEvent("fringe:analyzed", { detail: fr.lastResult }));
+    return;
+  }
 
   const body = {
-    coefficients: avgCoeffs,
-    subtract_terms: getSubtractTerms(),
+    source_ids: accepted.map(c => c.id),
     wavelength_nm: getWavelength(),
-    surface_height: fr.avgSurfaceHeight,
-    surface_width: fr.avgSurfaceWidth,
+    rejection: "none",
   };
-  // Full-fidelity path — preserve high-frequency detail when recomputing the
-  // averaged surface (e.g. after toggling a subtract pill or changing form
-  // model). Guard: the averaged result may lack a raw grid, in which case
-  // the backend transparently falls back to coefficient-only reconstruction.
-  if (fr.lastResult && fr.lastResult.raw_height_grid_nm
-      && fr.lastResult.grid_rows && fr.lastResult.grid_cols) {
-    body.raw_height_grid_nm = fr.lastResult.raw_height_grid_nm;
-    body.raw_grid_rows = fr.lastResult.grid_rows;
-    body.raw_grid_cols = fr.lastResult.grid_cols;
-  }
-  const resp = await apiFetch("/fringe/reanalyze", {
+  const resp = await apiFetch("/fringe/average", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
   if (!resp.ok) return;
   const avgData = await resp.json();
+  fr.lastResult = { ...avgData };
   mergeReanalyzeResult(avgData);
-  fr.lastResult.coefficients = avgCoeffs;
   document.dispatchEvent(new CustomEvent("fringe:analyzed", { detail: fr.lastResult }));
 }
 
@@ -512,7 +509,7 @@ async function addToAverage() {
     }
 
     const capture = {
-      coefficients: new Float64Array(data.coefficients),
+      id: data.id,
       rms_nm: data.rms_nm,
       accepted: true,
       reason: "",
@@ -663,10 +660,16 @@ export function wirePanelEvents() {
   $("fringe-lens-profile")?.addEventListener("change", (e) => {
     const sel = e.target;
     if (!sel.value) {
-      fr.lensK1 = 0;
+      _setAppliedLensK1(0);
     } else {
       const opt = sel.selectedOptions[0];
-      fr.lensK1 = parseFloat(opt.dataset.k1) || 0;
+      let k1 = parseFloat(opt.dataset.k1) || 0;
+      if (opt.dataset.coefficientSpace === "pixel_v0") {
+        const w = imageWidth || fr.lastResult?.image_width || 0;
+        const h = imageHeight || fr.lastResult?.image_height || 0;
+        if (w > 0 && h > 0) k1 *= (w * w + h * h) / 4;
+      }
+      _setAppliedLensK1(k1);
     }
     if (fr.lastResult && !state._hosted) _runAnalysis();
   });
@@ -796,7 +799,7 @@ export function wirePanelEvents() {
     window.crossMode = {
       source: 'fringe-lens-cal',
       callback: (k1) => {
-        fr.lensK1 = k1;
+        _setAppliedLensK1(k1);
         // Show save prompt
         const saveRow = $("fringe-lens-save-row");
         if (saveRow) { saveRow.hidden = false; saveRow.style.display = 'flex'; }
