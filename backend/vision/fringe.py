@@ -1298,6 +1298,14 @@ def _carrier_extend(image: np.ndarray, fy: float, fx: float,
         wrap (this) 2.6 nm   reflect 14.6   symmetric 10.6   ramp→0 16.6
         taper 17.2           zeros   30.3   odd-reflect 91.5
 
+    That table was measured with this function consuming the
+    background-subtracted field, which is what it consumes again — the
+    2026-08-19 reorder briefly fed it the raw frame instead, and step 2 of
+    ``extract_phase_dft`` now takes the illumination off before calling here.
+    Read the numbers as ranking rules for a flat-lit field; on a field that
+    still carries a gradient the far-side pads import the opposite edge's
+    brightness and no ranking of *shapes* is the relevant question.
+
     So do not invent an envelope: reuse the frame's own, at the phase the
     carrier says the continuation must have. ``e(x + w) = e(x + Δ)`` for a
     carrier ``f`` when ``2π·f·Δ ≡ 2π·f·w (mod 2π)``, i.e. ``Δ = frac(f·w)/f``,
@@ -1412,6 +1420,156 @@ def _carrier_extend(image: np.ndarray, fy: float, fx: float,
     map_y = np.broadcast_to(ys[:, None], (ys.size, xs.size)).astype(np.float32)
     out = cv2.remap(np.asarray(image, dtype=np.float32), map_x, map_y,
                     cv2.INTER_CUBIC).astype(np.float64)
+    out[pad_y:pad_y + h, pad_x:pad_x + w] = image
+    return out
+
+
+def _carrier_extend_local(image: np.ndarray, fy: float, fx: float,
+                          pad_y: int, pad_x: int) -> np.ndarray:
+    """Extend a frame by repeating the carrier period nearest *each* edge.
+
+    Companion to ``_carrier_extend``, for the one consumer that wants the
+    opposite trade-off. Both fabricate a phase-correct continuation, and the
+    phase does not pick between them: the phase-correct family is
+    ``Δ = (q + k)/f`` for integer ``k`` (see ``_carrier_extend._shift``), so
+    every member is equally legitimate and only *where the samples are lifted
+    from* differs. ``_carrier_extend`` picks the member that lands on the
+    **far** edge, which is what makes its join globally continuous. This one
+    picks, per pad line, the member that lands just inside that pad's **own**
+    edge — pure integer-period tiling, ``Δ = m/f``.
+
+    Two roles, two rules, and they do not swap. The single-sideband transform
+    is global: its kernel decays as ``1/x``, so it weights every discontinuity
+    in the array, and tiling gives it a fresh one at every tile boundary
+    because only the carrier is periodic — the specimen is not. Feeding the
+    sideband path this rule instead of ``_carrier_extend`` was measured, and
+    it fails: a 320 nm astigmatism at 5.37 fringes on a 45° carrier came back
+    as 505.5 nm (+58.0%, against −1.6% as shipped), and its ±45° mirror pair
+    disagreed by 49.6 percentage points against a 5 pp gate. That is the same
+    corner sensitivity the ledger recorded when tiling was tried there before
+    (corner max 158 nm, against 118 for the far-side rule).
+
+    The background blur is the opposite kind of consumer — a *local* estimator
+    of illumination, over a σ ≈ 50-60 px Gaussian, which is strictly positive
+    and has no tail to ring. A tile seam costs it a smoothing error of order
+    (illumination gradient × carrier period); the far-side rule costs it the
+    whole gradient at once, because every pad then carries the *opposite*
+    edge's brightness. See ``extract_phase_dft`` step 2 for what that is worth
+    in nanometres.
+
+    Tiling alone is not enough, and that is why this does not stop there.
+    Repeating the last period repeats its *brightness* too, so under a
+    gradient the pad carries a sawtooth of amplitude (gradient × period) at
+    exactly the carrier frequency — the worst available place for an error,
+    because the demodulator maps the carrier frequency onto DC and hands
+    whatever sits there to the surface as figure. So every resampled sample
+    gets back the illumination its shift walked away from, ``+ (x − x_src)·g``
+    with ``g`` the illumination gradient at that edge. Flat part, 5.37
+    fringes, carrier exact, full pipeline, PV nm at 256 px / 512 px, tiling
+    alone → tiling with the gradient restored:
+
+        uniform  0.42/0.56 → 0.40/0.57     ramp 20 levels  4.33/2.96 → 0.26/0.63
+        ramp 50 10.93/6.58 → 0.46/0.53     ramp 100      22.14/12.96 → 0.38/0.63
+        tilt ±15% 11.26/9.07 → 4.76/6.17   tilt ±30%     25.79/20.03 → 11.03/13.10
+
+    ``g`` comes from the difference of two adjacent one-period means, which is
+    the one estimator available here that is blind to the fringe: the mean of
+    a sinusoid over exactly one of its own periods is zero whatever its phase,
+    so no carrier survives into ``g``. Under uniform illumination ``g`` is
+    therefore zero and the correction vanishes identically — it cannot regress
+    the flat-lit case (the table's first row is the witness). That is what
+    separates it from detrending the *image* before extending, which was
+    measured at 6-8 nm of flat-part PV on uniform cells precisely because that
+    one does touch the interior.
+
+    Because the shift is a whole number of periods, ``f·Δ`` is an integer for
+    either sign of ``f`` and ``period = 1/|f|`` is sign-free: this needs none
+    of ``_shift``'s sign analysis, and none of its ``frac`` discontinuity
+    either — there is no ``frac(f·n)`` here to sit near an integer, so a
+    carrier estimate a ten-thousandth of a cycle below one cannot displace the
+    continuation by a whole period the way it did there.
+
+    A frame narrower than two carrier periods along an axis has neither a
+    period to repeat nor the two one-period means the gradient needs; that is
+    the low-carrier regime ``analyze_interferogram`` already warns about, and
+    that axis falls back to edge clipping. Harmless *here*: an axis with no
+    resolvable carrier has no fringe for the clip to kink either.
+    """
+    h, w = image.shape
+    pad_y = int(max(0, min(pad_y, h - 2)))
+    pad_x = int(max(0, min(pad_x, w - 2)))
+    if pad_y <= 0 and pad_x <= 0:
+        return np.array(image, dtype=np.float64)
+
+    img = np.asarray(image, dtype=np.float64)
+
+    def _axis(freq: float, n: int, pad: int) -> tuple[np.ndarray, float]:
+        """Source index per output index, plus the period used (0 = clipped)."""
+        idx = np.arange(-pad, n + pad, dtype=np.float64)
+        if pad <= 0 or abs(freq) < 1e-12:
+            return np.clip(idx, 0.0, n - 1.001), 0.0
+        period = 1.0 / abs(freq)
+        if 2.0 * period > n - 1.0:
+            return np.clip(idx, 0.0, n - 1.001), 0.0
+        # High pad: step back whole periods until the source sits in the last
+        # period of the frame, [n - period, n). Low pad: step forward until it
+        # sits in the first, [0, period).
+        src_hi = idx - (np.floor((idx - n) / period) + 1.0) * period
+        src_lo = np.ceil(-idx / period) * period + idx
+        src = np.where(idx >= n, src_hi, np.where(idx < 0, src_lo, idx))
+        return np.clip(src, 0.0, n - 1.001), period
+
+    def _edge_gradients(field: np.ndarray, axis: int,
+                        period: float) -> tuple[np.ndarray, np.ndarray]:
+        """Illumination gradient just inside each edge, along ``axis``.
+
+        Two adjacent one-period means, differenced. One period of a sinusoid
+        averages to zero regardless of phase, so the fringe drops out of both
+        means and the result is the background's slope alone.
+
+        Then smoothed *along* the edge over the same period, so the estimate's
+        support is square rather than a one-pixel-wide sliver: a per-line
+        difference of two means is otherwise the noisiest quantity in this
+        function, and it gets multiplied by up to ``pad`` pixels of shift.
+        """
+        step = max(1, int(round(period)))
+        n = field.shape[axis]
+        near_lo = field.take(range(0, step), axis=axis).mean(axis=axis)
+        far_lo = field.take(range(step, 2 * step), axis=axis).mean(axis=axis)
+        near_hi = field.take(range(n - step, n), axis=axis).mean(axis=axis)
+        far_hi = field.take(range(n - 2 * step, n - step), axis=axis).mean(axis=axis)
+        g_lo = (far_lo - near_lo) / period
+        g_hi = (near_hi - far_hi) / period
+        return tuple(cv2.GaussianBlur(g.reshape(-1, 1), (0, 0), period).ravel()
+                     for g in (g_lo, g_hi))
+
+    ys, period_y = _axis(fy, h, pad_y)
+    xs, period_x = _axis(fx, w, pad_x)
+    y_idx = np.arange(-pad_y, h + pad_y, dtype=np.float64)
+    x_idx = np.arange(-pad_x, w + pad_x, dtype=np.float64)
+
+    map_x = np.broadcast_to(xs[None, :], (ys.size, xs.size)).astype(np.float32)
+    map_y = np.broadcast_to(ys[:, None], (ys.size, xs.size)).astype(np.float32)
+    out = cv2.remap(img.astype(np.float32), map_x, map_y,
+                    cv2.INTER_CUBIC).astype(np.float64)
+
+    # Put back the illumination each resampled sample was carried away from.
+    # `delta` is the whole number of periods this sample was shifted by (zero
+    # over the interior), and the gradient is read at the sample's own source
+    # line, so a corner -- shifted on both axes -- gets both corrections.
+    if period_x > 0.0:
+        g_lo, g_hi = _edge_gradients(img, 1, period_x)
+        at_row = [np.interp(ys, np.arange(h, dtype=np.float64), g)[:, None]
+                  for g in (g_lo, g_hi)]
+        out += (x_idx - xs)[None, :] * np.where(
+            (x_idx >= w)[None, :], at_row[1], at_row[0])
+    if period_y > 0.0:
+        g_lo, g_hi = _edge_gradients(img, 0, period_y)
+        at_col = [np.interp(xs, np.arange(w, dtype=np.float64), g)[None, :]
+                  for g in (g_lo, g_hi)]
+        out += (y_idx - ys)[:, None] * np.where(
+            (y_idx >= h)[:, None], at_col[1], at_col[0])
+
     out[pad_y:pad_y + h, pad_x:pad_x + w] = image
     return out
 
@@ -1619,32 +1777,86 @@ def extract_phase_dft(image: np.ndarray, mask: np.ndarray | None = None,
     fx = (px - w // 2) / w
     fringe_freq = math.sqrt(fy ** 2 + fx ** 2)
 
-    # Step 2: extend the frame with its own carrier-consistent continuation
-    # so the circular FFT below is not handed a step at the wrap seam, then
-    # background subtraction to enhance fringe contrast.
+    # Step 2: take the illumination off the frame, extend the frame with its
+    # carrier-consistent continuation so the circular FFT below is not handed
+    # a step at the wrap seam, and high-pass the result.
+    #
+    # The continuation is honest about the fringe and cannot be honest about
+    # the light. `_carrier_extend` builds each pad by resampling from the
+    # OPPOSITE edge — that is precisely what makes its join continuous, and it
+    # means every pad arrives carrying the far edge's brightness. Under even
+    # illumination that costs nothing. Under illumination that ramps ALONG the
+    # carrier it plants a step the size of the entire gradient right where a
+    # sigma=bg_sigma blur reaches across, and the blur smears it back ~sigma
+    # deep into the frame, where the demodulator reads it as figure. Flat
+    # part, 5.37 fringes, carrier exact, PV nm at 256 px / 512 px, blurring
+    # the far-side-extended array -> this ordering:
+    #
+    #     uniform  0.47/0.55 -> 0.40/0.57      ramp 20 levels 20.2/17.9 -> 0.26/0.63
+    #     ramp 50 46.0/42.0  -> 0.46/0.53      ramp 100       73.9/72.8 -> 0.38/0.63
+    #     tilt +-15% 41.8/37.5 -> 4.76/6.17    tilt +-30%     71.8/69.2 -> 11.0/13.1
+    #
+    # (The tilted pair keeps a residual because tilting the illumination tilts
+    # the fringe CONTRAST with it, and an amplitude gradient is not a
+    # background at all. The pre-2026-08-19 ordering read 8.4/14.7 and
+    # 24.2/15.7 on those two, so this is still an improvement, not a wash.)
+    #
+    # So the illumination is estimated first, on its own terms, and taken off
+    # the frame before anything is extended:
+    #
+    #  1. `_carrier_extend_local` pads the frame by repeating the carrier
+    #     period nearest each pad's own edge, with the illumination that
+    #     repetition walked away from added back. Phase-correct like the
+    #     far-side rule, but locally lit — so the blur below sees no step, and
+    #     no mirror kink either. Blurring the raw frame instead lets cv2's
+    #     mirror kink the fringe wherever the edge does not land on an
+    #     extremum, contaminating a ~3*bg_sigma band (7.4-10.3 nm of flat-part
+    #     PV at quarter-fraction counts on 256 px, worse on larger frames as
+    #     the fringe period grows).
+    #  2. `img - illumination` is now flat-lit, so `_carrier_extend`'s join is
+    #     honest again and the sideband path keeps the far-side rule it needs.
+    #     Tiling there instead breaks obliques badly (320 nm astigmatism at
+    #     5.37 fringes / 45 deg -> 505.5 nm, +58.0%) — see
+    #     `_carrier_extend_local`.
+    #  3. The high-pass below is unchanged. On a frame that is already
+    #     flat-lit it has almost no background left to remove, but it is not
+    #     redundant: it also runs over the PADS, where cv2's mirror at the
+    #     array's outer boundary makes it a real conditioning of the
+    #     continuation. Dropping it (fault-injected) costs 13.1 nm of
+    #     flat-part PV at 5.00 fringes on 1024 px, 8.2 at 8.00/1024, 6.4 at
+    #     6.00/512 — all integer counts, where the frame is exactly periodic
+    #     and every other term vanishes.
+    #
+    # The extension has to outrun the background blur, not just the low-pass.
+    # Sizing it to the low-pass alone (3*sigma_across) leaves 1.6-11.0 nm of
+    # flat-part PV even at integer fringe counts, worst where that sizing is
+    # smallest against bg_sigma (16-40 px of pad against a 50 px blur, at
+    # 8-13 fringes on 256 px), fading to ~2-4 nm once the pad reaches ~100 px;
+    # the 3*bg_sigma floor brings every one of those cells to 0.10-1.60 nm.
+    # (The 10-13 nm figure this comment used to quote was measured under the
+    # pre-2026-08-19 ordering, on a different mechanism; the numbers above are
+    # this pipeline's.)
     if fringe_freq > 1e-10:
         lpf_period = 1.0 / fringe_freq
         lpf_frac = (DEFAULT_LPF_SIGMA_FRAC if lpf_sigma_frac is None
                     else float(lpf_sigma_frac))
-        # The extension has to outrun the background blur, not just the
-        # low-pass: cv2 mirrors at the array edge, and the mirror
-        # continuation agrees with a fringe field only where the edge lands
-        # on an extremum — anywhere else it kinks, and the background
-        # estimate inherits a contaminated band ~3*bg_sigma wide. Blurring
-        # AFTER the carrier-consistent extension (below) hands the blur a
-        # continuation that agrees with the field, and parks the mirror
-        # band in the pads' outer reaches, which the crop never returns to
-        # the frame. Blur-before-extend was measured at 7.4-10.3 nm of
-        # flat-part PV at quarter-fraction counts on 256 px (worse on
-        # larger frames, scaling with the fringe period in px); this
-        # ordering brings the same cases under 5 nm with the carrier held
-        # exact. Sizing it to the low-pass alone (3*sigma_across, ~37 px
-        # here) leaves 10-13 nm of flat-part PV even at integer fringe
-        # counts; 3*bg_sigma is what keeps the mirror band off the frame.
         ext = min(256, max(8, int(math.ceil(
             3.0 * max(lpf_period * lpf_frac * 1.4142, 5.0)))))
         ext = max(ext, int(math.ceil(3.0 * bg_sigma)))
-        extended = _carrier_extend(img, fy, fx, ext, ext)
+        locally_extended = _carrier_extend_local(img, fy, fx, ext, ext)
+        # `_carrier_extend*` clamp the pad to the frame, so read the pad that
+        # was actually applied off the result rather than assuming `ext`.
+        bg_y = (locally_extended.shape[0] - h) // 2
+        bg_x = (locally_extended.shape[1] - w) // 2
+        # float32 for this one blur: sigma is ~50-60 px, so the kernel is ~480
+        # taps and this is the most expensive operation in the function, and
+        # single precision costs 3e-4 levels of agreement with the float64
+        # result on a frame whose own quantization step is 1 level. Measured
+        # 1.003 s -> 0.273 s on the 1200x1920 case.
+        illumination = cv2.GaussianBlur(
+            locally_extended.astype(np.float32), (0, 0), bg_sigma
+        )[bg_y:bg_y + h, bg_x:bg_x + w].astype(np.float64)
+        extended = _carrier_extend(img - illumination, fy, fx, ext, ext)
         enhanced = extended - cv2.GaussianBlur(extended, (0, 0), bg_sigma)
         ext_y = (enhanced.shape[0] - h) // 2
         ext_x = (enhanced.shape[1] - w) // 2
@@ -1705,7 +1917,11 @@ def extract_phase_dft(image: np.ndarray, mask: np.ndarray | None = None,
 
     # Step 4: complex demodulation — shift carrier to DC, then crop back to the
     # frame. The continuation was only ever there to keep the FFT above honest;
-    # it is not measurement, so nothing downstream is allowed to see it.
+    # it is not measurement, so no pixel of it survives the crop. That is not
+    # the same as it being inert: step 3's half-plane multiplier is a kernel
+    # decaying as 1/x, so the pads have already had their say on every sample
+    # inside the frame by the time this crop runs. They are parked out of
+    # reach of the *low-pass*, not out of the transform.
     yy, xx = np.mgrid[0:eh, 0:ew]
     carrier = np.exp(-2j * np.pi * (fy * (yy - ext_y) + fx * (xx - ext_x)))
     demod = (sideband * carrier)[ext_y:ext_y + h, ext_x:ext_x + w]

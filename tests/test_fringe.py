@@ -206,7 +206,11 @@ class TestPhysicsCorrections:
                "estimator semantics fork documented in the 2026-08-18 ledger "
                "(an accurate estimator must absorb specimen tilt — "
                "physically indistinguishable from reference wedge — "
-               "breaking two tests that assert tilt survives demodulation, "
+               "breaking two tests that assert tilt survives demodulation "
+               "— TestM22SubpixelCarrier::"
+               "test_subpixel_carrier_unbiased_by_step and "
+               "TestDFTPhaseExtraction::"
+               "test_extracts_phase_from_synthetic_interferogram — "
                "and the unbiased estimators measured so far regress "
                "step-input robustness 0.67-0.79 bins vs the 0.5 gate). That "
                "is a product decision, deliberately not resolved here.",
@@ -260,6 +264,51 @@ class TestPhysicsCorrections:
                 f"flat part at {n} fringes reported {result['pv_nm']:.2f} nm "
                 f"PV with the carrier exact"
             )
+
+    def test_flat_part_survives_illumination_ramped_along_the_carrier(self):
+        """A background that ramps ALONG the carrier must not manufacture
+        surface structure.
+
+        The 5.0 nm limit is the same product property every other flat test
+        in this class asserts (a mathematically flat part must read flat);
+        nothing about a 20-level illumination ramp — 14% of this fixture's
+        140-level fringe swing, and mild next to the 3-44 level wrap steps
+        the repo's own ROI-cropped snapshots carry — entitles the demodulator
+        to a different answer than it gives on a uniformly lit one.
+
+        The frame extension resamples each pad from the *opposite* edge — that
+        is what makes the join carrier-consistent — so with the illumination
+        ramped along the carrier every pad arrives carrying the far edge's
+        brightness: a step the size of the whole ramp, sitting exactly where
+        the sigma=bg_sigma background blur reaches across. The blur smears it
+        back over a band ~sigma deep into the frame and the residual is handed
+        to the surface as figure. Measured on this fixture: 4.95 nm while the
+        background was still estimated on the frame alone (commit 5b462aa; an
+        independent reviewer measured 4.77 nm on their own reconstruction),
+        20.21 nm once the estimate moved onto the far-side-extended array
+        (commit 08f7fed).
+
+        Ramp 20 is deliberately the mildest of the gradients measured, so this
+        pins the mechanism rather than a comfortable margin; ramps of 50 and
+        100 levels ran to 46.0 and 73.9 nm under that ordering.
+        """
+        h = w = 256
+        n = 5.37
+        r = 20.0
+        _yy, xx = np.mgrid[:h, :w]
+        image = np.clip(
+            (128 - r / 2 + r * xx / w) + 70 * np.cos(2 * np.pi * n * xx / w),
+            0, 255,
+        ).astype(np.uint8)
+        result = analyze_interferogram(
+            image, wavelength_nm=589.3, subtract_terms=[1],
+            use_full_mask=True, correct_2pi_jumps=False,
+            carrier_override=(h // 2, w // 2 + n),
+        )
+        assert result["pv_nm"] < 5.0, (
+            f"flat part under a {r:.0f}-level illumination ramp reported "
+            f"{result['pv_nm']:.2f} nm PV with the carrier exact"
+        )
 
     def test_extension_does_not_manufacture_a_seam_at_integer_counts(self):
         """A frame spanning an integer number of carrier periods is exactly
