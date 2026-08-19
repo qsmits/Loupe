@@ -288,27 +288,38 @@ class TestPhysicsCorrections:
         20.21 nm once the estimate moved onto the far-side-extended array
         (commit 08f7fed).
 
-        Ramp 20 is deliberately the mildest of the gradients measured, so this
-        pins the mechanism rather than a comfortable margin; ramps of 50 and
-        100 levels ran to 46.0 and 73.9 nm under that ordering.
+        Ramp 20 is deliberately the mildest of the gradients measured, so it
+        pins the mechanism rather than a comfortable margin. Ramp 50 is here
+        because it is the cell that discriminates all three generations of
+        this code at once, and the 20-level cell does not:
+
+            ramp 50, same fixture, 5b462aa 5.24 nm | 08f7fed 46.01 | now 0.46
+
+        5b462aa is *marginally over* the limit and 08f7fed is an order of
+        magnitude over, so neither passes; and unlike ramp 20 this cell also
+        fails (10.93 nm, fault-injected) if the extension's pads repeat the
+        near edge's carrier period without putting back the illumination that
+        repetition walked away from. A gradient the demodulator does not
+        remove costs error in proportion to the gradient, so the steeper cell
+        is the honest place to assert the property.
         """
         h = w = 256
         n = 5.37
-        r = 20.0
         _yy, xx = np.mgrid[:h, :w]
-        image = np.clip(
-            (128 - r / 2 + r * xx / w) + 70 * np.cos(2 * np.pi * n * xx / w),
-            0, 255,
-        ).astype(np.uint8)
-        result = analyze_interferogram(
-            image, wavelength_nm=589.3, subtract_terms=[1],
-            use_full_mask=True, correct_2pi_jumps=False,
-            carrier_override=(h // 2, w // 2 + n),
-        )
-        assert result["pv_nm"] < 5.0, (
-            f"flat part under a {r:.0f}-level illumination ramp reported "
-            f"{result['pv_nm']:.2f} nm PV with the carrier exact"
-        )
+        for r in (20.0, 50.0):
+            image = np.clip(
+                (128 - r / 2 + r * xx / w) + 70 * np.cos(2 * np.pi * n * xx / w),
+                0, 255,
+            ).astype(np.uint8)
+            result = analyze_interferogram(
+                image, wavelength_nm=589.3, subtract_terms=[1],
+                use_full_mask=True, correct_2pi_jumps=False,
+                carrier_override=(h // 2, w // 2 + n),
+            )
+            assert result["pv_nm"] < 5.0, (
+                f"flat part under a {r:.0f}-level illumination ramp reported "
+                f"{result['pv_nm']:.2f} nm PV with the carrier exact"
+            )
 
     def test_extension_does_not_manufacture_a_seam_at_integer_counts(self):
         """A frame spanning an integer number of carrier periods is exactly
