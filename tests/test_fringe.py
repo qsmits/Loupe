@@ -194,34 +194,22 @@ class TestPhysicsCorrections:
         assert result["pv_nm"] < 5.0, f'flat part reported {result["pv_nm"]:.1f} nm PV'
 
     @pytest.mark.xfail(
-        reason="Dominated by sub-pixel carrier-estimator bias, not by the "
-               "rim. Holding the carrier exact via carrier_override isolates "
-               "the two: the rim residual is 0.74-23.34 nm before and "
-               "1.35-10.31 nm after over counts 5.0-13.0 -- every "
-               "non-integer count improves, by up to 12x, and every integer "
-               "count regresses 1.7-3.7x but stays under 3 nm -- while the "
-               "auto-detected "
-               "carrier sits up to 0.088 cycles/frame off, and a d-cycle "
-               "error is a 2*pi*d phase ramp the demodulator hands to the "
-               "specimen -- 0.084 cycles is 25 nm of PV at 589.3 nm, which "
-               "is the whole remaining miss here. subtract_terms=[1] is "
-               "piston-only, so unlike the default it does not hide it. "
-               "Fixing that needs an unbiased sub-pixel estimator, and it is "
-               "not a free win: three unbiased estimators were built and "
-               "measured (closed-form Hann inversion, 1-D and 2-D Hann-lobe "
-               "least squares; clean-tone bias 0.0026-0.0030 cycles vs the "
-               "M2.2 log-paraboloid fit\'s 0.149) and all three break "
-               "TestM22SubpixelCarrier::test_subpixel_carrier_unbiased_by_step "
-               "(0.67-0.79 bins vs its 0.5 limit, which the biased fit meets "
-               "at 0.37), while an accurate carrier also absorbs specimen "
-               "tilt entirely -- it reads 8.4999 for a 8-fringe carrier plus "
-               "0.5 fringes of surface tilt -- breaking "
-               "TestDFTPhaseExtraction::"
-               "test_extracts_phase_from_synthetic_interferogram, which "
-               "assumes tilt survives demodulation. Tilt IS the wedge in a "
-               "single interferogram, so that is a semantics decision about "
-               "what the demodulator should hand back, not a bug to fix "
-               "under a rim-artefact task.",
+        reason="Auto-carrier only: the boundary mechanisms that used to "
+               "dominate this fixture are fixed and pinned by "
+               "test_flat_part_boundary_artifact_stays_under_limit_carrier_exact; "
+               "what remains is sub-pixel carrier-estimator bias — a d-cycle "
+               "carrier error is a 2*pi*d phase ramp handed to the specimen, "
+               "and the estimator sits up to 0.088 cycles off here (measured "
+               "23.8 nm PV on this fixture, vs 0.4 nm with the carrier held "
+               "exact). subtract_terms=[1] is piston-only, so unlike the "
+               "production default it does not hide tilt. Fixing it is the "
+               "estimator semantics fork documented in the 2026-08-18 ledger "
+               "(an accurate estimator must absorb specimen tilt — "
+               "physically indistinguishable from reference wedge — "
+               "breaking two tests that assert tilt survives demodulation, "
+               "and the unbiased estimators measured so far regress "
+               "step-input robustness 0.67-0.79 bins vs the 0.5 gate). That "
+               "is a product decision, deliberately not resolved here.",
         strict=False,
     )
     def test_default_lpf_keeps_dc_outside_the_passband_non_integer_count(self):
@@ -229,8 +217,11 @@ class TestPhysicsCorrections:
 
         An integer count makes the frame exactly periodic, which flatters every
         FFT stage in the demodulator; no real capture is periodic. This pins
-        what the periodic case hides — ~33 nm, of which ~25 nm is carrier
-        tilt (see the xfail reason) and the rest is rim.
+        what the periodic case hides — 23.8 nm, all of it sub-pixel
+        carrier-estimator bias now that the boundary term is fixed and
+        separately pinned by
+        test_flat_part_boundary_artifact_stays_under_limit_carrier_exact
+        (see the xfail reason).
         """
         h = w = 256
         _yy, xx = np.mgrid[:h, :w]
@@ -292,10 +283,11 @@ class TestPhysicsCorrections:
 
     def test_flat_part_boundary_error_is_carrier_sign_symmetric(self):
         """_shift(f, n) == _shift(-f, n) is mathematically required (the
-        offset depends only on w mod 1/|f|), and the same must hold for the
-        phase-consistent outer pad: fringes tilting the other way are every
-        second real capture. A sign bug here survived three reviews once
-        because every sweep stayed in the positive-fx half-plane."""
+        offset depends only on w mod 1/|f|), and the same parity must hold
+        for the whole demodulation path, extension pads included: fringes
+        tilting the other way are every second real capture. A sign bug
+        here survived three reviews once because every sweep stayed in the
+        positive-fx half-plane."""
         h = w = 256
         n = 5.37
         _yy, xx = np.mgrid[:h, :w]
