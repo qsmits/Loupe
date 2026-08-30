@@ -34,8 +34,35 @@ describe('statusLine', () => {
   it('arc-fit reports live fit once 3+ points placed', () => {
     const pts = [{ x: 0, y: 10 }, { x: 10, y: 0 }, { x: 0, y: -10 }, { x: -10, y: 0 }];
     const s = { ...FRESH, pendingPoints: pts };
-    assert.match(statusLine('arc-fit', s), /Finish/);
+    // Past the 3-point minimum the status bar stays on live progress text
+    // rather than jumping to "Finish" purely because a count was exceeded —
+    // finishing is a discrete action (Enter/double-click), not a point count.
+    assert.match(statusLine('arc-fit', s), /4 points placed/);
     assert.match(PROCEDURES['arc-fit'].liveLine(s), /Ø.*px/);
+  });
+  it('arc-fit shows count-aware progress before and after the 3-point threshold', () => {
+    assert.equal(statusLine('arc-fit', FRESH), 'Best fit — Place at least 3 points on the edge');
+    assert.equal(
+      statusLine('arc-fit', { ...FRESH, pendingPoints: [{ x: 0, y: 0 }, { x: 1, y: 1 }] }),
+      'Best fit — 2 points placed — need 1 more');
+    assert.match(
+      statusLine('arc-fit', { ...FRESH, pendingPoints: [{ x: 0, y: 10 }, { x: 10, y: 0 }, { x: 0, y: -10 }, { x: -10, y: 0 }] }),
+      /4 points placed/);
+  });
+  it('area shows count-aware progress before the 3-vertex threshold', () => {
+    assert.equal(
+      statusLine('area', { ...FRESH, pendingPoints: [{ x: 0, y: 0 }] }),
+      'Area — 1 vertex placed — need 2 more');
+  });
+  it('spline shows count-aware progress before the 2-anchor threshold', () => {
+    assert.equal(
+      statusLine('spline', { ...FRESH, pendingPoints: [{ x: 0, y: 0 }] }),
+      'Spline — 1 anchor placed');
+  });
+  it('fit-line shows count-aware progress before the 2-point threshold', () => {
+    assert.equal(
+      statusLine('fit-line', { ...FRESH, pendingPoints: [{ x: 0, y: 0 }] }),
+      'Flatness — 1 point placed');
   });
   it('unknown tool falls back to the tool id', () => {
     assert.equal(statusLine('nonsense', FRESH), 'nonsense');

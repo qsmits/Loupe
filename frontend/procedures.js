@@ -75,10 +75,18 @@ export const PROCEDURES = {
   },
   'arc-fit': {
     title: 'Best fit',
-    steps: () => ['Place at least 3 points on the edge',
-                  'Add points — more improves the fit',
-                  'Finish — Enter or double-click'],
-    currentStep: s => (nPts(s) < 3 ? 0 : nPts(s) === 3 ? 1 : 2),
+    steps: s => {
+      const n = nPts(s);
+      return [
+        n === 0 ? 'Place at least 3 points on the edge' : `${n} point${n === 1 ? '' : 's'} placed — need ${3 - n} more`,
+        `${n} points placed — more improves the fit`,
+        'Finish — Enter or double-click',
+      ];
+    },
+    // Once the 3-point minimum is met, stay on the live-progress step (index 1)
+    // no matter how many extra points are added — index 2 ("Finish") is a
+    // discrete action, not something point count alone should trigger.
+    currentStep: s => (nPts(s) < 3 ? 0 : 1),
     liveLine: circleFitLive,
     finish: { minPoints: 3, hint: 'Enter or double-click' },
   },
@@ -91,7 +99,13 @@ export const PROCEDURES = {
   },
   area: {
     title: 'Area',
-    steps: () => ['Click to place vertices (≥3)', 'Finish — Enter or double-click'],
+    steps: s => {
+      const n = nPts(s);
+      return [
+        n === 0 ? 'Click to place vertices (≥3)' : `${n} vert${n === 1 ? 'ex' : 'ices'} placed${n < 3 ? ` — need ${3 - n} more` : ''}`,
+        'Finish — Enter or double-click',
+      ];
+    },
     currentStep: s => (nPts(s) >= 3 ? 1 : 0),
     finish: { minPoints: 3, hint: 'Enter or double-click' },
   },
@@ -102,13 +116,25 @@ export const PROCEDURES = {
   },
   spline: {
     title: 'Spline',
-    steps: () => ['Click anchor points (≥2)', 'Finish — Enter or double-click'],
+    steps: s => {
+      const n = nPts(s);
+      return [
+        n === 0 ? 'Click anchor points (≥2)' : `${n} anchor${n === 1 ? '' : 's'} placed`,
+        'Finish — Enter or double-click',
+      ];
+    },
     currentStep: s => (nPts(s) >= 2 ? 1 : 0),
     finish: { minPoints: 2, hint: 'Enter or double-click' },
   },
   'fit-line': {
     title: 'Flatness',
-    steps: () => ['Place points along the line (≥2)', 'Finish — Enter or double-click'],
+    steps: s => {
+      const n = nPts(s);
+      return [
+        n === 0 ? 'Place points along the line (≥2)' : `${n} point${n === 1 ? '' : 's'} placed`,
+        'Finish — Enter or double-click',
+      ];
+    },
     currentStep: s => (nPts(s) >= 2 ? 1 : 0),
     liveLine: lineFitLive,
     finish: { minPoints: 2, hint: 'Enter or double-click' },
