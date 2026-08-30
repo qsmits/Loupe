@@ -143,7 +143,7 @@ export function hitTestAnnotation(ann, pt) {
     const circle = state.annotations.find(a => a.id === ann.circleId);
     if (!circle) return false;
     let cx, cy, r;
-    if (circle.type === "circle") {
+    if (circle.type === "circle" || circle.type === "arc-fit") {
       cx = circle.cx; cy = circle.cy; r = circle.r;
     } else {
       const sx = circle.frameWidth ? imageWidth / circle.frameWidth : 1;

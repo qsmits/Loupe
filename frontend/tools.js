@@ -220,14 +220,14 @@ export async function handleToolClick(rawPt, e = {}) {
           const parsed = parseDistanceInput(dist);
           if (parsed) {
             let cx, cy, r;
-            if (circle.type === "circle") {
+            if (circle.type === "circle" || circle.type === "arc-fit") {
               cx = circle.cx; cy = circle.cy; r = circle.r;
             } else {
               const sx = imageWidth / circle.frameWidth;
               const sy = imageHeight / circle.frameHeight;
               cx = circle.x * sx; cy = circle.y * sy; r = circle.radius * sx;
             }
-            if (circle.type !== "circle") {
+            if (circle.type !== "circle" && circle.type !== "arc-fit") {
               // Elevate the detection first, then calibrate without adding the
               // redundant diameter-line annotation — the circle measurement is
               // already the visual record of what was calibrated on.
@@ -720,12 +720,14 @@ export function getHandles(ann) {
 
 // ── Circle snap ─────────────────────────────────────────────────────────────
 // Returns the circle annotation whose edge is closest to pt, if within 20px.
-// Handles both "circle" (canvas coords) and "detected-circle" (frame coords).
+// Handles "circle" and "arc-fit" (canvas coords, cx/cy/r — partial arcs
+// included deliberately: relating from a fitted arc's center is legitimate
+// metrology) and "detected-circle" (frame coords).
 export function snapToCircle(pt) {
   let best = null, bestDist = 20 / viewport.zoom;
   state.annotations.forEach(ann => {
     let cx, cy, r;
-    if (ann.type === "circle") {
+    if (ann.type === "circle" || ann.type === "arc-fit") {
       cx = ann.cx; cy = ann.cy; r = ann.r;
     } else if (ann.type === "detected-circle") {
       const sx = imageWidth / ann.frameWidth;
@@ -751,10 +753,15 @@ export function snapToCircle(pt) {
 
 function _circleCenter(circle) {
   if (circle.type === "circle" || circle.type === "arc-fit") return { x: circle.cx, y: circle.cy };
-  // detected-circle: frame coords → canvas coords (historical formula, kept
-  // as recovered — note this uses canvas.width/frameWidth, not the
-  // imageWidth/imageHeight scaling snapToCircle itself uses internally).
-  const sx = canvas.width / circle.frameWidth, sy = canvas.height / circle.frameHeight;
+  // detected-circle: frame coords → image coords. Matches snapToCircle's own
+  // detected-circle math (and hit-test.js / format.js / render-annotations.js's
+  // pt-circle-dist readers) — imageWidth/imageHeight, NOT canvas.width/height.
+  // The historical recovered formula used canvas.width/frameWidth (the
+  // display canvas, not the image), which would land a detected-circle
+  // relation endpoint at display coords that then snap to image coords the
+  // moment the circle is dragged. Fixed during keystone review, not carried
+  // forward verbatim.
+  const sx = imageWidth / circle.frameWidth, sy = imageHeight / circle.frameHeight;
   return { x: circle.x * sx, y: circle.y * sy };
 }
 
@@ -764,6 +771,12 @@ function _consumePickedCircle(tool, circle) {
       state.pendingCenterCircle = circle;
       updateToolStatus();
       redraw();
+      return;
+    }
+    if (circle.id != null && circle.id === state.pendingCenterCircle.id) {
+      // Same circle picked twice — ignore rather than create a zero-length
+      // junk measurement; keep the first pick armed for a different circle.
+      showStatus("Center distance — pick a different circle");
       return;
     }
     const a = _circleCenter(state.pendingCenterCircle);

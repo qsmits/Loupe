@@ -226,7 +226,7 @@ export function measurementLabel(ann, ctx) {
     const circle = ctx.annotations.find(a => a.id === ann.circleId);
     if (!circle) return "\u2299 ref deleted";
     let cx, cy, r;
-    if (circle.type === "circle") {
+    if (circle.type === "circle" || circle.type === "arc-fit") {
       cx = circle.cx; cy = circle.cy; r = circle.r;
     } else {
       const sx = circle.frameWidth  ? (ctx.imageWidth  || circle.frameWidth)  / circle.frameWidth  : 1;
@@ -427,7 +427,7 @@ export function measurementNumeric(ann, ctx = {}) {
       const circle = (ctx.annotations || []).find(a => a.id === ann.circleId);
       if (!circle) return null;
       let cx, cy, r;
-      if (circle.type === 'circle') {
+      if (circle.type === 'circle' || circle.type === 'arc-fit') {
         cx = circle.cx; cy = circle.cy; r = circle.r;
       } else {
         const sx = circle.frameWidth  ? (ctx.imageWidth  || circle.frameWidth)  / circle.frameWidth  : 1;

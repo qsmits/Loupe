@@ -345,7 +345,7 @@ export function drawPtCircleDist(ann, sel) {
     return;
   }
   let cx, cy, r;
-  if (circle.type === "circle") {
+  if (circle.type === "circle" || circle.type === "arc-fit") {
     cx = circle.cx; cy = circle.cy; r = circle.r;
   } else {
     const sx = circle.frameWidth ? imageWidth / circle.frameWidth : 1;

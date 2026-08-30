@@ -1,10 +1,12 @@
 import './dom-stub.js';
-import { describe, it, beforeEach } from 'node:test';
+import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { state } from '../../frontend/state.js';
 import { setTool, handleToolClick, RELATION_TOOLS } from '../../frontend/tools.js';
 import { addAnnotation } from '../../frontend/annotations.js';
 import { getStatus } from '../../frontend/render.js';
+import { measurementNumeric } from '../../frontend/format.js';
+import { setImageSize } from '../../frontend/viewport.js';
 
 beforeEach(() => {
   state.annotations = [];
@@ -30,6 +32,72 @@ describe('center-dist resurrection', () => {
     assert.deepEqual({ x: rel.a.x, y: rel.a.y }, { x: 100, y: 100 });
     assert.equal(state.tool, 'center-dist');     // stays armed
     assert.equal(state.pendingCenterCircle, null);
+  });
+
+  it('an arc-fit (best-fit circle/arc) is pickable alongside a plain circle (Finding 1)', async () => {
+    const c1 = addAnnotation({ type: 'circle', cx: 100, cy: 100, r: 30 });
+    const arc = addAnnotation({ type: 'arc-fit', cx: 400, cy: 100, r: 20 });
+    setTool('center-dist');
+    await handleToolClick({ x: 130, y: 100 });   // c1 edge
+    await handleToolClick({ x: 420, y: 100 });   // arc-fit edge
+    const rel = state.annotations.find(a => a.type === 'center-dist');
+    assert.ok(rel, 'center-dist created against an arc-fit');
+    assert.equal(rel.circleAId, c1.id);
+    assert.equal(rel.circleBId, arc.id);
+    assert.deepEqual({ x: rel.b.x, y: rel.b.y }, { x: 400, y: 100 }); // arc-fit's own cx/cy, no scaling
+  });
+
+  it('same circle picked twice is ignored; picking a different circle still completes, and a second cycle works (Finding 3)', async () => {
+    const c1 = addAnnotation({ type: 'circle', cx: 100, cy: 100, r: 30 });
+    const c2 = addAnnotation({ type: 'circle', cx: 400, cy: 100, r: 20 });
+    const c3 = addAnnotation({ type: 'circle', cx: 700, cy: 100, r: 10 });
+    setTool('center-dist');
+    await handleToolClick({ x: 130, y: 100 });   // pick c1
+    await handleToolClick({ x: 130, y: 100 });   // pick c1 again — must be ignored
+    assert.equal(state.annotations.filter(a => a.type === 'center-dist').length, 0,
+      'no junk zero-length measurement from picking the same circle twice');
+    assert.ok(state.pendingCenterCircle, 'first pick stays armed');
+    assert.equal(state.pendingCenterCircle.id, c1.id);
+
+    await handleToolClick({ x: 420, y: 100 });   // pick c2 — completes the first relation
+    const rel1 = state.annotations.find(a => a.type === 'center-dist');
+    assert.ok(rel1, 'first center-dist created');
+    assert.equal(rel1.circleAId, c1.id);
+    assert.equal(rel1.circleBId, c2.id);
+    assert.equal(state.tool, 'center-dist');     // stays armed
+    assert.equal(state.pendingCenterCircle, null);
+
+    // Genuine second cycle — stay-armed exercised for real, not just asserted.
+    await handleToolClick({ x: 130, y: 100 });   // pick c1 again, fresh cycle
+    await handleToolClick({ x: 710, y: 100 });   // pick c3 — completes a second relation
+    const rels = state.annotations.filter(a => a.type === 'center-dist');
+    assert.equal(rels.length, 2, 'a second center-dist was created in the same armed session');
+    const rel2 = rels[1];
+    assert.equal(rel2.circleAId, c1.id);
+    assert.equal(rel2.circleBId, c3.id);
+    assert.equal(state.tool, 'center-dist');
+    assert.equal(state.pendingCenterCircle, null);
+  });
+
+  describe('detected-circle endpoints use image coords, not canvas coords (Finding 2)', () => {
+    afterEach(() => { setImageSize(0, 0); }); // restore the file's default for later tests
+
+    it('center-dist endpoint for a detected-circle matches imageWidth-based scaling', async () => {
+      setImageSize(800, 600); // frameWidth (400) !== imageWidth (800): discriminates the two formulas
+      const det = addAnnotation({ type: 'detected-circle', x: 50, y: 60, radius: 10, frameWidth: 400, frameHeight: 300 });
+      const c1 = addAnnotation({ type: 'circle', cx: 500, cy: 500, r: 30 });
+      setTool('center-dist');
+      // detected-circle center in image coords: (50*800/400, 60*600/300) = (100, 120), r = 10*2 = 20.
+      await handleToolClick({ x: 120, y: 120 });   // detected-circle edge (image coords)
+      await handleToolClick({ x: 530, y: 500 });   // c1 edge
+      const rel = state.annotations.find(a => a.type === 'center-dist');
+      assert.ok(rel, 'center-dist created against a detected-circle');
+      assert.equal(rel.circleAId, det.id);
+      assert.equal(rel.circleBId, c1.id);
+      // Must be the image-coord center (100, 120) — NOT canvas.width-based (which
+      // would be {0, 0} here, since dom-stub's canvas.width defaults to 0).
+      assert.deepEqual({ x: rel.a.x, y: rel.a.y }, { x: 100, y: 120 });
+    });
   });
 });
 
@@ -69,6 +137,18 @@ describe('pt-circle-dist resurrection', () => {
     assert.equal(state.annotations.length, 0);
     assert.match(getStatus(), /circle/i);
     assert.equal(state.tool, 'pt-circle-dist');
+  });
+
+  it('pt-circle-dist against an arc-fit computes a finite gap (Finding 1)', async () => {
+    const arc = addAnnotation({ type: 'arc-fit', cx: 100, cy: 100, r: 30 });
+    setTool('pt-circle-dist');
+    await handleToolClick({ x: 130, y: 100 });   // arc-fit edge
+    await handleToolClick({ x: 500, y: 500 });   // free point
+    const rel = state.annotations.find(a => a.type === 'pt-circle-dist');
+    assert.ok(rel, 'pt-circle-dist created against an arc-fit');
+    assert.equal(rel.circleId, arc.id);
+    const numeric = measurementNumeric(rel, { annotations: state.annotations, calibration: null });
+    assert.ok(numeric && Number.isFinite(numeric.value), 'measurementNumeric returns a finite gap, not NaN');
   });
 });
 
