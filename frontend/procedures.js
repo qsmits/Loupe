@@ -155,6 +155,43 @@ export const PROCEDURES = {
     steps: () => ['Click to detect features'],
     currentStep: () => 0,
   },
+  // ── Relation tools (resurrected 2026-08-30) — not in TOOL_BUTTONS, so the
+  // procedures-completeness gate (test_procedures.js) doesn't require these;
+  // Task 16's palette gains its own completeness coverage for them.
+  'center-dist': {
+    title: 'Circle ↔ circle distance',
+    steps: () => ['Specify the 1st circle — click a fitted circle',
+                  'Specify the 2nd circle',
+                  'Distance appears — set pattern/nominal in Properties'],
+    currentStep: s => (s.pendingCenterCircle ? 1 : 0),
+  },
+  'pt-circle-dist': {
+    title: 'Point ↔ circle distance',
+    steps: () => ['Click a fitted circle', 'Click the point to measure from'],
+    currentStep: s => (s.pendingCircleRef ? 1 : 0),
+  },
+  'perp-dist': {
+    title: 'Perpendicular distance',
+    steps: () => ['Click the reference line', 'Click the start point', 'Click the end point'],
+    currentStep: s => (!s.pendingRefLine ? 0 : (s.pendingPoints || []).length === 0 ? 1 : 2),
+  },
+  'para-dist': {
+    title: 'Parallel distance / parallelism',
+    steps: () => ['Click the reference line',
+                  'Click another line (parallelism) or a free point (parallel distance)',
+                  'Click the end point'],
+    currentStep: s => (!s.pendingRefLine ? 0 : (s.pendingPoints || []).length === 0 ? 1 : 2),
+  },
+  'slot-dist': {
+    title: 'Width between two lines',
+    steps: () => ['Click the first line', 'Click the second line'],
+    currentStep: s => (s.pendingRefLine ? 1 : 0),
+  },
+  intersect: {
+    title: 'Intersection of two lines',
+    steps: () => ['Click the first line', 'Click the second line'],
+    currentStep: s => (s.pendingRefLine ? 1 : 0),
+  },
 };
 
 export function statusLine(toolId, state) {

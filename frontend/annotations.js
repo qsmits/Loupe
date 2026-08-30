@@ -29,6 +29,7 @@ export function addAnnotation(data, { skipUndo = false } = {}) {
   state.annotations.push(ann);
   state.selected = new Set([ann.id]);
   renderSidebar();
+  return ann;
 }
 
 export function deleteAnnotation(id) {

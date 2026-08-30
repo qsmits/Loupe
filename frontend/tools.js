@@ -5,6 +5,7 @@ import { statusLine } from './procedures.js';
 import { renderMeasurePanel } from './measure-panel.js';
 import { redraw, canvas, showStatus, getLineEndpoints, lineAngleDeg, listEl } from './render.js';
 import { dxfToCanvas } from './render-dxf.js';
+import { projectConstrained } from './format.js';
 import { addAnnotation, applyCalibration, elevateAnnotation, recalibrateFromAnnotation } from './annotations.js';
 import { fitCircle, fitCircleAlgebraic, fitLine, splineArcLength, parseDistanceInput, distPointToSegment, polygonArea, catmullRomControlPoints } from './math.js';
 import { renderSidebar } from './sidebar.js';
@@ -103,6 +104,15 @@ const _TOOL_TO_TOP_LEVEL = {
   "spline":         "misc",
   "point":          "point",
 };
+
+// The six "relation" measurement tools resurrected from commit 2247278's
+// deprecation: pick-only creation flows over existing circles/lines. Not in
+// TOOL_BUTTONS (zero toolbar cost) — armed via setTool(id) from the palette
+// (Task 16) or devtools. Their annotation TYPES already render/hit-test/drag/
+// export; only creation logic was missing.
+export const RELATION_TOOLS = new Set([
+  "center-dist", "pt-circle-dist", "perp-dist", "para-dist", "slot-dist", "intersect",
+]);
 
 export function canvasPoint(e) {
   const r = canvas.getBoundingClientRect();
@@ -443,6 +453,141 @@ export async function handleToolClick(rawPt, e = {}) {
     return;
   }
 
+  // ── Relation tools (resurrected 2026-08-30, pick-only, stay-armed) ────────
+  // Historical creation logic recovered from git show 2247278^:frontend/tools.js.
+  // Stay-armed change vs. that history: every setTool("select") after
+  // addAnnotation is replaced with a pending-state reset + updateToolStatus()
+  // + redraw(), so the tool remains armed for the next pick. Task 13 (inline
+  // fitting) feeds detected/fitted elements through _consumePickedCircle /
+  // _consumePickedLine so the miss-path here (a status hint) will gain point
+  // accumulation without touching these branches.
+
+  if (tool === "center-dist") {
+    const circle = snapToCircle(pt);
+    if (circle) { _consumePickedCircle("center-dist", circle); }
+    else { showStatus("Center distance — click a fitted circle (inline fitting arrives with the palette)"); }
+    return;
+  }
+
+  if (tool === "pt-circle-dist") {
+    if (!state.pendingCircleRef) {
+      const circle = snapToCircle(pt);
+      if (circle) { _consumePickedCircle("pt-circle-dist", circle); }
+      else { showStatus("Point↔circle — click a fitted circle first"); }
+      return;
+    }
+    const { circleId } = state.pendingCircleRef;
+    state.pendingCircleRef = null;
+    addAnnotation({ type: "pt-circle-dist", circleId, px: pt.x, py: pt.y });
+    updateToolStatus();
+    redraw();
+    return;
+  }
+
+  if (tool === "perp-dist") {
+    if (!state.pendingRefLine) {
+      // Step 1: pick reference line
+      const refAnn = findSnapLine(pt);
+      if (!refAnn) return; // no line nearby — ignore click
+      _consumePickedLine("perp-dist", refAnn);
+      return;
+    }
+    if (state.pendingPoints.length === 0) {
+      // Step 2: place start point
+      state.pendingPoints = [pt];
+      showStatus("Perp — click end point");
+      redraw();
+      return;
+    }
+    // Step 3: place end point (constrained perpendicular)
+    const a = state.pendingPoints[0];
+    const b = projectConstrained(pt, a, state.pendingRefLine, true);
+    addAnnotation({ type: "perp-dist", a, b });
+    state.pendingRefLine = null;
+    state.pendingPoints = [];
+    updateToolStatus();
+    redraw();
+    return;
+  }
+
+  if (tool === "para-dist") {
+    if (!state.pendingRefLine) {
+      // Step 1: pick reference line
+      const refAnn = findSnapLine(pt);
+      if (!refAnn) return; // no line nearby — ignore
+      _consumePickedLine("para-dist", refAnn);
+      return;
+    }
+    // Step 2: check if click is on a different line (Mode A — parallelism measurement)
+    const clickedLine = findSnapLine(pt);
+    if (clickedLine && clickedLine.id !== state.pendingRefLine.id) {
+      const epRef = getLineEndpoints(state.pendingRefLine);
+      const epOther = getLineEndpoints(clickedLine);
+      let diff = Math.abs(lineAngleDeg(state.pendingRefLine) - lineAngleDeg(clickedLine)) % 180;
+      if (diff > 90) diff = 180 - diff;
+      const a = { x: (epRef.a.x + epRef.b.x) / 2, y: (epRef.a.y + epRef.b.y) / 2 };
+      const b = { x: (epOther.a.x + epOther.b.x) / 2, y: (epOther.a.y + epOther.b.y) / 2 };
+      addAnnotation({ type: "parallelism", a, b, angleDeg: diff });
+      state.pendingRefLine = null;
+      state.pendingPoints = [];
+      updateToolStatus();
+      redraw();
+      return;
+    }
+    // Mode B — parallel constraint: free point clicked
+    if (state.pendingPoints.length === 0) {
+      state.pendingPoints = [pt];
+      showStatus("Para — click end point");
+      redraw();
+      return;
+    }
+    // Mode B step 2: constrained endpoint
+    const a = state.pendingPoints[0];
+    const b = projectConstrained(pt, a, state.pendingRefLine, false);
+    addAnnotation({ type: "para-dist", a, b });
+    state.pendingRefLine = null;
+    state.pendingPoints = [];
+    updateToolStatus();
+    redraw();
+    return;
+  }
+
+  if (tool === "slot-dist") {
+    const snapped = findSnapLine(pt);
+    if (!state.pendingRefLine) {
+      if (!snapped) return;
+      _consumePickedLine("slot-dist", snapped);
+      return;
+    }
+    if (!snapped) return;
+    if (snapped.id === state.pendingRefLine.id) return;
+    const lineAId = state.pendingRefLine.id;
+    const lineBId = snapped.id;
+    state.pendingRefLine = null;
+    addAnnotation({ type: "slot-dist", lineAId, lineBId });
+    updateToolStatus();
+    redraw();
+    return;
+  }
+
+  if (tool === "intersect") {
+    const snapped = findSnapLine(pt);
+    if (!state.pendingRefLine) {
+      if (!snapped) return;
+      _consumePickedLine("intersect", snapped);
+      return;
+    }
+    if (!snapped) return;
+    if (snapped.id === state.pendingRefLine.id) return;
+    const lineAId = state.pendingRefLine.id;
+    const lineBId = snapped.id;
+    state.pendingRefLine = null;
+    addAnnotation({ type: "intersect", lineAId, lineBId });
+    updateToolStatus();
+    redraw();
+    return;
+  }
+
   if (tool === "point") {
     addAnnotation({
       type: "point",
@@ -597,6 +742,52 @@ export function snapToCircle(pt) {
 
 // projectConstrained moved to format.js (pure) so render-hud.js can draw the
 // perp/para preview without importing tools.js.
+
+// ── Relation-tool pick consumers ─────────────────────────────────────────────
+// Module-private: advance a relation flow given a picked circle/line element.
+// Task 13 (inline fitting) feeds fitted elements through these same functions,
+// so the flows here don't change shape when a miss becomes a fit instead of a
+// bare status hint.
+
+function _circleCenter(circle) {
+  if (circle.type === "circle" || circle.type === "arc-fit") return { x: circle.cx, y: circle.cy };
+  // detected-circle: frame coords → canvas coords (historical formula, kept
+  // as recovered — note this uses canvas.width/frameWidth, not the
+  // imageWidth/imageHeight scaling snapToCircle itself uses internally).
+  const sx = canvas.width / circle.frameWidth, sy = canvas.height / circle.frameHeight;
+  return { x: circle.x * sx, y: circle.y * sy };
+}
+
+function _consumePickedCircle(tool, circle) {
+  if (tool === "center-dist") {
+    if (state.pendingCenterCircle === null) {
+      state.pendingCenterCircle = circle;
+      updateToolStatus();
+      redraw();
+      return;
+    }
+    const a = _circleCenter(state.pendingCenterCircle);
+    const b = _circleCenter(circle);
+    const circleA = state.pendingCenterCircle;
+    state.pendingCenterCircle = null;
+    addAnnotation({ type: "center-dist", a, b,
+                    circleAId: circleA.id ?? null, circleBId: circle.id ?? null });
+    updateToolStatus();
+    redraw();
+  } else if (tool === "pt-circle-dist") {
+    state.pendingCircleRef = { circleId: circle.id };
+    updateToolStatus();
+    redraw();
+  }
+}
+
+function _consumePickedLine(tool, lineAnn) {
+  state.pendingRefLine = lineAnn;
+  if (tool === "perp-dist") showStatus("Perp — click start point");
+  else if (tool === "para-dist") showStatus("Para — click a line to measure parallelism, or a free point to draw a parallel line");
+  else showStatus("Now click a second line"); // slot-dist, intersect
+  redraw();
+}
 
 export function handleDrag(pt) {
   if (!state.dragState) return;

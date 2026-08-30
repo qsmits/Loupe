@@ -33,6 +33,7 @@ function makeCtx2d() {
     'moveTo', 'lineTo', 'arc', 'arcTo', 'bezierCurveTo', 'quadraticCurveTo',
     'rect', 'fill', 'stroke', 'clip', 'clearRect', 'fillRect', 'strokeRect',
     'drawImage', 'putImageData', 'setTransform', 'transform', 'setLineDash',
+    'fillText', 'strokeText', 'roundRect',
   ];
   for (const m of methods) ctx[m] = noop;
   ctx.getImageData = () => ({ data: new Uint8ClampedArray(4), width: 1, height: 1 });
@@ -69,6 +70,7 @@ function makeElement(tag) {
       return true;
     },
     appendChild(child) { el.children.push(child); return child; },
+    append(...nodes) { el.children.push(...nodes); },
     removeChild(child) { el.children = el.children.filter(c => c !== child); },
     remove: noop,
     querySelector: () => null,
@@ -87,6 +89,13 @@ function makeElement(tag) {
 // id → stub element. Pre-seeded with only what's load-bearing for import.
 const elementRegistry = new Map();
 elementRegistry.set('overlay-canvas', makeElement('canvas'));
+// status-text/measurement-list: load-bearing for tools.js's handleToolClick
+// (showStatus/updateToolStatus) and annotations.js's addAnnotation
+// (renderSidebar) respectively — both dereference these unconditionally
+// (no `?.`), so under the default "unregistered id → null" behavior they'd
+// throw before test_relations.js could exercise any tool-click logic.
+elementRegistry.set('status-text', makeElement('div'));
+elementRegistry.set('measurement-list', makeElement('div'));
 
 /** Test seam: register a fake element for an id (e.g. "home-screen") when a
  *  test wants to observe DOM-visibility toggling. Not used by default. */
@@ -96,6 +105,8 @@ export function registerElement(id, el) { elementRegistry.set(id, el); }
 export function resetElements() {
   elementRegistry.clear();
   elementRegistry.set('overlay-canvas', makeElement('canvas'));
+  elementRegistry.set('status-text', makeElement('div'));
+  elementRegistry.set('measurement-list', makeElement('div'));
 }
 
 const docListeners = new Map();
