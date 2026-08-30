@@ -8,7 +8,7 @@ import { renderSidebar, loadCameraInfo, loadUiConfig, loadTolerances,
          startCameraStatsPolling, stopCameraStatsPolling } from './sidebar.js';
 import { deleteAnnotation, addAnnotation, elevateSelected, clearDetections, clearMeasurements, clearDxfOverlay, clearAll, clearCalSource } from './annotations.js';
 import { assembleTemplate, downloadTemplate, readTemplateFile } from './template.js';
-import { setTool, promptArcFitChoice, finalizeArea, finalizeSpline, finalizeFitLine, finalizeArcFit } from './tools.js';
+import { setTool, promptArcFitChoice, finalizeArea, finalizeSpline, finalizeFitLine } from './tools.js';
 import { initDxfHandlers, measurementsAsDxf } from './dxf.js';
 import { doFreeze, initDetectHandlers } from './detect.js';
 import { initCompareHandlers } from './compare.js';
@@ -1619,8 +1619,6 @@ initDeflectometry();
 initGear();
 initFringe();
 initReticlePanel();
-document.getElementById("btn-arc-fit-arc")?.addEventListener("click", () => finalizeArcFit(false));
-document.getElementById("btn-arc-fit-circle")?.addEventListener("click", () => finalizeArcFit(true));
 
 new ResizeObserver(resizeCanvas).observe(img);
 img.addEventListener("load", resizeCanvas);
