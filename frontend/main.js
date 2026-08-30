@@ -35,6 +35,7 @@ import { initFringe } from './fringe.js';
 import { enterMaskEditSession, isCrossModeActive } from './cross-mode.js';
 import { captureEpoch, isStale, registerWorkspaceDom, isUsableViewport } from './workspace.js';
 import { initShell, showToast } from './shell.js';
+import { setPanelWidth } from './measure-panel.js';
 import { initTabManager, getActiveTabId, getActiveTab, isHomeVisible, flushAutosave, newProject } from './tab-manager.js';
 import { initProjectIo, offerAutosaveMigration } from './project-io.js';
 import { onStorageUnavailable } from './projects-db.js';
@@ -458,13 +459,10 @@ if (mpResize && mpEl) {
   });
   document.addEventListener("mousemove", e => {
     if (!mpResizing) return;
-    const sidebarLeft = document.getElementById("sidebar").getBoundingClientRect().left;
-    const newWidth = sidebarLeft - e.clientX;
-    const panel = mpEl.querySelector(".mp-panel");
-    if (panel && !panel.classList.contains("mp-collapsed")) {
-      panel.style.width = Math.max(180, Math.min(420, newWidth)) + "px";
-      resizeCanvas();
-    }
+    if (!sidebar) return;
+    const sidebarLeft = sidebar.getBoundingClientRect().left;
+    setPanelWidth(sidebarLeft - e.clientX);
+    resizeCanvas();
   });
   document.addEventListener("mouseup", () => {
     if (mpResizing) { mpResizing = false; document.body.style.cursor = ""; }

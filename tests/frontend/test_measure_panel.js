@@ -18,7 +18,7 @@ import './dom-stub.js';
 import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { state } from '../../frontend/state.js';
-import { MeasurePanel } from '../../frontend/measure-panel.js';
+import { MeasurePanel, setPanelWidth } from '../../frontend/measure-panel.js';
 
 // Recursively expand function-component vnodes and flatten nested arrays
 // (the same recursion test_toolbar.js's expand() uses, checking
@@ -84,5 +84,30 @@ describe('MeasurePanel faces', () => {
     // procedures.js::circleFitLive emits "Ø" (U+00D8, Latin O-stroke), not
     // the diameter sign "⌀" (U+2300) the brief's draft assertion used.
     assert.match(txt, /Preview: Ø/);
+  });
+});
+
+// The vnode owns the panel width (not the DOM): a resize drag calls
+// setPanelWidth(), which is baked into the style prop of the rendered root
+// on every re-render. This is what makes collapsing always win over a
+// previous resize — the collapsed root simply never receives a style prop,
+// so `.mp-panel.mp-collapsed { width: 26px }` is never out-ranked by a
+// leftover inline width (see main.js's fix-round-1 commit for the bug this
+// guards against: a DOM-owned width survives a class-only collapse).
+describe('MeasurePanel width ownership', () => {
+  it('collapsing after a resize drops the inline width — the collapsed root carries no style', () => {
+    state.tool = 'distance';
+    setPanelWidth(400);
+    state.measurePanelCollapsed = true;
+    const root = MeasurePanel();
+    assert.ok(hasClass(root, 'mp-collapsed'));
+    assert.equal(root.props.style, undefined);
+  });
+  it('an expanded root carries setPanelWidth\'s clamped width', () => {
+    state.tool = 'distance';
+    state.measurePanelCollapsed = false;
+    setPanelWidth(999);   // clamps to the 420px max
+    const root = MeasurePanel();
+    assert.equal(root.props.style.width, '420px');
   });
 });
