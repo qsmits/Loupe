@@ -3,9 +3,12 @@
 // otherwise. Mirrors the Preact/htm pattern of toolbar.js.
 import { h, render } from './vendor/preact.mjs';
 import htm from './vendor/htm.mjs';
-import { state } from './state.js';
+import { state, pushUndo } from './state.js';
 import { PROCEDURES } from './procedures.js';
 import { SUB_MODES } from './toolbar.js';
+import { measurementLabel, measurementNumeric } from './format.js';
+import { evaluateSpec, formatDeviation } from './spec.js';
+import { annotationNumbers } from './numbering.js';
 
 const html = htm.bind(h);
 let _mount = null;
@@ -82,6 +85,86 @@ function ProcedureFace({ tool }) {
   </div>`;
 }
 
+// Context object for format.js/measurementNumeric — mirrors sidebar.js's _mctx
+// but the properties face never needs imageWidth/imageHeight (no
+// detected-* types reach a selectable measurement's properties face).
+function _mctx() {
+  return { calibration: state.calibration, annotations: state.annotations, origin: state.origin };
+}
+
+// One tolerance input (nominal/upper/lower). Values are STORED on ann.spec in
+// the measurement's base unit (mm) — the input displays/accepts the active
+// display unit (µm ×1000); toMm/fromMm are the only place that conversion
+// happens. Mirrors sidebar.js's rename undo-session pattern (~lines 137-150):
+// pushUndo() once per focus→blur session, on the first keystroke, snapshotting
+// state BEFORE the edit. `undoPushed` lives in this call's closure, which
+// survives the whole session because renderMeasurePanel() is only invoked on
+// blur, not on every keystroke.
+function SpecField({ ann, field, label }) {
+  const cal = state.calibration;
+  const toMm = v => (cal && cal.displayUnit === 'µm' ? v / 1000 : v);
+  const fromMm = v => (cal && cal.displayUnit === 'µm' ? v * 1000 : v);
+  const unit = measurementNumeric(ann, _mctx())?.unit ?? (cal ? 'mm' : 'px');
+  const displayUnit = unit === 'mm' && cal?.displayUnit === 'µm' ? 'µm' : unit;
+  const raw = ann.spec?.[field];
+  let undoPushed = false;
+  return html`<div class="mp-fld">
+    <label>${label}</label>
+    <input class="mp-in" type="number" step="any"
+      value=${raw != null ? String(fromMm(raw)) : ''}
+      onFocus=${() => { undoPushed = false; }}
+      onInput=${e => {
+        if (!undoPushed) { pushUndo(); undoPushed = true; }
+        const v = e.target.value.trim();
+        if (field === 'nominal' && v === '') { delete ann.spec; }
+        else {
+          if (!ann.spec) ann.spec = { nominal: NaN, upper: 0, lower: 0 };
+          ann.spec[field] = toMm(parseFloat(v));
+        }
+      }}
+      onBlur=${() => { renderMeasurePanel(); dispatch('annotations-changed'); }}
+    /><span>${displayUnit}</span>
+  </div>`;
+}
+
+// Properties face: name/value/tolerance editing for a single selected
+// measurement. Multi-select collapses to a bare count (bulk actions live on
+// the sidebar rows, not here) — see the brief's interface note.
+function PropertiesFace() {
+  const ids = [...state.selected];
+  if (ids.length > 1) {
+    // Single JS string, not an htm interpolation split across literal text —
+    // htm treats `${x} selected` as two separate children (a number leaf and
+    // a ' selected' leaf), which textOf() then joins with an extra space.
+    const countLabel = `${ids.length} selected`;
+    return html`<div class="mp-body"><div class="mp-hdr">${countLabel}</div>
+    <div class="mp-live">Bulk actions: Delete removes all, the eye toggles visibility per row.</div></div>`;
+  }
+  const ann = state.annotations.find(a => a.id === ids[0]);
+  if (!ann) return html`<div class="mp-body">—</div>`;
+  const ctx = _mctx();
+  const num = annotationNumbers(state.annotations, state.measurementGroups).get(ann.id);
+  const numLabel = "[" + (num ?? '–') + "]";  // same single-string pattern as sidebar.js's row numbers
+  const n = measurementNumeric(ann, ctx);
+  const ev = ann.spec ? evaluateSpec(n?.value, ann.spec) : null;
+  return html`<div class="mp-body">
+    <div class="mp-hdr">${numLabel}
+      <input class="mp-name" placeholder="Label…" value=${ann.name || ''}
+        onChange=${e => { pushUndo(); ann.name = e.target.value; dispatch('annotations-changed'); }} />
+      <button class="mp-collapse" onClick=${() => { state.measurePanelCollapsed = true; renderMeasurePanel(); }}>⌄</button>
+    </div>
+    <div class="mp-value">${measurementLabel(ann, ctx)}
+      ${ev ? html`<span class="spec-chip ${ev.pass ? 'pass' : 'fail'}">${ev.pass ? 'PASS' : 'FAIL'}</span>` : null}
+    </div>
+    <div class="mp-sect"><div class="mp-sect-t">Tolerance</div>
+      <${SpecField} ann=${ann} field="nominal" label="Nominal" />
+      <${SpecField} ann=${ann} field="upper" label="Upper" />
+      <${SpecField} ann=${ann} field="lower" label="Lower" />
+      ${ev ? html`<div class="mp-dev">Deviation <b class=${ev.pass ? 'dev-pass' : 'dev-fail'}>${formatDeviation(ev.deviation, n.unit, state.calibration?.displayUnit)}</b></div>` : null}
+    </div>
+  </div>`;
+}
+
 export function MeasurePanel() {
   const toolArmed = state.tool && state.tool !== 'select';
   const hasSelection = state.selected instanceof Set && state.selected.size > 0;
@@ -89,8 +172,7 @@ export function MeasurePanel() {
     return html`<div class="mp-panel" style=${{ width: _panelWidth + 'px' }}><${ProcedureFace} tool=${state.tool} /></div>`;
   }
   if (!toolArmed && hasSelection && !state.measurePanelCollapsed) {
-    // Properties face lands in Task 9; placeholder keeps the face-selection rule testable.
-    return html`<div class="mp-panel" style=${{ width: _panelWidth + 'px' }}><div class="mp-body"><div class="mp-hdr">Properties</div><div>—</div></div></div>`;
+    return html`<div class="mp-panel" style=${{ width: _panelWidth + 'px' }}><${PropertiesFace} /></div>`;
   }
   return html`<div class="mp-panel mp-collapsed"><${Strip} /></div>`;
 }

@@ -17,7 +17,7 @@
 import './dom-stub.js';
 import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { state } from '../../frontend/state.js';
+import { state, undoStack } from '../../frontend/state.js';
 import { MeasurePanel, setPanelWidth } from '../../frontend/measure-panel.js';
 
 // Recursively expand function-component vnodes and flatten nested arrays
@@ -126,5 +126,94 @@ describe('panel buttons dispatch', () => {
     btns[0].props.onClick();
     document.removeEventListener('measure-panel-action', h);
     assert.deepEqual(got, { action: 'finish' });
+  });
+});
+
+describe('properties face', () => {
+  it('shows number, name, value and PASS chip for a toleranced measurement', () => {
+    state.calibration = { pixelsPerMm: 100, displayUnit: 'mm' };
+    state.annotations = [{ id: 7, type: 'distance', name: 'hole-pitch', purpose: 'measurement',
+                           a: { x: 0, y: 0 }, b: { x: 362.5, y: 0 },
+                           spec: { nominal: 3.6, upper: 0.05, lower: -0.05 } }];
+    state.selected = new Set([7]);
+    state.tool = 'select';
+    const txt = textOf(expand(MeasurePanel())).join(' ');
+    assert.match(txt, /\[1\]/);
+    assert.match(txt, /3\.625 mm/);
+    assert.match(txt, /PASS/);
+    assert.match(txt, /▲\+0\.025 mm/);
+  });
+  it('shows FAIL when out of band', () => {
+    state.calibration = { pixelsPerMm: 100, displayUnit: 'mm' };
+    state.annotations = [{ id: 7, type: 'distance', name: '', purpose: 'measurement',
+                           a: { x: 0, y: 0 }, b: { x: 367.5, y: 0 },
+                           spec: { nominal: 3.6, upper: 0.05, lower: -0.05 } }];
+    state.selected = new Set([7]);
+    state.tool = 'select';
+    assert.match(textOf(expand(MeasurePanel())).join(' '), /FAIL/);
+  });
+  it('multi-select shows only a count', () => {
+    state.annotations = [
+      { id: 1, type: 'distance', purpose: 'measurement', a: {x:0,y:0}, b: {x:1,y:0} },
+      { id: 2, type: 'distance', purpose: 'measurement', a: {x:0,y:0}, b: {x:2,y:0} }];
+    state.selected = new Set([1, 2]);
+    state.tool = 'select';
+    assert.match(textOf(expand(MeasurePanel())).join(' '), /2 selected/);
+  });
+  it('the properties face root carries the panel-owned width style', () => {
+    state.calibration = null;
+    state.annotations = [{ id: 7, type: 'distance', purpose: 'measurement',
+                           a: { x: 0, y: 0 }, b: { x: 1, y: 0 } }];
+    state.selected = new Set([7]);
+    state.tool = 'select';
+    setPanelWidth(300);
+    const root = MeasurePanel();
+    assert.ok(hasClass(root, 'mp-panel'));
+    assert.equal(root.props.style.width, '300px');
+  });
+  it('clearing the nominal field deletes ann.spec', () => {
+    state.calibration = { pixelsPerMm: 100, displayUnit: 'mm' };
+    const ann = { id: 7, type: 'distance', name: '', purpose: 'measurement',
+                  a: { x: 0, y: 0 }, b: { x: 362.5, y: 0 },
+                  spec: { nominal: 3.6, upper: 0.05, lower: -0.05 } };
+    state.annotations = [ann];
+    state.selected = new Set([7]);
+    state.tool = 'select';
+    const nodes = expand(MeasurePanel());
+    const nominalInput = nodes.filter(n => hasClass(n, 'mp-in'))[0];
+    nominalInput.props.onFocus();
+    nominalInput.props.onInput({ target: { value: '' } });
+    assert.equal(ann.spec, undefined);
+  });
+});
+
+// The brief's SpecField captures `undoPushed` in a closure scoped to one
+// SpecField render. renderMeasurePanel() is NOT called on every keystroke
+// (only on blur), so the closure survives an entire focus→blur session —
+// this test pins that: multiple onInput calls between one onFocus/onBlur
+// pair must push exactly one undo snapshot, and a second session (a fresh
+// focus) must push exactly one more.
+describe('properties face — undo session granularity', () => {
+  it('pushes exactly one undo entry per focus→blur editing session', () => {
+    state.calibration = { pixelsPerMm: 100, displayUnit: 'mm' };
+    state.annotations = [{ id: 7, type: 'distance', name: '', purpose: 'measurement',
+                           a: { x: 0, y: 0 }, b: { x: 362.5, y: 0 } }];
+    state.selected = new Set([7]);
+    state.tool = 'select';
+    const nodes = expand(MeasurePanel());
+    const inputs = nodes.filter(n => hasClass(n, 'mp-in'));
+    assert.equal(inputs.length, 3); // nominal, upper, lower
+    const nominalInput = inputs[0];
+    const before = undoStack.length;
+    nominalInput.props.onFocus();
+    nominalInput.props.onInput({ target: { value: '3.6' } });
+    nominalInput.props.onInput({ target: { value: '3.60' } });
+    nominalInput.props.onInput({ target: { value: '3.600' } });
+    assert.equal(undoStack.length, before + 1, 'three keystrokes in one session push exactly one snapshot');
+    nominalInput.props.onBlur();
+    assert.equal(undoStack.length, before + 1, 'blur pushes no additional snapshot');
+    nominalInput.props.onFocus();
+    nominalInput.props.onInput({ target: { value: '3.601' } });
+    assert.equal(undoStack.length, before + 2, 'a new focus→blur session pushes exactly one more');
   });
 });

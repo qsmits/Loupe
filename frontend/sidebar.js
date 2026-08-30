@@ -7,6 +7,7 @@ import { imageWidth, imageHeight, setImageSize, fitToWindow, shouldAdoptCameraIm
 import { renderGearResultsPanel } from './gear.js';
 import { loadReticleList, getReticleCategories, loadReticle, unloadReticle, setReticleRotation } from './reticle.js';
 import { annotationNumbers, OVERLAY_SKIP_TYPES } from './numbering.js';
+import { renderMeasurePanel } from './measure-panel.js';
 
 const _mctx = () => ({
   calibration: state.calibration,
@@ -386,6 +387,11 @@ export function renderSidebar() {
   updateTemplateDisplay();
   renderGearResultsPanel();
   updateReticlePanel();
+  // Selection/mutation refresh signal for the Measure panel's properties
+  // face (Task 9) — every path that mutates annotations or selection and
+  // re-renders the sidebar must also refresh the panel, or the properties
+  // face goes stale (or stays on the Task 3 placeholder forever).
+  renderMeasurePanel();
 }
 
 // ── Template display ───────────────────────────────────────────────────────────

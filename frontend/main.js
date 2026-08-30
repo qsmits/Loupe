@@ -144,6 +144,15 @@ document.addEventListener("measure-panel-action", e => {
   }
 });
 
+// Measure panel's properties face (Task 9) edits ann.name/ann.spec directly
+// on the annotation object, then dispatches this to sync the sidebar row
+// (name/value text) and the canvas (deviation labels). Lives here, not in
+// sidebar.js or measure-panel.js, so the two never need to import each other.
+document.addEventListener("annotations-changed", () => {
+  renderSidebar();
+  redraw();
+});
+
 // Frame provider for lazy re-upload (api.js apiFetchFrame): the stored
 // frozen Blob, or a JPEG re-encode of the frozen background as fallback
 // (covers z-stack/stitch results that set frozenBackground directly).

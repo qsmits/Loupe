@@ -3952,3 +3952,23 @@ body.no-camera .camera-section { display: none; }
 .mp-btn-pri { background: var(--accent); color: #fff; }
 .mp-btn:disabled { opacity: .4; cursor: default; }
 
+/* ── Measure panel: properties face (Task 9) ─────────────────────────────── */
+.mp-name { flex: 1; margin: 0 6px; background: var(--bg); border: 1px solid var(--border);
+           border-radius: 4px; color: var(--text); font-size: 12px; padding: 2px 6px; }
+.mp-value { font-size: 16px; font-weight: 600; margin: 4px 0 8px; display: flex;
+            align-items: center; gap: 8px; }
+.mp-sect { border-top: 1px solid var(--surface-2); margin-top: 10px; padding-top: 8px; }
+.mp-sect-t { font-size: 10px; letter-spacing: .6px; text-transform: uppercase;
+             color: var(--muted); margin-bottom: 5px; }
+.mp-fld { display: flex; align-items: center; gap: 7px; margin: 6px 0; }
+.mp-fld label { width: 62px; font-size: 11px; color: var(--text-secondary); flex: none; }
+.mp-in { flex: 1; background: var(--bg); border: 1px solid var(--border); border-radius: 4px;
+         padding: 3px 7px; font-size: 12px; color: var(--text); }
+.mp-dev { font-size: 11px; color: var(--text-secondary); margin-top: 4px; }
+.dev-pass { color: var(--success); } .dev-fail { color: var(--danger); }
+/* .spec-chip is also reused by Task 11's sidebar rows — kept here since this
+   is where it first lands; do not duplicate this block elsewhere. */
+.spec-chip { font-size: 9px; font-weight: 700; border-radius: 3px; padding: 1px 5px; flex: none; }
+.spec-chip.pass { background: rgba(48, 209, 88, .15); color: var(--success); }
+.spec-chip.fail { background: var(--danger); color: #fff; }
+
