@@ -2,7 +2,8 @@ import { apiFetch } from './api.js';
 import { state, DETECTION_TYPES, camBounds, pushUndo } from './state.js';
 import { redraw, resizeCanvas, showStatus, getStatus, canvas, listEl } from './render.js';
 import { constraintsForAnnotation, CONSTRAINT_ICONS, CONSTRAINT_LABELS } from './constraints.js';
-import { measurementLabel } from './format.js';
+import { measurementLabel, measurementNumeric } from './format.js';
+import { evaluateSpec } from './spec.js';
 import { imageWidth, imageHeight, setImageSize, fitToWindow, shouldAdoptCameraImageSize } from './viewport.js';
 import { renderGearResultsPanel } from './gear.js';
 import { loadReticleList, getReticleCategories, loadReticle, unloadReticle, setReticleRotation } from './reticle.js';
@@ -74,6 +75,18 @@ function _createMeasurementRow(ann, number) {
   } else {
     valSpan.textContent = measurementLabel(ann, _mctx());
   }
+  // Pass/fail chip for toleranced measurements (mirrors measure-panel.js's
+  // PropertiesFace chip — same .spec-chip class, same evaluateSpec call).
+  let specSpan = null;
+  if (ann.spec) {
+    const n = measurementNumeric(ann, _mctx());
+    const ev = evaluateSpec(n?.value, ann.spec);
+    if (ev) {
+      specSpan = document.createElement("span");
+      specSpan.className = `spec-chip ${ev.pass ? "pass" : "fail"}`;
+      specSpan.textContent = ev.pass ? "PASS" : "FAIL";
+    }
+  }
   // The measurement the current calibration was derived from.
   let calSpan = null;
   if (ann.calSource) {
@@ -101,7 +114,7 @@ function _createMeasurementRow(ann, number) {
   delBtn.className = "del-btn";
   delBtn.dataset.id = ann.id;
   delBtn.textContent = "✕";
-  row.append(numSpan, nameInput, valSpan, ...(calSpan ? [calSpan] : []), visBtn, delBtn);
+  row.append(numSpan, nameInput, valSpan, ...(specSpan ? [specSpan] : []), ...(calSpan ? [calSpan] : []), visBtn, delBtn);
   // Constraint chips
   const annConstraints = constraintsForAnnotation(ann.id);
   if (annConstraints.length > 0) {

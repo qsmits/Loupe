@@ -1,15 +1,21 @@
 /**
- * Tests for formatCsvValue from frontend/format.js.
+ * Tests for formatCsvValue from frontend/format.js and buildCsvRows from
+ * frontend/session.js.
  * Run with: node --test tests/frontend/test_csv.js
  */
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
+// dom-stub must be imported before any frontend module that touches the DOM
+// at load time (session.js pulls in render.js/sidebar.js, which do).
+import './dom-stub.js';
+
 // Stub alert (polygonArea's dependency math.js may call it)
 globalThis.alert = globalThis.alert || (() => {});
 
 import { formatCsvValue } from '../../frontend/format.js';
+import { buildCsvRows } from '../../frontend/session.js';
 
 describe('formatCsvValue', () => {
   it('distance calibrated mm', () => {
@@ -77,5 +83,61 @@ describe('formatCsvValue', () => {
     const ann = { type: 'intersect', lineAId: 1, lineBId: 2 };
     const r = formatCsvValue(ann, null, 640, { annotations: [l1, l2, ann] });
     assert.deepStrictEqual(r, { value: '50.0, 0.0', unit: 'px' });
+  });
+});
+
+describe('buildCsvRows', () => {
+  const cal = { pixelsPerMm: 100, displayUnit: 'mm' };
+  const mctx = { calibration: cal, annotations: [], origin: null };
+
+  it('header includes the spec/tolerance columns', () => {
+    const rows = buildCsvRows([], cal, 640, mctx);
+    assert.deepEqual(rows[0], [
+      "#", "Name", "Value", "Unit", "Nominal", "Upper", "Lower", "Deviation", "Result", "type", "label",
+    ]);
+  });
+
+  it('spec columns blank for annotations without ann.spec', () => {
+    const ann = { id: 1, type: 'distance', a: { x: 0, y: 0 }, b: { x: 300, y: 400 } };
+    const rows = buildCsvRows([ann], cal, 640, { ...mctx, annotations: [ann] });
+    const [, name, value, unit, nominal, upper, lower, deviation, result] = rows[1];
+    assert.equal(value, '5.000');
+    assert.equal(unit, 'mm');
+    assert.equal(nominal, '');
+    assert.equal(upper, '');
+    assert.equal(lower, '');
+    assert.equal(deviation, '');
+    assert.equal(result, '');
+  });
+
+  it('exports spec columns when ann.spec present (pass)', () => {
+    const ann = {
+      id: 1, type: 'distance', a: { x: 0, y: 0 }, b: { x: 362.5, y: 0 },
+      spec: { nominal: 3.6, upper: 0.05, lower: -0.05 },
+    };
+    const rows = buildCsvRows([ann], cal, 640, { ...mctx, annotations: [ann] });
+    const [, , value, unit, nominal, upper, lower, deviation, result] = rows[1];
+    assert.equal(value, '3.625');
+    assert.equal(unit, 'mm');
+    assert.equal(nominal, '3.600');
+    assert.equal(upper, '0.050');
+    assert.equal(lower, '-0.050');
+    assert.equal(deviation, '0.025');
+    assert.equal(result, 'PASS');
+  });
+
+  it('exports FAIL when the deviation is out of tolerance', () => {
+    const ann = {
+      id: 1, type: 'distance', a: { x: 0, y: 0 }, b: { x: 362.5, y: 0 },
+      spec: { nominal: 3.6, upper: 0.01, lower: -0.01 },
+    };
+    const rows = buildCsvRows([ann], cal, 640, { ...mctx, annotations: [ann] });
+    assert.equal(rows[1][8], 'FAIL');
+  });
+
+  it('skips valueless annotations (origin/overlays) same as before', () => {
+    const origin = { id: 1, type: 'origin', x: 0, y: 0 };
+    const rows = buildCsvRows([origin], cal, 640, { ...mctx, annotations: [origin] });
+    assert.equal(rows.length, 1); // header only
   });
 });

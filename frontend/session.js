@@ -5,7 +5,8 @@ import { renderSidebar, renderInspectionTable } from './sidebar.js';
 import { addAnnotation } from './annotations.js';
 import { polygonArea } from './math.js';
 import { imageWidth, imageHeight } from './viewport.js';
-import { measurementLabel, formatCsvValue } from './format.js';
+import { measurementLabel, measurementNumeric, formatCsvValue } from './format.js';
+import { evaluateSpec } from './spec.js';
 
 const _mctx = () => ({
   calibration: state.calibration,
@@ -46,15 +47,44 @@ export function exportAnnotatedImage() {
 }
 
 // ── CSV export ──────────────────────────────────────────────────────────────
-export function exportCsv() {
-  const rows = [["#", "Name", "Value", "Unit", "type", "label"]];
+/**
+ * Pure row-builder for measurements CSV export — extracted so it's testable
+ * under Node without a download side effect. Adds spec/tolerance columns
+ * (Nominal/Upper/Lower/Deviation/Result) alongside the pre-existing
+ * Value/Unit/type/label columns; those five stay blank for annotations
+ * without ann.spec.
+ * @param {Array} annotations - state.annotations
+ * @param {object|null} cal - state.calibration
+ * @param {number} imageWidth
+ * @param {object} mctx - the shared measurement ctx (see _mctx() above)
+ */
+export function buildCsvRows(annotations, cal, imageWidth, mctx) {
+  const rows = [["#", "Name", "Value", "Unit", "Nominal", "Upper", "Lower", "Deviation", "Result", "type", "label"]];
   let i = 1;
-  state.annotations.forEach(ann => {
-    const label = measurementLabel(ann, _mctx());
+  annotations.forEach(ann => {
+    const label = measurementLabel(ann, mctx);
     if (!label) return;  // skip origin / overlays
-    const { value, unit } = formatCsvValue(ann, state.calibration, imageWidth, _mctx());
-    rows.push([i++, ann.name || "", value, unit, ann.type, label]);
+    const { value, unit } = formatCsvValue(ann, cal, imageWidth, mctx);
+    let nominal = "", upper = "", lower = "", deviation = "", result = "";
+    if (ann.spec) {
+      const n = measurementNumeric(ann, mctx);
+      const ev = evaluateSpec(n?.value, ann.spec);
+      if (ev) {
+        const d = n.unit === "°" ? 2 : 3;
+        nominal = ann.spec.nominal.toFixed(d);
+        upper = (ann.spec.upper ?? 0).toFixed(d);
+        lower = (ann.spec.lower ?? 0).toFixed(d);
+        deviation = ev.deviation.toFixed(d);
+        result = ev.pass ? "PASS" : "FAIL";
+      }
+    }
+    rows.push([i++, ann.name || "", value, unit, nominal, upper, lower, deviation, result, ann.type, label]);
   });
+  return rows;
+}
+
+export function exportCsv() {
+  const rows = buildCsvRows(state.annotations, state.calibration, imageWidth, _mctx());
   const csv = rows
     .map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(","))
     .join("\n");
