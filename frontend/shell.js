@@ -10,6 +10,7 @@ import htm from './vendor/htm.mjs';
 import { getTabs, getActiveTabId } from './tab-manager.js';
 import { Toolbar } from './toolbar.js';
 import { HomeScreen, refreshHomeData } from './home-screen.js';
+import { initMeasurePanel } from './measure-panel.js';
 
 export const html = htm.bind(h);
 
@@ -145,4 +146,5 @@ export function initShell() {
   document.addEventListener("tool-changed", renderShell);
   document.addEventListener("home-shown", refreshHomeData);
   renderShell();
+  initMeasurePanel();
 }

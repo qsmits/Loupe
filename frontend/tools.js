@@ -2,6 +2,7 @@ import { apiFetch, apiFetchFrame } from './api.js';
 import { refinePointJS } from './subpixel-js.js';
 import { state, pushUndo } from './state.js';
 import { statusLine } from './procedures.js';
+import { renderMeasurePanel } from './measure-panel.js';
 import { redraw, canvas, showStatus, getLineEndpoints, lineAngleDeg, listEl } from './render.js';
 import { dxfToCanvas } from './render-dxf.js';
 import { addAnnotation, applyCalibration, elevateAnnotation, recalibrateFromAnnotation } from './annotations.js';
@@ -895,6 +896,7 @@ function _angleFromLines(annA, annB, clickA, clickB) {
 // the Measure panel cannot drift apart.
 export function updateToolStatus() {
   showStatus(statusLine(state.tool, state));
+  renderMeasurePanel();
 }
 
 // ── Sync center-dist endpoints when a referenced circle moves ─────────────────

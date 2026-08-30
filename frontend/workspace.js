@@ -106,6 +106,7 @@ export const STATE_FIELDS = {
   _reticleDrag: "transient",
 
   // ── app / hardware level (global — untouched by tab switches) ──
+  measurePanelCollapsed: "global",
   includeWebcams: "global",
   settings: "global",
   arcMeasureMode: "global",

@@ -448,6 +448,29 @@ if (sidebarResize && sidebar) {
   });
 }
 
+// ── Measure panel resize ─────────────────────────────────────────────────────
+const mpResize = document.getElementById("measure-panel-resize");
+const mpEl = document.getElementById("measure-panel");
+if (mpResize && mpEl) {
+  let mpResizing = false;
+  mpResize.addEventListener("mousedown", e => {
+    e.preventDefault(); mpResizing = true; document.body.style.cursor = "col-resize";
+  });
+  document.addEventListener("mousemove", e => {
+    if (!mpResizing) return;
+    const sidebarLeft = document.getElementById("sidebar").getBoundingClientRect().left;
+    const newWidth = sidebarLeft - e.clientX;
+    const panel = mpEl.querySelector(".mp-panel");
+    if (panel && !panel.classList.contains("mp-collapsed")) {
+      panel.style.width = Math.max(180, Math.min(420, newWidth)) + "px";
+      resizeCanvas();
+    }
+  });
+  document.addEventListener("mouseup", () => {
+    if (mpResizing) { mpResizing = false; document.body.style.cursor = ""; }
+  });
+}
+
 // ── Drag-and-drop image load (no-camera mode) ─────────────────────────────────
 const viewerEl = document.getElementById("viewer");
 const dropOverlayEl = document.getElementById("drop-overlay");

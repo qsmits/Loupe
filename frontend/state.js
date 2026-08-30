@@ -10,6 +10,7 @@ export const state = {
   frozenFilename: null,      // original filename when frozenSource === "file"
   crosshair: false,
   showGrid: false,
+  measurePanelCollapsed: false,
   showGradientOverlay: false,
   _gradientOverlayImg: null,
   calibration: null,

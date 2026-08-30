@@ -3960,3 +3960,36 @@ body.no-camera .camera-section { display: none; }
   flex-shrink: 0;
 }
 
+/* ── Measure panel ─────────────────────────────────────────────────────── */
+#measure-panel { display: flex; flex-shrink: 0; }
+#measure-panel-resize { width: 6px; margin-right: -6px; cursor: col-resize; z-index: 20;
+                        flex-shrink: 0; }
+.mp-panel { width: 240px; background: var(--surface); border-left: 1px solid var(--border);
+            display: flex; flex-direction: column; overflow-y: auto; font-size: 12px; }
+.mp-panel.mp-collapsed { width: 26px; cursor: pointer; }
+.mp-strip { display: flex; flex-direction: column; align-items: center; gap: 8px;
+            padding-top: 8px; color: var(--muted); width: 100%; }
+.mp-strip-label { writing-mode: vertical-rl; font-size: 9px; letter-spacing: 1px;
+                  color: var(--text-secondary); }
+.mp-body { padding: 10px 12px; }
+.mp-hdr { font-weight: 600; font-size: 13px; display: flex; justify-content: space-between;
+          align-items: center; margin-bottom: 8px; }
+.mp-collapse { background: none; border: none; color: var(--muted); cursor: pointer; }
+.mp-seg { display: inline-flex; border: 1px solid var(--border); border-radius: 5px;
+          overflow: hidden; margin-bottom: 8px; }
+.mp-seg-btn { background: none; border: none; padding: 2px 9px; font-size: 11px;
+              color: var(--text-secondary); cursor: pointer; }
+.mp-seg-btn.on { background: var(--accent); color: #fff; }
+.mp-step { display: flex; gap: 8px; margin: 7px 0; align-items: baseline; line-height: 1.4; }
+.mp-step-n { width: 16px; height: 16px; border-radius: 50%; background: var(--accent);
+             color: #fff; font-size: 10px; text-align: center; line-height: 16px; flex: none; }
+.mp-step-done { opacity: .55; } .mp-step-done .mp-step-n { background: var(--success); }
+.mp-step-todo { opacity: .45; } .mp-step-todo .mp-step-n { background: var(--muted); }
+.mp-live { background: var(--bg); border-radius: 6px; padding: 7px 9px; margin: 9px 0;
+           font-size: 11px; color: var(--text-secondary); }
+.mp-btns { display: flex; gap: 7px; margin-top: 10px; }
+.mp-btn { flex: 1; text-align: center; padding: 5px 0; border-radius: 5px; font-size: 11.5px;
+          border: none; cursor: pointer; background: var(--surface-2); color: var(--text); }
+.mp-btn-pri { background: var(--accent); color: #fff; }
+.mp-btn:disabled { opacity: .4; cursor: default; }
+
