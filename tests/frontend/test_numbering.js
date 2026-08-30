@@ -103,4 +103,24 @@ describe('annotationNumbers', () => {
     assert.equal(m.get(1), 1);
     assert.equal(m.get(2), 2);
   });
+
+  it('origin can trigger a group\'s first-appearance position (matches renderSidebar\'s ' +
+     'groupMap, which is built over an array — "measurements" — that still contains origin; ' +
+     'only the per-row render loop skips it)', () => {
+    const anns = [
+      { id: 10, type: 'origin', x: 0, y: 0, angle: 0 },  // G1's first-appearing member
+      A(20),                                             // G2's only member
+      A(30),                                              // G1's only NUMBERED member
+    ];
+    const groups = { 10: 'G1', 20: 'G2', 30: 'G1' };
+    const m = annotationNumbers(anns, groups);
+    // G1 is discovered before G2 (origin appears first in the array), so
+    // G1's member is numbered before G2's — even though origin itself never
+    // receives a number. Before the fix, dropping origin before computing
+    // group order made G2 (whose first real member, id 20, appears earlier
+    // among non-origin annotations) get discovered first instead.
+    assert.equal(m.get(30), 1);  // G1 member
+    assert.equal(m.get(20), 2);  // G2 member
+    assert.equal(m.has(10), false);
+  });
 });

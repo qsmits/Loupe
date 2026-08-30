@@ -6,7 +6,7 @@ import { measurementLabel } from './format.js';
 import { imageWidth, imageHeight, setImageSize, fitToWindow, shouldAdoptCameraImageSize } from './viewport.js';
 import { renderGearResultsPanel } from './gear.js';
 import { loadReticleList, getReticleCategories, loadReticle, unloadReticle, setReticleRotation } from './reticle.js';
-import { annotationNumbers } from './numbering.js';
+import { annotationNumbers, OVERLAY_SKIP_TYPES } from './numbering.js';
 
 const _mctx = () => ({
   calibration: state.calibration,
@@ -177,8 +177,7 @@ export function renderSidebar() {
   const numbers = annotationNumbers(state.annotations, state.measurementGroups);
 
   // Partition annotations into: skip, origin, grouped, ungrouped
-  const skip = new Set(["edges-overlay", "preprocessed-overlay", "dxf-overlay"]);
-  const visible = state.annotations.filter(a => !skip.has(a.type));
+  const visible = state.annotations.filter(a => !OVERLAY_SKIP_TYPES.has(a.type));
 
   // Separate detections from measurements
   const detections = visible.filter(a => DETECTION_TYPES.has(a.type));
