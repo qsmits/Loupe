@@ -44,7 +44,7 @@ function Icon({ name }) {
 }
 
 // Every tool, flat — no flyouts, no hidden tools (spec).
-const TOOL_BUTTONS = [
+export const TOOL_BUTTONS = [
   { tool: "select",      label: "Select",    key: "V" },
   { tool: "pan",         label: "Pan",       key: "H" },
   { tool: "comment",     label: "Note",      key: "T" },
@@ -63,7 +63,7 @@ const TOOL_BUTTONS = [
 
 // Contextual sub-modes for the active tool (replaces the floating
 // sub-mode selector; ≤2 options per tool so the row stays flat).
-const SUB_MODES = {
+export const SUB_MODES = {
   circle: {
     stateKey: "circleMode",
     options: [
