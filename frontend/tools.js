@@ -1,6 +1,7 @@
 import { apiFetch, apiFetchFrame } from './api.js';
 import { refinePointJS } from './subpixel-js.js';
-import { state, TOOL_STATUS, pushUndo } from './state.js';
+import { state, pushUndo } from './state.js';
+import { statusLine } from './procedures.js';
 import { redraw, canvas, showStatus, getLineEndpoints, lineAngleDeg, listEl } from './render.js';
 import { dxfToCanvas } from './render-dxf.js';
 import { addAnnotation, applyCalibration, elevateAnnotation, recalibrateFromAnnotation } from './annotations.js';
@@ -82,7 +83,7 @@ export function setTool(name) {
     canvas.style.cursor = "default";
   }
   document.dispatchEvent(new CustomEvent("tool-changed"));
-  showStatus(TOOL_STATUS[name] ?? name);
+  updateToolStatus();
   canvas.style.cursor = name === "pan" ? "grab" : name === "select" ? "default" : "crosshair";
   redraw();
 }
@@ -889,54 +890,11 @@ function _angleFromLines(annA, annB, clickA, clickB) {
 }
 
 // ── Dynamic step status ───────────────────────────────────────────────────────
-// Called after each point placement to keep the status bar current.
+// Called after each point placement (and on tool switch) to keep the status
+// bar current. Step text is sourced from procedures.js so the status bar and
+// the Measure panel cannot drift apart.
 export function updateToolStatus() {
-  const n = state.pendingPoints.length;
-  if (n === 0) return;
-  const tool = state.tool;
-
-  // Fixed-step tools: array index = points already placed
-  const steps = {
-    distance:      ['Click point 2'],
-    angle:         ['Click the vertex', 'Click point 3 (other arm)'],
-    circle:        state.circleMode === 'center-edge'
-      ? ['Click edge point']
-      : ['Click point 2 of 3', 'Click point 3 of 3'],
-    calibrate:     ['Click point 2'],
-    'arc-measure': state.arcMeasureMode === 'ends-first'
-      ? ['Click second end', 'Click arc midpoint']
-      : ['Click arc midpoint', 'Click arc end'],
-  };
-  const names = {
-    distance: 'Distance', angle: 'Angle',
-    circle: state.circleMode === 'center-edge' ? 'Circle (Center+Edge)' : 'Circle (3-point)',
-    calibrate: 'Calibrate', 'arc-measure': 'Arc Measure',
-  };
-  if (steps[tool]) {
-    const msg = steps[tool][n - 1] ?? steps[tool][steps[tool].length - 1];
-    showStatus(`${names[tool]} — ${msg}`);
-    return;
-  }
-  if (tool === 'arc-fit') {
-    if (n < 3) showStatus(`Fit Arc — ${n} point${n > 1 ? 's' : ''} placed, need ${3 - n} more`);
-    else       showStatus(`Fit Arc — ${n} points · double-click or Enter to finish`);
-    return;
-  }
-  if (tool === 'area') {
-    if (n < 3) showStatus(`Area — ${n} point${n > 1 ? 's' : ''} placed, need ${3 - n} more`);
-    else       showStatus(`Area — ${n} points · double-click or Enter to finish`);
-    return;
-  }
-  if (tool === 'spline') {
-    if (n < 2) showStatus(`Spline — ${n} anchor placed, need ${2 - n} more`);
-    else       showStatus(`Spline — ${n} anchors · double-click or Enter to finish`);
-    return;
-  }
-  if (tool === 'fit-line') {
-    if (n < 2) showStatus(`Fit Line — ${n} point placed, need ${2 - n} more`);
-    else       showStatus(`Fit Line — ${n} points · double-click or Enter to finish`);
-    return;
-  }
+  showStatus(statusLine(state.tool, state));
 }
 
 // ── Sync center-dist endpoints when a referenced circle moves ─────────────────

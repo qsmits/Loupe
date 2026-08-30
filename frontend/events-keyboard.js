@@ -1,5 +1,6 @@
 // ── Undo / Redo / Keyboard shortcuts ─────────────────────────────────────────
-import { state, undoStack, redoStack, takeSnapshot, mergeRestoredAnnotations, undoTarget, TOOL_STATUS } from './state.js';
+import { state, undoStack, redoStack, takeSnapshot, mergeRestoredAnnotations, undoTarget } from './state.js';
+import { statusLine } from './procedures.js';
 import { canvas, showStatus, redraw, resizeCanvas } from './render.js';
 import { renderSidebar, renderInspectionTable } from './sidebar.js';
 import { deleteSelected, elevateSelected } from './annotations.js';
@@ -158,7 +159,7 @@ export function initKeyboard(closeAllDropdowns) {
       if (target === "pending-point") {
         state.pendingPoints.pop();
         if (state.pendingPoints.length > 0) updateToolStatus();
-        else showStatus(TOOL_STATUS[state.tool] ?? state.tool);
+        else showStatus(statusLine(state.tool, state));
         redraw();
         return;
       }

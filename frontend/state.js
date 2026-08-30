@@ -192,24 +192,6 @@ export function undoTarget(s) {
   return "history";
 }
 
-// ── TOOL_STATUS ─────────────────────────────────────────────────────────────
-export const TOOL_STATUS = {
-  "select":         "Select",
-  "calibrate":      "Click — place two points or select a circle",
-  "distance":       "Distance · Direct — click to place point 1",
-  "angle":          "Angle — click a line (two-lines) or empty space (three-points)",
-  "circle":         "Circle/Arc · 3-point — click to place point 1",
-  "arc-fit":        "Circle/Arc · Best-fit — place points (double-click to confirm)",
-  "detect":         "Click — detect features",
-  "area":           "Area · Polygon — click to place points (double-click to confirm)",
-  "area-shape":     "Area · From shape — click a closed shape or a segment of a closed loop",
-  "arc-measure":    "Circle/Arc · Arc measure — place 3 points on arc",
-  "spline":         "Area · Spline — place anchor points (double-click or Enter to finish)",
-  "fit-line":       "Flatness — place points on a line (double-click or Enter to confirm)",
-  "comment":        "Click — place a note on the canvas",
-  "point":          "Point — click to place a reference point",
-};
-
 // ── TRANSIENT_TYPES (moved from line 3062) ───────────────────────────────────
 export const TRANSIENT_TYPES = new Set([
   "edges-overlay", "preprocessed-overlay", "dxf-overlay",
