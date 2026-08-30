@@ -6,6 +6,7 @@ import { measurementLabel } from './format.js';
 import { imageWidth, imageHeight, setImageSize, fitToWindow, shouldAdoptCameraImageSize } from './viewport.js';
 import { renderGearResultsPanel } from './gear.js';
 import { loadReticleList, getReticleCategories, loadReticle, unloadReticle, setReticleRotation } from './reticle.js';
+import { annotationNumbers } from './numbering.js';
 
 const _mctx = () => ({
   calibration: state.calibration,
@@ -171,6 +172,10 @@ function _createMeasurementRow(ann, number) {
 export function renderSidebar() {
   listEl.innerHTML = "";
 
+  // Single numbering authority shared with canvas labels (frontend/numbering.js).
+  // Ports these exact partition semantics — see that module's header comment.
+  const numbers = annotationNumbers(state.annotations, state.measurementGroups);
+
   // Partition annotations into: skip, origin, grouped, ungrouped
   const skip = new Set(["edges-overlay", "preprocessed-overlay", "dxf-overlay"]);
   const visible = state.annotations.filter(a => !skip.has(a.type));
@@ -193,8 +198,6 @@ export function renderSidebar() {
       if (isMeasurement) ungrouped.push(ann);
     }
   }
-
-  let i = 0;
 
   // Render groups first
   for (const [groupName, members] of groupMap) {
@@ -247,8 +250,7 @@ export function renderSidebar() {
 
     for (const ann of members) {
       if (ann.type === "origin") continue;
-      const number = String.fromCodePoint(9312 + i);
-      i++;
+      const number = "[" + numbers.get(ann.id) + "]";
       const row = _createMeasurementRow(ann, number);
       row.classList.add("meas-group-member");
       if (ann.purpose === 'drawing' || ann.purpose === 'helper') {
@@ -292,8 +294,7 @@ export function renderSidebar() {
       listEl.appendChild(row);
       continue;
     }
-    const number = String.fromCodePoint(9312 + i);
-    i++;
+    const number = "[" + numbers.get(ann.id) + "]";
     listEl.appendChild(_createMeasurementRow(ann, number));
   }
 
