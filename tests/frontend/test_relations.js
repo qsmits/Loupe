@@ -2,7 +2,7 @@ import './dom-stub.js';
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { state } from '../../frontend/state.js';
-import { setTool, handleToolClick, RELATION_TOOLS } from '../../frontend/tools.js';
+import { setTool, handleToolClick, RELATION_TOOLS, nudgeSelected } from '../../frontend/tools.js';
 import { addAnnotation } from '../../frontend/annotations.js';
 import { getStatus } from '../../frontend/render.js';
 import { measurementNumeric } from '../../frontend/format.js';
@@ -45,6 +45,24 @@ describe('center-dist resurrection', () => {
     assert.equal(rel.circleAId, c1.id);
     assert.equal(rel.circleBId, arc.id);
     assert.deepEqual({ x: rel.b.x, y: rel.b.y }, { x: 400, y: 100 }); // arc-fit's own cx/cy, no scaling
+  });
+
+  it('nudging a linked arc-fit syncs its center-dist endpoint (Finding 4 — _syncCenterDist arc-fit gap)', async () => {
+    const c1 = addAnnotation({ type: 'circle', cx: 100, cy: 100, r: 30 });
+    const arc = addAnnotation({ type: 'arc-fit', cx: 400, cy: 100, r: 20 });
+    setTool('center-dist');
+    await handleToolClick({ x: 130, y: 100 });   // c1 edge
+    await handleToolClick({ x: 420, y: 100 });   // arc-fit edge
+    const rel = state.annotations.find(a => a.type === 'center-dist');
+    assert.ok(rel, 'center-dist created against an arc-fit');
+    assert.equal(rel.circleBId, arc.id);
+    assert.deepEqual({ x: rel.b.x, y: rel.b.y }, { x: 400, y: 100 }); // pre-nudge
+
+    state.selected = new Set([arc.id]);
+    nudgeSelected(15, -7);
+    assert.deepEqual({ x: arc.cx, y: arc.cy }, { x: 415, y: 93 }, 'arc-fit center moved');
+    assert.deepEqual({ x: rel.b.x, y: rel.b.y }, { x: 415, y: 93 },
+      'linked center-dist endpoint follows the nudged arc-fit center');
   });
 
   it('same circle picked twice is ignored; picking a different circle still completes, and a second cycle works (Finding 3)', async () => {

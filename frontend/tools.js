@@ -907,6 +907,7 @@ export function handleDrag(pt) {
       ann.r = Math.hypot(pt.x - ann.cx, pt.y - ann.cy);
     } else {
       ann.cx += dx; ann.cy += dy;
+      _syncCenterDist(ann.id, ann.cx, ann.cy);
     }
   }
   else if (ann.type === "spline") {
@@ -1137,7 +1138,7 @@ function _nudgeAnn(ann, dx, dy) {
     ann.p3.x += dx; ann.p3.y += dy;
   } else if (ann.type === 'circle' || ann.type === 'arc-fit') {
     ann.cx += dx; ann.cy += dy;
-    if (ann.type === 'circle') _syncCenterDist(ann.id, ann.cx, ann.cy);
+    _syncCenterDist(ann.id, ann.cx, ann.cy);
   } else if (ann.type === 'calibration') {
     if (ann.x1 !== undefined) { ann.x1 += dx; ann.y1 += dy; ann.x2 += dx; ann.y2 += dy; }
     else { ann.cx += dx; ann.cy += dy; }
