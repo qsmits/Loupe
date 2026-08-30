@@ -92,7 +92,6 @@ export function initKeyboard(closeAllDropdowns) {
       return;
     }
     if (e.key === "Escape") {
-      document.getElementById("arc-fit-chooser").hidden = true;
       if (state.inspectionPickTarget) {
         state.inspectionPickTarget = null;
         state.inspectionPickPoints = [];

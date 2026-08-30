@@ -787,47 +787,6 @@ body.no-camera #stream-img {
   color: var(--success);
 }
 .cal-btn.calibrated:hover { background: rgba(48,209,88,.25); }
-
-/* ─── Arc-fit chooser ───────────────────────────────────────── */
-.arc-fit-chooser {
-  position: fixed;
-  bottom: 62px;
-  left: 50%;
-  transform: translateX(-50%);
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 20px;
-  padding: 6px 10px;
-  box-shadow: 0 4px 16px rgba(0,0,0,.5);
-  z-index: 450;
-  white-space: nowrap;
-}
-.arc-fit-chooser[hidden] { display: none; }
-.arc-fit-chooser-label {
-  font-size: 11px;
-  color: var(--muted);
-  margin-right: 2px;
-}
-.arc-fit-chooser button {
-  padding: 4px 12px;
-  border-radius: 14px;
-  font-size: 11px;
-  font-weight: 500;
-  border: 1px solid var(--border);
-  background: var(--surface-2);
-  color: var(--text);
-  cursor: pointer;
-  transition: background 0.1s;
-}
-.arc-fit-chooser button:hover {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: #fff;
-}
-
 /* ─── Lens-cal button states ────────────────────────────────── */
 .cal-btn.lens-uncalibrated {
   background: rgba(99,102,241,.13);

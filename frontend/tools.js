@@ -771,8 +771,6 @@ export function promptArcFitChoice() {
 
 /** Called by the Arc / Circle chooser buttons. */
 export function finalizeArcFit(asCircle) {
-  const chooser = document.getElementById("arc-fit-chooser");
-  if (chooser) chooser.hidden = true;
   if (state.pendingPoints.length < 3) return;
   const fit = fitCircleAlgebraic(state.pendingPoints);
   if (!fit) { showStatus("Could not fit circle — points may be collinear"); return; }
