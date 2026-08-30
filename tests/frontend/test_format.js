@@ -196,6 +196,9 @@ describe('measurementNumeric', () => {
       { ann: { type: 'fit-line', zoneWidth: 30 } },
       { ann: { type: 'arc-measure', r: 100, span_deg: 90, chord_px: 141.4, cx: 50, cy: 50 } },
       { ann: { type: 'spline', length_px: 250 } },
+      // mm-unit only: a µm-declared calibration intentionally breaks label
+      // parity (measurementNumeric normalizes to mm; the label prints
+      // knownValue verbatim in ann.unit) — covered separately below, not here.
       { ann: { type: 'calibration', x1: 0, y1: 0, x2: 100, y2: 0, knownValue: 5, unit: 'mm' } },
       { ann: { type: 'area', points: [{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 100 }, { x: 0, y: 100 }] } },
       { ann: { type: 'detected-arc-partial', r: 80, start_deg: 10, end_deg: 100 } },
@@ -226,9 +229,31 @@ describe('measurementNumeric', () => {
       const label = measurementLabel(ann, fullCtx);
       const printed = parseFloat(label.replace(/[^\d.\-]+/g, ' ').trim().split(/\s+/)[0]);
       assert.ok(n, `${ann.type}: measurementNumeric returned null`);
+      assert.ok(Number.isFinite(n.value), `${ann.type}: numeric value is not finite (${n.value})`);
       assert.ok(Math.abs(n.value - printed) < 0.002,
         `${ann.type}: numeric ${n.value} vs label "${label}"`);
     }
+  });
+
+  it('calibration normalizes µm to mm (SSOT contract)', () => {
+    // Deliberately excluded from the label-parity loop above: the label
+    // prints ann.knownValue verbatim in ann.unit ("500 µm"), while
+    // measurementNumeric normalizes to mm per the mm/px/°/mm²/px² contract
+    // — these two numbers (500 vs 0.5) are expected to diverge.
+    const ann = { type: 'calibration', x1: 0, y1: 0, x2: 100, y2: 0, knownValue: 500, unit: 'µm' };
+    assert.deepEqual(measurementNumeric(ann, {}), { value: 0.5, unit: 'mm' });
+    const label = measurementLabel(ann, {});
+    assert.equal(label, '⟷ 500 µm'); // verbatim — intentionally not 0.5 mm
+  });
+
+  it('detected-circle stays finite when ctx.imageWidth is missing', () => {
+    const cal = { pixelsPerMm: 100, displayUnit: 'mm' };
+    const ann = { type: 'detected-circle', x: 0, y: 0, radius: 50, frameWidth: 500 };
+    // No ctx.imageWidth → scale must fall back to 1 (frameWidth/frameWidth),
+    // never (undefined / frameWidth) === NaN.
+    const n = measurementNumeric(ann, { calibration: cal });
+    assert.ok(Number.isFinite(n.value), `expected finite value, got ${n.value}`);
+    assert.deepEqual(n, { value: 1, unit: 'mm' }); // radius 50 * 2 / 100 ppm
   });
 });
 
@@ -241,6 +266,12 @@ describe('formatCsvValue regressions', () => {
     assert.equal(typeof out.value, 'string');
     assert.ok(out.unit.length > 0);
     assert.ok(out.value.includes('r='));
+  });
+
+  it('calibration CSV row normalizes µm to mm, formatted to mm precision', () => {
+    const ann = { type: 'calibration', x1: 0, y1: 0, x2: 100, y2: 0, knownValue: 500, unit: 'µm' };
+    const out = formatCsvValue(ann, { pixelsPerMm: 100, displayUnit: 'mm' }, 1000);
+    assert.deepEqual(out, { value: '0.500', unit: 'mm' });
   });
 
   it('pt-circle-dist no longer exports blank', () => {

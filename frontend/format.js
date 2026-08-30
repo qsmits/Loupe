@@ -356,22 +356,25 @@ export function measurementNumeric(ann, ctx = {}) {
     case 'fit-line':
       return len(ann.zoneWidth || 0);
     case 'detected-circle': {
-      const sx = ctx.imageWidth / ann.frameWidth;
+      // NaN-safety guard (sanctioned deviation from copy-the-expression):
+      // same (ctx.imageWidth || ann.frameWidth) fallback getLineEndpoints
+      // uses, so a missing ctx.imageWidth yields scale 1, not NaN.
+      const sx = (ctx.imageWidth || ann.frameWidth) / ann.frameWidth;
       const r = ann.radius * sx;
       return len(r * 2);
     }
     case 'detected-line': {
-      const sx = ctx.imageWidth / ann.frameWidth;
+      const sx = (ctx.imageWidth || ann.frameWidth) / ann.frameWidth;
       const lenPx = ann.length * sx;
       return len(lenPx);
     }
     case 'detected-line-merged': {
-      const sx = ann.frameWidth ? ctx.imageWidth / ann.frameWidth : 1;
+      const sx = ann.frameWidth ? (ctx.imageWidth || ann.frameWidth) / ann.frameWidth : 1;
       const lenPx = Math.hypot((ann.x2 - ann.x1) * sx, (ann.y2 - ann.y1) * sx);
       return len(lenPx);
     }
     case 'detected-arc-partial': {
-      const sx = ann.frameWidth ? ctx.imageWidth / ann.frameWidth : 1;
+      const sx = ann.frameWidth ? (ctx.imageWidth || ann.frameWidth) / ann.frameWidth : 1;
       const rPx = ann.r * sx;
       return len(rPx);
     }
@@ -380,9 +383,12 @@ export function measurementNumeric(ann, ctx = {}) {
     case 'spline':
       return len(ann.length_px || 0);
     case 'calibration':
-      // Not calibration-derived: this IS the calibration definition, already
-      // expressed in its own declared unit (mirrors measurementLabel exactly).
-      return { value: ann.knownValue, unit: ann.unit };
+      // Unit normalized to mm per the SSOT contract (mm/px/°/mm²/px² only) —
+      // this IS the calibration definition, so ctx.calibration is irrelevant;
+      // only ann's own declared knownValue/unit matter. measurementLabel
+      // shows ann.knownValue verbatim in ann.unit (no normalization) — that's
+      // an intentional display-vs-SSOT divergence, not a bug.
+      return { value: ann.unit === 'µm' ? ann.knownValue / 1000 : ann.knownValue, unit: 'mm' };
     case 'parallelism':
       return { value: ann.angleDeg, unit: '\u00b0' };
     case 'area':
@@ -528,7 +534,6 @@ export function formatCsvValue(ann, calibration, imgWidth, ctx = {}) {
     case "px\u00b2":
       return { value: n.value.toFixed(1), unit: "px\u00b2" };
     default:
-      // calibration: value/unit already expressed in their own declared unit.
-      return { value: String(n.value), unit: n.unit };
+      return { value: "", unit: "" };
   }
 }
