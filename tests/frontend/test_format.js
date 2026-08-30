@@ -16,6 +16,7 @@ import assert from 'node:assert/strict';
 import {
   getLineEndpoints, lineAngleDeg, measurementLabel,
   measurementNumeric, centerDistPx, formatCsvValue,
+  fullMeasurementLabel,
 } from '../../frontend/format.js';
 
 // Stub alert (polygonArea's dependency math.js may call it)
@@ -296,5 +297,25 @@ describe('formatCsvValue regressions', () => {
     const out = formatCsvValue(ann, null, 1000, { annotations: [l1, l2, ann] });
     assert.notEqual(out.value, '');
     assert.equal(out.unit, 'px');
+  });
+});
+
+describe('fullMeasurementLabel', () => {
+  const cal = { pixelsPerMm: 100, displayUnit: 'mm' };
+  const base = { id: 7, type: 'distance', a: { x: 0, y: 0 }, b: { x: 362.5, y: 0 }, purpose: 'measurement' };
+  it('plain measurement: [n] value', () => {
+    const { text, edge } = fullMeasurementLabel({ ...base, name: '' }, { calibration: cal }, 3);
+    assert.equal(text, '[3] 3.625 mm');
+    assert.equal(edge, null);
+  });
+  it('named + spec: [n] name value ▲dev, pass edge', () => {
+    const ann = { ...base, name: 'hole-pitch', spec: { nominal: 3.6, upper: 0.05, lower: -0.05 } };
+    const { text, edge } = fullMeasurementLabel(ann, { calibration: cal }, 3);
+    assert.equal(text, '[3] hole-pitch 3.625 mm ▲+0.025 mm');
+    assert.equal(edge, 'pass');
+  });
+  it('failing spec gets fail edge', () => {
+    const ann = { ...base, spec: { nominal: 3.6, upper: 0.01, lower: -0.01 } };
+    assert.equal(fullMeasurementLabel(ann, { calibration: cal }, 1).edge, 'fail');
   });
 });

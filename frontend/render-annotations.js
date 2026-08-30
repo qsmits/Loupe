@@ -3,13 +3,24 @@
  * Extracted from render.js (Task 7).
  */
 import { state, _labelHitBoxes } from './state.js';
-import { getLineEndpoints, lineAngleDeg } from './format.js';
+import { getLineEndpoints, lineAngleDeg, fullMeasurementLabel } from './format.js';
+import { annotationNumbers } from './numbering.js';
 import { viewport, imageWidth, imageHeight } from './viewport.js';
 import { catmullRomControlPoints } from './math.js';
 import {
   ctx, canvas, pw, drawLine, drawHandle, drawDiamondHandle, drawLabel,
-  drawMeasurementLabel, _annColor, measurementLabel,
+  drawMeasurementLabel, _annColor, measurementLabel, _mctx,
 } from './render.js';
+
+// Per-frame numbering map, computed once at the top of drawAnnotations() and
+// read by every numbered-measurement draw function below — so "[3]" on the
+// canvas always matches "[3]" in the sidebar (annotationNumbers is the single
+// numbering authority both consume).
+let _numbers = new Map();
+
+function _numberedLabel(ann) {
+  return fullMeasurementLabel(ann, _mctx(), _numbers.get(ann.id));
+}
 
 function applyPurposeStyle(ann) {
   if (ann.purpose === 'helper') {
@@ -36,7 +47,8 @@ export function drawDistance(ann, sel) {
     (ann.b.snapped ? drawDiamondHandle : drawHandle)(ann.b, "#60a5fa");
   }
   const mx = (ann.a.x + ann.b.x) / 2, my = (ann.a.y + ann.b.y) / 2;
-  drawMeasurementLabel(ann, measurementLabel(ann), mx + 5, my - 5, mx, my);
+  const { text, edge } = _numberedLabel(ann);
+  drawMeasurementLabel(ann, text, mx + 5, my - 5, mx, my, { edge });
 }
 
 export function drawAngle(ann, sel) {
@@ -72,13 +84,19 @@ export function drawAngle(ann, sel) {
     // Label just outside the arc midpoint
     const lx = ann.vertex.x + Math.cos(mid) * (r + 10 / viewport.zoom);
     const ly = ann.vertex.y + Math.sin(mid) * (r + 10 / viewport.zoom);
-    drawMeasurementLabel(ann, measurementLabel(ann), lx, ly, hx, hy);
+    {
+      const { text, edge } = _numberedLabel(ann);
+      drawMeasurementLabel(ann, text, lx, ly, hx, hy, { edge });
+    }
     return;
   }
   drawLine(ann.p1, ann.vertex, c, sel ? 2 : 1.5);
   drawLine(ann.vertex, ann.p3, c, sel ? 2 : 1.5);
   if (sel) { [ann.p1, ann.vertex, ann.p3].forEach(p => (p.snapped ? drawDiamondHandle : drawHandle)(p, "#60a5fa")); }
-  drawMeasurementLabel(ann, measurementLabel(ann), ann.vertex.x + 8, ann.vertex.y - 8, ann.vertex.x, ann.vertex.y);
+  {
+    const { text, edge } = _numberedLabel(ann);
+    drawMeasurementLabel(ann, text, ann.vertex.x + 8, ann.vertex.y - 8, ann.vertex.x, ann.vertex.y, { edge });
+  }
 }
 
 export function drawCircle(ann, sel) {
@@ -92,7 +110,10 @@ export function drawCircle(ann, sel) {
     drawHandle({ x: ann.cx, y: ann.cy }, "#60a5fa");
     drawHandle({ x: ann.cx + ann.r, y: ann.cy }, "#60a5fa");
   }
-  drawMeasurementLabel(ann, measurementLabel(ann), ann.cx + 5, ann.cy - ann.r - 5, ann.cx, ann.cy);
+  {
+    const { text, edge } = _numberedLabel(ann);
+    drawMeasurementLabel(ann, text, ann.cx + 5, ann.cy - ann.r - 5, ann.cx, ann.cy, { edge });
+  }
 }
 
 export function drawArcMeasure(ann, sel) {
@@ -120,7 +141,10 @@ export function drawArcMeasure(ann, sel) {
     drawHandle(ann.p3, "#60a5fa");
   }
   ctx.restore();
-  drawMeasurementLabel(ann, measurementLabel(ann), ann.cx + 5, ann.cy - ann.r - 5, ann.cx, ann.cy);
+  {
+    const { text, edge } = _numberedLabel(ann);
+    drawMeasurementLabel(ann, text, ann.cx + 5, ann.cy - ann.r - 5, ann.cx, ann.cy, { edge });
+  }
 }
 
 export function drawArcFit(ann, sel) {
@@ -157,7 +181,10 @@ export function drawArcFit(ann, sel) {
   const labelOffset = pw(14);
   const lx = ann.cx + Math.cos(midAngle) * (ann.r + labelOffset);
   const ly = ann.cy + Math.sin(midAngle) * (ann.r + labelOffset);
-  drawMeasurementLabel(ann, measurementLabel(ann), lx, ly, ann.cx, ann.cy);
+  {
+    const { text, edge } = _numberedLabel(ann);
+    drawMeasurementLabel(ann, text, lx, ly, ann.cx, ann.cy, { edge });
+  }
 }
 
 export function drawSpline(ann, sel) {
@@ -180,7 +207,10 @@ export function drawSpline(ann, sel) {
   ctx.restore();
 
   const mid = pts[Math.floor((n - 1) / 2)];
-  drawMeasurementLabel(ann, measurementLabel(ann), mid.x + 5, mid.y - 5, mid.x, mid.y);
+  {
+    const { text, edge } = _numberedLabel(ann);
+    drawMeasurementLabel(ann, text, mid.x + 5, mid.y - 5, mid.x, mid.y, { edge });
+  }
 }
 
 export function drawSplinePreview(pts, cursor) {
@@ -297,7 +327,8 @@ export function drawParallelism(ann, sel) {
     (ann.b.snapped ? drawDiamondHandle : drawHandle)(ann.b, "#60a5fa");
   }
   const mx = (ann.a.x + ann.b.x) / 2, my = (ann.a.y + ann.b.y) / 2;
-  drawLabel(measurementLabel(ann), mx + 5, my - 5);
+  const { text, edge } = _numberedLabel(ann);
+  drawMeasurementLabel(ann, text, mx + 5, my - 5, mx, my, { edge });
 }
 
 export function drawPtCircleDist(ann, sel) {
@@ -332,7 +363,8 @@ export function drawPtCircleDist(ann, sel) {
   if (sel) drawHandle({ x: ann.px, y: ann.py }, "#60a5fa");
   const mx = (ann.px + edgePt.x) / 2;
   const my = (ann.py + edgePt.y) / 2;
-  drawLabel(measurementLabel(ann), mx + 5, my - 5);
+  const { text, edge } = _numberedLabel(ann);
+  drawMeasurementLabel(ann, text, mx + 5, my - 5, mx, my, { edge });
 }
 
 export function drawIntersect(ann, sel) {
@@ -370,7 +402,10 @@ export function drawIntersect(ann, sel) {
   ctx.moveTo(ix - ARM, iy); ctx.lineTo(ix + ARM, iy);
   ctx.moveTo(ix, iy - ARM); ctx.lineTo(ix, iy + ARM);
   ctx.stroke();
-  drawLabel(measurementLabel(ann), ix + ARM + 3, iy - ARM);
+  {
+    const { text, edge } = _numberedLabel(ann);
+    drawMeasurementLabel(ann, text, ix + ARM + 3, iy - ARM, ix, iy, { edge });
+  }
 }
 
 export function drawSlotDist(ann, sel) {
@@ -398,7 +433,8 @@ export function drawSlotDist(ann, sel) {
 
   const mx = (midA.x + projA.x) / 2;
   const my = (midA.y + projA.y) / 2;
-  drawLabel(measurementLabel(ann), mx + 5, my - 5);
+  const { text, edge } = _numberedLabel(ann);
+  drawMeasurementLabel(ann, text, mx + 5, my - 5, mx, my, { edge });
 }
 
 export function drawArea(ann, sel) {
@@ -413,7 +449,8 @@ export function drawArea(ann, sel) {
   if (sel) ann.points.forEach(p => drawHandle(p, "#60a5fa"));
   const cx = ann.points.reduce((s, p) => s + p.x, 0) / ann.points.length;
   const cy = ann.points.reduce((s, p) => s + p.y, 0) / ann.points.length;
-  drawLabel(measurementLabel(ann), cx + 4, cy);
+  const { text, edge } = _numberedLabel(ann);
+  drawMeasurementLabel(ann, text, cx + 4, cy, cx, cy, { edge });
 }
 
 export function drawFitLine(ann, sel) {
@@ -452,7 +489,8 @@ export function drawFitLine(ann, sel) {
   if (sel) ann.points.forEach(p => drawHandle(p, "#60a5fa"));
 
   const mx = (ann.x1 + ann.x2) / 2, my = (ann.y1 + ann.y2) / 2;
-  drawMeasurementLabel(ann, measurementLabel(ann), mx + 5, my - 5, mx, my);
+  const { text, edge } = _numberedLabel(ann);
+  drawMeasurementLabel(ann, text, mx + 5, my - 5, mx, my, { edge });
 }
 
 export function drawAreaPreview(pts, cursor) {
@@ -608,6 +646,7 @@ function drawPoint(ann, sel) {
 
 export function drawAnnotations(redrawFn, dxfFns) {
   _labelHitBoxes.length = 0;
+  _numbers = annotationNumbers(state.annotations, state.measurementGroups);
   const flashActive = Date.now() < state._flashExpiry;
   state.annotations.forEach(ann => {
     // User-toggled visibility (sidebar eye button). DXF overlays and

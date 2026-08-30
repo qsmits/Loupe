@@ -34,8 +34,8 @@ export function getStatus() {
   return statusEl.textContent;
 }
 
-export function measurementLabel(ann) {
-  return _measurementLabel(ann, {
+export function _mctx() {
+  return {
     calibration: state.calibration,
     annotations: state.annotations,
     origin: state.origin,
@@ -43,7 +43,11 @@ export function measurementLabel(ann) {
     imageHeight,
     canvasWidth: canvas.width,
     canvasHeight: canvas.height,
-  });
+  };
+}
+
+export function measurementLabel(ann) {
+  return _measurementLabel(ann, _mctx());
 }
 
 const GROUP_COLOR = "#38bdf8";  // sky blue for grouped measurements
@@ -90,12 +94,16 @@ export function drawDiamondHandle(pt, color) {
   ctx.restore();
 }
 
-export function drawLabel(text, x, y) {
+export function drawLabel(text, x, y, opts = {}) {
   const fontSize = pw(12);
   ctx.font = `bold ${fontSize}px ui-monospace, monospace`;
   ctx.fillStyle = "rgba(0,0,0,0.65)";
   const m = ctx.measureText(text);
   ctx.fillRect(x - pw(2), y - pw(13), m.width + pw(4), pw(16));
+  if (opts.edge) {
+    ctx.fillStyle = opts.edge === "fail" ? "#ff453a" : "#30d158";
+    ctx.fillRect(x - pw(2), y - pw(13), pw(3), pw(16));
+  }
   ctx.fillStyle = "#fff";
   ctx.fillText(text, x, y);
 }
@@ -105,7 +113,7 @@ export function drawLabel(text, x, y) {
  *  into view with a leader line to the true anchor (Track A #2). A
  *  user-dragged label (labelOffset ≠ 0) is never clamped — its offset is
  *  authoritative; double-click resets it (events-mouse.js). */
-export function drawMeasurementLabel(ann, text, defaultX, defaultY, refX, refY) {
+export function drawMeasurementLabel(ann, text, defaultX, defaultY, refX, refY, opts = {}) {
   if (ann.purpose && ann.purpose !== 'measurement') return; // suppress label for drawing/helper
   const offset = ann.labelOffset || { dx: 0, dy: 0 };
   const userDragged = offset.dx !== 0 || offset.dy !== 0;
@@ -146,7 +154,7 @@ export function drawMeasurementLabel(ann, text, defaultX, defaultY, refX, refY) 
     ctx.restore();
   }
 
-  drawLabel(text, lx, ly);
+  drawLabel(text, lx, ly, opts);
 
   // Record hitbox for dragging. effDx/effDy is the label's rendered offset
   // from its default position (drag offset + clamp shift) — events-mouse.js

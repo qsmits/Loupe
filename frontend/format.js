@@ -4,6 +4,7 @@
  */
 
 import { polygonArea } from './math.js';
+import { evaluateSpec, formatDeviation } from './spec.js';
 
 /**
  * Return display-ready {a, b} endpoints for a line-like annotation.
@@ -316,6 +317,35 @@ export function measurementLabel(ann, ctx) {
     return `\u27fa ${valStr}${angSuffix}`;
   }
   return "";
+}
+
+/**
+ * Full canvas/sidebar label for a numbered measurement: `[n] name value \u25b2dev`.
+ * `name` is omitted when empty, `[num]` omitted when `num == null`, and the
+ * deviation suffix omitted when the annotation has no spec (or the spec
+ * can't be evaluated, e.g. a ref-resolving type with a deleted reference).
+ * @param {object} ann - annotation object
+ * @param {object} ctx - { calibration, annotations, origin, imageWidth, imageHeight }
+ * @param {number|null} num - this annotation's number from annotationNumbers(), or null
+ * @returns {{ text: string, edge: 'pass'|'fail'|null }}
+ */
+export function fullMeasurementLabel(ann, ctx, num) {
+  const base = measurementLabel(ann, ctx);
+  if (!base) return { text: '', edge: null };
+  const parts = [];
+  if (num != null) parts.push(`[${num}]`);
+  if (ann.name) parts.push(ann.name);
+  parts.push(base);
+  let edge = null;
+  if (ann.spec) {
+    const n = measurementNumeric(ann, ctx);
+    const ev = evaluateSpec(n?.value, ann.spec);
+    if (ev) {
+      parts.push(formatDeviation(ev.deviation, n.unit, ctx.calibration?.displayUnit));
+      edge = ev.pass ? 'pass' : 'fail';
+    }
+  }
+  return { text: parts.join(' '), edge };
 }
 
 /** Raw numeric value of a measurement in its base unit (mm/px, \u00b0, mm\u00b2/px\u00b2).
