@@ -158,39 +158,107 @@ export const PROCEDURES = {
   // ── Relation tools (resurrected 2026-08-30) — not in TOOL_BUTTONS, so the
   // procedures-completeness gate (test_procedures.js) doesn't require these;
   // Task 16's palette gains its own completeness coverage for them.
+  //
+  // Task 13 (inline fitting): each tool's pick-a-circle/pick-a-line slot can
+  // also be filled by placing ≥3 (circle) / ≥2 (line) edge points and
+  // pressing Enter (or double-click, or the panel's Finish button) —
+  // finalizeRelationPick() in tools.js. While that slot is mid-fit
+  // (s.pendingRelationFit), its step line swaps to a live point count; the
+  // `liveLine` preview mirrors arc-fit's/fit-line's Ø·RMS / RMS readout.
   'center-dist': {
     title: 'Circle ↔ circle distance',
-    steps: () => ['Specify the 1st circle — click a fitted circle',
-                  'Specify the 2nd circle',
-                  'Distance appears — set pattern/nominal in Properties'],
+    steps: s => {
+      const n = nPts(s);
+      const cur = s.pendingCenterCircle ? 1 : 0;
+      const steps = [
+        'Specify the 1st circle — click a fitted circle, or place ≥3 edge points and press Enter',
+        'Specify the 2nd circle — click a fitted circle, or place ≥3 edge points and press Enter',
+        'Distance appears — set pattern/nominal in Properties',
+      ];
+      if (s.pendingRelationFit?.kind === 'circle') {
+        steps[cur] = n === 0 ? 'Place at least 3 edge points' : `${n} point${n === 1 ? '' : 's'} placed${n < 3 ? ` — need ${3 - n} more` : ''}`;
+      }
+      return steps;
+    },
     currentStep: s => (s.pendingCenterCircle ? 1 : 0),
+    liveLine: s => s.pendingRelationFit?.kind === 'circle' ? circleFitLive(s) : null,
+    finish: { minPoints: 3, hint: 'Enter or double-click' },
   },
   'pt-circle-dist': {
     title: 'Point ↔ circle distance',
-    steps: () => ['Click a fitted circle', 'Click the point to measure from'],
+    steps: s => {
+      const n = nPts(s);
+      const steps = ['Click a fitted circle, or place ≥3 edge points and press Enter',
+                     'Click the point to measure from'];
+      if (s.pendingRelationFit?.kind === 'circle') {
+        steps[0] = n === 0 ? 'Place at least 3 edge points' : `${n} point${n === 1 ? '' : 's'} placed${n < 3 ? ` — need ${3 - n} more` : ''}`;
+      }
+      return steps;
+    },
     currentStep: s => (s.pendingCircleRef ? 1 : 0),
+    liveLine: s => s.pendingRelationFit?.kind === 'circle' ? circleFitLive(s) : null,
+    finish: { minPoints: 3, hint: 'Enter or double-click' },
   },
   'perp-dist': {
     title: 'Perpendicular distance',
-    steps: () => ['Click the reference line', 'Click the start point', 'Click the end point'],
+    steps: s => {
+      const n = nPts(s);
+      const steps = ['Click the reference line, or place ≥2 edge points and press Enter',
+                     'Click the start point', 'Click the end point'];
+      if (s.pendingRelationFit?.kind === 'line') {
+        steps[0] = n === 0 ? 'Place at least 2 edge points' : `${n} point${n === 1 ? '' : 's'} placed${n < 2 ? ` — need ${2 - n} more` : ''}`;
+      }
+      return steps;
+    },
     currentStep: s => (!s.pendingRefLine ? 0 : (s.pendingPoints || []).length === 0 ? 1 : 2),
+    liveLine: s => s.pendingRelationFit?.kind === 'line' ? lineFitLive(s) : null,
+    finish: { minPoints: 2, hint: 'Enter or double-click' },
   },
   'para-dist': {
     title: 'Parallel distance / parallelism',
-    steps: () => ['Click the reference line',
-                  'Click another line (parallelism) or a free point (parallel distance)',
-                  'Click the end point'],
+    steps: s => {
+      const n = nPts(s);
+      const steps = ['Click the reference line, or place ≥2 edge points and press Enter',
+                     'Click another line (parallelism) or a free point (parallel distance)',
+                     'Click the end point'];
+      if (s.pendingRelationFit?.kind === 'line') {
+        steps[0] = n === 0 ? 'Place at least 2 edge points' : `${n} point${n === 1 ? '' : 's'} placed${n < 2 ? ` — need ${2 - n} more` : ''}`;
+      }
+      return steps;
+    },
     currentStep: s => (!s.pendingRefLine ? 0 : (s.pendingPoints || []).length === 0 ? 1 : 2),
+    liveLine: s => s.pendingRelationFit?.kind === 'line' ? lineFitLive(s) : null,
+    finish: { minPoints: 2, hint: 'Enter or double-click' },
   },
   'slot-dist': {
     title: 'Width between two lines',
-    steps: () => ['Click the first line', 'Click the second line'],
+    steps: s => {
+      const n = nPts(s);
+      const steps = ['Click the first line, or place ≥2 edge points and press Enter',
+                     'Click the second line'];
+      if (s.pendingRelationFit?.kind === 'line') {
+        steps[0] = n === 0 ? 'Place at least 2 edge points' : `${n} point${n === 1 ? '' : 's'} placed${n < 2 ? ` — need ${2 - n} more` : ''}`;
+      }
+      return steps;
+    },
     currentStep: s => (s.pendingRefLine ? 1 : 0),
+    liveLine: s => s.pendingRelationFit?.kind === 'line' ? lineFitLive(s) : null,
+    finish: { minPoints: 2, hint: 'Enter or double-click' },
   },
   intersect: {
     title: 'Intersection of two lines',
-    steps: () => ['Click the first line', 'Click the second line'],
+    steps: s => {
+      const n = nPts(s);
+      const steps = ['Click the first line, or place ≥2 edge points and press Enter',
+                     'Click the second line'];
+      if (s.pendingRelationFit?.kind === 'line') {
+        steps[0] = n === 0 ? 'Place at least 2 edge points' : `${n} point${n === 1 ? '' : 's'} placed${n < 2 ? ` — need ${2 - n} more` : ''}`;
+      }
+      return steps;
+    },
     currentStep: s => (s.pendingRefLine ? 1 : 0),
+    liveLine: s => s.pendingRelationFit?.kind === 'line' ? lineFitLive(s) : null,
+    finish: { minPoints: 2, hint: 'Enter or double-click' },
   },
 };
 

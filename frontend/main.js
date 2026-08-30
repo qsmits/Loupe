@@ -8,7 +8,7 @@ import { renderSidebar, loadCameraInfo, loadUiConfig, loadTolerances,
          startCameraStatsPolling, stopCameraStatsPolling } from './sidebar.js';
 import { deleteAnnotation, addAnnotation, elevateSelected, clearDetections, clearMeasurements, clearDxfOverlay, clearAll, clearCalSource } from './annotations.js';
 import { assembleTemplate, downloadTemplate, readTemplateFile } from './template.js';
-import { setTool, promptArcFitChoice, finalizeArea, finalizeSpline, finalizeFitLine } from './tools.js';
+import { setTool, promptArcFitChoice, finalizeArea, finalizeSpline, finalizeFitLine, finalizeRelationPick } from './tools.js';
 import { initDxfHandlers, measurementsAsDxf } from './dxf.js';
 import { doFreeze, initDetectHandlers } from './detect.js';
 import { initCompareHandlers } from './compare.js';
@@ -135,6 +135,7 @@ document.addEventListener("toolbar-action", e => {
 document.addEventListener("measure-panel-action", e => {
   const action = e.detail?.action;
   if (action === "finish") {
+    if (finalizeRelationPick()) return;
     if (state.tool === "arc-fit" && state.pendingPoints.length >= 3) promptArcFitChoice();
     else if (state.tool === "area" && state.pendingPoints.length >= 3) finalizeArea();
     else if (state.tool === "spline" && state.pendingPoints.length >= 2) finalizeSpline();

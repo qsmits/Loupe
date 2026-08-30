@@ -4,7 +4,7 @@ import { statusLine } from './procedures.js';
 import { canvas, showStatus, redraw, resizeCanvas } from './render.js';
 import { renderSidebar, renderInspectionTable } from './sidebar.js';
 import { deleteSelected, elevateSelected } from './annotations.js';
-import { setTool, promptArcFitChoice, finalizeArcFit, finalizeArea, finalizeSpline, finalizeFitLine, nudgeSelected, updateToolStatus } from './tools.js';
+import { setTool, promptArcFitChoice, finalizeArcFit, finalizeArea, finalizeSpline, finalizeFitLine, finalizeRelationPick, nudgeSelected, updateToolStatus } from './tools.js';
 import { exitDxfAlignMode } from './dxf.js';
 import { saveSession } from './session.js';
 import { viewport, fitToWindow, zoomOneToOne, clampPan, imageWidth, imageHeight } from './viewport.js';
@@ -82,6 +82,7 @@ export function initKeyboard(closeAllDropdowns) {
 
     if (e.key === "Enter") {
       if (state.inspectionPickTarget) { _finalizePickInspection(); return; }
+      if (finalizeRelationPick()) return;
       if (state.tool === "spline" && state.pendingPoints.length >= 2) { finalizeSpline(); return; }
       if (state.tool === "arc-fit" && state.pendingPoints.length >= 3) { promptArcFitChoice(); return; }
       if (state.tool === "area" && state.pendingPoints.length >= 3) { finalizeArea(); return; }

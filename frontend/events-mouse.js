@@ -11,7 +11,8 @@ import { measurementPixelSpan } from './math.js';
 import { setTool, handleToolClick, handleSelectDown, handleDrag,
          canvasPoint, snapPoint, collectDxfSnapPoints,
          hitTestDxfEntity, findSnapLine,
-         promptArcFitChoice, finalizeArcFit, finalizeArea, finalizeSpline, finalizeFitLine } from './tools.js';
+         promptArcFitChoice, finalizeArcFit, finalizeArea, finalizeSpline, finalizeFitLine,
+         finalizeRelationPick } from './tools.js';
 import { isCrossModeActive } from './cross-mode.js';
 import { exitDxfAlignMode, openFeatureTolPopover } from './dxf.js';
 import { viewport, screenToImage, clampPan, fitToWindow, zoomOneToOne,
@@ -464,6 +465,10 @@ export function initMouseHandlers() {
         }
       }
     }
+    // Relation tools (Task 13): finish an in-progress inline circle/line fit
+    // before falling through to the per-tool multi-point dispatch below (a
+    // relation tool is never also one of those tools, so order is harmless).
+    if (finalizeRelationPick()) { e.preventDefault(); return; }
     // Multi-point tools: dblclick fires after 2 mousedowns (which each added a point).
     // Pop the duplicate from the second mousedown before finalizing.
     if (state.tool === "spline" && state.pendingPoints.length >= 3) {

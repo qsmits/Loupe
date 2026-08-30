@@ -22,6 +22,8 @@ export const state = {
   pendingRefLineClick: null,
   hoverRefLine: null,  // annotation the angle tool would capture on click
   pendingCircleRef: null,
+  pendingRelationFit: null,  // { kind: "circle" | "line" } while a relation tool's pick
+                             // slot is accumulating inline-fit points in pendingPoints (Task 13)
   origin: null,
   dragState: null,
   snapTarget: null,

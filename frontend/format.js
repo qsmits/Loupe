@@ -19,6 +19,9 @@ export function getLineEndpoints(ann, ctx = {}) {
   if (ann.type === "calibration" && ann.x1 !== undefined) {
     return { a: { x: ann.x1, y: ann.y1 }, b: { x: ann.x2, y: ann.y2 } };
   }
+  if (ann.type === "fit-line") {
+    return { a: { x: ann.x1, y: ann.y1 }, b: { x: ann.x2, y: ann.y2 } };
+  }
   if (ann.type === "detected-line") {
     const sx = ann.frameWidth  ? (ctx.imageWidth  || ann.frameWidth)  / ann.frameWidth  : 1;
     const sy = ann.frameHeight ? (ctx.imageHeight || ann.frameHeight) / ann.frameHeight : 1;

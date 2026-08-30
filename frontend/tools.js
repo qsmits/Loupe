@@ -48,6 +48,7 @@ export function setTool(name) {
   state.pendingRefLine = null;
   state.pendingRefLineClick = null;
   state.pendingCircleRef = null;
+  state.pendingRelationFit = null;
   state.hoverRefLine = null;
   state.snapTarget = null;
   state._previewCursor = null;
@@ -453,27 +454,38 @@ export async function handleToolClick(rawPt, e = {}) {
     return;
   }
 
-  // ── Relation tools (resurrected 2026-08-30, pick-only, stay-armed) ────────
+  // ── Relation tools (resurrected 2026-08-30, stay-armed) ───────────────────
   // Historical creation logic recovered from git show 2247278^:frontend/tools.js.
   // Stay-armed change vs. that history: every setTool("select") after
   // addAnnotation is replaced with a pending-state reset + updateToolStatus()
   // + redraw(), so the tool remains armed for the next pick. Task 13 (inline
-  // fitting) feeds detected/fitted elements through _consumePickedCircle /
-  // _consumePickedLine so the miss-path here (a status hint) will gain point
-  // accumulation without touching these branches.
+  // fitting): a miss on the relevant pick slot now arms state.pendingRelationFit
+  // and accumulates the snapped click into state.pendingPoints instead of just
+  // showing a status hint — finalizeRelationPick() (Enter/double-click/panel
+  // Finish) fits a first-class circle/fit-line annotation from those points and
+  // feeds it through the same _consumePickedCircle / _consumePickedLine used by
+  // a direct pick. Once pendingRelationFit is armed, a click that would
+  // otherwise snap to an existing circle/line is still treated as a fit point
+  // (the `&& !state.pendingRelationFit` guards below), not a pick.
 
   if (tool === "center-dist") {
     const circle = snapToCircle(pt);
-    if (circle) { _consumePickedCircle("center-dist", circle); }
-    else { showStatus("Center distance — click a fitted circle (inline fitting arrives with the palette)"); }
+    if (circle && !state.pendingRelationFit) { _consumePickedCircle("center-dist", circle); return; }
+    state.pendingRelationFit = { kind: "circle" };
+    state.pendingPoints.push(pt);
+    updateToolStatus();
+    redraw();
     return;
   }
 
   if (tool === "pt-circle-dist") {
     if (!state.pendingCircleRef) {
       const circle = snapToCircle(pt);
-      if (circle) { _consumePickedCircle("pt-circle-dist", circle); }
-      else { showStatus("Point↔circle — click a fitted circle first"); }
+      if (circle && !state.pendingRelationFit) { _consumePickedCircle("pt-circle-dist", circle); return; }
+      state.pendingRelationFit = { kind: "circle" };
+      state.pendingPoints.push(pt);
+      updateToolStatus();
+      redraw();
       return;
     }
     const { circleId } = state.pendingCircleRef;
@@ -486,10 +498,13 @@ export async function handleToolClick(rawPt, e = {}) {
 
   if (tool === "perp-dist") {
     if (!state.pendingRefLine) {
-      // Step 1: pick reference line
+      // Step 1: pick reference line, or accumulate inline-fit edge points
       const refAnn = findSnapLine(pt);
-      if (!refAnn) return; // no line nearby — ignore click
-      _consumePickedLine("perp-dist", refAnn);
+      if (refAnn && !state.pendingRelationFit) { _consumePickedLine("perp-dist", refAnn); return; }
+      state.pendingRelationFit = { kind: "line" };
+      state.pendingPoints.push(pt);
+      updateToolStatus();
+      redraw();
       return;
     }
     if (state.pendingPoints.length === 0) {
@@ -512,10 +527,13 @@ export async function handleToolClick(rawPt, e = {}) {
 
   if (tool === "para-dist") {
     if (!state.pendingRefLine) {
-      // Step 1: pick reference line
+      // Step 1: pick reference line, or accumulate inline-fit edge points
       const refAnn = findSnapLine(pt);
-      if (!refAnn) return; // no line nearby — ignore
-      _consumePickedLine("para-dist", refAnn);
+      if (refAnn && !state.pendingRelationFit) { _consumePickedLine("para-dist", refAnn); return; }
+      state.pendingRelationFit = { kind: "line" };
+      state.pendingPoints.push(pt);
+      updateToolStatus();
+      redraw();
       return;
     }
     // Step 2: check if click is on a different line (Mode A — parallelism measurement)
@@ -555,8 +573,11 @@ export async function handleToolClick(rawPt, e = {}) {
   if (tool === "slot-dist") {
     const snapped = findSnapLine(pt);
     if (!state.pendingRefLine) {
-      if (!snapped) return;
-      _consumePickedLine("slot-dist", snapped);
+      if (snapped && !state.pendingRelationFit) { _consumePickedLine("slot-dist", snapped); return; }
+      state.pendingRelationFit = { kind: "line" };
+      state.pendingPoints.push(pt);
+      updateToolStatus();
+      redraw();
       return;
     }
     if (!snapped) return;
@@ -573,8 +594,11 @@ export async function handleToolClick(rawPt, e = {}) {
   if (tool === "intersect") {
     const snapped = findSnapLine(pt);
     if (!state.pendingRefLine) {
-      if (!snapped) return;
-      _consumePickedLine("intersect", snapped);
+      if (snapped && !state.pendingRelationFit) { _consumePickedLine("intersect", snapped); return; }
+      state.pendingRelationFit = { kind: "line" };
+      state.pendingPoints.push(pt);
+      updateToolStatus();
+      redraw();
       return;
     }
     if (!snapped) return;
@@ -800,6 +824,55 @@ function _consumePickedLine(tool, lineAnn) {
   else if (tool === "para-dist") showStatus("Para — click a line to measure parallelism, or a free point to draw a parallel line");
   else showStatus("Now click a second line"); // slot-dist, intersect
   redraw();
+}
+
+// ── Inline fitting inside relation flows (Task 13) ───────────────────────────
+// Finalizes the points accumulated in state.pendingPoints while
+// state.pendingRelationFit is armed into a first-class circle/fit-line
+// annotation, then feeds it through the same consumer a direct pick would use
+// — so an inline-fitted element is indistinguishable from a picked one to the
+// rest of the relation flow (own number, own undo entry, draggable handles).
+// Called from the same three finalize entry points as the other multi-point
+// tools (dblclick, Enter, the Measure panel's Finish button); returns false
+// when there's nothing to finalize so those callers fall through to their
+// existing dispatch.
+export function finalizeRelationPick() {
+  if (!RELATION_TOOLS.has(state.tool) || !state.pendingRelationFit) return false;
+  const { kind } = state.pendingRelationFit;
+  if (kind === "circle") {
+    if (state.pendingPoints.length < 3) return false;
+    const fit = fitCircleAlgebraic(state.pendingPoints);
+    if (!fit) { showStatus("Could not fit a circle to those points"); return false; }
+    const circ = addAnnotation({ type: "circle", cx: fit.cx, cy: fit.cy, r: fit.r });
+    state.pendingPoints = [];
+    state.pendingRelationFit = null;
+    _consumePickedCircle(state.tool, circ);
+  } else {
+    if (state.pendingPoints.length < 2) return false;
+    const fit = fitLine(state.pendingPoints);
+    if (!fit) { showStatus("Could not fit a line to those points"); return false; }
+    // Same shape finalizeFitLine() produces (tools.js) — a fit-line created
+    // here must be indistinguishable from one made with the Flatness tool.
+    const pts = state.pendingPoints;
+    const { cx, cy, dx, dy } = fit;
+    const nx = -dy, ny = dx;
+    const dists = pts.map(p => (p.x - cx) * nx + (p.y - cy) * ny);
+    const zoneMin = Math.min(...dists);
+    const zoneMax = Math.max(...dists);
+    const zoneWidth = zoneMax - zoneMin;
+    const line = addAnnotation({
+      type: "fit-line", points: [...pts],
+      cx, cy, dx, dy,
+      x1: fit.x1, y1: fit.y1, x2: fit.x2, y2: fit.y2,
+      zoneWidth, zoneMin, zoneMax,
+    });
+    state.pendingPoints = [];
+    state.pendingRelationFit = null;
+    _consumePickedLine(state.tool, line);
+  }
+  updateToolStatus();
+  redraw();
+  return true;
 }
 
 export function handleDrag(pt) {

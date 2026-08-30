@@ -2,7 +2,7 @@ import './dom-stub.js';
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { state } from '../../frontend/state.js';
-import { setTool, handleToolClick, RELATION_TOOLS, nudgeSelected } from '../../frontend/tools.js';
+import { setTool, handleToolClick, RELATION_TOOLS, nudgeSelected, finalizeRelationPick } from '../../frontend/tools.js';
 import { addAnnotation } from '../../frontend/annotations.js';
 import { getStatus } from '../../frontend/render.js';
 import { measurementNumeric } from '../../frontend/format.js';
@@ -16,6 +16,7 @@ beforeEach(() => {
   state.calibration = null;
   state.pendingPoints = []; state.pendingRefLine = null;
   state.pendingCenterCircle = null; state.pendingCircleRef = null;
+  state.pendingRelationFit = null;
 });
 
 describe('center-dist resurrection', () => {
@@ -149,10 +150,12 @@ describe('pt-circle-dist resurrection', () => {
     assert.equal(state.pendingCircleRef, null);
   });
 
-  it('miss-click with no circle picked shows a status hint and creates nothing', async () => {
+  it('miss-click with no circle picked accumulates an inline-fit point instead of creating anything', async () => {
     setTool('pt-circle-dist');
     await handleToolClick({ x: 500, y: 500 });   // no circle nearby
     assert.equal(state.annotations.length, 0);
+    assert.equal(state.pendingRelationFit?.kind, 'circle');
+    assert.equal(state.pendingPoints.length, 1);
     assert.match(getStatus(), /circle/i);
     assert.equal(state.tool, 'pt-circle-dist');
   });
@@ -238,11 +241,13 @@ describe('slot-dist resurrection', () => {
   });
 });
 
-describe('miss-path status hints (pick-only, no inline fitting yet)', () => {
-  it('center-dist miss-click shows a hint and creates nothing', async () => {
+describe('miss-path accumulates an inline-fit point (Task 13)', () => {
+  it('center-dist miss-click arms inline fitting and creates nothing yet', async () => {
     setTool('center-dist');
     await handleToolClick({ x: 500, y: 500 });   // no circle nearby
     assert.equal(state.annotations.length, 0);
+    assert.equal(state.pendingRelationFit?.kind, 'circle');
+    assert.equal(state.pendingPoints.length, 1);
     assert.match(getStatus(), /circle/i);
     assert.equal(state.tool, 'center-dist');
   });
@@ -252,5 +257,93 @@ describe('RELATION_TOOLS registry', () => {
   it('contains exactly the six relation tools', () => {
     assert.deepEqual([...RELATION_TOOLS].sort(),
       ['center-dist', 'intersect', 'para-dist', 'perp-dist', 'pt-circle-dist', 'slot-dist']);
+  });
+});
+
+describe('inline fitting inside center-dist (circle kind)', () => {
+  it('bare-edge clicks accumulate, Enter (finalizeRelationPick) fits a first-class circle and feeds the relation', async () => {
+    const c1 = addAnnotation({ type: 'circle', cx: 100, cy: 100, r: 30 });
+    setTool('center-dist');
+    await handleToolClick({ x: 130, y: 100 });   // pick existing circle 1 (its edge)
+    // no circle near (400,300): three edge clicks around an imaginary Ø60 hole
+    await handleToolClick({ x: 430, y: 300 });
+    await handleToolClick({ x: 400, y: 330 });
+    await handleToolClick({ x: 370, y: 300 });
+    assert.equal(state.pendingRelationFit?.kind, 'circle');
+    assert.equal(state.pendingPoints.length, 3);
+    assert.equal(finalizeRelationPick(), true);
+    const circles = state.annotations.filter(a => a.type === 'circle');
+    assert.equal(circles.length, 2, 'inline fit created a first-class circle');
+    assert.ok(Math.abs(circles[1].cx - 400) < 1e-6 && Math.abs(circles[1].cy - 300) < 1e-6 && Math.abs(circles[1].r - 30) < 1e-6,
+      'fitted circle matches the 3 edge points');
+    const rel = state.annotations.find(a => a.type === 'center-dist');
+    assert.ok(rel, 'relation completed from the inline fit');
+    assert.equal(rel.circleAId, c1.id);
+    assert.equal(rel.circleBId, circles[1].id);
+    assert.equal(state.pendingRelationFit, null);
+    assert.equal(state.pendingPoints.length, 0);
+    assert.equal(state.tool, 'center-dist');   // stays armed, like a direct pick
+  });
+
+  it('a miss while already mid-fit still accumulates, even if it lands near another circle (no pick-through)', async () => {
+    const c1 = addAnnotation({ type: 'circle', cx: 100, cy: 100, r: 30 });
+    const decoy = addAnnotation({ type: 'circle', cx: 400, cy: 300, r: 30 });
+    setTool('center-dist');
+    await handleToolClick({ x: 130, y: 100 });   // pick c1
+    await handleToolClick({ x: 900, y: 900 });   // miss — arms inline fitting
+    assert.equal(state.pendingRelationFit?.kind, 'circle');
+    // This click lands right on the decoy circle's edge, but a fit is already
+    // in progress — it must accumulate as a fit point, not pick the decoy.
+    await handleToolClick({ x: 430, y: 300 });
+    assert.equal(state.pendingPoints.length, 2);
+    assert.equal(state.annotations.filter(a => a.type === 'center-dist').length, 0,
+      'no relation completed — the decoy was not picked');
+  });
+
+  it('finalizeRelationPick is a no-op outside relation fitting', () => {
+    setTool('distance');
+    assert.equal(finalizeRelationPick(), false);
+  });
+
+  it('finalizeRelationPick is a no-op with too few accumulated points', async () => {
+    setTool('center-dist');
+    await handleToolClick({ x: 430, y: 300 });
+    await handleToolClick({ x: 400, y: 330 });   // only 2 — circle fit needs 3
+    assert.equal(state.pendingPoints.length, 2);
+    assert.equal(finalizeRelationPick(), false);
+    assert.equal(state.pendingRelationFit?.kind, 'circle', 'stays armed for one more point');
+  });
+});
+
+describe('inline fitting inside perp-dist (line kind)', () => {
+  it('two bare clicks accumulate, finalizeRelationPick fits a first-class fit-line and feeds the ref-line slot', async () => {
+    setTool('perp-dist');
+    await handleToolClick({ x: 0, y: 0 });      // no line nearby — arms inline fitting
+    await handleToolClick({ x: 200, y: 0 });    // second edge point — horizontal line
+    assert.equal(state.pendingRelationFit?.kind, 'line');
+    assert.equal(state.pendingPoints.length, 2);
+
+    assert.equal(finalizeRelationPick(), true);
+    const fitLines = state.annotations.filter(a => a.type === 'fit-line');
+    assert.equal(fitLines.length, 1, 'inline fit created a first-class fit-line');
+    const fl = fitLines[0];
+    // Same field set finalizeFitLine() produces.
+    for (const f of ['points', 'cx', 'cy', 'dx', 'dy', 'x1', 'y1', 'x2', 'y2', 'zoneWidth', 'zoneMin', 'zoneMax']) {
+      assert.ok(f in fl, `fit-line missing field ${f}`);
+    }
+    assert.equal(state.pendingRefLine?.id, fl.id, 'fit-line consumed as the reference line');
+    assert.equal(state.pendingRelationFit, null);
+    assert.equal(state.pendingPoints.length, 0);
+
+    // Ref line established from the inline fit — perp-dist now expects the
+    // start point, exactly like the pick-only flow.
+    await handleToolClick({ x: 60, y: 10 });     // start point
+    await handleToolClick({ x: 999, y: 999 });   // end point (raw), gets constrained
+    const rel = state.annotations.find(a => a.type === 'perp-dist');
+    assert.ok(rel, 'perp-dist completed using the inline-fitted ref line');
+    assert.equal(rel.a.x, 60);
+    assert.equal(rel.a.y, 10);
+    assert.ok(Math.abs(rel.b.x - 60) < 1e-9, 'perpendicular constraint honors the fitted horizontal line');
+    assert.equal(state.tool, 'perp-dist');       // stays armed
   });
 });
