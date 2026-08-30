@@ -13,7 +13,13 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { getLineEndpoints, lineAngleDeg, measurementLabel } from '../../frontend/format.js';
+import {
+  getLineEndpoints, lineAngleDeg, measurementLabel,
+  measurementNumeric, centerDistPx, formatCsvValue,
+} from '../../frontend/format.js';
+
+// Stub alert (polygonArea's dependency math.js may call it)
+globalThis.alert = globalThis.alert || (() => {});
 
 const detectedLine = (overrides = {}) => ({
   type: 'detected-line',
@@ -111,5 +117,153 @@ describe('measurementLabel — pt-circle-dist referencing a detected-circle', ()
       imageWidth: 1000, imageHeight: 800,
     });
     assert.equal(label, '⊙ 200.0 px');
+  });
+});
+
+describe('centerDistPx', () => {
+  it('plain center-to-center pixel distance', () => {
+    const ann = { type: 'center-dist', a: { x: 0, y: 0 }, b: { x: 30, y: 40 } };
+    assert.equal(centerDistPx(ann, {}), 50);
+  });
+});
+
+describe('measurementNumeric', () => {
+  const cal = { pixelsPerMm: 100, displayUnit: 'mm' };
+
+  it('distance in mm when calibrated', () => {
+    const ann = { type: 'distance', a: { x: 0, y: 0 }, b: { x: 300, y: 400 } };
+    assert.deepEqual(measurementNumeric(ann, { calibration: cal }), { value: 5, unit: 'mm' });
+  });
+
+  it('distance in px when uncalibrated', () => {
+    const ann = { type: 'distance', a: { x: 0, y: 0 }, b: { x: 30, y: 40 } };
+    assert.deepEqual(measurementNumeric(ann, {}), { value: 50, unit: 'px' });
+  });
+
+  it('circle reports diameter', () => {
+    const ann = { type: 'circle', cx: 0, cy: 0, r: 100 };
+    assert.deepEqual(measurementNumeric(ann, { calibration: cal }), { value: 2, unit: 'mm' });
+  });
+
+  it('parallelism reports degrees', () => {
+    const ann = { type: 'parallelism', a: { x: 0, y: 0 }, b: { x: 1, y: 1 }, angleDeg: 1.25 };
+    assert.deepEqual(measurementNumeric(ann, {}), { value: 1.25, unit: '°' });
+  });
+
+  it('pt-circle-dist resolves the referenced circle', () => {
+    const circle = { id: 1, type: 'circle', cx: 0, cy: 0, r: 100 };
+    const ann = { type: 'pt-circle-dist', circleId: 1, px: 300, py: 0 };
+    assert.deepEqual(measurementNumeric(ann, { calibration: cal, annotations: [circle, ann] }),
+                     { value: 2, unit: 'mm' });  // 300px to center − 100px radius = 200px = 2mm
+  });
+
+  it('slot-dist resolves both referenced lines', () => {
+    const l1 = { id: 1, type: 'distance', a: { x: 0, y: 0 }, b: { x: 100, y: 0 } };
+    const l2 = { id: 2, type: 'distance', a: { x: 0, y: 50 }, b: { x: 100, y: 50 } };
+    const ann = { type: 'slot-dist', lineAId: 1, lineBId: 2 };
+    assert.deepEqual(measurementNumeric(ann, { calibration: cal, annotations: [l1, l2, ann] }),
+                     { value: 0.5, unit: 'mm' });
+  });
+
+  it('returns null for valueless types', () => {
+    assert.equal(measurementNumeric({ type: 'comment', text: 'x' }, {}), null);
+    assert.equal(measurementNumeric({ type: 'intersect', lineAId: 1, lineBId: 2 }, {}), null);
+    assert.equal(measurementNumeric({ type: 'point', x: 1, y: 1 }, {}), null);
+    assert.equal(measurementNumeric({ type: 'origin', x: 0, y: 0 }, {}), null);
+  });
+
+  it('returns null when a ref-resolving type points at a missing annotation', () => {
+    assert.equal(measurementNumeric({ type: 'pt-circle-dist', circleId: 99, px: 0, py: 0 },
+                                     { calibration: cal, annotations: [] }), null);
+    assert.equal(measurementNumeric({ type: 'slot-dist', lineAId: 1, lineBId: 2 },
+                                     { calibration: cal, annotations: [] }), null);
+  });
+
+  it('label parity: numeric matches the number printed in the label', () => {
+    const circle = { id: 1, type: 'circle', cx: 0, cy: 0, r: 40 };
+    const l1 = { id: 1, type: 'distance', a: { x: 0, y: 0 }, b: { x: 100, y: 0 } };
+    const l2 = { id: 2, type: 'distance', a: { x: 0, y: 50 }, b: { x: 100, y: 50 } };
+    const cases = [
+      { ann: { type: 'distance', a: { x: 0, y: 0 }, b: { x: 300, y: 400 } } },
+      { ann: { type: 'circle', cx: 0, cy: 0, r: 123 } },
+      { ann: { type: 'center-dist', a: { x: 0, y: 0 }, b: { x: 250, y: 0 } } },
+      { ann: { type: 'perp-dist', a: { x: 0, y: 0 }, b: { x: 0, y: 170 } } },
+      { ann: { type: 'para-dist', a: { x: 0, y: 0 }, b: { x: 90, y: 0 } } },
+      { ann: { type: 'angle', vertex: { x: 0, y: 0 }, p1: { x: 1, y: 0 }, p3: { x: 0, y: 1 } } },
+      { ann: { type: 'parallelism', a: { x: 0, y: 0 }, b: { x: 1, y: 1 }, angleDeg: 1.25 } },
+      { ann: { type: 'arc-fit', startAngle: 0, r: 120 } },        // arc branch: R
+      { ann: { type: 'arc-fit', r: 60 } },                        // full-circle branch: ⌀
+      { ann: { type: 'fit-line', zoneWidth: 30 } },
+      { ann: { type: 'arc-measure', r: 100, span_deg: 90, chord_px: 141.4, cx: 50, cy: 50 } },
+      { ann: { type: 'spline', length_px: 250 } },
+      { ann: { type: 'calibration', x1: 0, y1: 0, x2: 100, y2: 0, knownValue: 5, unit: 'mm' } },
+      { ann: { type: 'area', points: [{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 100 }, { x: 0, y: 100 }] } },
+      { ann: { type: 'detected-arc-partial', r: 80, start_deg: 10, end_deg: 100 } },
+      {
+        ann: { type: 'detected-circle', radius: 50, frameWidth: 500 },
+        ctx: { imageWidth: 1000 },
+      },
+      {
+        ann: { type: 'detected-line', length: 150, frameWidth: 300 },
+        ctx: { imageWidth: 600 },
+      },
+      {
+        ann: { type: 'detected-line-merged', x1: 0, y1: 0, x2: 100, y2: 0, frameWidth: 200 },
+        ctx: { imageWidth: 400 },
+      },
+      {
+        ann: { type: 'pt-circle-dist', circleId: 1, px: 300, py: 0 },
+        ctx: { annotations: [circle] },
+      },
+      {
+        ann: { type: 'slot-dist', lineAId: 1, lineBId: 2 },
+        ctx: { annotations: [l1, l2] },
+      },
+    ];
+    for (const { ann, ctx: extra = {} } of cases) {
+      const fullCtx = { calibration: cal, annotations: [], ...extra };
+      const n = measurementNumeric(ann, fullCtx);
+      const label = measurementLabel(ann, fullCtx);
+      const printed = parseFloat(label.replace(/[^\d.\-]+/g, ' ').trim().split(/\s+/)[0]);
+      assert.ok(n, `${ann.type}: measurementNumeric returned null`);
+      assert.ok(Math.abs(n.value - printed) < 0.002,
+        `${ann.type}: numeric ${n.value} vs label "${label}"`);
+    }
+  });
+});
+
+describe('formatCsvValue regressions', () => {
+  it('arc-measure returns {value, unit} (was a bare string)', () => {
+    // Fixture uses the fields the real measurementLabel arc-measure branch
+    // reads (r, span_deg, chord_px, cx, cy) — not p1/p2/p3.
+    const ann = { type: 'arc-measure', r: 100, span_deg: 90, chord_px: 141.4, cx: 50, cy: 50 };
+    const out = formatCsvValue(ann, { pixelsPerMm: 100, displayUnit: 'mm' }, 1000);
+    assert.equal(typeof out.value, 'string');
+    assert.ok(out.unit.length > 0);
+    assert.ok(out.value.includes('r='));
+  });
+
+  it('pt-circle-dist no longer exports blank', () => {
+    const circle = { id: 1, type: 'circle', cx: 0, cy: 0, r: 100 };
+    const ann = { type: 'pt-circle-dist', circleId: 1, px: 300, py: 0 };
+    const out = formatCsvValue(ann, null, 1000, { annotations: [circle, ann] });
+    assert.notEqual(out.value, '');
+  });
+
+  it('slot-dist no longer exports blank', () => {
+    const l1 = { id: 1, type: 'distance', a: { x: 0, y: 0 }, b: { x: 100, y: 0 } };
+    const l2 = { id: 2, type: 'distance', a: { x: 0, y: 50 }, b: { x: 100, y: 50 } };
+    const ann = { type: 'slot-dist', lineAId: 1, lineBId: 2 };
+    const out = formatCsvValue(ann, null, 1000, { annotations: [l1, l2, ann] });
+    assert.notEqual(out.value, '');
+  });
+
+  it('intersect no longer exports blank', () => {
+    const l1 = { id: 1, type: 'distance', a: { x: 0, y: 0 }, b: { x: 100, y: 0 } };
+    const l2 = { id: 2, type: 'distance', a: { x: 50, y: -50 }, b: { x: 50, y: 50 } };
+    const ann = { type: 'intersect', lineAId: 1, lineBId: 2 };
+    const out = formatCsvValue(ann, null, 1000, { annotations: [l1, l2, ann] });
+    assert.notEqual(out.value, '');
+    assert.equal(out.unit, 'px');
   });
 });

@@ -52,7 +52,7 @@ export function exportCsv() {
   state.annotations.forEach(ann => {
     const label = measurementLabel(ann, _mctx());
     if (!label) return;  // skip origin / overlays
-    const { value, unit } = formatCsvValue(ann, state.calibration, imageWidth);
+    const { value, unit } = formatCsvValue(ann, state.calibration, imageWidth, _mctx());
     rows.push([i++, ann.name || "", value, unit, ann.type, label]);
   });
   const csv = rows

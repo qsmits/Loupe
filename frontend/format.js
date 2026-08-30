@@ -318,54 +318,181 @@ export function measurementLabel(ann, ctx) {
   return "";
 }
 
+/** Raw numeric value of a measurement in its base unit (mm/px, \u00b0, mm\u00b2/px\u00b2).
+ *  Single source of truth for tolerance evaluation and CSV export.
+ *  Branch expressions mirror measurementLabel exactly \u2014 keep them in lockstep.
+ * @param {object} ann - annotation object
+ * @param {object} ctx - { calibration, annotations, origin, imageWidth, imageHeight }
+ * @returns {{ value: number, unit: string } | null}
+ */
+export function measurementNumeric(ann, ctx = {}) {
+  const cal = ctx.calibration && ctx.calibration.pixelsPerMm > 0 ? ctx.calibration : null;
+  const len = px => cal ? { value: px / cal.pixelsPerMm, unit: 'mm' } : { value: px, unit: 'px' };
+  const area = px2 => cal
+    ? { value: px2 / (cal.pixelsPerMm * cal.pixelsPerMm), unit: 'mm\u00b2' }
+    : { value: px2, unit: 'px\u00b2' };
+
+  switch (ann.type) {
+    case 'distance':
+    case 'perp-dist':
+    case 'para-dist':
+      return len(Math.hypot(ann.b.x - ann.a.x, ann.b.y - ann.a.y));
+    case 'center-dist':
+      return len(centerDistPx(ann, ctx));
+    case 'angle': {
+      const v1 = { x: ann.p1.x - ann.vertex.x, y: ann.p1.y - ann.vertex.y };
+      const v2 = { x: ann.p3.x - ann.vertex.x, y: ann.p3.y - ann.vertex.y };
+      const dot = v1.x * v2.x + v1.y * v2.y;
+      const mag = Math.hypot(v1.x, v1.y) * Math.hypot(v2.x, v2.y);
+      const deg = mag < 1e-10 ? 0 : Math.acos(Math.max(-1, Math.min(1, dot / mag))) * 180 / Math.PI;
+      return { value: deg, unit: '\u00b0' };
+    }
+    case 'circle':
+      return len(ann.r * 2);
+    case 'arc-fit': {
+      const isArc = ann.startAngle !== undefined;
+      return isArc ? len(ann.r) : len(ann.r * 2);
+    }
+    case 'fit-line':
+      return len(ann.zoneWidth || 0);
+    case 'detected-circle': {
+      const sx = ctx.imageWidth / ann.frameWidth;
+      const r = ann.radius * sx;
+      return len(r * 2);
+    }
+    case 'detected-line': {
+      const sx = ctx.imageWidth / ann.frameWidth;
+      const lenPx = ann.length * sx;
+      return len(lenPx);
+    }
+    case 'detected-line-merged': {
+      const sx = ann.frameWidth ? ctx.imageWidth / ann.frameWidth : 1;
+      const lenPx = Math.hypot((ann.x2 - ann.x1) * sx, (ann.y2 - ann.y1) * sx);
+      return len(lenPx);
+    }
+    case 'detected-arc-partial': {
+      const sx = ann.frameWidth ? ctx.imageWidth / ann.frameWidth : 1;
+      const rPx = ann.r * sx;
+      return len(rPx);
+    }
+    case 'arc-measure':
+      return len(ann.r);
+    case 'spline':
+      return len(ann.length_px || 0);
+    case 'calibration':
+      // Not calibration-derived: this IS the calibration definition, already
+      // expressed in its own declared unit (mirrors measurementLabel exactly).
+      return { value: ann.knownValue, unit: ann.unit };
+    case 'parallelism':
+      return { value: ann.angleDeg, unit: '\u00b0' };
+    case 'area':
+      return area(polygonArea(ann.points));
+    case 'pt-circle-dist': {
+      const circle = (ctx.annotations || []).find(a => a.id === ann.circleId);
+      if (!circle) return null;
+      let cx, cy, r;
+      if (circle.type === 'circle') {
+        cx = circle.cx; cy = circle.cy; r = circle.r;
+      } else {
+        const sx = circle.frameWidth  ? (ctx.imageWidth  || circle.frameWidth)  / circle.frameWidth  : 1;
+        const sy = circle.frameHeight ? (ctx.imageHeight || circle.frameHeight) / circle.frameHeight : 1;
+        cx = circle.x * sx; cy = circle.y * sy; r = circle.radius * sx;
+      }
+      const dist = Math.hypot(ann.px - cx, ann.py - cy);
+      return len(dist - r);
+    }
+    case 'slot-dist': {
+      const annA = (ctx.annotations || []).find(a => a.id === ann.lineAId);
+      const annB = (ctx.annotations || []).find(a => a.id === ann.lineBId);
+      if (!annA || !annB) return null;
+      const epA = getLineEndpoints(annA, ctx);
+      const epB = getLineEndpoints(annB, ctx);
+      if (!epA || !epB) return null;
+      const midA = { x: (epA.a.x + epA.b.x) / 2, y: (epA.a.y + epA.b.y) / 2 };
+      const dx_b = epB.b.x - epB.a.x, dy_b = epB.b.y - epB.a.y;
+      const lenSqB = dx_b * dx_b + dy_b * dy_b;
+      if (lenSqB < 1e-10) return len(0);
+      const t = ((midA.x - epB.a.x) * dx_b + (midA.y - epB.a.y) * dy_b) / lenSqB;
+      const projA = { x: epB.a.x + t * dx_b, y: epB.a.y + t * dy_b };
+      const gapPx = Math.hypot(midA.x - projA.x, midA.y - projA.y);
+      return len(gapPx);
+    }
+    default:
+      return null; // comment, point, origin, intersect, overlays: no scalar value
+  }
+}
+
+/** Center-to-center pixel distance (Task 14 extends with pattern min/max). */
+export function centerDistPx(ann, ctx = {}) {
+  return Math.hypot(ann.b.x - ann.a.x, ann.b.y - ann.a.y);
+}
+
 /**
- * Format an annotation for CSV export.
+ * Adapts measurementLabel's intersect coordinate math into a CSV-exportable
+ * {value, unit} pair. intersect has no single scalar (it's a 2D point), so
+ * measurementNumeric returns null for it \u2014 this keeps the CSV row non-blank.
+ */
+function intersectCsvValue(ann, ctx) {
+  const annA = (ctx.annotations || []).find(a => a.id === ann.lineAId);
+  const annB = (ctx.annotations || []).find(a => a.id === ann.lineBId);
+  if (!annA || !annB) return { value: "", unit: "" };
+  const epA = getLineEndpoints(annA, ctx);
+  const epB = getLineEndpoints(annB, ctx);
+  if (!epA || !epB) return { value: "", unit: "" };
+  const dA = lineAngleDeg(annA, ctx), dB = lineAngleDeg(annB, ctx);
+  let diff = Math.abs(dA - dB) % 180;
+  if (diff > 90) diff = 180 - diff;
+  if (diff < 1) return { value: "", unit: "" };
+  const dx_a = epA.b.x - epA.a.x, dy_a = epA.b.y - epA.a.y;
+  const dx_b = epB.b.x - epB.a.x, dy_b = epB.b.y - epB.a.y;
+  const denom = dx_a * dy_b - dy_a * dx_b;
+  if (Math.abs(denom) < 1e-10) return { value: "", unit: "" };
+  const t = ((epB.a.x - epA.a.x) * dy_b - (epB.a.y - epA.a.y) * dx_b) / denom;
+  const ix = epA.a.x + t * dx_a;
+  const iy = epA.a.y + t * dy_a;
+  const org = ctx.origin;
+  let ux = ix, uy = iy;
+  if (org) {
+    const cosA = Math.cos(-(org.angle ?? 0)), sinA = Math.sin(-(org.angle ?? 0));
+    const rx = ix - org.x, ry = iy - org.y;
+    ux = rx * cosA - ry * sinA;
+    uy = rx * sinA + ry * cosA;
+  }
+  const cal = ctx.calibration && ctx.calibration.pixelsPerMm > 0 ? ctx.calibration : null;
+  if (!cal) return { value: `${ux.toFixed(1)}, ${uy.toFixed(1)}`, unit: "px" };
+  const mmX = ux / cal.pixelsPerMm, mmY = uy / cal.pixelsPerMm;
+  if (cal.displayUnit === "\u00b5m") {
+    return { value: `${(mmX * 1000).toFixed(1)}, ${(mmY * 1000).toFixed(1)}`, unit: "\u00b5m" };
+  }
+  return { value: `${mmX.toFixed(3)}, ${mmY.toFixed(3)}`, unit: "mm" };
+}
+
+/**
+ * Format an annotation for CSV export. Delegates to measurementNumeric for
+ * the raw scalar, then applies CSV's own precision/unit conventions.
  * @param {object} ann - annotation object
  * @param {object} calibration - calibration state (or null)
  * @param {number} imgWidth - image width in pixels
- * @returns {{ value: string, unit: string } | string}
+ * @param {object} ctx - { annotations, origin, imageHeight } for ref-resolving
+ *                        types (pt-circle-dist, slot-dist, intersect)
+ * @returns {{ value: string, unit: string }}
  */
-export function formatCsvValue(ann, calibration, imgWidth) {
+export function formatCsvValue(ann, calibration, imgWidth, ctx = {}) {
   const cal = calibration;
+  const mctx = {
+    calibration: cal,
+    imageWidth: imgWidth,
+    imageHeight: ctx.imageHeight,
+    annotations: ctx.annotations || [],
+    origin: ctx.origin,
+  };
 
-  function distResult(px) {
-    if (!cal) return { value: px.toFixed(1), unit: "px" };
-    const mm = px / cal.pixelsPerMm;
-    if (cal.displayUnit === "\u00b5m") return { value: (mm * 1000).toFixed(1), unit: "\u00b5m" };
-    return { value: mm.toFixed(3), unit: "mm" };
-  }
-
-  function areaResult(px2) {
-    if (!cal) return { value: px2.toFixed(1), unit: "px\u00b2" };
-    const mm2 = px2 / (cal.pixelsPerMm * cal.pixelsPerMm);
-    if (cal.displayUnit === "\u00b5m") return { value: (mm2 * 1e6).toFixed(1), unit: "\u00b5m\u00b2" };
-    return { value: mm2.toFixed(4), unit: "mm\u00b2" };
+  if (ann.type === "intersect") {
+    return intersectCsvValue(ann, mctx);
   }
 
-  if (ann.type === "distance" || ann.type === "perp-dist" || ann.type === "para-dist") {
-    return distResult(Math.hypot(ann.b.x - ann.a.x, ann.b.y - ann.a.y));
-  }
-  if (ann.type === "center-dist") {
-    return distResult(Math.hypot(ann.b.x - ann.a.x, ann.b.y - ann.a.y));
-  }
-  if (ann.type === "angle") {
-    const v1 = { x: ann.p1.x - ann.vertex.x, y: ann.p1.y - ann.vertex.y };
-    const v2 = { x: ann.p3.x - ann.vertex.x, y: ann.p3.y - ann.vertex.y };
-    const dot = v1.x * v2.x + v1.y * v2.y;
-    const mag = Math.hypot(v1.x, v1.y) * Math.hypot(v2.x, v2.y);
-    const deg = mag < 1e-10 ? 0 : Math.acos(Math.max(-1, Math.min(1, dot / mag))) * 180 / Math.PI;
-    return { value: deg.toFixed(2), unit: "\u00b0" };
-  }
-  if (ann.type === "circle") {
-    return distResult(ann.r * 2);
-  }
-  if (ann.type === "arc-fit") {
-    return distResult(ann.r * 2);
-  }
-  if (ann.type === "fit-line") {
-    return distResult(ann.zoneWidth || 0);
-  }
   if (ann.type === "arc-measure") {
+    const n = measurementNumeric(ann, mctx);
     const ppm = cal ? cal.pixelsPerMm : 1;
     const r_mm = ann.r / ppm;
     const chord_mm = ann.chord_px / ppm;
@@ -380,29 +507,28 @@ export function formatCsvValue(ann, calibration, imgWidth) {
     const centerStr = cal
       ? `(${cx_mm.toFixed(3)}, ${cy_mm.toFixed(3)}) mm`
       : `(${ann.cx.toFixed(1)}, ${ann.cy.toFixed(1)}) px`;
-    return `center=${centerStr}  r=${rStr}  span ${ann.span_deg.toFixed(1)}\u00b0  chord=${chordStr}`;
+    const value = `center=${centerStr}  r=${rStr}  span ${ann.span_deg.toFixed(1)}\u00b0  chord=${chordStr}`;
+    return { value, unit: n ? n.unit : (cal ? "mm" : "px") };
   }
-  if (ann.type === "detected-circle") {
-    const sx = imgWidth / ann.frameWidth;
-    return distResult((ann.radius * sx) * 2);
+
+  const n = measurementNumeric(ann, mctx);
+  if (!n) return { value: "", unit: "" };
+
+  switch (n.unit) {
+    case "mm":
+      if (cal && cal.displayUnit === "\u00b5m") return { value: (n.value * 1000).toFixed(1), unit: "\u00b5m" };
+      return { value: n.value.toFixed(3), unit: "mm" };
+    case "px":
+      return { value: n.value.toFixed(1), unit: "px" };
+    case "\u00b0":
+      return { value: n.value.toFixed(2), unit: "\u00b0" };
+    case "mm\u00b2":
+      if (cal && cal.displayUnit === "\u00b5m") return { value: (n.value * 1e6).toFixed(1), unit: "\u00b5m\u00b2" };
+      return { value: n.value.toFixed(4), unit: "mm\u00b2" };
+    case "px\u00b2":
+      return { value: n.value.toFixed(1), unit: "px\u00b2" };
+    default:
+      // calibration: value/unit already expressed in their own declared unit.
+      return { value: String(n.value), unit: n.unit };
   }
-  if (ann.type === "area") {
-    return areaResult(polygonArea(ann.points));
-  }
-  if (ann.type === "spline") {
-    return distResult(ann.length_px || 0);
-  }
-  if (ann.type === "parallelism") {
-    return { value: ann.angleDeg.toFixed(2), unit: "\u00b0" };
-  }
-  if (ann.type === "calibration") {
-    let px;
-    if (ann.x1 !== undefined) {
-      px = Math.hypot(ann.x2 - ann.x1, ann.y2 - ann.y1);
-    } else {
-      px = ann.r * 2;
-    }
-    return distResult(px);
-  }
-  return { value: "", unit: "" };
 }
