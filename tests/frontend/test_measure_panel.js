@@ -111,3 +111,20 @@ describe('MeasurePanel width ownership', () => {
     assert.equal(root.props.style.width, '420px');
   });
 });
+
+describe('panel buttons dispatch', () => {
+  it('finish button dispatches measure-panel-action', () => {
+    state.tool = 'arc-fit';
+    state.pendingPoints = [{ x: 0, y: 10 }, { x: 10, y: 0 }, { x: 0, y: -10 }];
+    let got = null;
+    const h = e => { got = e.detail; };
+    document.addEventListener('measure-panel-action', h);
+    const tree = expand(MeasurePanel());
+    // find the primary button and invoke its onClick
+    const btns = tree.filter(n => hasClass(n, 'mp-btn-pri'));
+    assert.equal(btns.length, 1);
+    btns[0].props.onClick();
+    document.removeEventListener('measure-panel-action', h);
+    assert.deepEqual(got, { action: 'finish' });
+  });
+});

@@ -8,7 +8,7 @@ import { renderSidebar, loadCameraInfo, loadUiConfig, loadTolerances,
          startCameraStatsPolling, stopCameraStatsPolling } from './sidebar.js';
 import { deleteAnnotation, addAnnotation, elevateSelected, clearDetections, clearMeasurements, clearDxfOverlay, clearAll, clearCalSource } from './annotations.js';
 import { assembleTemplate, downloadTemplate, readTemplateFile } from './template.js';
-import { setTool } from './tools.js';
+import { setTool, promptArcFitChoice, finalizeArea, finalizeSpline, finalizeFitLine, finalizeArcFit } from './tools.js';
 import { initDxfHandlers, measurementsAsDxf } from './dxf.js';
 import { doFreeze, initDetectHandlers } from './detect.js';
 import { initCompareHandlers } from './compare.js';
@@ -23,7 +23,6 @@ import { initLensCal, openLensCalDialog } from './lens-cal.js';
 import { initTiltCal, openTiltCalDialog, hasPerspectiveCorrection, undoPerspectiveCorrection } from './tilt-cal.js';
 import { initCalProfiles, openCalProfiles } from './cal-profiles.js';
 import { isBrowserCameraActive, startBrowserCamera, stopBrowserCamera, adoptBrowserCameraSize } from './browser-camera.js';
-import { finalizeArcFit } from './tools.js';
 import { initZstack } from './zstack.js';
 import { initStitch } from './stitch.js';
 import { initSuperRes } from './superres.js';
@@ -131,6 +130,18 @@ document.addEventListener("toolbar-action", e => {
   if (action === "undo") undo();
   else if (action === "redo") redo();
   else if (action === "origin") toggleOriginMode();
+});
+
+document.addEventListener("measure-panel-action", e => {
+  const action = e.detail?.action;
+  if (action === "finish") {
+    if (state.tool === "arc-fit" && state.pendingPoints.length >= 3) promptArcFitChoice();
+    else if (state.tool === "area" && state.pendingPoints.length >= 3) finalizeArea();
+    else if (state.tool === "spline" && state.pendingPoints.length >= 2) finalizeSpline();
+    else if (state.tool === "fit-line" && state.pendingPoints.length >= 2) finalizeFitLine();
+  } else if (action === "cancel") {
+    setTool("select");
+  }
 });
 
 // Frame provider for lazy re-upload (api.js apiFetchFrame): the stored
