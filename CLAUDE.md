@@ -62,6 +62,7 @@ Priority order at startup:
 - `frontend/render.js` — Canvas rendering with viewport transform, all annotation draw functions, DXF overlay, guided inspection result rendering, measurement labels, HUD (crosshair, zoom badge).
 - `frontend/viewport.js` — Zoom/pan state, `imageToScreen`/`screenToImage` transforms, `fitToWindow`, `clampPan`.
 - `frontend/tools.js` — Tool switching, `canvasPoint` (viewport-aware), hit-testing for all annotation types + DXF entities, handle drag, `handleSelectDown` (multi-select, Shift+click, drag-select rectangle).
+- `frontend/procedures.js` — Per-tool/task guided-procedure table (steps, live fit metrics); single source for the status bar and the Measure panel.
 - `frontend/dxf.js` — DXF load/align/flip/rotate, "Run Inspection" handler (calls `/inspect-guided`), per-feature tolerance popover, drag-to-translate.
 - `frontend/detect.js` — Detection button handlers with busy indicators, auto-freeze, arc deduplication, slider wiring.
 - `frontend/annotations.js` — Add/delete/elevate annotations, merge lines, clear operations (detections/measurements/DXF/all), `deleteSelected`.
@@ -70,17 +71,23 @@ Priority order at startup:
 - `frontend/math.js` — Geometric helpers: `fitCircle`, `fitCircleAlgebraic`, `fitLine`, `polygonArea`, `distPointToSegment`.
 - `frontend/workspace.js` — Swap-on-activate workspace state for project tabs: `serializeWorkspace`/`restoreWorkspace`, the `STATE_FIELDS` swapped/transient/global classification, `state._epoch` staleness guard. See "Projects & tabs" below.
 - `frontend/project-format.js` — Pure codecs: in-memory tab record ↔ workspace v4 (JSON) ↔ `.loupe` file (JSON + data-URL image); `migrateV3ToV4` for legacy session import.
+- `frontend/spec.js` — Per-measurement tolerance evaluation (`ann.spec = {nominal, upper, lower}`, binary PASS/FAIL).
+- `frontend/numbering.js` — Unified `[n]` numbering shared by sidebar rows and canvas labels.
 - `frontend/projects-db.js` — The ONLY persistence layer: browser-local IndexedDB (`loupe` DB, `projects` store), with an in-memory fallback + `onStorageUnavailable`/`isPersistent` when IndexedDB is unavailable.
 - `frontend/tab-manager.js` — Typed project tabs over the singleton engine: open/activate/close, swap-on-activate, singleton rules for deflectometry/fringe, ~2s dirty-poll autosave, per-tab `X-Session-ID`.
 - `frontend/shell.js` — Preact/htm app bar (tab strip) and overlay layer: modal `showNotice`, `showToast`; re-renders on `workspace-changed`/`tool-changed`.
 - `frontend/toolbar.js` — Flat row-2 microscopy toolbar (Preact): every tool as icon+text, contextual sub-mode segment, Calibrate/Origin/Undo/Redo.
+- `frontend/measure-panel.js` — Measure panel column (Preact): procedure face while a tool is armed, properties face (name/nominal/upper/lower tolerances, pattern/direction) for the selection, collapsed strip when idle.
+- `frontend/palette.js` — Verb-first "Measure…" task palette (toolbar button + M): the discovery layer over all tools and the only creation surface for relation measurements (center/pt-circle/perp/para/slot distance, intersection).
 - `frontend/home-screen.js` — Preact home screen: new-project type cards, IndexedDB-only recents grid, import drop zone.
 - `frontend/project-io.js` — `.loupe` export/import, plain-image and v3-session import, legacy `microscope-autosave` migration offer, global `.loupe` drag-in.
 - `frontend/vendor/` — Vendored `preact.mjs` + `htm.mjs` (plain ES module imports, no npm/bundler).
 - Calibration flow lives in `tools.js` (`handleToolClick` calibrate branch) + `annotations.js` (`applyCalibration`, `recalibrateFromAnnotation`); pure scale math in `math.js::calibrationPixelsPerMm`.
 
 ### Key Features
-- **13 tools on a flat row-2 toolbar** (`frontend/toolbar.js`, no flyouts/hidden tools): Select, Pan, Note, Distance, Angle, Circle, Best fit (circle/arc), Arc, Area, Shape (area-from-shape), Spline, Flatness, Point — plus dedicated Calibrate/Origin buttons and Undo/Redo. Contextual sub-mode segments (e.g. Circle → 3-point/Center+edge, Best fit → Circle/Arc) show inline for the active tool.
+- **13 tools on a flat row-2 toolbar** (`frontend/toolbar.js`, no flyouts/hidden tools): Select, Pan, Note, Distance, Angle, Circle, Best fit (circle/arc), Arc, Area, Shape (area-from-shape), Spline, Flatness, Point — plus dedicated Calibrate/Origin buttons, Undo/Redo, and the **Measure…** palette button (`frontend/palette.js`, key `M`), a verb-first task index over all tools and the only creation surface for relation measurements. Contextual sub-mode segments (e.g. Circle → 3-point/Center+edge, Best fit → Circle/Arc) show inline for the active tool.
+- **Relation measurements** (`frontend/palette.js`, `frontend/measure-panel.js`): circle↔circle distance with min/max/axis-projected patterns, point↔circle distance, perpendicular/parallel line-to-line distance, slot width, line intersection — created via the Measure… palette, with inline fitting when a step lands on a bare edge instead of an existing feature; deleting a referenced circle/line cascades to its dependent relation measurements.
+- **Per-measurement tolerances** (`frontend/spec.js`): nominal + asymmetric upper/lower limits per measurement, binary PASS/FAIL surfaced as `[n] name value ▲dev` canvas labels (green pass / red fail), sidebar chips, and CSV columns; `frontend/numbering.js` keeps the `[n]` numbering consistent between canvas and sidebar.
 - **Multi-select**: Set-based selection, Shift+click, rectangle drag-select, bulk delete/elevate.
 - **Detection elevation**: Promote auto-detected features to editable measurements. Merge multiple line segments into one.
 - **Right-click context menu**: Elevate, delete, rename, merge lines, group, convert arc→circle, Punch/Die toggle, clear operations.

@@ -218,6 +218,24 @@ describe('applyWorkspaceV4', () => {
     });
     assert.deepEqual(rec.state.calibration, cal);
   });
+
+  it('round-trips spec, pattern, direction and labelOffset on annotations', () => {
+    const rec = sampleRecord();
+    rec.state.annotations.push({
+      id: 6, type: 'center-dist', a: { x: 0, y: 0 }, b: { x: 400, y: 0 },
+      circleAId: 1, circleBId: 2, name: 'hole-pitch', purpose: 'measurement',
+      pattern: 'min', direction: 'x',
+      spec: { nominal: 3.6, upper: 0.05, lower: -0.05 },
+      labelOffset: { dx: 10, dy: -8 },
+    });
+    const v4 = buildWorkspaceV4(rec);
+    const out = applyWorkspaceV4(JSON.parse(JSON.stringify(v4)));
+    const ann = out.state.annotations.find(a => a.id === 6);
+    assert.deepEqual(ann.spec, { nominal: 3.6, upper: 0.05, lower: -0.05 });
+    assert.equal(ann.pattern, 'min');
+    assert.equal(ann.direction, 'x');
+    assert.deepEqual(ann.labelOffset, { dx: 10, dy: -8 });
+  });
 });
 
 describe('migrateV3ToV4', () => {
