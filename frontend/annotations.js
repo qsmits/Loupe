@@ -37,7 +37,7 @@ export function addAnnotation(data, { skipUndo = false } = {}) {
 // circleId, slot-dist/intersect's lineAId/lineBId). Deleting a referenced
 // annotation must also delete anything that references it — a center-dist
 // pointed at a deleted circle is meaningless, not just stale.
-const _REF_FIELDS = ["circleAId", "circleBId", "circleId", "lineAId", "lineBId"];
+const _REF_FIELDS = ["circleAId", "circleBId", "circleId", "lineAId", "lineBId", "refLineId"];
 
 /** ids + every annotation transitively referencing them (a relation whose
  *  referenced circle/line is itself doomed, e.g. a slot-dist over two lines

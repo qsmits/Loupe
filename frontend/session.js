@@ -7,6 +7,7 @@ import { polygonArea } from './math.js';
 import { imageWidth, imageHeight } from './viewport.js';
 import { measurementLabel, measurementNumeric, formatCsvValue } from './format.js';
 import { evaluateSpec } from './spec.js';
+import { annotationNumbers } from './numbering.js';
 
 const _mctx = () => ({
   calibration: state.calibration,
@@ -57,10 +58,16 @@ export function exportAnnotatedImage() {
  * @param {object|null} cal - state.calibration
  * @param {number} imageWidth
  * @param {object} mctx - the shared measurement ctx (see _mctx() above)
+ * @param {object} measurementGroups - state.measurementGroups, threaded into
+ *   annotationNumbers() so the CSV's `#` column matches the sidebar/canvas
+ *   `[n]` numbering exactly instead of keeping its own independent counter
+ *   (which drifted for detections and any other unnumbered row — those now
+ *   get an empty `#` rather than a number that means something different in
+ *   the sidebar).
  */
-export function buildCsvRows(annotations, cal, imageWidth, mctx) {
+export function buildCsvRows(annotations, cal, imageWidth, mctx, measurementGroups = {}) {
   const rows = [["#", "Name", "Value", "Unit", "Nominal", "Upper", "Lower", "Deviation", "Result", "type", "label"]];
-  let i = 1;
+  const numbers = annotationNumbers(annotations, measurementGroups);
   annotations.forEach(ann => {
     const label = measurementLabel(ann, mctx);
     if (!label) return;  // skip origin / overlays
@@ -78,13 +85,14 @@ export function buildCsvRows(annotations, cal, imageWidth, mctx) {
         result = ev.pass ? "PASS" : "FAIL";
       }
     }
-    rows.push([i++, ann.name || "", value, unit, nominal, upper, lower, deviation, result, ann.type, label]);
+    const num = numbers.get(ann.id);
+    rows.push([num ?? "", ann.name || "", value, unit, nominal, upper, lower, deviation, result, ann.type, label]);
   });
   return rows;
 }
 
 export function exportCsv() {
-  const rows = buildCsvRows(state.annotations, state.calibration, imageWidth, _mctx());
+  const rows = buildCsvRows(state.annotations, state.calibration, imageWidth, _mctx(), state.measurementGroups);
   const csv = rows
     .map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(","))
     .join("\n");

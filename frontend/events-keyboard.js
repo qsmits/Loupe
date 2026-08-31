@@ -1,6 +1,5 @@
 // ── Undo / Redo / Keyboard shortcuts ─────────────────────────────────────────
 import { state, undoStack, redoStack, takeSnapshot, mergeRestoredAnnotations, undoTarget } from './state.js';
-import { statusLine } from './procedures.js';
 import { canvas, showStatus, redraw, resizeCanvas } from './render.js';
 import { renderSidebar, renderInspectionTable } from './sidebar.js';
 import { deleteSelected, elevateSelected } from './annotations.js';
@@ -81,23 +80,14 @@ export function initKeyboard(closeAllDropdowns) {
     }
     if (e.key === " ") { e.preventDefault(); return; }  // suppress repeat scroll
 
-    if (e.key === "Enter") {
-      if (state.inspectionPickTarget) { _finalizePickInspection(); return; }
-      if (finalizeRelationPick()) return;
-      if (state.tool === "spline" && state.pendingPoints.length >= 2) { finalizeSpline(); return; }
-      if (state.tool === "arc-fit" && state.pendingPoints.length >= 3) { promptArcFitChoice(); return; }
-      if (state.tool === "area" && state.pendingPoints.length >= 3) { finalizeArea(); return; }
-      if (state.tool === "fit-line" && state.pendingPoints.length >= 2) { finalizeFitLine(); return; }
-    }
-    if ((e.key === "Delete" || e.key === "Backspace") && state.selected.size > 0) {
-      deleteSelected();
-      return;
-    }
     if (e.key === "Escape") {
       // Measure… palette: closes first, before any other Escape behavior, so
       // Esc works even when focus never made it to the search box (e.g. the
       // palette was opened via the toolbar button, or requestAnimationFrame
-      // hasn't committed focus yet).
+      // hasn't committed focus yet). This check must run BEFORE the
+      // paletteOpen bail just below, and everything else in this handler
+      // (Enter/Delete/arrows/letter shortcuts) must run AFTER it — otherwise
+      // Escape could never reach the palette-close branch.
       if (state.paletteOpen) { closePalette(); return; }
       if (state.inspectionPickTarget) {
         state.inspectionPickTarget = null;
@@ -146,6 +136,27 @@ export function initKeyboard(closeAllDropdowns) {
       }
       return;
     }
+    // The Measure… palette is a modal overlay: once open, it owns all
+    // keyboard input except Escape (handled above). Without this bail, a
+    // Delete/arrow/letter keydown whose focus has slipped off the palette's
+    // search input (e.g. onto the backdrop) falls through to the tool
+    // shortcuts and mutating actions below and lands on whatever is behind
+    // the overlay (Finding I6). Placed after the Escape branch so Escape
+    // still closes the palette even when focus has escaped the search box.
+    if (state.paletteOpen) return;
+
+    if (e.key === "Enter") {
+      if (state.inspectionPickTarget) { _finalizePickInspection(); return; }
+      if (finalizeRelationPick()) return;
+      if (state.tool === "spline" && state.pendingPoints.length >= 2) { finalizeSpline(); return; }
+      if (state.tool === "arc-fit" && state.pendingPoints.length >= 3) { promptArcFitChoice(); return; }
+      if (state.tool === "area" && state.pendingPoints.length >= 3) { finalizeArea(); return; }
+      if (state.tool === "fit-line" && state.pendingPoints.length >= 2) { finalizeFitLine(); return; }
+    }
+    if ((e.key === "Delete" || e.key === "Backspace") && state.selected.size > 0) {
+      deleteSelected();
+      return;
+    }
     const ctrlOrMeta = e.ctrlKey || e.metaKey;
     if (ctrlOrMeta && e.key === "z" && !e.shiftKey) {
       e.preventDefault();
@@ -164,8 +175,15 @@ export function initKeyboard(closeAllDropdowns) {
       }
       if (target === "pending-point") {
         state.pendingPoints.pop();
-        if (state.pendingPoints.length > 0) updateToolStatus();
-        else showStatus(statusLine(state.tool, state));
+        // A relation tool's inline-fit accumulation (Task 13) popped back to
+        // zero must also drop back to pick mode — otherwise pendingRelationFit
+        // stays armed with no points behind it, and the next click on an
+        // existing circle/line silently accumulates as a fit point instead of
+        // completing a pick (Finding I8).
+        if (state.pendingPoints.length === 0 && state.pendingRelationFit) {
+          state.pendingRelationFit = null;
+        }
+        updateToolStatus();
         redraw();
         return;
       }

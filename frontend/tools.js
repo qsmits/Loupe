@@ -171,18 +171,26 @@ export function snapPoint(rawPt, bypass = false) {
 
 // ── Tool click handler ─────────────────────────────────────────────────────
 export async function handleToolClick(rawPt, e = {}) {
-  const { pt: snappedPt, snapped: annotationSnapped } = (state.tool !== "calibrate" && state.tool !== "center-dist")
+  // center-dist's FIRST click (and any click while only a pick is pending —
+  // no fit in progress) is a pick attempt on an existing circle: skip
+  // snap/refine so a click meant to land ON a circle's edge isn't nudged
+  // toward some other nearby annotation-endpoint. Once pendingRelationFit is
+  // armed (a miss started inline-fit accumulation), the click IS a fit point
+  // like any other relation tool's, and should get the same snap/sub-pixel
+  // refinement (Finding I4) — only the pick attempts keep the old exclusion.
+  const isCenterDistPick = state.tool === "center-dist" && !state.pendingRelationFit;
+  const { pt: snappedPt, snapped: annotationSnapped } = (state.tool !== "calibrate" && !isCenterDistPick)
     ? snapPoint(rawPt, e.altKey ?? false)
     : { pt: rawPt, snapped: false };
   let pt = snappedPt;
 
   // Sub-pixel edge snap — skip when annotation-snap already fired (prefer
-  // exact endpoint over nearby edge), skip for center-dist, select, pan.
-  // Alt key bypasses both annotation-snap and subpixel.
+  // exact endpoint over nearby edge), skip for center-dist pick attempts,
+  // select, pan. Alt key bypasses both annotation-snap and subpixel.
   if (state.frozen && !e.altKey && !annotationSnapped &&
       state.settings.subpixelMethod !== "none" &&
       state.tool !== "select" && state.tool !== "pan" &&
-      state.tool !== "center-dist") {
+      !isCenterDistPick) {
     const method = state.settings.subpixelMethod;
     const baseRadius = state.settings.subpixelSearchRadius || 10;
     const zoomScale = Math.max(1, viewport.zoom);
@@ -510,14 +518,15 @@ export async function handleToolClick(rawPt, e = {}) {
     if (state.pendingPoints.length === 0) {
       // Step 2: place start point
       state.pendingPoints = [pt];
-      showStatus("Perp — click end point");
+      updateToolStatus();
       redraw();
       return;
     }
     // Step 3: place end point (constrained perpendicular)
     const a = state.pendingPoints[0];
-    const b = projectConstrained(pt, a, state.pendingRefLine, true);
-    addAnnotation({ type: "perp-dist", a, b });
+    const b = projectConstrained(pt, a, state.pendingRefLine, true, { imageWidth, imageHeight });
+    const refLineId = state.pendingRefLine.id;
+    addAnnotation({ type: "perp-dist", a, b, refLineId });
     state.pendingRefLine = null;
     state.pendingPoints = [];
     updateToolStatus();
@@ -539,13 +548,16 @@ export async function handleToolClick(rawPt, e = {}) {
     // Step 2: check if click is on a different line (Mode A — parallelism measurement)
     const clickedLine = findSnapLine(pt);
     if (clickedLine && clickedLine.id !== state.pendingRefLine.id) {
-      const epRef = getLineEndpoints(state.pendingRefLine);
-      const epOther = getLineEndpoints(clickedLine);
-      let diff = Math.abs(lineAngleDeg(state.pendingRefLine) - lineAngleDeg(clickedLine)) % 180;
+      const epRef = getLineEndpoints(state.pendingRefLine, { imageWidth, imageHeight });
+      const epOther = getLineEndpoints(clickedLine, { imageWidth, imageHeight });
+      let diff = Math.abs(lineAngleDeg(state.pendingRefLine, { imageWidth, imageHeight })
+                         - lineAngleDeg(clickedLine, { imageWidth, imageHeight })) % 180;
       if (diff > 90) diff = 180 - diff;
       const a = { x: (epRef.a.x + epRef.b.x) / 2, y: (epRef.a.y + epRef.b.y) / 2 };
       const b = { x: (epOther.a.x + epOther.b.x) / 2, y: (epOther.a.y + epOther.b.y) / 2 };
-      addAnnotation({ type: "parallelism", a, b, angleDeg: diff });
+      const lineAId = state.pendingRefLine.id;
+      const lineBId = clickedLine.id;
+      addAnnotation({ type: "parallelism", a, b, angleDeg: diff, lineAId, lineBId });
       state.pendingRefLine = null;
       state.pendingPoints = [];
       updateToolStatus();
@@ -555,14 +567,15 @@ export async function handleToolClick(rawPt, e = {}) {
     // Mode B — parallel constraint: free point clicked
     if (state.pendingPoints.length === 0) {
       state.pendingPoints = [pt];
-      showStatus("Para — click end point");
+      updateToolStatus();
       redraw();
       return;
     }
     // Mode B step 2: constrained endpoint
     const a = state.pendingPoints[0];
-    const b = projectConstrained(pt, a, state.pendingRefLine, false);
-    addAnnotation({ type: "para-dist", a, b });
+    const b = projectConstrained(pt, a, state.pendingRefLine, false, { imageWidth, imageHeight });
+    const refLineId = state.pendingRefLine.id;
+    addAnnotation({ type: "para-dist", a, b, refLineId });
     state.pendingRefLine = null;
     state.pendingPoints = [];
     updateToolStatus();
@@ -857,9 +870,12 @@ function _consumePickedLine(tool, lineAnn) {
     return;
   }
   state.pendingRefLine = lineAnn;
-  if (tool === "perp-dist") showStatus("Perp — click start point");
-  else if (tool === "para-dist") showStatus("Para — click a line to measure parallelism, or a free point to draw a parallel line");
-  else showStatus("Now click a second line"); // slot-dist, intersect
+  // Step-transition text comes from procedures.js via updateToolStatus() (not
+  // a hand-written showStatus string here) so the status bar and the Measure
+  // panel can never drift apart (Finding I1) — this was the last of the four
+  // line-relation flows (perp-dist/para-dist/slot-dist/intersect all pick
+  // their first line through this function) still bypassing the panel.
+  updateToolStatus();
   redraw();
 }
 

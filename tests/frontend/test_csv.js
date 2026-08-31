@@ -16,6 +16,7 @@ globalThis.alert = globalThis.alert || (() => {});
 
 import { formatCsvValue } from '../../frontend/format.js';
 import { buildCsvRows } from '../../frontend/session.js';
+import { annotationNumbers } from '../../frontend/numbering.js';
 
 describe('formatCsvValue', () => {
   it('distance calibrated mm', () => {
@@ -139,5 +140,39 @@ describe('buildCsvRows', () => {
     const origin = { id: 1, type: 'origin', x: 0, y: 0 };
     const rows = buildCsvRows([origin], cal, 640, { ...mctx, annotations: [origin] });
     assert.equal(rows.length, 1); // header only
+  });
+});
+
+// Finding I9: buildCsvRows used to keep its own independent `i++` counter for
+// the "#" column, which drifted from the sidebar/canvas/panel's unified
+// [n] numbering (annotationNumbers()) — e.g. a detection sitting between two
+// measurements would still consume a number in the old CSV counter even
+// though it's never numbered anywhere else, shifting every subsequent row's
+// "#" off by one from what the sidebar shows for the same annotation.
+describe('buildCsvRows "#" matches annotationNumbers (Finding I9)', () => {
+  it('numbered rows carry their [n]; an unnumbered detection gets an empty "#"', () => {
+    const det = { id: 1, type: 'detected-circle', x: 0, y: 0, radius: 25, frameWidth: 320, frameHeight: 240 };
+    const m1 = { id: 2, type: 'distance', a: { x: 0, y: 0 }, b: { x: 300, y: 400 } };
+    const m2 = { id: 3, type: 'distance', a: { x: 0, y: 0 }, b: { x: 100, y: 0 } };
+    const annotations = [det, m1, m2];
+    const groups = { 3: 'Group A' }; // exercises the threaded measurementGroups param
+    const csvCtx = { calibration: null, annotations, origin: null, imageWidth: 640, imageHeight: 480 };
+    const numbers = annotationNumbers(annotations, groups);
+
+    const rows = buildCsvRows(annotations, null, 640, csvCtx, groups);
+    const [, detRow, m1Row, m2Row] = rows; // header, then one row per input annotation (none skipped — all have a label)
+    assert.equal(detRow[9], 'detected-circle');
+    assert.equal(detRow[0], '', 'a detection is never numbered, in the CSV or anywhere else');
+    assert.equal(m1Row[9], 'distance');
+    assert.equal(m2Row[9], 'distance');
+    assert.equal(m1Row[0], numbers.get(2));
+    assert.equal(m2Row[0], numbers.get(3));
+    assert.notEqual(numbers.get(2), numbers.get(3), 'test setup issue: the two measurements must get distinct numbers');
+  });
+
+  it('measurementGroups defaults to {} when omitted (backward-compatible call signature)', () => {
+    const ann = { id: 1, type: 'distance', a: { x: 0, y: 0 }, b: { x: 300, y: 400 } };
+    const rows = buildCsvRows([ann], null, 640, { calibration: null, annotations: [ann], origin: null });
+    assert.equal(rows[1][0], 1);
   });
 });

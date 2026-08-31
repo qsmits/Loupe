@@ -61,6 +61,9 @@ const _REF_PAIRS = {
   'slot-dist': ['lineAId', 'lineBId'],
   'intersect': ['lineAId', 'lineBId'],
   'pt-circle-dist': ['circleId'],
+  'perp-dist': ['refLineId'],
+  'para-dist': ['refLineId'],
+  'parallelism': ['lineAId', 'lineBId'],
 };
 
 // ── Sidebar rendering ──────────────────────────────────────────────────────────

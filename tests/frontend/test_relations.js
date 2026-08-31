@@ -3,12 +3,15 @@ import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { state } from '../../frontend/state.js';
 import { setTool, handleToolClick, RELATION_TOOLS, nudgeSelected, finalizeRelationPick } from '../../frontend/tools.js';
+import { finalizeRelationPickOnDblClick } from '../../frontend/events-mouse.js';
 import { addAnnotation, deleteAnnotation, deleteSelected } from '../../frontend/annotations.js';
-import { undo } from '../../frontend/events-keyboard.js';
+import { undo, redo } from '../../frontend/events-keyboard.js';
 import { getStatus, listEl } from '../../frontend/render.js';
 import { renderSidebar } from '../../frontend/sidebar.js';
-import { measurementNumeric } from '../../frontend/format.js';
+import { measurementNumeric, formatCsvValue } from '../../frontend/format.js';
 import { setImageSize } from '../../frontend/viewport.js';
+import { fitLine, fitCircleAlgebraic } from '../../frontend/math.js';
+import { PROCEDURES } from '../../frontend/procedures.js';
 
 beforeEach(() => {
   state.annotations = [];
@@ -602,5 +605,194 @@ describe('para-dist regression (fix round 2): 2nd slot never gains accumulation'
     assert.equal(rel.a.y, 40);
     assert.ok(Math.abs(rel.b.y - 40) < 1e-9);
     assert.equal(state.pendingRelationFit, null);
+  });
+});
+
+// ── Final review fix wave ────────────────────────────────────────────────────
+
+describe('Measure panel step sync on the first line pick (Finding I1)', () => {
+  // perp-dist/para-dist's step-2 branches, and _consumePickedLine (the first
+  // line pick shared by perp-dist/para-dist/slot-dist/intersect), used to
+  // call showStatus(...) directly instead of updateToolStatus() — bypassing
+  // renderMeasurePanel(), so the Measure panel stayed on step 1 forever even
+  // though the status bar text (and PROCEDURES[tool].currentStep) had moved
+  // on. Asserting both currentStep and the status text catches either half
+  // of that drift.
+  for (const tool of ['perp-dist', 'para-dist', 'slot-dist', 'intersect']) {
+    it(`${tool}: picking the first line advances currentStep and changes the status text`, async () => {
+      addAnnotation({ type: 'distance', a: { x: 0, y: 0 }, b: { x: 200, y: 0 } });
+      setTool(tool);
+      const stepBefore = PROCEDURES[tool].currentStep(state);
+      const statusBefore = getStatus();
+      await handleToolClick({ x: 50, y: 0 });   // pick the line directly
+      assert.ok(state.pendingRefLine, `${tool}: first pick registered`);
+      const stepAfter = PROCEDURES[tool].currentStep(state);
+      const statusAfter = getStatus();
+      assert.ok(stepAfter > stepBefore,
+        `${tool}: expected currentStep to advance (${stepBefore} -> ${stepAfter})`);
+      assert.notEqual(statusAfter, statusBefore,
+        `${tool}: status text must change on the step-1 -> step-2 transition`);
+    });
+  }
+});
+
+describe('double-click finalize pops the duplicate accumulate point (Finding I3)', () => {
+  it('center-dist (circle kind, min 3): the dblclick\'s own duplicate 5th point is popped before fitting', async () => {
+    const c1 = addAnnotation({ type: 'circle', cx: 100, cy: 100, r: 30 });
+    setTool('center-dist');
+    await handleToolClick({ x: 130, y: 100 });   // pick c1 directly
+
+    // 4 points the user intends for the 2nd circle's fit — p4 deliberately
+    // NOT concyclic with p1..p3, so a duplicate of it measurably perturbs an
+    // un-popped least-squares fit (a perfectly concyclic quadruple wouldn't
+    // discriminate: duplicating an exact-fit point changes no residual).
+    const p1 = { x: 430, y: 300 }, p2 = { x: 400, y: 330 }, p3 = { x: 370, y: 300 }, p4 = { x: 405, y: 268 };
+    await handleToolClick(p1);
+    await handleToolClick(p2);
+    await handleToolClick(p3);
+    await handleToolClick(p4);   // user's intended 4th point — dblclick's 1st mousedown
+    await handleToolClick(p4);   // duplicate — dblclick's 2nd mousedown (same screen location)
+    assert.equal(state.pendingPoints.length, 5);
+
+    assert.equal(finalizeRelationPickOnDblClick(), true);
+    const circles = state.annotations.filter(a => a.type === 'circle');
+    const fitted = circles[circles.length - 1];
+
+    const popped4 = fitCircleAlgebraic([p1, p2, p3, p4]);
+    const unpopped5 = fitCircleAlgebraic([p1, p2, p3, p4, p4]);
+    assert.ok(
+      Math.abs(popped4.cx - unpopped5.cx) > 1e-6 ||
+      Math.abs(popped4.cy - unpopped5.cy) > 1e-6 ||
+      Math.abs(popped4.r - unpopped5.r) > 1e-6,
+      'test setup issue: the 4-point and un-popped 5-point fits must differ to discriminate the fix'
+    );
+    assert.ok(Math.abs(fitted.cx - popped4.cx) < 1e-9 && Math.abs(fitted.cy - popped4.cy) < 1e-9 && Math.abs(fitted.r - popped4.r) < 1e-9,
+      'fit must match the popped 4-point set, not the un-popped 5-point set with the duplicate');
+  });
+
+  it('perp-dist (line kind, min 2): the dblclick\'s own duplicate 4th point is popped before fitting', async () => {
+    setTool('perp-dist');
+    const p1 = { x: 0, y: 0 }, p2 = { x: 200, y: 0 }, p3 = { x: 80, y: 50 };
+    await handleToolClick(p1);
+    await handleToolClick(p2);
+    await handleToolClick(p3);   // user's intended 3rd point — dblclick's 1st mousedown
+    await handleToolClick(p3);   // duplicate — dblclick's 2nd mousedown
+    assert.equal(state.pendingPoints.length, 4);
+
+    assert.equal(finalizeRelationPickOnDblClick(), true);
+    const fitLines = state.annotations.filter(a => a.type === 'fit-line');
+    const fitted = fitLines[fitLines.length - 1];
+
+    const popped3 = fitLine([p1, p2, p3]);
+    const unpopped4 = fitLine([p1, p2, p3, p3]);
+    assert.ok(Math.abs(popped3.cy - unpopped4.cy) > 1e-6,
+      'test setup issue: the 3-point and un-popped 4-point fits must differ to discriminate the fix');
+    assert.ok(Math.abs(fitted.cx - popped3.cx) < 1e-9 && Math.abs(fitted.cy - popped3.cy) < 1e-9,
+      'fit must match the popped 3-point set, not the un-popped 4-point set with the duplicate');
+  });
+});
+
+describe('center-dist accumulation clicks snap (Finding I4)', () => {
+  it('the FIRST click (pick attempt) is unsnapped — a nearby point annotation is not pulled in', async () => {
+    addAnnotation({ type: 'point', x: 503, y: 500, purpose: 'drawing' });
+    setTool('center-dist');
+    await handleToolClick({ x: 500, y: 500 });   // miss (no circle) — arms inline fitting
+    assert.equal(state.pendingRelationFit?.kind, 'circle');
+    assert.deepEqual(state.pendingPoints, [{ x: 500, y: 500 }],
+      'the first click must land exactly on the raw point — no snap for a pick attempt');
+  });
+
+  it('an accumulation click (pendingRelationFit already armed) DOES snap to a nearby annotation endpoint', async () => {
+    setTool('center-dist');
+    await handleToolClick({ x: 500, y: 500 });   // miss — arms inline fitting (1st fit point)
+    assert.equal(state.pendingRelationFit?.kind, 'circle');
+    addAnnotation({ type: 'point', x: 620, y: 500, purpose: 'drawing' });
+    await handleToolClick({ x: 623, y: 500 });   // within SNAP_RADIUS(8)/zoom(1) of the point
+    assert.equal(state.pendingPoints.length, 2);
+    assert.deepEqual(state.pendingPoints[1], { x: 620, y: 500 },
+      'the accumulation click snapped to the point annotation instead of staying at the raw (623,500)');
+  });
+});
+
+describe('para-dist Mode A resolves detected-line endpoints in image coords (Finding I5)', () => {
+  afterEach(() => setImageSize(0, 0));
+
+  it('parallelism midpoints use imageWidth/imageHeight scaling, not the raw frame coords', async () => {
+    // frameWidth(400) !== imageWidth(800), frameHeight(300) !== imageHeight(600):
+    // discriminates the ctx-less getLineEndpoints/lineAngleDeg fallback (which
+    // silently treated scale as 1×) from the real image-space scale (2×).
+    setImageSize(800, 600);
+    addAnnotation({ type: 'detected-line', x1: 10, y1: 0, x2: 110, y2: 0, frameWidth: 400, frameHeight: 300 });
+    addAnnotation({ type: 'detected-line', x1: 10, y1: 25, x2: 110, y2: 25, frameWidth: 400, frameHeight: 300 });
+    setTool('para-dist');
+    // Image-space endpoints (×2 scale): line 1 = (20,0)-(220,0); line 2 = (20,50)-(220,50).
+    await handleToolClick({ x: 100, y: 0 });     // on line 1 (image coords)
+    await handleToolClick({ x: 100, y: 50 });    // on line 2 (image coords) — Mode A: parallelism
+    const rel = state.annotations.find(a => a.type === 'parallelism');
+    assert.ok(rel, 'parallelism created from two detected-lines');
+    // Correct (image-coord) midpoint x = (20+220)/2 = 120. The ctx-less bug
+    // would compute the frame-coord midpoint (10+110)/2 = 60 instead.
+    assert.equal(rel.a.x, 120);
+    assert.equal(rel.b.x, 120);
+    assert.equal(rel.a.y, 0);
+    assert.equal(rel.b.y, 50);
+  });
+});
+
+describe('perp-dist/para-dist/parallelism store parent refs (Finding I7)', () => {
+  it('perp-dist stores refLineId, cascades on delete, and shows a sidebar ref', async () => {
+    const l1 = addAnnotation({ type: 'distance', a: { x: 0, y: 0 }, b: { x: 200, y: 0 } });
+    setTool('perp-dist');
+    await handleToolClick({ x: 50, y: 0 });      // pick reference line
+    await handleToolClick({ x: 60, y: 10 });     // start point
+    await handleToolClick({ x: 999, y: 999 });   // end point (constrained)
+    const rel = state.annotations.find(a => a.type === 'perp-dist');
+    assert.ok(rel);
+    assert.equal(rel.refLineId, l1.id);
+
+    listEl.children.length = 0;
+    renderSidebar();
+    const row = listEl.children.find(r => String(r.dataset.id) === String(rel.id));
+    const refSpan = row?.children.find(c => c.className === 'relation-refs');
+    assert.ok(refSpan, 'relation-refs span rendered for perp-dist');
+    assert.equal(refSpan.textContent, '[1]');
+
+    deleteAnnotation(l1.id);
+    assert.ok(!state.annotations.some(a => a.type === 'perp-dist'), 'perp-dist cascaded when its ref line was deleted');
+  });
+
+  it('para-dist (Mode B) stores refLineId and cascades on delete', async () => {
+    const l1 = addAnnotation({ type: 'distance', a: { x: 0, y: 0 }, b: { x: 200, y: 0 } });
+    setTool('para-dist');
+    await handleToolClick({ x: 50, y: 0 });      // pick reference line
+    await handleToolClick({ x: 60, y: 40 });     // free point (Mode B)
+    await handleToolClick({ x: 999, y: 999 });   // end point (constrained)
+    const rel = state.annotations.find(a => a.type === 'para-dist');
+    assert.ok(rel);
+    assert.equal(rel.refLineId, l1.id);
+    deleteAnnotation(l1.id);
+    assert.ok(!state.annotations.some(a => a.type === 'para-dist'), 'para-dist cascaded when its ref line was deleted');
+  });
+
+  it('parallelism (Mode A) stores lineAId/lineBId and cascades on delete of either line', async () => {
+    const l1 = addAnnotation({ type: 'distance', a: { x: 0, y: 0 }, b: { x: 200, y: 0 } });
+    const l2 = addAnnotation({ type: 'distance', a: { x: 0, y: 50 }, b: { x: 200, y: 50 } });
+    setTool('para-dist');
+    await handleToolClick({ x: 50, y: 0 });      // pick reference line
+    await handleToolClick({ x: 50, y: 50 });     // pick a different (parallel) line — Mode A
+    const rel = state.annotations.find(a => a.type === 'parallelism');
+    assert.ok(rel);
+    assert.equal(rel.lineAId, l1.id);
+    assert.equal(rel.lineBId, l2.id);
+
+    listEl.children.length = 0;
+    renderSidebar();
+    const row = listEl.children.find(r => String(r.dataset.id) === String(rel.id));
+    const refSpan = row?.children.find(c => c.className === 'relation-refs');
+    assert.ok(refSpan, 'relation-refs span rendered for parallelism');
+    assert.equal(refSpan.textContent, '[1] ↔ [2]');
+
+    deleteAnnotation(l2.id);
+    assert.ok(!state.annotations.some(a => a.type === 'parallelism'), 'parallelism cascaded when one of its two lines was deleted');
   });
 });

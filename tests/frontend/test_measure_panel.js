@@ -15,10 +15,11 @@
  * Run with: node --test tests/frontend/test_measure_panel.js
  */
 import './dom-stub.js';
-import { describe, it, beforeEach } from 'node:test';
+import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { state, undoStack } from '../../frontend/state.js';
 import { MeasurePanel, setPanelWidth } from '../../frontend/measure-panel.js';
+import { setImageSize } from '../../frontend/viewport.js';
 
 // Recursively expand function-component vnodes and flatten nested arrays
 // (the same recursion test_toolbar.js's expand() uses, checking
@@ -160,6 +161,25 @@ describe('properties face', () => {
     state.tool = 'select';
     assert.match(textOf(expand(MeasurePanel())).join(' '), /2 selected/);
   });
+  // Finding I2: measure-panel.js's own _mctx() omitted imageWidth/imageHeight,
+  // so measurementLabel's detected-* branches (bare `ctx.imageWidth /
+  // ann.frameWidth`, no fallback) divided by undefined and rendered "NaN".
+  describe('detected-* selection has no NaN (Finding I2)', () => {
+    afterEach(() => setImageSize(0, 0));
+
+    it('a selected detected-circle renders a real diameter, not NaN', () => {
+      setImageSize(640, 480);
+      state.annotations = [{ id: 9, type: 'detected-circle', purpose: 'measurement',
+                             x: 50, y: 60, radius: 10, frameWidth: 320, frameHeight: 240 }];
+      state.selected = new Set([9]);
+      state.tool = 'select';
+      state.calibration = null;
+      const txt = textOf(expand(MeasurePanel())).join(' ');
+      assert.ok(!/NaN/.test(txt), `expected no NaN, got: ${txt}`);
+      assert.match(txt, /⌀/); // ⌀ diameter glyph with a real number
+    });
+  });
+
   it('the properties face root carries the panel-owned width style', () => {
     state.calibration = null;
     state.annotations = [{ id: 7, type: 'distance', purpose: 'measurement',

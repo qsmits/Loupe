@@ -2,7 +2,7 @@
 import './dom-stub.js';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { TASKS, filterTasks } from '../../frontend/palette.js';
+import { TASKS, filterTasks, initPalette, renderPalette } from '../../frontend/palette.js';
 import { PROCEDURES } from '../../frontend/procedures.js';
 import { RELATION_TOOLS } from '../../frontend/tools.js';
 
@@ -18,6 +18,32 @@ describe('palette task registry', () => {
     for (const t of TASKS)
       for (const f of ['group', 'title', 'desc', 'icon'])
         assert.ok(t[f], `task "${t.id}" missing ${f}`);
+  });
+});
+
+// Finding I6(a): a tab switch (workspace-changed) must re-render the palette
+// so it can't show stale content (or a stale open/closed state) from the
+// previously-active tab. Preact's render() can't actually mount into
+// dom-stub's fake DOM (it's deliberately not a faithful DOM — see its own
+// header comment — and the existing measure-panel/toolbar tests all avoid
+// invoking it too), so this checks the wiring structurally: spy on
+// document.addEventListener and assert initPalette() registered exactly the
+// same handler reference renderMeasurePanel's initMeasurePanel() already
+// registers for the same event.
+describe('palette re-renders on workspace-changed (Finding I6a)', () => {
+  it('initPalette registers renderPalette for the workspace-changed event', () => {
+    const registered = [];
+    const origAdd = document.addEventListener.bind(document);
+    document.addEventListener = (type, fn) => { registered.push([type, fn]); origAdd(type, fn); };
+    try {
+      initPalette();
+    } finally {
+      document.addEventListener = origAdd;
+    }
+    assert.ok(
+      registered.some(([type, fn]) => type === 'workspace-changed' && fn === renderPalette),
+      'expected document.addEventListener("workspace-changed", renderPalette)'
+    );
   });
 });
 

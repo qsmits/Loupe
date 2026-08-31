@@ -9,6 +9,7 @@ import { SUB_MODES } from './toolbar.js';
 import { measurementLabel, measurementNumeric } from './format.js';
 import { evaluateSpec, formatDeviation } from './spec.js';
 import { annotationNumbers } from './numbering.js';
+import { imageWidth, imageHeight } from './viewport.js';
 
 const html = htm.bind(h);
 let _mount = null;
@@ -85,11 +86,13 @@ function ProcedureFace({ tool }) {
   </div>`;
 }
 
-// Context object for format.js/measurementNumeric — mirrors sidebar.js's _mctx
-// but the properties face never needs imageWidth/imageHeight (no
-// detected-* types reach a selectable measurement's properties face).
+// Context object for format.js/measurementNumeric — mirrors sidebar.js's
+// _mctx exactly (imageWidth/imageHeight included: a selected detected-*
+// annotation's measurementLabel branches divide by these, and their absence
+// produced NaN in the panel).
 function _mctx() {
-  return { calibration: state.calibration, annotations: state.annotations, origin: state.origin };
+  return { calibration: state.calibration, annotations: state.annotations, origin: state.origin,
+           imageWidth, imageHeight };
 }
 
 // One tolerance input (nominal/upper/lower). Values are STORED on ann.spec in

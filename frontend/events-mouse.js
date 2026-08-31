@@ -97,6 +97,22 @@ function _commitDragUndo() {
   state._dragMoved = false;
 }
 
+// A native dblclick event sequence is mousedown+mouseup+click (twice), THEN
+// dblclick — so the second mousedown of the double-click has already pushed
+// its own point into state.pendingPoints (via handleToolClick) by the time
+// this fires, exactly like every other multi-point tool's dblclick handler
+// below (spline/arc-fit/area/fit-line all `.pop()` that duplicate before
+// finalizing). finalizeRelationPick() itself never did this (Finding I3) —
+// factored out here (rather than inlined in the dblclick listener) so it's
+// callable directly from a test without simulating a full DOM event.
+export function finalizeRelationPickOnDblClick() {
+  if (state.pendingRelationFit) {
+    const min = state.pendingRelationFit.kind === "circle" ? 3 : 2;
+    if (state.pendingPoints.length > min) state.pendingPoints.pop();
+  }
+  return finalizeRelationPick();
+}
+
 async function onMouseDown(e) {
   if (e.button !== 0 && e.button !== 1) return;
   document.getElementById("label-tooltip")?.setAttribute("hidden", "");
@@ -468,7 +484,7 @@ export function initMouseHandlers() {
     // Relation tools (Task 13): finish an in-progress inline circle/line fit
     // before falling through to the per-tool multi-point dispatch below (a
     // relation tool is never also one of those tools, so order is harmless).
-    if (finalizeRelationPick()) { e.preventDefault(); return; }
+    if (finalizeRelationPickOnDblClick()) { e.preventDefault(); return; }
     // Multi-point tools: dblclick fires after 2 mousedowns (which each added a point).
     // Pop the duplicate from the second mousedown before finalizing.
     if (state.tool === "spline" && state.pendingPoints.length >= 3) {

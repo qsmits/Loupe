@@ -107,5 +107,6 @@ export function closePalette() {
 }
 export function initPalette() {
   _mount = document.getElementById('palette-mount');
+  document.addEventListener('workspace-changed', renderPalette);
   renderPalette();
 }
