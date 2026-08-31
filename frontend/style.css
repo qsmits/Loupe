@@ -75,6 +75,12 @@ input[type=range] { cursor: pointer; accent-color: var(--accent); }
   flex-wrap: wrap;
   gap: 2px;
   min-width: 0;
+  /* #tool-bar is itself display:flex with #toolbar-root as its only child,
+     which shrink-wraps to content by default — leaving no free space inside
+     #toolbar-root for .tb-measure's margin-left:auto to consume. flex: 1
+     makes #toolbar-root grow to fill #tool-bar's width so the Measure…
+     button can actually right-align on normal (non-wrapped) windows. */
+  flex: 1;
 }
 
 .tb-btn {
@@ -3981,6 +3987,9 @@ body.no-camera .camera-section { display: none; }
 
 /* Task 16: toolbar Measure… button — right-aligned, accent-filled */
 .tb-measure { margin-left: auto; background: var(--accent); color: #fff; }
+/* .tb-btn:hover (0,2,0) would otherwise beat .tb-measure (0,1,0) and turn the
+   button grey on hover — mirrors the existing .tb-btn.active:hover pattern. */
+.tb-measure:hover { background: var(--accent-hover); color: #fff; }
 
 /* ── Measure palette ───────────────────────────────────────────────────── */
 .palette-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.45); z-index: 1002;

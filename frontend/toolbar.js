@@ -146,6 +146,6 @@ export function Toolbar() {
     </button>
     <button class="tb-btn tb-measure" title="Measure… (M)"
       onClick=${() => dispatch("toolbar-action", { action: "open-palette" })}>
-      <span class="tb-label">⌕ Measure…</span>
+      <span>⌕ Measure…</span>
     </button>`;
 }
