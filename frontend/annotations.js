@@ -57,6 +57,30 @@ function _withDependents(ids) {
   return doomed;
 }
 
+// Every in-progress relation pick (tools.js's center-dist/slot-dist/intersect/
+// perp-dist/para-dist/pt-circle-dist flows) holds a reference to a first
+// circle/line already picked, before the relation annotation itself exists —
+// so it isn't caught by _withDependents (which only walks REF fields on
+// annotations that already exist). If its target is about to be deleted and
+// this isn't cleared, completing the pick afterward silently creates a new
+// relation with a dangling ref (e.g. centerDistPx's rOf falls back to 0,
+// producing a plausible-looking wrong pattern min/max instead of an error).
+// Shared by deleteAnnotation and deleteSelected so they can't drift apart.
+// Gated on doomed.has(...) throughout — an unrelated deletion must never
+// clear an in-progress pick.
+function _clearDeadPendingPicks(doomed) {
+  if (state.pendingCenterCircle && doomed.has(state.pendingCenterCircle.id)) {
+    state.pendingCenterCircle = null;
+  }
+  if (state.pendingRefLine && doomed.has(state.pendingRefLine.id)) {
+    state.pendingRefLine = null;
+    state.pendingRefLineClick = null;  // always paired with pendingRefLine — see tools.js
+  }
+  if (state.pendingCircleRef && doomed.has(state.pendingCircleRef.circleId)) {
+    state.pendingCircleRef = null;
+  }
+}
+
 export function deleteAnnotation(id) {
   const ann = state.annotations.find(a => a.id === id);
   if (!ann) return;  // checked BEFORE pushUndo so a missing id leaves no phantom undo step
@@ -70,7 +94,7 @@ export function deleteAnnotation(id) {
   state.annotations = state.annotations.filter(a => !doomed.has(a.id));
   pruneOrphanGroupEntries();
   for (const doomedId of doomed) state.selected.delete(doomedId);
-  if (state.pendingCenterCircle && doomed.has(state.pendingCenterCircle.id)) state.pendingCenterCircle = null;
+  _clearDeadPendingPicks(doomed);
   renderSidebar();
   redraw();
 }
@@ -86,6 +110,7 @@ export function deleteSelected() {
   }
   state.annotations = state.annotations.filter(a => !doomed.has(a.id));
   pruneOrphanGroupEntries();
+  _clearDeadPendingPicks(doomed);
   state.selected = new Set();
   renderSidebar();
   redraw();

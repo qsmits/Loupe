@@ -474,6 +474,63 @@ describe('delete-cascade (Task 15)', () => {
   });
 });
 
+describe('clearing dead pending relation picks (fix round 1)', () => {
+  it('deleteSelected clears a mid-pick pendingCenterCircle; completing with another circle starts a fresh pick (no dangling ref)', async () => {
+    const c1 = addAnnotation({ type: 'circle', cx: 100, cy: 100, r: 30 });
+    const c2 = addAnnotation({ type: 'circle', cx: 400, cy: 100, r: 20 });
+    const c3 = addAnnotation({ type: 'circle', cx: 700, cy: 100, r: 10 });
+    setTool('center-dist');
+    await handleToolClick({ x: 130, y: 100 });   // pick c1 — mid-pick, no relation yet
+    assert.equal(state.pendingCenterCircle?.id, c1.id);
+    state.selected = new Set([c1.id]);
+    deleteSelected();
+    assert.equal(state.pendingCenterCircle, null, 'pending pick cleared when its target circle is deleted');
+
+    // Completing the pick now must NOT silently finish a relation against the
+    // deleted c1 — this click becomes a fresh first pick instead.
+    await handleToolClick({ x: 420, y: 100 });   // pick c2
+    assert.equal(state.annotations.filter(a => a.type === 'center-dist').length, 0,
+      'no relation created — c2 became the fresh first pick, not a completion against the dead c1');
+    assert.equal(state.pendingCenterCircle?.id, c2.id);
+
+    await handleToolClick({ x: 710, y: 100 });   // pick c3 — completes against c2
+    const rel = state.annotations.find(a => a.type === 'center-dist');
+    assert.ok(rel, 'relation completes normally from the fresh pick');
+    assert.equal(rel.circleAId, c2.id);
+    assert.equal(rel.circleBId, c3.id);
+  });
+
+  it('deleteAnnotation clears a mid-pick pendingRefLine (slot-dist)', async () => {
+    const l1 = addAnnotation({ type: 'distance', a: { x: 0, y: 0 }, b: { x: 200, y: 0 } });
+    setTool('slot-dist');
+    await handleToolClick({ x: 50, y: 0 });      // pick l1 — mid-pick
+    assert.equal(state.pendingRefLine?.id, l1.id);
+    deleteAnnotation(l1.id);
+    assert.equal(state.pendingRefLine, null, 'pendingRefLine cleared when its target line is deleted');
+    assert.equal(state.pendingRefLineClick, null);
+  });
+
+  it('deleteAnnotation clears a mid-pick pendingCircleRef (pt-circle-dist)', async () => {
+    const c1 = addAnnotation({ type: 'circle', cx: 100, cy: 100, r: 30 });
+    setTool('pt-circle-dist');
+    await handleToolClick({ x: 130, y: 100 });   // pick c1 — mid-pick
+    assert.ok(state.pendingCircleRef, 'circle pick registered');
+    assert.equal(state.pendingCircleRef.circleId, c1.id);
+    deleteAnnotation(c1.id);
+    assert.equal(state.pendingCircleRef, null, 'pendingCircleRef cleared when its target circle is deleted');
+  });
+
+  it('negative control: deleting an unrelated annotation leaves a mid-pick pendingCenterCircle intact', async () => {
+    const c1 = addAnnotation({ type: 'circle', cx: 100, cy: 100, r: 30 });
+    const unrelated = addAnnotation({ type: 'distance', a: { x: 0, y: 0 }, b: { x: 10, y: 0 } });
+    setTool('center-dist');
+    await handleToolClick({ x: 130, y: 100 });   // pick c1 — mid-pick
+    assert.equal(state.pendingCenterCircle?.id, c1.id);
+    deleteAnnotation(unrelated.id);
+    assert.equal(state.pendingCenterCircle?.id, c1.id, 'unrelated deletion must not clear an in-progress pick');
+  });
+});
+
 describe('sidebar parent refs (Task 15)', () => {
   // listEl is a persistent DOM-stub element whose .children the stub's
   // innerHTML="" clear does not actually empty (see dom-stub.js) — clear it
