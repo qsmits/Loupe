@@ -11,6 +11,8 @@ export const state = {
   crosshair: false,
   showGrid: false,
   measurePanelCollapsed: false,
+  paletteOpen: false,     // Measure… palette (Task 16) visibility
+  paletteQuery: "",       // live search text in the Measure… palette
   showGradientOverlay: false,
   _gradientOverlayImg: null,
   calibration: null,

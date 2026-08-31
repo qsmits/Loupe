@@ -65,6 +65,8 @@ export const STATE_FIELDS = {
   reticleOpacityOverride: "swapped",
 
   // ── in-progress gestures / hovers / scratch (transient — reset per swap) ──
+  paletteOpen: "transient",
+  paletteQuery: "transient",
   showGradientOverlay: "transient",
   _gradientOverlayImg: "transient",
   pendingPoints: "transient",
@@ -167,6 +169,8 @@ export const FIELD_DEFAULTS = {
   reticleColorOverride: () => null,
   reticleOpacityOverride: () => null,
   // transient
+  paletteOpen: () => false,
+  paletteQuery: () => "",
   showGradientOverlay: () => false,
   _gradientOverlayImg: () => null,
   pendingPoints: () => [],

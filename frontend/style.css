@@ -3979,3 +3979,25 @@ body.no-camera .camera-section { display: none; }
 /* Task 15: relation sidebar rows' "[nA] ↔ [nB]" parent-ref span */
 .relation-refs { font-size: 9px; color: var(--muted); flex: none; }
 
+/* Task 16: toolbar Measure… button — right-aligned, accent-filled */
+.tb-measure { margin-left: auto; background: var(--accent); color: #fff; }
+
+/* ── Measure palette ───────────────────────────────────────────────────── */
+.palette-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.45); z-index: 1002;
+                    display: flex; align-items: flex-start; justify-content: center; }
+.palette { margin-top: 9vh; width: 460px; max-width: 92vw; max-height: 74vh; overflow-y: auto;
+           background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+           box-shadow: 0 8px 30px rgba(0,0,0,.5); }
+.palette-search { width: 100%; box-sizing: border-box; background: var(--bg); border: none;
+                  border-bottom: 1px solid var(--surface-2); color: var(--text);
+                  padding: 11px 14px; font-size: 13px; outline: none; }
+.palette-group { padding: 8px 14px 2px; font-size: 10px; letter-spacing: .6px;
+                 text-transform: uppercase; color: var(--muted); }
+.palette-task { display: flex; gap: 10px; padding: 7px 14px; align-items: center; cursor: pointer; }
+.palette-task:hover, .palette-task.hl { background: rgba(10,132,255,.13); }
+.palette-ic { width: 30px; height: 30px; background: var(--bg); border-radius: 6px; flex: none;
+              display: flex; align-items: center; justify-content: center; font-size: 12px; }
+.palette-tt { font-weight: 600; font-size: 12.5px; color: var(--text); }
+.palette-td { font-size: 11px; color: var(--text-secondary); }
+.palette-empty { padding: 18px 14px; color: var(--muted); font-size: 12px; }
+

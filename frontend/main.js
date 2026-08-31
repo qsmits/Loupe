@@ -34,6 +34,7 @@ import { initFringe } from './fringe.js';
 import { enterMaskEditSession, isCrossModeActive } from './cross-mode.js';
 import { captureEpoch, isStale, registerWorkspaceDom, isUsableViewport } from './workspace.js';
 import { initShell, showToast } from './shell.js';
+import { initPalette, openPalette } from './palette.js';
 import { setPanelWidth } from './measure-panel.js';
 import { initTabManager, getActiveTabId, getActiveTab, isHomeVisible, flushAutosave, newProject } from './tab-manager.js';
 import { initProjectIo, offerAutosaveMigration } from './project-io.js';
@@ -66,6 +67,7 @@ function toggleDropdown(btnId, dropId) {
 initMouseHandlers();
 initKeyboard(closeAllDropdowns);
 initShell();
+initPalette();
 
 // IndexedDB unavailable (e.g. Safari private mode): in-memory fallback is
 // active — warn persistently. Registered before initTabManager so the very
@@ -130,6 +132,7 @@ document.addEventListener("toolbar-action", e => {
   if (action === "undo") undo();
   else if (action === "redo") redo();
   else if (action === "origin") toggleOriginMode();
+  else if (action === "open-palette") openPalette();
 });
 
 document.addEventListener("measure-panel-action", e => {

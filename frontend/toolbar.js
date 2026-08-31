@@ -143,5 +143,9 @@ export function Toolbar() {
     <button class="tb-btn" title="Redo (Ctrl+Y)"
       onClick=${() => dispatch("toolbar-action", { action: "redo" })}>
       <${Icon} name="redo" /><span>Redo</span>
+    </button>
+    <button class="tb-btn tb-measure" title="Measure… (M)"
+      onClick=${() => dispatch("toolbar-action", { action: "open-palette" })}>
+      <span class="tb-label">⌕ Measure…</span>
     </button>`;
 }

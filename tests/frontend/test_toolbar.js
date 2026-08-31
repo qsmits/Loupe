@@ -70,12 +70,12 @@ function restore() {
 }
 
 describe('Toolbar — flat tool buttons', () => {
-  it('renders exactly one button per underlying tool, plus Calibrate/Origin/Undo/Redo', () => {
+  it('renders exactly one button per underlying tool, plus Calibrate/Origin/Undo/Redo/Measure…', () => {
     const nodes = render();
     const btns = toolButtons(nodes);
     // 13 measurement/select/pan/note tools (TOOL_BUTTONS minus the divider)
-    // + Calibrate + Origin + Undo + Redo = 17.
-    assert.equal(btns.length, 17);
+    // + Calibrate + Origin + Undo + Redo + Measure… (Task 16 palette launcher) = 18.
+    assert.equal(btns.length, 18);
     restore();
   });
 
@@ -86,6 +86,7 @@ describe('Toolbar — flat tool buttons', () => {
     const expectedTools = [
       'Select', 'Pan', 'Note', 'Distance', 'Angle', 'Circle', 'Best fit', 'Arc',
       'Area', 'Shape', 'Spline', 'Flatness', 'Point', 'Calibrate', 'Set origin', 'Undo', 'Redo',
+      'Measure',
     ];
     for (const label of expectedTools) {
       assert.ok(
@@ -103,16 +104,21 @@ describe('Toolbar — flat tool buttons', () => {
     restore();
   });
 
-  it('every button has a non-empty inline-SVG icon (no emoji)', () => {
+  it('every button has a non-empty inline-SVG icon (no emoji), except Measure…', () => {
     const nodes = render();
     const svgs = nodes.filter(n => n.type === 'svg');
-    // One svg per tb-btn (Calibrate/Origin/Undo/Redo + 13 tools = 17).
+    // One svg per tb-btn (Calibrate/Origin/Undo/Redo + 13 tools = 17). The
+    // Measure… palette launcher is deliberately exempt — it uses a unicode
+    // glyph label (⌕) rather than the shared Icon component, per the brief.
     assert.equal(svgs.length, 17);
     for (const svg of svgs) {
       const html = svg.props.dangerouslySetInnerHTML?.__html;
       assert.ok(html && html.length > 0, 'icon markup should not be empty');
       assert.ok(html.includes('<path') || html.includes('<circle'), 'icon should be SVG path/circle markup');
     }
+    const btns = toolButtons(nodes);
+    const measureBtn = btns.find(b => hasClass(b, 'tb-measure'));
+    assert.ok(measureBtn, 'expected a .tb-measure button');
     restore();
   });
 });

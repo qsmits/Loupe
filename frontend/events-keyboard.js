@@ -12,6 +12,7 @@ import { hideContextMenu } from './events-context-menu.js';
 import { _finalizePickInspection, _updatePickFit } from './events-inspection.js';
 import { getActiveMode } from './modes.js';
 import { nudgeReticleRotation, setReticleRotation } from './reticle.js';
+import { openPalette, closePalette } from './palette.js';
 
 // Shared restore logic for undo/redo. Snapshots exclude the live-image
 // overlays (edges/preprocessed) — mergeRestoredAnnotations re-attaches the
@@ -93,6 +94,11 @@ export function initKeyboard(closeAllDropdowns) {
       return;
     }
     if (e.key === "Escape") {
+      // Measure… palette: closes first, before any other Escape behavior, so
+      // Esc works even when focus never made it to the search box (e.g. the
+      // palette was opened via the toolbar button, or requestAnimationFrame
+      // hasn't committed focus yet).
+      if (state.paletteOpen) { closePalette(); return; }
       if (state.inspectionPickTarget) {
         state.inspectionPickTarget = null;
         state.inspectionPickPoints = [];
@@ -251,6 +257,13 @@ export function initKeyboard(closeAllDropdowns) {
         clampPan(rect.width, rect.height);
         resizeCanvas();
       }
+      return;
+    }
+
+    // Measure… palette (Task 16) — verb-first task index; opens over
+    // whatever's on screen, no modifier chords stolen from the OS/browser.
+    if (e.key.toLowerCase() === "m" && !e.metaKey && !e.ctrlKey && !e.altKey) {
+      openPalette();
       return;
     }
 
