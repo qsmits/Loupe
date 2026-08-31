@@ -580,12 +580,23 @@ export async function handleToolClick(rawPt, e = {}) {
       redraw();
       return;
     }
-    if (!snapped) return;
-    if (snapped.id === state.pendingRefLine.id) return;
-    const lineAId = state.pendingRefLine.id;
-    const lineBId = snapped.id;
-    state.pendingRefLine = null;
-    addAnnotation({ type: "slot-dist", lineAId, lineBId });
+    // Second slot: pick a different line directly, or (fix round 2) accumulate
+    // inline-fit points on a miss — symmetric with the first slot. Clicking
+    // the SAME line again stays a silent no-op (not a fit point) regardless
+    // of pendingRelationFit, matching the historical "pick a different line"
+    // guard.
+    if (snapped && snapped.id === state.pendingRefLine.id) return;
+    if (snapped && !state.pendingRelationFit) {
+      const lineAId = state.pendingRefLine.id;
+      const lineBId = snapped.id;
+      state.pendingRefLine = null;
+      addAnnotation({ type: "slot-dist", lineAId, lineBId });
+      updateToolStatus();
+      redraw();
+      return;
+    }
+    state.pendingRelationFit = { kind: "line" };
+    state.pendingPoints.push(pt);
     updateToolStatus();
     redraw();
     return;
@@ -601,12 +612,20 @@ export async function handleToolClick(rawPt, e = {}) {
       redraw();
       return;
     }
-    if (!snapped) return;
-    if (snapped.id === state.pendingRefLine.id) return;
-    const lineAId = state.pendingRefLine.id;
-    const lineBId = snapped.id;
-    state.pendingRefLine = null;
-    addAnnotation({ type: "intersect", lineAId, lineBId });
+    // Second slot: pick a different line directly, or (fix round 2) accumulate
+    // inline-fit points on a miss — symmetric with the first slot.
+    if (snapped && snapped.id === state.pendingRefLine.id) return;
+    if (snapped && !state.pendingRelationFit) {
+      const lineAId = state.pendingRefLine.id;
+      const lineBId = snapped.id;
+      state.pendingRefLine = null;
+      addAnnotation({ type: "intersect", lineAId, lineBId });
+      updateToolStatus();
+      redraw();
+      return;
+    }
+    state.pendingRelationFit = { kind: "line" };
+    state.pendingPoints.push(pt);
     updateToolStatus();
     redraw();
     return;
@@ -819,6 +838,24 @@ function _consumePickedCircle(tool, circle) {
 }
 
 function _consumePickedLine(tool, lineAnn) {
+  // slot-dist/intersect route BOTH line-pick slots through this function
+  // (unlike perp-dist/para-dist, whose only inline-fittable slot is the
+  // first). When pendingRefLine is already set for one of these two tools,
+  // lineAnn completes the relation instead of replacing the reference line —
+  // mirrors the direct-pick completion inline in handleToolClick. The
+  // same-line id guard those branches apply on a direct pick is unreachable
+  // here: lineAnn is always a freshly addAnnotation()'d fit-line with a new
+  // id when reached via finalizeRelationPick(), so it can never collide with
+  // pendingRefLine.id.
+  if ((tool === "slot-dist" || tool === "intersect") && state.pendingRefLine) {
+    const lineAId = state.pendingRefLine.id;
+    const lineBId = lineAnn.id;
+    state.pendingRefLine = null;
+    addAnnotation({ type: tool, lineAId, lineBId });
+    updateToolStatus();
+    redraw();
+    return;
+  }
   state.pendingRefLine = lineAnn;
   if (tool === "perp-dist") showStatus("Perp — click start point");
   else if (tool === "para-dist") showStatus("Para — click a line to measure parallelism, or a free point to draw a parallel line");

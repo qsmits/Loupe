@@ -347,3 +347,94 @@ describe('inline fitting inside perp-dist (line kind)', () => {
     assert.equal(state.tool, 'perp-dist');       // stays armed
   });
 });
+
+// ── Fix round 2: slot-dist/intersect's second line-pick slot is ALSO
+// inline-fittable (both slots route through _consumePickedLine, mirroring
+// center-dist's both-circle-slots), and para-dist's second slot is confirmed
+// NOT to have gained this (a bare click there is Mode B's free point).
+
+describe('inline fitting inside slot-dist (both slots, fix round 2)', () => {
+  it('two inline-fitted lines create a slot-dist referencing both fit-lines, with a finite gap', async () => {
+    setTool('slot-dist');
+    // First line: horizontal at y=0, fitted from two bare clicks.
+    await handleToolClick({ x: 0, y: 0 });
+    await handleToolClick({ x: 200, y: 0 });
+    assert.equal(state.pendingRelationFit?.kind, 'line');
+    assert.equal(state.pendingPoints.length, 2);
+    assert.equal(finalizeRelationPick(), true);
+    let fitLines = state.annotations.filter(a => a.type === 'fit-line');
+    assert.equal(fitLines.length, 1, 'first line inline-fitted');
+    assert.equal(state.pendingRefLine?.id, fitLines[0].id, 'first fit-line becomes the reference line');
+
+    // Second line: horizontal at y=50, far enough from the first that
+    // findSnapLine misses — must accumulate exactly like the first slot did.
+    await handleToolClick({ x: 0, y: 50 });
+    await handleToolClick({ x: 200, y: 50 });
+    assert.equal(state.pendingRelationFit?.kind, 'line');
+    assert.equal(state.pendingPoints.length, 2);
+    assert.equal(finalizeRelationPick(), true);
+
+    fitLines = state.annotations.filter(a => a.type === 'fit-line');
+    assert.equal(fitLines.length, 2, 'second line also inline-fitted');
+    const rel = state.annotations.find(a => a.type === 'slot-dist');
+    assert.ok(rel, 'slot-dist completed from two inline fits');
+    assert.equal(rel.lineAId, fitLines[0].id);
+    assert.equal(rel.lineBId, fitLines[1].id);
+    assert.equal(state.pendingRefLine, null);
+    assert.equal(state.pendingRelationFit, null);
+    assert.equal(state.tool, 'slot-dist');   // stays armed
+
+    const numeric = measurementNumeric(rel, { annotations: state.annotations, calibration: null });
+    assert.ok(numeric && Number.isFinite(numeric.value), 'measurementNumeric returns a finite gap, not NaN');
+    assert.ok(Math.abs(numeric.value - 50) < 1e-6, 'gap equals the 50px separation between the two fitted lines');
+  });
+});
+
+describe('inline fitting inside intersect (second slot, fix round 2)', () => {
+  it('first line picked directly, second line inline-fitted, completes the intersect', async () => {
+    const l1 = addAnnotation({ type: 'distance', a: { x: 0, y: 0 }, b: { x: 200, y: 0 } });
+    setTool('intersect');
+    await handleToolClick({ x: 50, y: 0 });      // pick l1 directly (first slot, unaffected)
+    assert.equal(state.pendingRefLine?.id, l1.id);
+
+    // Second line: a vertical line at x=100, far from l1's body — a miss.
+    await handleToolClick({ x: 100, y: -100 });
+    await handleToolClick({ x: 100, y: 100 });
+    assert.equal(state.pendingRelationFit?.kind, 'line');
+    assert.equal(state.pendingPoints.length, 2);
+    assert.equal(finalizeRelationPick(), true);
+
+    const fitLines = state.annotations.filter(a => a.type === 'fit-line');
+    assert.equal(fitLines.length, 1, 'second line inline-fitted');
+    const rel = state.annotations.find(a => a.type === 'intersect');
+    assert.ok(rel, 'intersect completed from a direct pick + an inline fit');
+    assert.equal(rel.lineAId, l1.id);
+    assert.equal(rel.lineBId, fitLines[0].id);
+    assert.equal(state.pendingRefLine, null);
+    assert.equal(state.pendingRelationFit, null);
+    assert.equal(state.tool, 'intersect');
+  });
+});
+
+describe('para-dist regression (fix round 2): 2nd slot never gains accumulation', () => {
+  it('a bare click in slot 2 still enters Mode B (free point), not inline-fit accumulation', async () => {
+    addAnnotation({ type: 'distance', a: { x: 0, y: 0 }, b: { x: 200, y: 0 } });
+    setTool('para-dist');
+    await handleToolClick({ x: 50, y: 0 });      // pick reference line directly
+    assert.ok(state.pendingRefLine);
+    assert.equal(state.pendingRelationFit, null);
+
+    await handleToolClick({ x: 60, y: 40 });     // bare click, not on any line
+    assert.equal(state.pendingRelationFit, null, 'slot 2 must not arm inline fitting');
+    assert.deepEqual(state.pendingPoints, [{ x: 60, y: 40 }],
+      'the click became Mode B\'s free point, not a fit point');
+
+    await handleToolClick({ x: 999, y: 999 });   // end point, parallel-constrained
+    const rel = state.annotations.find(a => a.type === 'para-dist');
+    assert.ok(rel, 'para-dist completed via Mode B, unaffected by fix round 2');
+    assert.equal(rel.a.x, 60);
+    assert.equal(rel.a.y, 40);
+    assert.ok(Math.abs(rel.b.y - 40) < 1e-9);
+    assert.equal(state.pendingRelationFit, null);
+  });
+});
