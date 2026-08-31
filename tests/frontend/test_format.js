@@ -300,6 +300,30 @@ describe('formatCsvValue regressions', () => {
   });
 });
 
+describe('center-dist pattern and direction', () => {
+  const cal = { pixelsPerMm: 100, displayUnit: 'mm' };
+  const cA = { id: 1, type: 'circle', cx: 0, cy: 0, r: 50 };
+  const cB = { id: 2, type: 'circle', cx: 400, cy: 0, r: 30 };
+  const mk = extra => ({ type: 'center-dist', a: { x: 0, y: 0 }, b: { x: 400, y: 0 },
+                         circleAId: 1, circleBId: 2, ...extra });
+  const ctx = { calibration: cal, annotations: [cA, cB] };
+  it('centers (default) = 4 mm', () =>
+    assert.equal(measurementNumeric(mk({}), ctx).value, 4));
+  it('min gap = d − rA − rB = 3.2 mm', () =>
+    assert.ok(Math.abs(measurementNumeric(mk({ pattern: 'min' }), ctx).value - 3.2) < 1e-9));
+  it('max span = d + rA + rB = 4.8 mm', () =>
+    assert.ok(Math.abs(measurementNumeric(mk({ pattern: 'max' }), ctx).value - 4.8) < 1e-9));
+  it('direction x projects onto the origin axis', () => {
+    const octx = { ...ctx, origin: { x: 0, y: 0, angle: Math.PI / 4 } };
+    const ann = mk({ direction: 'x' });
+    // a→b = (400,0); X-axis at 45°: |cos·dx + sin·dy| = 400/√2
+    assert.ok(Math.abs(measurementNumeric(ann, octx).value - 400 / Math.SQRT2 / 100) < 1e-9);
+  });
+  it('label carries a suffix', () => {
+    assert.match(measurementLabel(mk({ pattern: 'min' }), ctx), /\(min\)/);
+  });
+});
+
 describe('fullMeasurementLabel', () => {
   const cal = { pixelsPerMm: 100, displayUnit: 'mm' };
   const base = { id: 7, type: 'distance', a: { x: 0, y: 0 }, b: { x: 362.5, y: 0 }, purpose: 'measurement' };

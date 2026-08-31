@@ -3966,6 +3966,11 @@ body.no-camera .camera-section { display: none; }
          padding: 3px 7px; font-size: 12px; color: var(--text); }
 .mp-dev { font-size: 11px; color: var(--text-secondary); margin-top: 4px; }
 .dev-pass { color: var(--success); } .dev-fail { color: var(--danger); }
+/* Task 14: center-dist Pattern/Direction radio sections */
+.mp-radio { display: flex; align-items: center; gap: 6px; margin: 3px 0; font-size: 12px;
+            cursor: pointer; color: var(--text); }
+.mp-dot { width: 9px; height: 9px; border-radius: 50%; border: 1.5px solid var(--muted); flex: none; }
+.mp-radio.on .mp-dot { background: var(--accent); border-color: var(--accent); }
 /* .spec-chip is also reused by Task 11's sidebar rows — kept here since this
    is where it first lands; do not duplicate this block elsewhere. */
 .spec-chip { font-size: 9px; font-weight: 700; border-radius: 3px; padding: 1px 5px; flex: none; }

@@ -127,6 +127,19 @@ function SpecField({ ann, field, label }) {
   </div>`;
 }
 
+// One radio option within a center-dist's Pattern/Direction section. `def` is
+// the value treated as "absent" — clicking it deletes ann[field] rather than
+// writing the default explicitly, so old sessions/exports stay minimal.
+function RadioRow({ ann, field, value, label, def }) {
+  const on = (ann[field] ?? def) === value;
+  return html`<div class="mp-radio ${on ? 'on' : ''}" onClick=${() => {
+    pushUndo();
+    if (value === def) delete ann[field]; else ann[field] = value;
+    dispatch('annotations-changed');
+    renderMeasurePanel();
+  }}><span class="mp-dot"></span>${label}</div>`;
+}
+
 // Properties face: name/value/tolerance editing for a single selected
 // measurement. Multi-select collapses to a bare count (bulk actions live on
 // the sidebar rows, not here) — see the brief's interface note.
@@ -156,6 +169,18 @@ function PropertiesFace() {
     <div class="mp-value">${measurementLabel(ann, ctx)}
       ${ev ? html`<span class="spec-chip ${ev.pass ? 'pass' : 'fail'}">${ev.pass ? 'PASS' : 'FAIL'}</span>` : null}
     </div>
+    ${ann.type === 'center-dist' ? html`
+      <div class="mp-sect"><div class="mp-sect-t">Pattern</div>
+        <${RadioRow} ann=${ann} field="pattern" value="centers" def="centers" label="Between centers" />
+        <${RadioRow} ann=${ann} field="pattern" value="min" def="centers" label="Minimum gap" />
+        <${RadioRow} ann=${ann} field="pattern" value="max" def="centers" label="Maximum span" />
+      </div>
+      ${state.origin ? html`<div class="mp-sect"><div class="mp-sect-t">Direction</div>
+        <${RadioRow} ann=${ann} field="direction" value="line" def="line" label="Direct line" />
+        <${RadioRow} ann=${ann} field="direction" value="x" def="line" label="X · reference axis" />
+        <${RadioRow} ann=${ann} field="direction" value="y" def="line" label="Y · reference axis" />
+      </div>` : null}
+    ` : null}
     <div class="mp-sect"><div class="mp-sect-t">Tolerance</div>
       <${SpecField} ann=${ann} field="nominal" label="Nominal" />
       <${SpecField} ann=${ann} field="upper" label="Upper" />

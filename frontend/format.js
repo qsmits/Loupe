@@ -79,12 +79,13 @@ export function measurementLabel(ann, ctx) {
       : `${mm.toFixed(3)} mm`;
   }
   if (ann.type === "center-dist") {
-    const px = Math.hypot(ann.b.x - ann.a.x, ann.b.y - ann.a.y);
-    if (!cal) return `${px.toFixed(1)} px`;
+    const px = centerDistPx(ann, ctx);
+    const suffix = centerDistSuffix(ann);
+    if (!cal) return `${px.toFixed(1)} px${suffix}`;
     const mm = px / cal.pixelsPerMm;
     return cal.displayUnit === "\u00b5m"
-      ? `${(mm * 1000).toFixed(2)} \u00b5m`
-      : `${mm.toFixed(3)} mm`;
+      ? `${(mm * 1000).toFixed(2)} \u00b5m${suffix}`
+      : `${mm.toFixed(3)} mm${suffix}`;
   }
   if (ann.type === "angle") {
     const v1 = { x: ann.p1.x - ann.vertex.x, y: ann.p1.y - ann.vertex.y };
@@ -461,9 +462,47 @@ export function measurementNumeric(ann, ctx = {}) {
   }
 }
 
-/** Center-to-center pixel distance (Task 14 extends with pattern min/max). */
+/**
+ * Center-to-center pixel distance for a center-dist annotation, pattern- and
+ * direction-aware:
+ *  - ann.direction 'x'/'y' projects the a→b vector onto the origin's
+ *    reference axis (same frame math as the coord-readout HUD in
+ *    events-mouse.js) before taking a length — 'line' (default/absent)
+ *    leaves it untouched.
+ *  - ann.pattern 'min'/'max' subtracts/adds the two referenced circles'
+ *    (circleAId/circleBId, resolved via ctx.annotations) radii from the
+ *    plain center distance — 'centers' (default/absent) leaves it as-is.
+ *    'min' can go negative for overlapping circles; that's a legitimate
+ *    reading (interference), not clamped to zero.
+ */
 export function centerDistPx(ann, ctx = {}) {
-  return Math.hypot(ann.b.x - ann.a.x, ann.b.y - ann.a.y);
+  let dx = ann.b.x - ann.a.x, dy = ann.b.y - ann.a.y;
+  if (ann.direction === 'x' || ann.direction === 'y') {
+    const a = ctx.origin?.angle ?? 0;
+    // same frame math as the HUD readout (events-mouse.js coord-display)
+    const proj = ann.direction === 'x'
+      ? Math.cos(a) * dx + Math.sin(a) * dy
+      : Math.sin(a) * dx - Math.cos(a) * dy;
+    dx = proj; dy = 0;
+  }
+  let px = Math.hypot(dx, dy);
+  if ((ann.pattern === 'min' || ann.pattern === 'max') && ctx.annotations) {
+    const rOf = id => { const c = ctx.annotations.find(x => x.id === id); return c?.r ?? c?.radius ?? 0; };
+    const rr = rOf(ann.circleAId) + rOf(ann.circleBId);
+    px = ann.pattern === 'min' ? px - rr : px + rr;
+  }
+  return px;
+}
+
+/** Label suffix for a center-dist's pattern/direction, e.g. " (min)", " (X)",
+ *  or " (min) (X)" when both are set. Empty string when neither applies. */
+function centerDistSuffix(ann) {
+  const parts = [];
+  if (ann.pattern === 'min') parts.push('(min)');
+  else if (ann.pattern === 'max') parts.push('(max)');
+  if (ann.direction === 'x') parts.push('(X)');
+  else if (ann.direction === 'y') parts.push('(Y)');
+  return parts.length ? ' ' + parts.join(' ') : '';
 }
 
 /**

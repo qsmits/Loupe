@@ -187,6 +187,81 @@ describe('properties face', () => {
   });
 });
 
+// Task 14: center-dist Pattern/Direction radio sections in the properties face.
+describe('properties face — center-dist pattern/direction (Task 14)', () => {
+  const mkCenterDist = extra => ({
+    id: 7, type: 'center-dist', purpose: 'measurement',
+    a: { x: 0, y: 0 }, b: { x: 400, y: 0 }, circleAId: 1, circleBId: 2,
+    ...extra,
+  });
+
+  it('Pattern section is absent for a non-center-dist selection', () => {
+    state.annotations = [{ id: 7, type: 'distance', purpose: 'measurement',
+                           a: { x: 0, y: 0 }, b: { x: 1, y: 0 } }];
+    state.selected = new Set([7]);
+    state.tool = 'select';
+    state.origin = null;
+    const nodes = expand(MeasurePanel());
+    assert.equal(nodes.filter(n => hasClass(n, 'mp-radio')).length, 0);
+  });
+
+  it('Pattern section renders three radios, Direction is absent without an origin', () => {
+    state.annotations = [mkCenterDist({})];
+    state.selected = new Set([7]);
+    state.tool = 'select';
+    state.origin = null;
+    const nodes = expand(MeasurePanel());
+    const sectTitles = nodes.filter(n => hasClass(n, 'mp-sect-t')).map(n => textOf(n).join(''));
+    assert.ok(sectTitles.includes('Pattern'));
+    assert.ok(!sectTitles.includes('Direction'), 'no origin → no Direction section');
+    assert.equal(nodes.filter(n => hasClass(n, 'mp-radio')).length, 3);
+  });
+
+  it('Direction section renders when state.origin exists', () => {
+    state.annotations = [mkCenterDist({})];
+    state.selected = new Set([7]);
+    state.tool = 'select';
+    state.origin = { x: 0, y: 0, angle: 0 };
+    const nodes = expand(MeasurePanel());
+    const sectTitles = nodes.filter(n => hasClass(n, 'mp-sect-t')).map(n => textOf(n).join(''));
+    assert.ok(sectTitles.includes('Direction'));
+    assert.equal(nodes.filter(n => hasClass(n, 'mp-radio')).length, 6); // 3 pattern + 3 direction
+    state.origin = null;
+  });
+
+  it('clicking a non-default pattern radio sets the field, pushes undo, dispatches annotations-changed', () => {
+    const ann = mkCenterDist({});
+    state.annotations = [ann];
+    state.selected = new Set([7]);
+    state.tool = 'select';
+    state.origin = null;
+    const before = undoStack.length;
+    let fired = false;
+    const h = () => { fired = true; };
+    document.addEventListener('annotations-changed', h);
+    const nodes = expand(MeasurePanel());
+    const radios = nodes.filter(n => hasClass(n, 'mp-radio'));
+    // order: centers, min, max
+    radios[1].props.onClick();
+    document.removeEventListener('annotations-changed', h);
+    assert.equal(ann.pattern, 'min');
+    assert.equal(undoStack.length, before + 1);
+    assert.ok(fired);
+  });
+
+  it('clicking the default (centers) radio deletes ann.pattern rather than storing it', () => {
+    const ann = mkCenterDist({ pattern: 'min' });
+    state.annotations = [ann];
+    state.selected = new Set([7]);
+    state.tool = 'select';
+    state.origin = null;
+    const nodes = expand(MeasurePanel());
+    const radios = nodes.filter(n => hasClass(n, 'mp-radio'));
+    radios[0].props.onClick(); // "Between centers" — the default
+    assert.equal(ann.pattern, undefined);
+  });
+});
+
 // The brief's SpecField captures `undoPushed` in a closure scoped to one
 // SpecField render. renderMeasurePanel() is NOT called on every keystroke
 // (only on blur), so the closure survives an entire focus→blur session —
