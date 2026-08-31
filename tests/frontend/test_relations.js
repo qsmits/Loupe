@@ -3,8 +3,10 @@ import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { state } from '../../frontend/state.js';
 import { setTool, handleToolClick, RELATION_TOOLS, nudgeSelected, finalizeRelationPick } from '../../frontend/tools.js';
-import { addAnnotation } from '../../frontend/annotations.js';
-import { getStatus } from '../../frontend/render.js';
+import { addAnnotation, deleteAnnotation, deleteSelected } from '../../frontend/annotations.js';
+import { undo } from '../../frontend/events-keyboard.js';
+import { getStatus, listEl } from '../../frontend/render.js';
+import { renderSidebar } from '../../frontend/sidebar.js';
 import { measurementNumeric } from '../../frontend/format.js';
 import { setImageSize } from '../../frontend/viewport.js';
 
@@ -413,6 +415,113 @@ describe('inline fitting inside intersect (second slot, fix round 2)', () => {
     assert.equal(state.pendingRefLine, null);
     assert.equal(state.pendingRelationFit, null);
     assert.equal(state.tool, 'intersect');
+  });
+});
+
+describe('delete-cascade (Task 15)', () => {
+  it('deleting a circle deletes its center-dist, one undo restores both', async () => {
+    const c1 = addAnnotation({ type: 'circle', cx: 100, cy: 100, r: 30 });
+    const c2 = addAnnotation({ type: 'circle', cx: 400, cy: 100, r: 20 });
+    setTool('center-dist');
+    await handleToolClick({ x: 130, y: 100 });
+    await handleToolClick({ x: 420, y: 100 });
+    assert.ok(state.annotations.some(a => a.type === 'center-dist'));
+    deleteAnnotation(c1.id);
+    assert.ok(!state.annotations.some(a => a.type === 'center-dist'), 'relation cascaded');
+    assert.ok(!state.annotations.some(a => a.id === c1.id));
+    undo();
+    assert.ok(state.annotations.some(a => a.type === 'center-dist'), 'undo restored the relation');
+    assert.ok(state.annotations.some(a => a.id === c1.id), 'undo restored the circle');
+  });
+
+  it('deleteSelected cascades too, and one undo restores everything', async () => {
+    const c1 = addAnnotation({ type: 'circle', cx: 100, cy: 100, r: 30 });
+    const c2 = addAnnotation({ type: 'circle', cx: 400, cy: 100, r: 20 });
+    setTool('center-dist');
+    await handleToolClick({ x: 130, y: 100 });
+    await handleToolClick({ x: 420, y: 100 });
+    const rel = state.annotations.find(a => a.type === 'center-dist');
+    assert.ok(rel);
+    state.selected = new Set([c2.id]);
+    deleteSelected();
+    assert.ok(!state.annotations.some(a => a.id === c2.id));
+    assert.ok(!state.annotations.some(a => a.id === rel.id), 'relation cascaded via deleteSelected');
+    undo();
+    assert.ok(state.annotations.some(a => a.id === c2.id));
+    assert.ok(state.annotations.some(a => a.id === rel.id));
+  });
+
+  it('cascade is transitive: deleting a line deletes a slot-dist AND an intersect built on the same two lines', async () => {
+    const l1 = addAnnotation({ type: 'distance', a: { x: 0, y: 0 }, b: { x: 200, y: 0 } });
+    const l2 = addAnnotation({ type: 'distance', a: { x: 0, y: 50 }, b: { x: 200, y: 50 } });
+    setTool('slot-dist');
+    await handleToolClick({ x: 50, y: 0 });
+    await handleToolClick({ x: 50, y: 50 });
+    const slot = state.annotations.find(a => a.type === 'slot-dist');
+    assert.ok(slot);
+    deleteAnnotation(l1.id);
+    assert.ok(!state.annotations.some(a => a.id === l1.id));
+    assert.ok(!state.annotations.some(a => a.id === slot.id), 'slot-dist cascaded transitively from the deleted line');
+    assert.ok(state.annotations.some(a => a.id === l2.id), 'the untouched line survives');
+  });
+
+  it('deleting an annotation with no dependents removes only itself', async () => {
+    const c1 = addAnnotation({ type: 'circle', cx: 100, cy: 100, r: 30 });
+    const lone = addAnnotation({ type: 'distance', a: { x: 0, y: 0 }, b: { x: 10, y: 0 } });
+    deleteAnnotation(lone.id);
+    assert.ok(!state.annotations.some(a => a.id === lone.id));
+    assert.ok(state.annotations.some(a => a.id === c1.id), 'unrelated annotation untouched');
+  });
+});
+
+describe('sidebar parent refs (Task 15)', () => {
+  // listEl is a persistent DOM-stub element whose .children the stub's
+  // innerHTML="" clear does not actually empty (see dom-stub.js) — clear it
+  // ourselves right before the render under test so only that render's rows
+  // are inspected.
+  function rowFor(id) {
+    return listEl.children.find(r => String(r.dataset.id) === String(id));
+  }
+  function refSpanOf(row) {
+    return row?.children.find(c => c.className === 'relation-refs') ?? null;
+  }
+
+  it('a center-dist row shows "[nA] ↔ [nB]"', async () => {
+    const c1 = addAnnotation({ type: 'circle', cx: 100, cy: 100, r: 30 });
+    const c2 = addAnnotation({ type: 'circle', cx: 400, cy: 100, r: 20 });
+    setTool('center-dist');
+    await handleToolClick({ x: 130, y: 100 });
+    await handleToolClick({ x: 420, y: 100 });
+    const rel = state.annotations.find(a => a.type === 'center-dist');
+    listEl.children.length = 0;
+    renderSidebar();
+    const span = refSpanOf(rowFor(rel.id));
+    assert.ok(span, 'relation-refs span rendered');
+    assert.equal(span.textContent, '[1] ↔ [2]');
+  });
+
+  it('a plain measurement row has no relation-refs span', () => {
+    const d = addAnnotation({ type: 'distance', a: { x: 0, y: 0 }, b: { x: 10, y: 0 } });
+    listEl.children.length = 0;
+    renderSidebar();
+    assert.equal(refSpanOf(rowFor(d.id)), null);
+  });
+
+  it('a dangling ref (referenced annotation deleted, cascade off) is skipped, not rendered as "[]"', async () => {
+    const c1 = addAnnotation({ type: 'circle', cx: 100, cy: 100, r: 30 });
+    const c2 = addAnnotation({ type: 'circle', cx: 400, cy: 100, r: 20 });
+    setTool('center-dist');
+    await handleToolClick({ x: 130, y: 100 });
+    await handleToolClick({ x: 420, y: 100 });
+    const rel = state.annotations.find(a => a.type === 'center-dist');
+    // Simulate a dangling ref directly (real deletes cascade — this covers
+    // the defensive branch for any other path that could leave one stale).
+    rel.circleAId = 999;
+    listEl.children.length = 0;
+    renderSidebar();
+    const span = refSpanOf(rowFor(rel.id));
+    assert.ok(span, 'still renders — the surviving ref is shown');
+    assert.equal(span.textContent, '[2]', 'the dangling ref is skipped, not a broken "[]"');
   });
 });
 

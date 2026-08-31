@@ -3976,4 +3976,6 @@ body.no-camera .camera-section { display: none; }
 .spec-chip { font-size: 9px; font-weight: 700; border-radius: 3px; padding: 1px 5px; flex: none; }
 .spec-chip.pass { background: rgba(48, 209, 88, .15); color: var(--success); }
 .spec-chip.fail { background: var(--danger); color: #fff; }
+/* Task 15: relation sidebar rows' "[nA] ↔ [nB]" parent-ref span */
+.relation-refs { font-size: 9px; color: var(--muted); flex: none; }
 

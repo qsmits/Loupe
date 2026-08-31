@@ -53,8 +53,20 @@ export function initGlobalVisToggle() {
   updateGlobalVisButton();
 }
 
+// Relation types → the ref fields (in display order) whose numbered targets
+// get shown as a "[nA] ↔ [nB]" span on that relation's sidebar row — the
+// same fields annotations.js's _REF_FIELDS cascades deletes through.
+const _REF_PAIRS = {
+  'center-dist': ['circleAId', 'circleBId'],
+  'slot-dist': ['lineAId', 'lineBId'],
+  'intersect': ['lineAId', 'lineBId'],
+  'pt-circle-dist': ['circleId'],
+};
+
 // ── Sidebar rendering ──────────────────────────────────────────────────────────
-function _createMeasurementRow(ann, number) {
+// `numbers` is the annotationNumbers() map computed once by renderSidebar()
+// and threaded through both call sites — avoids recomputing it per row.
+function _createMeasurementRow(ann, number, numbers) {
   const row = document.createElement("div");
   row.className = "measurement-item" + (state.selected.has(ann.id) ? " selected" : "");
   if (ann.hidden) row.classList.add("annotation-hidden");
@@ -74,6 +86,22 @@ function _createMeasurementRow(ann, number) {
     valSpan.style.color = "#fbbf24";
   } else {
     valSpan.textContent = measurementLabel(ann, _mctx());
+  }
+  // Parent-refs span for relation rows: "[nA] ↔ [nB]" (or a single "[n]" for
+  // pt-circle-dist). A ref to an annotation with no number (deleted →
+  // dangling, or unnumbered) is skipped rather than rendering a broken "[]".
+  let refSpan = null;
+  const refFields = _REF_PAIRS[ann.type];
+  if (refFields) {
+    const labels = refFields
+      .map(f => ann[f] != null && numbers.has(ann[f]) ? `[${numbers.get(ann[f])}]` : null)
+      .filter(Boolean);
+    if (labels.length) {
+      refSpan = document.createElement("span");
+      refSpan.className = "relation-refs";
+      refSpan.textContent = labels.join(" ↔ ");
+      refSpan.title = "References these measurements — deleting one deletes this relation";
+    }
   }
   // Pass/fail chip for toleranced measurements (mirrors measure-panel.js's
   // PropertiesFace chip — same .spec-chip class, same evaluateSpec call).
@@ -114,7 +142,7 @@ function _createMeasurementRow(ann, number) {
   delBtn.className = "del-btn";
   delBtn.dataset.id = ann.id;
   delBtn.textContent = "✕";
-  row.append(numSpan, nameInput, valSpan, ...(specSpan ? [specSpan] : []), ...(calSpan ? [calSpan] : []), visBtn, delBtn);
+  row.append(numSpan, nameInput, valSpan, ...(refSpan ? [refSpan] : []), ...(specSpan ? [specSpan] : []), ...(calSpan ? [calSpan] : []), visBtn, delBtn);
   // Constraint chips
   const annConstraints = constraintsForAnnotation(ann.id);
   if (annConstraints.length > 0) {
@@ -264,7 +292,7 @@ export function renderSidebar() {
     for (const ann of members) {
       if (ann.type === "origin") continue;
       const number = "[" + numbers.get(ann.id) + "]";
-      const row = _createMeasurementRow(ann, number);
+      const row = _createMeasurementRow(ann, number, numbers);
       row.classList.add("meas-group-member");
       if (ann.purpose === 'drawing' || ann.purpose === 'helper') {
         const suffix = document.createElement("span");
@@ -308,7 +336,7 @@ export function renderSidebar() {
       continue;
     }
     const number = "[" + numbers.get(ann.id) + "]";
-    listEl.appendChild(_createMeasurementRow(ann, number));
+    listEl.appendChild(_createMeasurementRow(ann, number, numbers));
   }
 
   // Render detections (non-elevated) in a separate section

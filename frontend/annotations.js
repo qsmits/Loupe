@@ -32,16 +32,45 @@ export function addAnnotation(data, { skipUndo = false } = {}) {
   return ann;
 }
 
+// Relation ref fields: each names the annotation id(s) a relation-type
+// annotation depends on (center-dist's circleAId/circleBId, pt-circle-dist's
+// circleId, slot-dist/intersect's lineAId/lineBId). Deleting a referenced
+// annotation must also delete anything that references it — a center-dist
+// pointed at a deleted circle is meaningless, not just stale.
+const _REF_FIELDS = ["circleAId", "circleBId", "circleId", "lineAId", "lineBId"];
+
+/** ids + every annotation transitively referencing them (a relation whose
+ *  referenced circle/line is itself doomed, e.g. a slot-dist over two lines
+ *  where one line is being deleted along with a relation that references it). */
+function _withDependents(ids) {
+  const doomed = new Set(ids);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const ann of state.annotations) {
+      if (doomed.has(ann.id)) continue;
+      if (_REF_FIELDS.some(f => ann[f] != null && doomed.has(ann[f]))) {
+        doomed.add(ann.id); changed = true;
+      }
+    }
+  }
+  return doomed;
+}
+
 export function deleteAnnotation(id) {
   const ann = state.annotations.find(a => a.id === id);
   if (!ann) return;  // checked BEFORE pushUndo so a missing id leaves no phantom undo step
   pushUndo();
-  _cleanupAnnotation(ann);
-  state.annotations = state.annotations.filter(a => a.id !== id);
-  cascadeDeleteConstraints(id);
+  const doomed = _withDependents([id]);
+  for (const doomedId of doomed) {
+    const doomedAnn = state.annotations.find(a => a.id === doomedId);
+    if (doomedAnn) _cleanupAnnotation(doomedAnn);
+    cascadeDeleteConstraints(doomedId);
+  }
+  state.annotations = state.annotations.filter(a => !doomed.has(a.id));
   pruneOrphanGroupEntries();
-  state.selected.delete(id);
-  if (state.pendingCenterCircle && state.pendingCenterCircle.id === id) state.pendingCenterCircle = null;
+  for (const doomedId of doomed) state.selected.delete(doomedId);
+  if (state.pendingCenterCircle && doomed.has(state.pendingCenterCircle.id)) state.pendingCenterCircle = null;
   renderSidebar();
   redraw();
 }
@@ -49,12 +78,13 @@ export function deleteAnnotation(id) {
 export function deleteSelected() {
   if (state.selected.size === 0) return;
   pushUndo();
-  for (const id of [...state.selected]) {
+  const doomed = _withDependents([...state.selected]);
+  for (const id of doomed) {
     const ann = state.annotations.find(a => a.id === id);
     if (ann) _cleanupAnnotation(ann);
     cascadeDeleteConstraints(id);
-    state.annotations = state.annotations.filter(a => a.id !== id);
   }
+  state.annotations = state.annotations.filter(a => !doomed.has(a.id));
   pruneOrphanGroupEntries();
   state.selected = new Set();
   renderSidebar();
