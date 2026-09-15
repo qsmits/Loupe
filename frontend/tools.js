@@ -286,7 +286,7 @@ export async function handleToolClick(rawPt, e = {}) {
     state.pendingPoints.push(pt);
     if (state.pendingPoints.length === 2) {
       const [a, b] = state.pendingPoints;
-      addAnnotation({ type: "distance", a, b });
+      _maybeOfferContourArea(addAnnotation({ type: "distance", a, b }));
       state.pendingPoints = [];
     }
     updateToolStatus();
@@ -421,7 +421,7 @@ export async function handleToolClick(rawPt, e = {}) {
       let span = Math.abs(a3 - a1) % 360;
       if (span > 180) span = 360 - span;
       const chord = Math.hypot(p3.x - p1.x, p3.y - p1.y);
-      addAnnotation({ type: "arc-measure", cx, cy, r, p1, p2, p3, span_deg: span, chord_px: chord });
+      _maybeOfferContourArea(addAnnotation({ type: "arc-measure", cx, cy, r, p1, p2, p3, span_deg: span, chord_px: chord }));
       state.pendingPoints = [];
     }
     updateToolStatus();
@@ -463,11 +463,7 @@ export async function handleToolClick(rawPt, e = {}) {
       showStatus("Not a closed shape");
       return;
     }
-    const area = polygonArea(loop.points);
-    addAnnotation({ type: "area", points: loop.points, sourceAnnIds: loop.ids });
-    state._flashExpiry = Date.now() + 400;
-    showStatus(`Area captured from ${loop.ids.length} segments (${area.toFixed(1)} px²)`);
-    setTool("select");
+    _createAreaFromLoop(loop);
     return;
   }
 
@@ -1548,4 +1544,49 @@ function _traverseLoop(startAnn) {
     current = { x: chosen.next.x, y: chosen.next.y };
   }
   return null;
+}
+
+/** Loop -> `area` annotation tail, shared by the area-shape (Shape tool)
+ *  one-shot pick flow and the closed-contour offer below. A single
+ *  addAnnotation call, so creating the area is one undo step. */
+function _createAreaFromLoop(loop) {
+  const area = polygonArea(loop.points);
+  addAnnotation({ type: "area", points: loop.points, sourceAnnIds: loop.ids });
+  state._flashExpiry = Date.now() + 400;
+  showStatus(`Area captured from ${loop.ids.length} segments (${area.toFixed(1)} px²)`);
+  setTool("select");
+  return area;
+}
+
+// ── Closed-contour area offer ─────────────────────────────────────────────
+// After a manually drawn distance or arc-measure segment completes, check
+// whether it just closed a loop with other endpoint-snapped segments and, if
+// so, offer to turn that loop into an area measurement. Deliberately narrow
+// in v1: only distance/arc-measure completions call this (not spline,
+// arc-fit, or the relation tools) — see the call sites above.
+function _maybeOfferContourArea(newAnn) {
+  const ep = _extractEndpoints(newAnn);
+  if (!ep) return;
+  const tol = _areaShapeTol();
+  const joinsEndpoint = pt => state.annotations.some(a => {
+    if (a.id === newAnn.id) return false;
+    const oep = _extractEndpoints(a);
+    if (!oep) return false;
+    return Math.hypot(oep.a.x - pt.x, oep.a.y - pt.y) <= tol ||
+           Math.hypot(oep.b.x - pt.x, oep.b.y - pt.y) <= tol;
+  });
+  // Both ends must already join some OTHER chainable annotation's endpoint —
+  // an open chain (either end free) never offers.
+  if (!joinsEndpoint(ep.a) || !joinsEndpoint(ep.b)) return;
+  const loop = _traverseLoop(newAnn);
+  if (!loop) return;
+  // Degenerate guard: a chord retracing its own line closes with ~zero area
+  // and shouldn't be offered (a chord+arc "D" shape has real area and is
+  // legitimately offered).
+  const area = polygonArea(loop.points);
+  if (Math.abs(area) <= 1) return;
+  showToast("Closed contour detected", {
+    actionLabel: "Create area",
+    onAction: () => { _createAreaFromLoop(loop); },
+  });
 }
