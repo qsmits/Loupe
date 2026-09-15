@@ -232,10 +232,12 @@ def test_load_dxf_returns_entities(client):
         files={"file": ("test.dxf", dxf_bytes, "application/octet-stream")},
     )
     assert r.status_code == 200
-    entities = r.json()
-    assert isinstance(entities, list)
-    lines = [e for e in entities if e["type"] == "line"]
+    body = r.json()
+    assert isinstance(body["entities"], list)
+    lines = [e for e in body["entities"] if e["type"] == "line"]
     assert len(lines) == 1
+    assert body["dim_specs"] == []
+    assert body["unmatched_dims"] == 0
 
 
 def test_load_dxf_invalid_file(client):

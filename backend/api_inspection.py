@@ -34,6 +34,17 @@ class ExportDxfBody(BaseModel):
     origin_y: float = Field(default=0, ge=-1e6, le=1e6)
 
 
+class FeatureSpec(BaseModel):
+    """A single feature's drawing-derived size tolerance (from a DXF
+    diameter/radius DIMENSION). Kept in the dimension's own basis — a
+    radius-kind spec's nominal/upper/lower are radius-valued, not diameter;
+    doubling to a diameter basis happens once, in scoring."""
+    kind: str = Field(pattern="^(diameter|radius)$")
+    nominal: float
+    upper: float = Field(ge=0)
+    lower: float = Field(le=0)
+
+
 class InspectGuidedBody(BaseModel):
     entities: list[dict] = Field(max_length=10000)
     pixels_per_mm: float = Field(gt=0, le=100000)
@@ -46,6 +57,8 @@ class InspectGuidedBody(BaseModel):
     tolerance_warn: float = Field(default=0.10, gt=0, le=100)
     tolerance_fail: float = Field(default=0.25, gt=0, le=100)
     feature_tolerances: dict = Field(default_factory=dict)
+    feature_specs: dict[str, FeatureSpec] = Field(default_factory=dict)
+    default_tol: float | None = Field(default=None, gt=0, le=100)
     smoothing: int = Field(default=1, ge=1, le=5)
     canny_low: int = Field(default=50, ge=0, le=255)
     canny_high: int = Field(default=130, ge=0, le=255)
@@ -277,6 +290,8 @@ def make_inspection_router(frame_store: SessionFrameStore) -> APIRouter:
             tolerance_warn=body.tolerance_warn,
             tolerance_fail=body.tolerance_fail,
             feature_tolerances=body.feature_tolerances,
+            feature_specs={h: s.model_dump() for h, s in body.feature_specs.items()},
+            default_tol=body.default_tol,
             smoothing=body.smoothing,
             canny_low=body.canny_low,
             canny_high=body.canny_high,
@@ -300,10 +315,10 @@ def make_inspection_router(frame_store: SessionFrameStore) -> APIRouter:
             raise HTTPException(413, detail="DXF file too large (max 10MB)")
         try:
             from .vision.dxf_parser import parse_dxf
-            entities = parse_dxf(content)
+            result = parse_dxf(content)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=safe_error_detail(request, exc, "Invalid DXF file"))
-        return entities
+        return result
 
     @insp_router.post("/refine-point")
     async def refine_point(body: RefinePointBody, session_id: str = Depends(get_session_id_dep)):

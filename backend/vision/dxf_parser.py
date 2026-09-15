@@ -25,14 +25,98 @@ def _bulge_to_arc(x1: float, y1: float, x2: float, y2: float, bulge: float):
     return cx, cy, r, start_deg, end_deg
 
 
-def parse_dxf(content: bytes) -> list[dict]:
+def _extract_dim_specs(msp, entities: list[dict]) -> tuple[list[dict], int]:
+    """Extract diameter/radius DIMENSION tolerances and associate each with
+    the circle/arc it dimensions.
+
+    Only diametric (dimtype 3) and radial (dimtype 4) dimensions carry a
+    size spec; other dimension types are ignored entirely (not counted as
+    unmatched). Tolerance is read from the dimension's EFFECTIVE dimstyle
+    attributes via ``Dimension.override()`` (respects per-entity DSTYLE
+    overrides, falling back to the assigned DIMSTYLE table entry) — if
+    ``dimtol`` is off, the dimension has no tolerance and produces no spec.
+
+    Association: contrary to the naive assumption that group code 10
+    (``dxf.defpoint``) is "the" definition point on the circle, ezdxf's own
+    renderers (``dim_radius.py``/``dim_diameter.py``) show that group code
+    10 means the CENTER for radius dimensions and only one of two points on
+    the circle for diameter dimensions. Group code 15 (``dxf.defpoint4``,
+    ezdxf's ``point_on_circle``) is the point that actually lies on the
+    circle for *both* dimension types, so that is what we test against
+    candidate circle/arc entities.
+
+    Nominal/limits are kept in the dimension's own basis (radius dims stay
+    radius-valued, diameter dims stay diameter-valued) — doubling to a
+    diameter basis happens later, once, in scoring.
     """
-    Parse DXF file bytes and return geometry entities as JSON-serialisable dicts.
+    circle_like = [e for e in entities if e.get("type") in ("circle", "arc", "polyline_arc")]
+    dim_specs: list[dict] = []
+    unmatched = 0
+
+    for dim in msp.query("DIMENSION"):
+        try:
+            dimtype = dim.dimtype  # ezdxf masks off the binary flag bits already
+            if dimtype == 3:
+                kind = "diameter"
+            elif dimtype == 4:
+                kind = "radius"
+            else:
+                continue  # not a size dimension we support
+
+            ov = dim.override()
+            if not ov.get("dimtol", 0):
+                continue  # no tolerance on this dimension -> no spec
+
+            upper = max(0.0, float(ov.get("dimtp", 0.0)))
+            lower = min(0.0, -float(ov.get("dimtm", 0.0)))
+            nominal = float(dim.get_measurement())
+
+            point = dim.dxf.defpoint4  # point_on_circle for both RADIUS and DIAMETER dims
+            px, py = float(point.x), float(point.y)
+
+            best_handle = None
+            best_dist = None
+            for c in circle_like:
+                r = c["radius"]
+                eps = max(1e-4 * r, 1e-6)
+                d = abs(math.hypot(px - c["cx"], py - c["cy"]) - r)
+                if d < eps and (best_dist is None or d < best_dist):
+                    best_dist = d
+                    best_handle = c["handle"]
+
+            if best_handle is None:
+                unmatched += 1
+                continue
+
+            dim_specs.append({
+                "handle": best_handle,
+                "kind": kind,
+                "nominal": nominal,
+                "upper": upper,
+                "lower": lower,
+            })
+        except Exception:
+            continue  # skip malformed/unsupported dimensions silently
+
+    return dim_specs, unmatched
+
+
+def parse_dxf(content: bytes) -> dict:
+    """
+    Parse DXF file bytes and return geometry + dimension-tolerance specs.
     Supports: LINE, CIRCLE, ARC, LWPOLYLINE.
     LWPOLYLINE segments are decomposed into polyline_line (straight) and
     polyline_arc (bulge) entities.
+    Diameter/radius DIMENSION tolerances -> dim_specs.
     Coordinates are in DXF units (typically mm).
     Raises ValueError if the file cannot be parsed.
+
+    Returns a dict:
+      {
+        "entities": [...],           # JSON-serialisable entity dicts
+        "dim_specs": [...],          # {handle, kind, nominal, upper, lower}
+        "unmatched_dims": int,       # diametric/radial dims that couldn't be associated
+      }
     """
     try:
         text = content.decode("utf-8", errors="replace")
@@ -115,4 +199,10 @@ def parse_dxf(content: bytes) -> list[dict]:
         except Exception:
             continue  # skip malformed entities silently
 
-    return entities
+    dim_specs, unmatched_dims = _extract_dim_specs(msp, entities)
+
+    return {
+        "entities": entities,
+        "dim_specs": dim_specs,
+        "unmatched_dims": unmatched_dims,
+    }

@@ -75,6 +75,95 @@ def _pass_fail(dev_mm: float, tol_warn: float, tol_fail: float) -> str:
         return "fail"
 
 
+def _worse_verdict(a: str, b: str) -> str:
+    """Return whichever of two pass/warn/fail verdicts is worse."""
+    order = {"pass": 0, "warn": 1, "fail": 2}
+    return b if order[b] > order[a] else a
+
+
+def _band_verdict(dev_mm: float, upper: float, lower: float) -> str:
+    """Classify a SIGNED deviation against an asymmetric [lower, upper] band
+    (lower <= 0 <= upper). Fail outside the band; warn once the deviation
+    passes 80% of the limit on its own side (positive deviations measured
+    against `upper`, negative against `lower` — the two 80% thresholds are
+    generally different magnitudes since the band need not be symmetric)."""
+    if dev_mm > upper or dev_mm < lower:
+        return "fail"
+    if dev_mm >= 0:
+        return "warn" if dev_mm > 0.8 * upper else "pass"
+    return "warn" if dev_mm < 0.8 * lower else "pass"
+
+
+def _existing_dev_mm(result: dict) -> float:
+    """The single deviation measure this codebase has always judged
+    pass/warn/fail against: signed perpendicular deviation for lines, the
+    larger-magnitude of (non-negative) center deviation / (signed) radius
+    deviation for arcs/circles."""
+    if result.get("perp_dev_mm") is not None:
+        return result["perp_dev_mm"]
+    center = result.get("center_dev_mm") or 0.0
+    radius = result.get("radius_dev_mm") or 0.0
+    return max(center, abs(radius))
+
+
+def _apply_spec_scoring(result: dict, entity: dict, spec: dict | None, ppm: float,
+                         default_tol: float | None,
+                         tolerance_warn: float, tolerance_fail: float) -> None:
+    """Re-score a MATCHED feature (that has no popover tolerance override)
+    against a DXF drawing spec and/or a per-drawing default tolerance.
+    Mutates `result` in place; a no-op when neither is available (today's
+    behavior, unchanged).
+
+    Precedence (the caller already handled priority (1), the popover
+    override, by not calling this at all when one is present):
+      (2) drawing spec (circles/arcs only) for SIZE + default/global for
+          POSITION, worst of the two wins.
+      (3) default_tol band alone, judging the existing single deviation
+          measure.
+      (4) leave `result["pass_fail"]` exactly as already computed (today's
+          global-tolerance behavior).
+    """
+    etype = entity.get("type", "")
+    is_circle_like = etype in ("arc", "polyline_arc", "circle")
+
+    if spec is not None and is_circle_like and result.get("fit"):
+        # Doubling happens exactly once, here: a radius-kind spec's
+        # nominal/upper/lower are radius-valued, but SIZE is always judged
+        # on diameter (the classic mistake: +/-0.01 on radius is +/-0.02 on
+        # diameter).
+        mult = 2.0 if spec["kind"] == "radius" else 1.0
+        nominal_d = mult * spec["nominal"]
+        upper_d = mult * spec["upper"]
+        lower_d = mult * spec["lower"]
+
+        measured_diameter_mm = 2.0 * result["fit"]["r"] / ppm
+        size_dev_mm = measured_diameter_mm - nominal_d
+        size_verdict = _band_verdict(size_dev_mm, upper_d, lower_d)
+
+        center_dev_mm = result.get("center_dev_mm") or 0.0
+        if default_tol is not None:
+            position_verdict = _pass_fail(center_dev_mm, 0.8 * default_tol, default_tol)
+            result["spec_source"] = "default"
+        else:
+            position_verdict = _pass_fail(center_dev_mm, tolerance_warn, tolerance_fail)
+
+        result["pass_fail"] = _worse_verdict(size_verdict, position_verdict)
+        result["spec"] = {
+            "nominal": spec["nominal"],
+            "upper": spec["upper"],
+            "lower": spec["lower"],
+            "kind": spec["kind"],
+            "source": "drawing",
+        }
+        result["size_dev_mm"] = round(size_dev_mm, 4)
+        return
+
+    if default_tol is not None:
+        dev_mm = _existing_dev_mm(result)
+        result["pass_fail"] = _pass_fail(dev_mm, 0.8 * default_tol, default_tol)
+        result["spec_source"] = "default"
+
+
 def _inspect_line(entity, edge_xy, ppm, tx, ty, angle_rad,
                   corridor_px, flip_h, flip_v, tol_warn, tol_fail,
                   subpixel="none", raw_gray=None):
@@ -468,6 +557,8 @@ def inspect_features(
     tolerance_warn: float = 0.1,
     tolerance_fail: float = 0.25,
     feature_tolerances: dict | None = None,
+    feature_specs: dict | None = None,
+    default_tol: float | None = None,
     smoothing: int = 1,
     subpixel: str = "parabola",
 ) -> list[dict]:
@@ -485,7 +576,15 @@ def inspect_features(
     corridor_px : half-width of the search corridor in pixels
     canny_low, canny_high : Canny edge detection thresholds
     tolerance_warn, tolerance_fail : deviation thresholds in mm
-    feature_tolerances : per-feature tolerance overrides {handle: {warn, fail}}
+    feature_tolerances : per-feature tolerance overrides {handle: {warn, fail}} —
+        top scoring priority; when present for a handle, everything below is
+        skipped and the feature is judged exactly as before this feature existed.
+    feature_specs : per-feature DXF diameter/radius dimension specs
+        {handle: {kind, nominal, upper, lower}} — second scoring priority,
+        circles/arcs only (see guided_inspection._apply_spec_scoring).
+    default_tol : per-drawing default tolerance in mm — third scoring
+        priority, used for POSITION when a spec applies, or as the sole band
+        when no spec applies.
     smoothing : preprocessing smoothing level
 
     Returns
@@ -506,10 +605,12 @@ def inspect_features(
     results = []
 
     ft = feature_tolerances or {}
+    fs = feature_specs or {}
 
     for entity in entities:
         etype = entity.get("type", "")
         handle = entity.get("handle")
+        has_override = bool(handle) and handle in ft
         per_feat = ft.get(handle, {}) if handle else {}
         tol_w = per_feat.get("warn", tolerance_warn)
         tol_f = per_feat.get("fail", tolerance_fail)
@@ -526,6 +627,16 @@ def inspect_features(
                                          subpixel=subpixel, raw_gray=raw_gray)
         else:
             result = _unmatched(entity, f"unsupported entity type: {etype}")
+
+        # A popover override (feature_tolerances) is the top scoring
+        # priority and already fully judged the result above via tol_w/tol_f
+        # — leave it untouched. Otherwise, a drawing spec and/or default_tol
+        # may override the plain-global-tolerance verdict _inspect_* just
+        # computed.
+        if result.get("matched") and not has_override:
+            spec = fs.get(handle) if handle else None
+            _apply_spec_scoring(result, entity, spec, pixels_per_mm, default_tol,
+                                 tolerance_warn, tolerance_fail)
 
         results.append(result)
 
