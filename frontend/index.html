@@ -742,6 +742,10 @@
           <button class="help-nav-item top-level" data-page="tool-flatness" data-help-modes="microscope">Flatness</button>
           <button class="help-nav-item top-level" data-page="tool-point" data-help-modes="microscope">Point</button>
 
+          <div class="help-nav-section" data-help-modes="microscope">Measuring</div>
+          <button class="help-nav-item top-level" data-page="measure-panel" data-help-modes="microscope">Measure Panel</button>
+          <button class="help-nav-item top-level" data-page="measure-palette" data-help-modes="microscope">Measure… Palette</button>
+
           <div class="help-nav-section" data-help-modes="microscope">Constraints</div>
           <button class="help-nav-item top-level" data-page="constraints" data-help-modes="microscope">Constraints</button>
 
@@ -803,7 +807,7 @@
             <div class="help-section-label">Basic workflow</div>
             <div class="help-step"><span class="help-step-num">1</span><span>Freeze a frame using the <strong>❄ Live</strong> button, drag and drop an image onto the viewer, or paste one (<kbd>Ctrl</kbd>/<kbd>⌘</kbd><kbd>V</kbd>).</span></div>
             <div class="help-step"><span class="help-step-num">2</span><span>Calibrate the image: press <kbd>C</kbd>, click two points of known distance, enter the value in mm.</span></div>
-            <div class="help-step"><span class="help-step-num">3</span><span>Select a measurement tool from the measuring-tools bar at the bottom of the header, or press its shortcut key. Click points on the image to place measurements. Some tools show extra sub-mode options inline in the same bar, next to the tool, when relevant.</span></div>
+            <div class="help-step"><span class="help-step-num">3</span><span>Select a measurement tool from the measuring-tools bar at the bottom of the header, or press its shortcut key — or press <kbd>M</kbd> and search for what you want to measure. Click points on the image to place measurements. The Measure panel between the canvas and the sidebar walks through whichever tool is armed; some tools also show extra sub-mode options inline in the toolbar, next to the tool.</span></div>
             <div class="help-step"><span class="help-step-num">4</span><span>Export results as CSV, PDF, or annotated PNG from the Overlay menu.</span></div>
             <div class="help-section-label">Tips</div>
             <div class="help-tip">Hover over the image with a measurement tool active — the cursor snaps to the nearest detected edge automatically. Hold <kbd>Alt</kbd> to bypass snapping and place a point exactly where you click.</div>
@@ -1439,6 +1443,7 @@
             <div class="help-step"><span class="help-step-num">2</span><span>Click on or near the boundary of a closed loop — a Circle, a closed Spline, an existing Area polygon, or a chain of Distance/Arc Measure/detected-line segments that forms a closed ring.</span></div>
             <p class="help-p">Loupe traces the loop from your click, walking from segment to segment until it returns to the start, and creates an Area annotation from the traced boundary.</p>
             <div class="help-tip">If the click doesn't land on anything, the status bar shows "Click a closed shape (or a segment of a closed loop)". If it hits a segment but the chain never closes, it shows "Not a closed shape" — nothing is added either way.</div>
+            <div class="help-tip">Loupe also offers this automatically: finishing a Distance or Arc Measure segment that closes a loop of already-snapped endpoints pops a "Closed contour detected" toast with a <strong>Create area</strong> button. Shape stays the manual way to do the same thing for a loop that doesn't just get closed.</div>
           </div>
 
           <div class="help-page" id="help-page-tool-spline" hidden>
@@ -1460,7 +1465,7 @@
             <div class="help-step"><span class="help-step-num">1</span><span>Press <kbd>L</kbd> and click points along the edge.</span></div>
             <div class="help-step"><span class="help-step-num">2</span><span>Double-click or press <kbd>Enter</kbd> to finish.</span></div>
             <p class="help-p">Loupe fits a best-fit line through the points (orthogonal least-squares, not a simple vertical regression), then measures each point's perpendicular distance from that line. The reported value is the <strong>peak-to-valley span</strong> of those distances — a flatness zone width, shown with a <strong>⏥</strong> symbol in px or mm if calibrated. The fit line and its dashed zone boundaries are drawn on the image.</p>
-            <div class="help-tip">There's no RMS value or per-point deviation label — only the overall zone width — and no tolerance-based coloring.</div>
+            <div class="help-tip">There's no RMS value or per-point deviation label along the fit line — only the overall zone width. You can still set a Nominal + Upper/Lower tolerance for that zone width in the Measure panel, like any measurement — that adds a PASS/FAIL chip and colors the canvas label — but there's no per-point coloring.</div>
           </div>
 
           <div class="help-page" id="help-page-tool-point" hidden>
@@ -1468,6 +1473,47 @@
             <p class="help-page-sub">A free reference point, for marking a coordinate without measuring anything.</p>
             <div class="help-step"><span class="help-step-num">1</span><span>Press <kbd>P</kbd> and click a location.</span></div>
             <p class="help-p">Places a small crosshair marker at that pixel. It carries position data like any other annotation — useful as a snap target or a DXF-alignment reference point — but shows no coordinate readout in the sidebar or on the canvas by default.</p>
+          </div>
+
+          <!-- MEASURE PANEL -->
+          <div class="help-page" id="help-page-measure-panel" hidden>
+            <h2 class="help-page-title">Measure Panel</h2>
+            <p class="help-page-sub">The column between the canvas and the sidebar. It shows a different face depending on what you're doing, and collapses to a thin strip when idle.</p>
+            <div class="help-section-label">While a tool is armed</div>
+            <p class="help-p">Numbered steps walk through the current tool's clicks, advancing as you place points. <strong>Best fit</strong> and <strong>Flatness</strong> show a live preview line — diameter and RMS for a circle, RMS for a line — updating as each point is placed. Multi-point tools show <strong>Finish</strong> and <strong>Cancel</strong> buttons, equivalent to pressing <kbd>Enter</kbd>/double-click to finish or <kbd>Esc</kbd> to cancel.</p>
+            <div class="help-section-label">With a measurement selected</div>
+            <p class="help-p">Switch to Select and click one measurement to see its properties: a rename field, and a <strong>Nominal</strong> + <strong>Upper</strong>/<strong>Lower</strong> tolerance in the active display unit (mm or µm). Once a nominal is set, the panel shows the live deviation and a PASS/FAIL chip. This is the same <strong>[n]</strong> number shown on the canvas label and in the sidebar row for that measurement.</p>
+            <p class="help-p">Selecting a circle↔circle distance adds a <strong>Pattern</strong> choice — between centers, minimum gap, or maximum span — and, only once an <strong>Origin</strong> is set, a <strong>Direction</strong> choice to report the distance along the reference X or Y axis instead of the direct line.</p>
+            <div class="help-tip">Selecting more than one measurement collapses this face to a count — bulk actions (delete, visibility) stay on the sidebar rows.</div>
+            <div class="help-section-label">Collapsed</div>
+            <p class="help-p">With no tool armed and nothing selected, the panel shrinks to a vertical <strong>MEASURE</strong> strip. Click it to expand manually; arming a tool or selecting a measurement expands it automatically. Drag its left edge to resize.</p>
+          </div>
+
+          <!-- MEASURE PALETTE -->
+          <div class="help-page" id="help-page-measure-palette" hidden>
+            <h2 class="help-page-title">Measure… Palette &amp; Relation Measurements <span class="help-badge">M</span></h2>
+            <p class="help-page-sub">A searchable, verb-first list of every measuring task — press <kbd>M</kbd> or click <strong>⌕ Measure…</strong> in the toolbar.</p>
+            <div class="help-step"><span class="help-step-num">1</span><span>Press <kbd>M</kbd>. Type to filter by name, description, or keyword (e.g. "pitch" finds circle-to-circle distance).</span></div>
+            <div class="help-step"><span class="help-step-num">2</span><span>Click a task, or press <kbd>Enter</kbd> with a result highlighted, to arm it. The palette closes and the Measure panel guides you through it.</span></div>
+            <div class="help-section-label">Relation measurements</div>
+            <p class="help-p">Six tasks measure a relationship between two existing elements rather than between raw clicks:</p>
+            <table>
+              <thead><tr><th>Task</th><th>What it needs</th></tr></thead>
+              <tbody>
+                <tr><td>Distance between two circles</td><td>two circles</td></tr>
+                <tr><td>Distance from point to circle</td><td>a circle, then a point</td></tr>
+                <tr><td>Perpendicular distance from a line</td><td>a reference line, then start and end points</td></tr>
+                <tr><td>Parallel distance / parallelism</td><td>a reference line, then another line or a free point</td></tr>
+                <tr><td>Width between two lines</td><td>two lines (a slot or groove)</td></tr>
+                <tr><td>Intersection of two lines</td><td>two lines</td></tr>
+              </tbody>
+            </table>
+            <div class="help-section-label">Picking or fitting</div>
+            <p class="help-p">For a circle or line slot, either click an already-fitted element to pick it directly, or click a bare edge to place fit points — at least 3 for a circle, at least 2 for a line — then press <kbd>Enter</kbd> (or double-click, or the panel's Finish button). The points become a normal Circle measurement, or a Flatness line, which then becomes the pick — the same as if you'd built it with those tools directly.</p>
+            <div class="help-tip">Parallel distance's second step is the one exception — it always picks an existing line or places a single free point, with no inline fitting there.</div>
+            <div class="help-tip">Perpendicular distance, parallel distance, and parallelism keep the geometry they were given even if you later drag the line they're anchored to — only deleting that line cascades.</div>
+            <div class="help-section-label">Deleting a referenced element</div>
+            <p class="help-p">Deleting a circle or line that a relation measurement depends on deletes the relation with it, in the same undo step — one <kbd>Ctrl</kbd>/<kbd>⌘</kbd><kbd>Z</kbd> brings both back.</p>
           </div>
 
           <!-- Constraints -->
@@ -1495,7 +1541,7 @@
             </table>
             <div class="help-section-label">Removing a constraint</div>
             <p class="help-p">A small badge marks the constraint's contact point — dark when satisfied, red if it can't converge, dashed when disabled. Right-click the badge for <strong>Remove constraint</strong> (or Enable/Disable). Right-click a single annotation that has constraints for a <strong>Constraints</strong> submenu listing each one individually.</p>
-            <div class="help-tip">This replaces the old dedicated Center Distance, Perpendicular Distance, Parallel Distance, Point-Circle Distance, Line Intersect, and Slot Distance tools. Old sessions containing those annotation types still display, hit-test, and export correctly — only the tools used to create new ones were removed.</div>
+            <div class="help-tip">Center Distance, Perpendicular Distance, Parallel Distance, Point-Circle Distance, Line Intersect, and Slot Distance are no longer dedicated toolbar tools — they're available again as relation measurements from the Measure… palette (press <kbd>M</kbd>; see "Measure… Palette &amp; Relation Measurements"). A constraint and a relation measurement are different things: a constraint keeps re-solving as you drag either linked annotation, while most relation measurements keep the geometry they were given and only react if their referenced circle/line is deleted.</div>
           </div>
 
           <!-- SHORTCUTS -->
@@ -1513,15 +1559,17 @@
                 <tr><td><kbd>O</kbd></td><td>Circle (3-point)</td><td><kbd>C</kbd></td><td>Calibrate</td></tr>
               </tbody>
             </table>
-            <div class="help-tip">Best fit, Arc, Shape, and Spline have no shortcut key — select them by clicking the tool in the measuring-tools bar.</div>
+            <div class="help-tip">Best fit, Arc, Shape, and Spline have no shortcut key of their own — arm them by clicking the tool in the measuring-tools bar, or search for them in the Measure… palette (<kbd>M</kbd>).</div>
+            <div class="help-tip">While the Measure… palette is open, typing filters its task list instead of triggering any shortcut below — only <kbd>Esc</kbd> still works, to close it.</div>
             <div class="help-section-label">Actions</div>
             <table>
               <thead><tr><th>Key</th><th>Action</th></tr></thead>
               <tbody>
-                <tr><td><kbd>Esc</kbd></td><td>Cancel / back to Select</td></tr>
+                <tr><td><kbd>Esc</kbd></td><td>Cancel / close the Measure… palette / back to Select</td></tr>
                 <tr><td><kbd>Del</kbd> / <kbd>Bksp</kbd></td><td>Delete selected annotation(s)</td></tr>
                 <tr><td><kbd>U</kbd></td><td>Elevate selected detection to measurement</td></tr>
-                <tr><td><kbd>Enter</kbd></td><td>Confirm multi-point tool or point-pick inspection</td></tr>
+                <tr><td><kbd>Enter</kbd></td><td>Confirm multi-point tool (including an inline circle/line fit in a relation measurement) or point-pick inspection</td></tr>
+                <tr><td><kbd>M</kbd></td><td>Open the Measure… palette</td></tr>
                 <tr><td><kbd>S</kbd></td><td>Save session</td></tr>
                 <tr><td><kbd>0</kbd></td><td>Zoom to fit window (frozen only)</td></tr>
                 <tr><td><kbd>1</kbd></td><td>Zoom to 1:1 pixels (frozen only)</td></tr>
@@ -1557,6 +1605,8 @@
                 <tr><td><kbd>Alt</kbd> (hold, no click)</td><td>Suppresses the orange snap preview crosshair on mousemove</td></tr>
               </tbody>
             </table>
+            <div class="help-section-label">Snapping while placing points</div>
+            <p class="help-p">Before falling back to sub-pixel edge detection (see Sub-pixel Snapping), Loupe first snaps to the endpoint of any existing annotation within the snap radius: a Distance/Perpendicular/Parallel/two-point Calibration endpoint, a Circle or Fit Arc center — plus, for a partial Fit Arc, its two arc ends — an Arc Measure's two ends, every point of a Flatness line or Spline, an Area vertex, a Point, or the Origin. When more than one is in range, the nearest one wins.</p>
             <div class="help-section-label">Selection (Select tool)</div>
             <table>
               <thead><tr><th>Gesture</th><th>Action</th></tr></thead>
@@ -1835,7 +1885,7 @@
               <thead><tr><th>Format</th><th>Contents</th><th>How to export</th></tr></thead>
               <tbody>
                 <tr><td><strong>Annotated PNG</strong></td><td>Image with all measurements and labels rendered on top</td><td>Overlay → Export annotated image</td></tr>
-                <tr><td><strong>CSV</strong></td><td>All measurements with values, coordinates, calibration. One row per measurement.</td><td>Overlay → Export CSV</td></tr>
+                <tr><td><strong>CSV</strong></td><td>All measurements with values, coordinates, and calibration, plus per-measurement tolerance columns (Nominal/Upper/Lower/Deviation/Result) where set. One row per measurement, numbered to match the sidebar and canvas labels.</td><td>Overlay → Export CSV</td></tr>
                 <tr><td><strong>Inspection CSV</strong></td><td>Guided inspection results: feature handle, deviation, pass/fail, Punch/Die</td><td>Overlay → Export Inspection CSV (requires inspection)</td></tr>
                 <tr><td><strong>Inspection PDF</strong></td><td>Formatted report with numbered features, deviation table, pass/fail summary</td><td>Overlay → Export Inspection PDF (requires inspection)</td></tr>
                 <tr><td><strong>DXF (reverse engineering)</strong></td><td>All measurement annotations converted to DXF entities in mm-space. Distances → lines, circles → circles, splines → SPLINE entities.</td><td>Overlay → Export DXF</td></tr>
