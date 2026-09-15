@@ -10,6 +10,17 @@ import { fitCircle } from './math.js';
 import { projectConstrained } from './format.js';
 import { CONSTRAINT_ICONS } from './constraints.js';
 
+/** The point a click would actually land on. Annotation snap wins — the click
+ *  path skips sub-pixel refinement when it fired (tools.js) — otherwise the
+ *  live sub-pixel target predicts the refinement the click will apply.
+ *  Resolved at draw time so the debounced server-side target self-heals the
+ *  preview on its own redraw. Fixes the preview circle jumping on click. */
+export function resolvePreviewCursor(pc, subpixelTarget) {
+  if (!pc) return pc;
+  if (!pc.annotationSnapped && subpixelTarget) return subpixelTarget;
+  return pc;
+}
+
 // Tools that trigger the loupe (any tool that places measurement points)
 const _LOUPE_TOOLS = new Set([
   "distance", "angle", "circle", "arc-fit", "arc-measure",
@@ -136,8 +147,8 @@ export function drawPendingPoints() {
  * Called from redraw() inside the viewport transform (image space).
  */
 export function drawToolPreview() {
-  if (!state._previewCursor) return;
-  const cur = state._previewCursor;
+  const cur = resolvePreviewCursor(state._previewCursor, state._subpixelSnapTarget);
+  if (!cur) return;
 
   // Generic rubber band + circle/arc-measure previews
   if (state.pendingPoints.length > 0 && state.tool !== "select"

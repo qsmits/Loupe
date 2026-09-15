@@ -744,7 +744,8 @@ export function initMouseHandlers() {
         (state.tool !== "select" && state.tool !== "calibrate" && state.tool !== "center-dist")) {
       const { pt: snappedPt, snapped } = snapPoint(rawPt, e.altKey);
       state.snapTarget = (snapped && !e.altKey) ? snappedPt : null;
-      if (wantsPreview) state._previewCursor = snappedPt;
+      if (wantsPreview) state._previewCursor =
+        { x: snappedPt.x, y: snappedPt.y, annotationSnapped: snapped && !e.altKey };
       // Angle tool: highlight the line that would be captured on click.
       if (state.tool === "angle") {
         const hover = findSnapLine(pt);
