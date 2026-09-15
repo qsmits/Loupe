@@ -23,6 +23,8 @@ function sampleRecord() {
   rec.state.lensK1 = -0.02;
   rec.state.lensK1Space = 'pixel_v0';
   rec.state.featureModes = { A1: 'punch' };
+  rec.state.featureSpecs = { C1: { kind: 'diameter', nominal: 20, upper: 0.05, lower: -0.02 } };
+  rec.state.dxfDefaultTol = 0.15;
   rec.state.measurementGroups = { 3: 'Slot' };
   rec.state.annotations = [
     { type: 'distance', id: 3, a: { x: 0, y: 0 }, b: { x: 10, y: 0 }, purpose: 'measurement' },
@@ -48,6 +50,8 @@ describe('buildWorkspaceV4', () => {
     assert.deepEqual(v4.tolerances, { warn: 0.05, fail: 0.2 });
     assert.equal(v4.lensK1, -0.02);
     assert.equal(v4.lensK1Space, 'pixel_v0');
+    assert.deepEqual(v4.featureSpecs, { C1: { kind: 'diameter', nominal: 20, upper: 0.05, lower: -0.02 } });
+    assert.equal(v4.dxfDefaultTol, 0.15);
   });
 
   it('defaults lensK1Space to diag_normalized_v1 when state omits it', () => {
@@ -76,8 +80,10 @@ describe('buildWorkspaceV4', () => {
     const v4 = buildWorkspaceV4(rec);
     rec.state.annotations[0].b.x = 999;
     rec.state.featureModes.A1 = 'die';
+    rec.state.dxfDefaultTol = 0.99;
     assert.equal(v4.annotations[0].b.x, 10);
     assert.equal(v4.featureModes.A1, 'punch');
+    assert.equal(v4.dxfDefaultTol, 0.15);
   });
 });
 
@@ -144,6 +150,18 @@ describe('applyWorkspaceV4', () => {
     assert.equal(rec.imageHeight, 1080);
     assert.deepEqual(rec.undoStack, []);
     assert.deepEqual(rec.state.measurementGroups, { 3: 'Slot' });
+    assert.deepEqual(rec.state.featureSpecs, { C1: { kind: 'diameter', nominal: 20, upper: 0.05, lower: -0.02 } });
+    assert.equal(rec.state.dxfDefaultTol, 0.15);
+  });
+
+  it('defaults featureSpecs/dxfDefaultTol for a workspace saved before those fields existed', () => {
+    // Regression: a pre-fix v4 record has neither key at all.
+    const v4 = buildWorkspaceV4(sampleRecord());
+    delete v4.featureSpecs;
+    delete v4.dxfDefaultTol;
+    const rec = applyWorkspaceV4(JSON.parse(JSON.stringify(v4)));
+    assert.deepEqual(rec.state.featureSpecs, {});
+    assert.equal(rec.state.dxfDefaultTol, null);
   });
 
   it('defaults lensK1Space to diag_normalized_v1 for a workspace saved before the field existed', () => {

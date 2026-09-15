@@ -65,6 +65,8 @@ export function buildWorkspaceV4(record) {
     // diag_normalized_v1 default on the next load and gets mistagged.
     lensK1Space: s.lensK1Space ?? "diag_normalized_v1",
     featureTolerances: { ...s.featureTolerances },
+    featureSpecs: { ...s.featureSpecs },
+    dxfDefaultTol: s.dxfDefaultTol ?? null,
     featureModes: { ...s.featureModes },
     featureNames: { ...s.featureNames },
     measurementGroups: { ...s.measurementGroups },
@@ -109,6 +111,8 @@ export function applyWorkspaceV4(v4) {
   // correct, safe default here, not a guess.
   s.lensK1Space = v4.lensK1Space ?? "diag_normalized_v1";
   s.featureTolerances = { ...(v4.featureTolerances ?? {}) };
+  s.featureSpecs = { ...(v4.featureSpecs ?? {}) };
+  s.dxfDefaultTol = v4.dxfDefaultTol ?? null;
   s.featureModes = { ...(v4.featureModes ?? {}) };
   s.featureNames = { ...(v4.featureNames ?? {}) };
   s.measurementGroups = { ...(v4.measurementGroups ?? {}) };
@@ -171,6 +175,10 @@ export function migrateV3ToV4(data) {
     lensK1: 0,
     lensK1Space: "diag_normalized_v1", // v3 sessions never carried lens correction
     featureTolerances: { ...(data.featureTolerances ?? {}) },
+    // v3 sessions never carried DXF dimension specs or a default tolerance
+    // (both post-date v3) — always empty/null on migration.
+    featureSpecs: {},
+    dxfDefaultTol: null,
     featureModes: { ...(data.featureModes ?? {}) },
     featureNames: { ...(data.featureNames ?? {}) },
     measurementGroups: { ...(data.measurementGroups ?? {}) },

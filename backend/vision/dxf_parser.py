@@ -48,6 +48,17 @@ def _extract_dim_specs(msp, entities: list[dict]) -> tuple[list[dict], int]:
     Nominal/limits are kept in the dimension's own basis (radius dims stay
     radius-valued, diameter dims stay diameter-valued) — doubling to a
     diameter basis happens later, once, in scoring.
+
+    Guard against a spurious geometric match: ezdxf defaults an ABSENT group
+    code 15 (defpoint4) to (0, 0, 0) rather than raising, so a dimension
+    whose defpoint4 got stripped (hand-edited DXF, a lossy round-trip
+    elsewhere in some toolchain) silently reads as "point on circle at the
+    origin" — which coincidentally sits on the boundary of any unrelated
+    circle/arc that happens to pass through the origin. Before trusting a
+    geometric match, cross-check the dimension's own measured nominal
+    against that candidate's actual size (2r for diameter-kind, r for
+    radius-kind); a mismatch means the "match" was spurious, so it counts
+    as unmatched rather than producing a spec on the wrong feature.
     """
     circle_like = [e for e in entities if e.get("type") in ("circle", "arc", "polyline_arc")]
     dim_specs: list[dict] = []
@@ -74,7 +85,7 @@ def _extract_dim_specs(msp, entities: list[dict]) -> tuple[list[dict], int]:
             point = dim.dxf.defpoint4  # point_on_circle for both RADIUS and DIAMETER dims
             px, py = float(point.x), float(point.y)
 
-            best_handle = None
+            best_c = None
             best_dist = None
             for c in circle_like:
                 r = c["radius"]
@@ -82,14 +93,20 @@ def _extract_dim_specs(msp, entities: list[dict]) -> tuple[list[dict], int]:
                 d = abs(math.hypot(px - c["cx"], py - c["cy"]) - r)
                 if d < eps and (best_dist is None or d < best_dist):
                     best_dist = d
-                    best_handle = c["handle"]
+                    best_c = c
 
-            if best_handle is None:
+            if best_c is None:
+                unmatched += 1
+                continue
+
+            expected_size = 2.0 * best_c["radius"] if kind == "diameter" else best_c["radius"]
+            size_tol = max(1e-3 * expected_size, 1e-6)
+            if abs(nominal - expected_size) > size_tol:
                 unmatched += 1
                 continue
 
             dim_specs.append({
-                "handle": best_handle,
+                "handle": best_c["handle"],
                 "kind": kind,
                 "nominal": nominal,
                 "upper": upper,

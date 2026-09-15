@@ -17,6 +17,8 @@
  * @param {Object}  config.calibration        — { pixelsPerMm, displayUnit }
  * @param {Object}  config.tolerances         — { warn, fail }
  * @param {Object}  [config.featureTolerances]
+ * @param {Object}  [config.featureSpecs]      — DXF diameter/radius DIMENSION tolerances, keyed by handle
+ * @param {number|null} [config.dxfDefaultTol] — per-drawing default ± tolerance (mm)
  * @param {Object}  [config.featureModes]
  * @param {Object}  [config.featureNames]
  * @param {Object}  config.detection          — { cannyLow, cannyHigh, smoothing, subpixel }
@@ -32,6 +34,8 @@ export function assembleTemplate(config) {
     calibration,
     tolerances,
     featureTolerances = {},
+    featureSpecs = {},
+    dxfDefaultTol = null,
     featureModes = {},
     featureNames = {},
     detection,
@@ -59,6 +63,8 @@ export function assembleTemplate(config) {
       fail: tolerances.fail,
     },
     featureTolerances,
+    featureSpecs,
+    dxfDefaultTol,
     featureModes,
     featureNames,
     detection: {

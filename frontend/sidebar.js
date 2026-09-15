@@ -9,6 +9,7 @@ import { renderGearResultsPanel } from './gear.js';
 import { loadReticleList, getReticleCategories, loadReticle, unloadReticle, setReticleRotation } from './reticle.js';
 import { annotationNumbers, OVERLAY_SKIP_TYPES } from './numbering.js';
 import { renderMeasurePanel } from './measure-panel.js';
+import { formatToleranceCell } from './tolerance-format.js';
 
 const _mctx = () => ({
   calibration: state.calibration,
@@ -973,21 +974,6 @@ export function updateDxfControlsVisibility() {
   }
 }
 
-// Tolerance-cell display for one inspection result row. Precedence mirrors
-// the backend's scoring: a drawing spec (DXF diameter/radius dimension) is
-// shown in preference to a default-tol verdict, which is shown in
-// preference to today's plain global/popover ±warn/fail band.
-function formatToleranceCell(r) {
-  if (r.spec) {
-    const { nominal, upper, lower } = r.spec;
-    return { text: `${nominal.toFixed(3)} +${upper.toFixed(3)}/${lower.toFixed(3)}`, tag: "DWG" };
-  }
-  if (r.spec_source === "default" && r.default_tol_used != null) {
-    return { text: `±${r.default_tol_used}`, tag: "DEF" };
-  }
-  return { text: `±${r.tolerance_warn}/${r.tolerance_fail}`, tag: null };
-}
-
 // ── Inspection result table ────────────────────────────────────────────────────
 export function renderInspectionTable() {
   const panel = document.getElementById("inspection-panel");
@@ -1333,9 +1319,17 @@ export function renderInspectionTable() {
           if (r.profile_mm != null) {
               deviationText += `  \u23e5${r.profile_mm.toFixed(4)}`;
           }
+          if (r.spec && r.size_dev_mm != null) {
+              const sign = r.size_dev_mm >= 0 ? "+" : "";
+              deviationText += `  \u2300\u0394${sign}${r.size_dev_mm.toFixed(4)}`;
+          }
       }
 
       let deviationTitle = "";
+      if (r.spec && r.size_dev_mm != null) {
+          const nomD = r.spec.kind === "radius" ? 2 * r.spec.nominal : r.spec.nominal;
+          deviationTitle += `Size deviation (diameter basis): ${r.size_dev_mm >= 0 ? "+" : ""}${r.size_dev_mm.toFixed(4)} mm vs nominal \u2300${nomD.toFixed(3)} mm\n`;
+      }
       if (r.profile_mm != null) {
           deviationTitle += `Profile of a line: \u23e5${r.profile_mm.toFixed(4)} mm\n`;
       }

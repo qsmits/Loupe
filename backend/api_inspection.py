@@ -40,9 +40,13 @@ class FeatureSpec(BaseModel):
     radius-kind spec's nominal/upper/lower are radius-valued, not diameter;
     doubling to a diameter basis happens once, in scoring."""
     kind: str = Field(pattern="^(diameter|radius)$")
-    nominal: float
-    upper: float = Field(ge=0)
-    lower: float = Field(le=0)
+    # allow_inf_nan=False: NaN/Infinity would otherwise pass validation and
+    # silently mis-score downstream — _band_verdict(NaN, ...) compares false
+    # against every bound and returns "pass" for a nonsensical spec instead
+    # of failing loudly here.
+    nominal: float = Field(allow_inf_nan=False)
+    upper: float = Field(ge=0, allow_inf_nan=False)
+    lower: float = Field(le=0, allow_inf_nan=False)
 
 
 class InspectGuidedBody(BaseModel):

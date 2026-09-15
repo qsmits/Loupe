@@ -1,4 +1,5 @@
 import logging
+import math
 import os
 import pathlib
 from contextlib import asynccontextmanager
@@ -6,7 +7,10 @@ from contextlib import asynccontextmanager
 log = logging.getLogger(__name__)
 
 from fastapi import FastAPI
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from .cameras.base import BaseCamera
@@ -24,6 +28,27 @@ from .api import make_router, router as ui_router
 from .run_store import RunStore
 
 FRONTEND_DIR = pathlib.Path(__file__).parent.parent / "frontend"
+
+
+def _sanitize_nan_inf(obj):
+    """Recursively replace non-finite floats (NaN/Infinity/-Infinity) with
+    their str() so a validation-error body can still be JSON-rendered.
+
+    Starlette's JSONResponse always renders with allow_nan=False. When a
+    request body carries a literal NaN/Infinity for a field guarded by
+    e.g. Field(allow_inf_nan=False) (see api_inspection.FeatureSpec), FastAPI's
+    default RequestValidationError handler echoes that rejected raw value
+    back verbatim in the error detail's "input" key — which then crashes
+    the very 422 response meant to report it. Used only by the exception
+    handler below.
+    """
+    if isinstance(obj, float) and not math.isfinite(obj):
+        return str(obj)
+    if isinstance(obj, dict):
+        return {k: _sanitize_nan_inf(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_sanitize_nan_inf(v) for v in obj]
+    return obj
 
 
 def create_app(camera: BaseCamera | None = None, no_camera: bool = False) -> FastAPI:
@@ -164,6 +189,16 @@ def create_app(camera: BaseCamera | None = None, no_camera: bool = False) -> Fas
 
     app = FastAPI(title="Video Microscope", lifespan=lifespan)
     app.state.hosted = hosted
+
+    @app.exception_handler(RequestValidationError)
+    async def _validation_exception_handler(request, exc):
+        # See _sanitize_nan_inf's docstring: a rejected NaN/Infinity input
+        # would otherwise crash this very error response instead of
+        # cleanly reporting 422.
+        return JSONResponse(
+            status_code=422,
+            content={"detail": _sanitize_nan_inf(jsonable_encoder(exc.errors()))},
+        )
 
     # Expose reader._stop on app so the MJPEG generator can check it.
     # The lifespan sets _stop in the finally block, but the generator needs

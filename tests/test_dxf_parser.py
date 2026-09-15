@@ -266,3 +266,29 @@ def test_dim_specs_key_present_even_with_no_dimensions():
     result = parse_dxf(_make_dxf(circle=True))
     assert result["dim_specs"] == []
     assert result["unmatched_dims"] == 0
+
+
+def test_stripped_defpoint4_does_not_mis_associate_via_origin_default():
+    """ezdxf defaults an absent group code 15 (defpoint4) to (0, 0, 0). If
+    some unrelated circle happens to pass exactly through the origin, a
+    naive geometric-only association would wrongly match IT instead of the
+    circle actually being dimensioned (whose defpoint4 got stripped, e.g.
+    by hand-editing or a lossy DXF round-trip elsewhere in the toolchain).
+    Cross-checking the dimension's own measured nominal against the
+    candidate's actual size must catch this and report unmatched instead
+    of a garbage spec on the wrong feature."""
+    doc = ezdxf.new()
+    msp = doc.modelspace()
+    msp.add_circle((50, 50, 0), radius=25)   # the actually-dimensioned circle
+    msp.add_circle((10, 0, 0), radius=10)    # decoy: boundary passes exactly through the origin
+    style = msp.add_diameter_dim(center=(50, 50, 0), radius=25, angle=45, dimstyle="EZ_RADIUS")
+    style.set_tolerance(0.05, 0.02)
+    style.render()
+    style.dimension.dxf.discard("defpoint4")  # reproduce the code-15-stripped repro
+
+    buf = io.StringIO()
+    doc.write(buf)
+    result = parse_dxf(buf.getvalue().encode())
+
+    assert result["dim_specs"] == []
+    assert result["unmatched_dims"] == 1

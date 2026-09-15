@@ -6,25 +6,7 @@ import { state, _deviationHitBoxes, _labelHitBoxes } from './state.js';
 import { viewport, imageWidth, imageHeight } from './viewport.js';
 import { ctx, canvas, pw, drawLabel } from './render.js';
 import { dxfCtmOps, applyCtmOps, dxfToCanvasPure } from './dxf-transform.js';
-
-function _deviationColor(r) {
-  const magnitude = Math.abs(r.perp_dev_mm ?? r.radius_dev_mm ?? 0);
-  const tol_w = r.tolerance_warn ?? state.tolerances.warn;
-  const tol_f = r.tolerance_fail ?? state.tolerances.fail;
-
-  if (magnitude <= tol_w) return "#32d74b";  // green — pass
-
-  const mode = state.featureModes[r.handle] || state.featureModes[r.parent_handle] || "die";
-  const radiusDev = r.radius_dev_mm;
-
-  if (radiusDev != null && magnitude > tol_w) {
-    const reworkable = (mode === "die" && radiusDev < 0)
-                    || (mode === "punch" && radiusDev > 0);
-    return reworkable ? "#ff9f0a" : "#ff453a";
-  }
-
-  return magnitude <= tol_f ? "#ff9f0a" : "#ff453a";
-}
+import { deviationColor as _deviationColor } from './deviation-color.js';
 
 function _drawFeatureNumber(x, y, num, color) {
   const r = pw(7);

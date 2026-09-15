@@ -279,6 +279,8 @@ export function initDxfHandlers() {
     const raw = e.target.value.trim();
     const v = parseFloat(raw);
     state.dxfDefaultTol = (raw !== "" && isFinite(v) && v > 0) ? v : null;
+    state._dirty = true;   // this field is swapped/persisted state; without this
+                            // the ~2s dirty-poll autosave never picks it up
   });
 
   // btn-align-dxf (auto-align) click

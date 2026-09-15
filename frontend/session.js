@@ -8,6 +8,7 @@ import { imageWidth, imageHeight } from './viewport.js';
 import { measurementLabel, measurementNumeric, formatCsvValue } from './format.js';
 import { evaluateSpec } from './spec.js';
 import { annotationNumbers } from './numbering.js';
+import { formatToleranceCell, buildInspectionCsvRow, INSPECTION_CSV_HEADERS } from './tolerance-format.js';
 
 const _mctx = () => ({
   calibration: state.calibration,
@@ -160,29 +161,15 @@ export async function exportDxf() {
 export function exportInspectionCsv() {
   const partName = state.dxfFilename || "";
   const timestamp = new Date().toISOString();
-  const headers = [
-    "part_name", "timestamp", "feature_id", "feature_type",
-    "deviation_mm", "tp_dev_mm", "angle_error_deg", "profile_mm", "tolerance_warn", "tolerance_fail", "result", "notes"
-  ];
+  const headers = INSPECTION_CSV_HEADERS;
 
   const rows = [headers];
 
-  // Section 1 — DXF feature deviations
+  // Section 1 — DXF feature deviations. buildInspectionCsvRow uses
+  // formatToleranceCell so a spec/default-tol-judged feature's row carries
+  // its actual band (DWG/DEF), not the stale global tolerance_warn/fail.
   state.inspectionResults.forEach(r => {
-    rows.push([
-      partName,
-      timestamp,
-      r.handle,
-      r.type,
-      r.matched && r.deviation_mm != null ? r.deviation_mm.toFixed(4) : "",
-      r.tp_dev_mm != null ? r.tp_dev_mm.toFixed(4) : "",
-      r.angle_error_deg != null ? r.angle_error_deg.toFixed(2) : "",
-      r.profile_mm != null ? r.profile_mm.toFixed(4) : "",
-      r.tolerance_warn,
-      r.tolerance_fail,
-      r.matched ? r.pass_fail.toUpperCase() : "UNMATCHED",
-      "",
-    ]);
+    rows.push(buildInspectionCsvRow(r, partName, timestamp));
   });
 
   // Section 2 — Arc-measure annotations
@@ -344,7 +331,12 @@ export function exportInspectionPdf() {
       if (r.profile_mm != null) {
         deviationText += `  \u23e5${r.profile_mm.toFixed(4)}`;
       }
-      const toleranceText = `±${r.tolerance_warn}/${r.tolerance_fail}`;
+      if (r.spec && r.size_dev_mm != null) {
+        const sizeSign = r.size_dev_mm >= 0 ? "+" : "";
+        deviationText += `  \u2300\u0394${sizeSign}${r.size_dev_mm.toFixed(4)}`;
+      }
+      const tolCell = formatToleranceCell(r);
+      const toleranceText = tolCell.tag ? `${tolCell.text} ${tolCell.tag}` : tolCell.text;
       const resultText = r.matched ? r.pass_fail.toUpperCase() : "—";
       const typeName = r.type.replace("polyline_", "p_");
 

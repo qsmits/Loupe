@@ -19,6 +19,8 @@ function validConfig() {
     calibration: { pixelsPerMm: 42.5, displayUnit: 'mm' },
     tolerances: { warn: 0.05, fail: 0.1 },
     featureTolerances: {},
+    featureSpecs: {},
+    dxfDefaultTol: null,
     featureModes: {},
     featureNames: {},
     detection: { cannyLow: 50, cannyHigh: 150, smoothing: 1, subpixel: true },
@@ -81,6 +83,26 @@ test('assembleTemplate: default description is empty string when omitted', () =>
   delete cfg.description;
   const tmpl = assembleTemplate(cfg);
   assert.equal(tmpl.description, '');
+});
+
+// ── DXF dimension-tolerance round-trip (fix round 1, C1) ──────────────────────
+
+test('assembleTemplate: preserves featureSpecs and dxfDefaultTol', () => {
+  const cfg = validConfig();
+  cfg.featureSpecs = { C1: { kind: 'diameter', nominal: 20, upper: 0.05, lower: -0.02 } };
+  cfg.dxfDefaultTol = 0.15;
+  const tmpl = assembleTemplate(cfg);
+  assert.deepEqual(tmpl.featureSpecs, { C1: { kind: 'diameter', nominal: 20, upper: 0.05, lower: -0.02 } });
+  assert.equal(tmpl.dxfDefaultTol, 0.15);
+});
+
+test('assembleTemplate: defaults featureSpecs to {} and dxfDefaultTol to null when omitted', () => {
+  const cfg = validConfig();
+  delete cfg.featureSpecs;
+  delete cfg.dxfDefaultTol;
+  const tmpl = assembleTemplate(cfg);
+  assert.deepEqual(tmpl.featureSpecs, {});
+  assert.equal(tmpl.dxfDefaultTol, null);
 });
 
 // ── validateTemplate ──────────────────────────────────────────────────────────

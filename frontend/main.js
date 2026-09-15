@@ -1449,6 +1449,8 @@ document.getElementById("btn-save-template")?.addEventListener("click", () => {
     },
     tolerances: { warn: state.tolerances.warn, fail: state.tolerances.fail },
     featureTolerances: state.featureTolerances,
+    featureSpecs: state.featureSpecs,
+    dxfDefaultTol: state.dxfDefaultTol,
     featureModes: state.featureModes,
     featureNames: state.featureNames,
     detection: {
@@ -1538,6 +1540,11 @@ document.getElementById("template-input")?.addEventListener("change", async (e) 
     state.annotations = state.annotations.filter(a => a.type !== "dxf-overlay");
     state.inspectionResults = [];
     state.featureTolerances = {};
+    // A previously-loaded DXF's drawing specs are keyed by handle — if left
+    // in place they'd get applied to a DIFFERENT drawing's colliding
+    // handles the moment this template's entities load, silently tagged DWG.
+    state.featureSpecs = {};
+    state.dxfDefaultTol = null;
     state.featureModes = {};
     state.featureNames = {};
 
@@ -1555,6 +1562,8 @@ document.getElementById("template-input")?.addEventListener("change", async (e) 
 
     // Apply feature config
     if (tmpl.featureTolerances) state.featureTolerances = { ...tmpl.featureTolerances };
+    if (tmpl.featureSpecs) state.featureSpecs = { ...tmpl.featureSpecs };
+    if (tmpl.dxfDefaultTol != null) state.dxfDefaultTol = tmpl.dxfDefaultTol;
     if (tmpl.featureModes) state.featureModes = { ...tmpl.featureModes };
     if (tmpl.featureNames) state.featureNames = { ...tmpl.featureNames };
 

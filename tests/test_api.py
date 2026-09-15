@@ -248,6 +248,33 @@ def test_load_dxf_invalid_file(client):
     assert r.status_code == 400
 
 
+def test_inspect_guided_rejects_nan_feature_spec_nominal(client):
+    # Fix round 1 (M4): a NaN nominal must be rejected at the request-body
+    # validation layer (422), not silently accepted and later mis-scored as
+    # a "pass" by _band_verdict (NaN compares false against every bound).
+    # httpx's `json=` convenience encoder refuses to serialize NaN at all
+    # (raises client-side before a request is even sent), so the literal
+    # non-standard `NaN` token is sent as raw content instead — exactly
+    # what a non-httpx client (or a hand-crafted request) could still send.
+    body = (
+        '{"entities": [{"type": "circle", "handle": "C1", "cx": 0, "cy": 0, "radius": 10}], '
+        '"pixels_per_mm": 10.0, '
+        '"feature_specs": {"C1": {"kind": "diameter", "nominal": NaN, "upper": 0.05, "lower": -0.02}}}'
+    )
+    r = client.post("/inspect-guided", content=body, headers={"Content-Type": "application/json"})
+    assert r.status_code == 422
+
+
+def test_inspect_guided_rejects_infinite_feature_spec_upper(client):
+    body = (
+        '{"entities": [{"type": "circle", "handle": "C1", "cx": 0, "cy": 0, "radius": 10}], '
+        '"pixels_per_mm": 10.0, '
+        '"feature_specs": {"C1": {"kind": "diameter", "nominal": 20.0, "upper": Infinity, "lower": -0.02}}}'
+    )
+    r = client.post("/inspect-guided", content=body, headers={"Content-Type": "application/json"})
+    assert r.status_code == 422
+
+
 # --- Gear analysis ---
 
 
