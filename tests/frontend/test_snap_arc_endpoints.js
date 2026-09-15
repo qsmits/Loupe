@@ -80,6 +80,28 @@ describe('snapPoint: arc endpoints as snap targets', () => {
     assert.deepEqual(pt, { x: 200, y: 200 });
   });
 
+  it('a small arc-fit\'s endpoint takes priority over its center when the two are within SNAP_RADIUS of each other (fix round 1)', () => {
+    // r=5 at zoom 1: the whole arc — center AND both endpoints — sits well
+    // inside SNAP_RADIUS(8) of every other point on it. Before the fix, the
+    // center was pushed to `targets` first and the scan is first-match-wins,
+    // so a click exactly on the endpoint (205,200) silently snapped to the
+    // center (200,200) instead — defeating endpoint snapping (and the
+    // closure offer, which depends on it) for small/zoomed-out arcs.
+    addAnnotation({
+      type: 'arc-fit', cx: 200, cy: 200, r: 5,
+      startAngle: 0, endAngle: Math.PI / 2, anticlockwise: false, points: [],
+    });
+    setTool('distance');
+    const onEndpoint = snapPoint({ x: 205, y: 200 });
+    assert.equal(onEndpoint.snapped, true);
+    assert.deepEqual(onEndpoint.pt, { x: 205, y: 200 }, 'must snap to the endpoint exactly, not the nearby center');
+
+    // Center snap must not be lost — just lower priority than the endpoints.
+    const onCenter = snapPoint({ x: 200, y: 200 });
+    assert.equal(onCenter.snapped, true);
+    assert.deepEqual(onCenter.pt, { x: 200, y: 200 });
+  });
+
   it('a FULL-circle arc-fit stays center-only — a rim click away from center does not snap', () => {
     addAnnotation({ type: 'arc-fit', cx: 300, cy: 300, r: 50, points: [] }); // no startAngle => full circle
     setTool('distance');

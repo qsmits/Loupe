@@ -150,14 +150,16 @@ export function snapPoint(rawPt, bypass = false) {
         targets.push({ x: ann.x1, y: ann.y1 }, { x: ann.x2, y: ann.y2 });
       }
     } else if (["circle", "arc-fit", "detected-circle"].includes(ann.type)) {
-      targets.push({ x: ann.cx, y: ann.cy });
-      // Partial arc-fits (not full circles) additionally expose their two
-      // computed endpoints, so a mixed distance+arc contour can close onto
-      // the arc's actual end rather than only its center.
+      // Partial arc-fits (not full circles) expose their two computed
+      // endpoints, pushed BEFORE the center: the scan below is first-match
+      // wins, and for small/zoomed-out arcs (r < SNAP_RADIUS/zoom) the
+      // center would otherwise shadow the endpoint, silently defeating
+      // endpoint snapping (and the closure offer, which depends on it).
       if (ann.type === "arc-fit" && ann.startAngle !== undefined) {
         const ep = _extractEndpoints(ann);
         if (ep) targets.push(ep.a, ep.b);
       }
+      targets.push({ x: ann.cx, y: ann.cy });
     } else if (ann.type === "arc-measure") {
       targets.push(ann.p1, ann.p3);
     } else if (ann.type === "spline" || ann.type === "fit-line") {
@@ -170,11 +172,23 @@ export function snapPoint(rawPt, bypass = false) {
       targets.push({ x: ann.x, y: ann.y });
     }
   });
+  // Nearest-match, not first-match: for a small/zoomed-out arc-fit, its
+  // center and endpoints can be mutually within SNAP_RADIUS of each other
+  // (e.g. r=5 < 8px radius), so push order alone can't guarantee a click
+  // on the center still resolves to the center once the endpoints are
+  // listed first for their own (correct) priority over more-distant clicks.
+  // Picking the closest candidate within radius satisfies both without
+  // depending on target insertion order.
+  let best = null;
+  let bestDist = Infinity;
   for (const t of targets) {
-    if (Math.hypot(t.x - rawPt.x, t.y - rawPt.y) <= SNAP_RADIUS / viewport.zoom) {
-      return { pt: { x: t.x, y: t.y }, snapped: true };
+    const d = Math.hypot(t.x - rawPt.x, t.y - rawPt.y);
+    if (d <= SNAP_RADIUS / viewport.zoom && d < bestDist) {
+      bestDist = d;
+      best = t;
     }
   }
+  if (best) return { pt: { x: best.x, y: best.y }, snapped: true };
   return { pt: rawPt, snapped: false };
 }
 
@@ -1580,9 +1594,11 @@ function _maybeOfferContourArea(newAnn) {
   if (!joinsEndpoint(ep.a) || !joinsEndpoint(ep.b)) return;
   const loop = _traverseLoop(newAnn);
   if (!loop) return;
-  // Degenerate guard: a chord retracing its own line closes with ~zero area
-  // and shouldn't be offered (a chord+arc "D" shape has real area and is
-  // legitimately offered).
+  // Degenerate guard: loops need >= 3 segments per _traverseLoop's own floor
+  // (chain.length >= 3), so a 2-segment "loop" is never even recognized —
+  // this guard is for the 3+-segment case where the enclosed area still
+  // collapses to a near-zero sliver (e.g. a segment doubling back on
+  // another's line) and shouldn't be offered.
   const area = polygonArea(loop.points);
   if (Math.abs(area) <= 1) return;
   showToast("Closed contour detected", {
