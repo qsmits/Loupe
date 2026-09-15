@@ -36,11 +36,20 @@ let _subpixelDebounce = null;
 const _SNAP_PREVIEW_TOOLS = new Set([
   "distance", "angle", "circle", "arc-fit", "arc-measure",
   "perp-dist", "para-dist", "area", "calibrate", "spline", "fit-line",
+  "pt-circle-dist", "slot-dist", "intersect",
 ]);
+
+/** Mirrors the click path's refine gate (tools.js isCenterDistPick): center-dist
+ *  pick clicks skip sub-pixel refinement, so the marker must not promise it —
+ *  only once inline fitting is armed do its clicks refine like everyone else's. */
+export function subpixelPreviewApplies(tool, pendingRelationFit) {
+  if (tool === "center-dist") return !!pendingRelationFit;
+  return _SNAP_PREVIEW_TOOLS.has(tool);
+}
 
 function _updateSubpixelPreview(pt, altKey = false) {
   // Only show preview when frozen, tool is a measurement tool, method is enabled, and Alt not held
-  if (!state.frozen || !_SNAP_PREVIEW_TOOLS.has(state.tool) ||
+  if (!state.frozen || !subpixelPreviewApplies(state.tool, state.pendingRelationFit) ||
       state.settings.subpixelMethod === "none" || altKey) {
     if (state._subpixelSnapTarget) { state._subpixelSnapTarget = null; redraw(); }
     return;
@@ -741,7 +750,8 @@ export function initMouseHandlers() {
       || ((state.tool === "area" || state.tool === "spline")
           && state.pendingPoints.length >= 1);
     if (wantsPreview ||
-        (state.tool !== "select" && state.tool !== "calibrate" && state.tool !== "center-dist")) {
+        (state.tool !== "select" && state.tool !== "calibrate"
+         && (state.tool !== "center-dist" || state.pendingRelationFit))) {
       const { pt: snappedPt, snapped } = snapPoint(rawPt, e.altKey);
       state.snapTarget = (snapped && !e.altKey) ? snappedPt : null;
       if (wantsPreview) state._previewCursor =
