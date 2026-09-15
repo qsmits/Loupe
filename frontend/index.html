@@ -306,6 +306,11 @@
           <button class="dropdown-item" id="btn-auto-align" disabled title="At least 2 DXF circles required">Auto-align</button>
           <button class="dropdown-item" id="btn-show-deviations" disabled title="Run inspection first">Deviations: off</button>
           <div class="dropdown-divider"></div>
+          <div class="dxf-row">
+            <label class="dxf-label" for="dxf-default-tol" title="Applies to features without a drawing tolerance">Default tol ±</label>
+            <input type="number" id="dxf-default-tol" class="dxf-input" step="0.001" min="0" placeholder="—" title="Applies to features without a drawing tolerance" />
+            <span class="dxf-unit">mm</span>
+          </div>
           <button class="dropdown-item" id="btn-run-inspection" disabled title="Load a DXF and detect features first">Run inspection</button>
           <button class="detect-btn" id="btn-save-run" hidden title="Save this inspection run for SPC tracking">Save Run</button>
           <button class="dropdown-item" id="btn-dxf-move" disabled title="Load a DXF first">Move DXF</button>
@@ -1692,7 +1697,7 @@
             <p class="help-p">If a feature fails to auto-detect (reflection, burr, incomplete edge), click it in the DXF overlay to enter point-pick mode. Place points along the real edge, then double-click or press <kbd>Enter</kbd> to fit and compute deviation.</p>
             <div class="help-tip">Right-click any inspection result on the canvas to toggle Punch/Die, re-measure manually, or delete the result.</div>
             <div class="help-section-label">Tolerances</div>
-            <p class="help-p">Global warn/fail thresholds are set in Settings. Per-feature overrides can be set by clicking a deviation label on the canvas.</p>
+            <p class="help-p">Global warn/fail thresholds are set in Settings. Per-feature overrides can be set by clicking a deviation label on the canvas. Diameter/radius dimensions with a tolerance in the DXF (e.g. Ø25 +0.05/−0.02) are read automatically and applied to the matching circle or arc, tagged <strong>DWG</strong> in the results table; set <strong>Default tol ±</strong> in the DXF panel to give every feature without its own drawing tolerance a plain ± band instead of the global thresholds (tagged <strong>DEF</strong>). Priority: a per-feature override always wins, then a drawing tolerance, then the default tolerance, then the global thresholds.</p>
             <div class="help-section-label">SPC tracking</div>
             <p class="help-p">After running an inspection, click <strong>Save Run</strong> (next to Run Inspection) and name the part. This saves the current inspection results as one dated "run" against that part. The SPC dashboard in the sidebar then plots each feature's deviation across saved runs, with your warn/fail tolerance bands, and shows a Cpk summary (mean, standard deviation, and range) once at least two runs exist.</p>
           </div>

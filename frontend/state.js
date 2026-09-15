@@ -42,6 +42,10 @@ export const state = {
   includeWebcams: false,
   tolerances: { warn: 0.10, fail: 0.25 },
   featureTolerances: {},
+  featureSpecs: {},        // { [handle]: {kind, nominal, upper, lower} } — from DXF
+                           // diameter/radius DIMENSION tolerances, set on DXF load
+  dxfDefaultTol: null,     // per-drawing default ± tolerance (mm) for features with
+                           // no drawing spec of their own; null = use global thresholds
   featureModes: {},        // { [handle]: "punch" | "die" } — default is "die"
   inspectionResults: [],   // populated by "Run inspection"; persisted in session v2
   inspectionFrame: null,   // base64 JPEG of composited camera+overlay at inspection time

@@ -8,6 +8,8 @@ import { serverSubpixelMethod } from './subpixel-js.js';
 import { ensureFrozen } from './detect.js';
 import { imageWidth, imageHeight } from './viewport.js';
 import { captureEpoch, isStale } from './workspace.js';
+import { showToast } from './shell.js';
+import { buildInspectGuidedBody } from './inspect-request.js';
 
 // ── Shared alignment helper ───────────────────────────────────────────────
 
@@ -109,7 +111,7 @@ export function initDxfHandlers() {
     try {
       const r = await apiFetch("/load-dxf", { method: "POST", body: formData });
       if (!r.ok) { alert("Could not load DXF: " + await r.text()); e.target.value = ""; return; }
-      const entities = await r.json();
+      const { entities, dim_specs, unmatched_dims } = await r.json();
       // Default scale: use calibration (px/mm) if available, otherwise 1 px/unit
       const cal = state.calibration;
       const autoScale = cal?.pixelsPerMm;
@@ -122,6 +124,17 @@ export function initDxfHandlers() {
       state._templateLoaded = false;
       state._templateName = null;
       state.dxfFilename = file.name.replace(/\.dxf$/i, "");
+      // DXF diameter/radius DIMENSION tolerances, keyed by the circle/arc
+      // handle they were associated with (fresh set per DXF load).
+      state.featureSpecs = {};
+      for (const spec of dim_specs || []) {
+        state.featureSpecs[spec.handle] = spec;
+      }
+      if (unmatched_dims > 0) {
+        showToast(
+          `${unmatched_dims} dimension tolerance${unmatched_dims === 1 ? "" : "s"} could not be matched to a feature`,
+        );
+      }
       renderInspectionTable();
       updateExportButtons();
       addAnnotation({
@@ -257,6 +270,15 @@ export function initDxfHandlers() {
     pushUndo();
     ann.scale = val;
     redraw();
+  });
+
+  // dxf-default-tol input: per-drawing default ± tolerance (mm) applied to
+  // features without their own DXF dimension tolerance. Empty/invalid -> null
+  // (fall back to the global warn/fail thresholds, today's behavior).
+  document.getElementById("dxf-default-tol")?.addEventListener("change", e => {
+    const raw = e.target.value.trim();
+    const v = parseFloat(raw);
+    state.dxfDefaultTol = (raw !== "" && isFinite(v) && v > 0) ? v : null;
   });
 
   // btn-align-dxf (auto-align) click
@@ -439,26 +461,29 @@ export function initDxfHandlers() {
 
       const inspectableTypes = ["line", "polyline_line", "arc", "polyline_arc", "circle"];
       const epoch = captureEpoch();
+      const defaultTolUsed = state.dxfDefaultTol;
       const resp = await apiFetchFrame("/inspect-guided", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+        body: JSON.stringify(buildInspectGuidedBody({
           entities: ann.entities.filter(e => inspectableTypes.includes(e.type)),
-          pixels_per_mm: cal.pixelsPerMm,
+          pixelsPerMm: cal.pixelsPerMm,
           tx: ann.offsetX,
           ty: ann.offsetY,
-          angle_deg: ann.angle ?? 0,
-          flip_h: ann.flipH ?? false,
-          flip_v: ann.flipV ?? false,
-          corridor_px: 15,
+          angleDeg: ann.angle ?? 0,
+          flipH: ann.flipH ?? false,
+          flipV: ann.flipV ?? false,
+          corridorPx: 15,
           smoothing: parseInt(document.getElementById("adv-smoothing")?.value || "1"),
-          canny_low: parseInt(document.getElementById("canny-low")?.value || "50"),
-          canny_high: parseInt(document.getElementById("canny-high")?.value || "130"),
-          tolerance_warn: state.tolerances.warn,
-          tolerance_fail: state.tolerances.fail,
-          feature_tolerances: state.featureTolerances,
+          cannyLow: parseInt(document.getElementById("canny-low")?.value || "50"),
+          cannyHigh: parseInt(document.getElementById("canny-high")?.value || "130"),
+          toleranceWarn: state.tolerances.warn,
+          toleranceFail: state.tolerances.fail,
+          featureTolerances: state.featureTolerances,
+          featureSpecs: state.featureSpecs,
+          defaultTol: defaultTolUsed,
           subpixel: serverSubpixelMethod(state.settings.subpixelMethod),
-        }),
+        })),
       });
 
       if (!resp.ok) {
@@ -489,6 +514,10 @@ export function initDxfHandlers() {
         center_dev_mm: r.center_dev_mm ?? null,
         radius_dev_mm: r.radius_dev_mm ?? null,
         profile_mm: r.profile_mm ?? null,
+        spec: r.spec ?? null,
+        size_dev_mm: r.size_dev_mm ?? null,
+        spec_source: r.spec_source ?? null,
+        default_tol_used: defaultTolUsed,
       }));
 
       // Capture inspection frame at native image resolution

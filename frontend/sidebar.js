@@ -950,6 +950,12 @@ export function updateDxfControlsVisibility() {
     const fV = document.getElementById("btn-dxf-flip-v");
     if (fV) fV.classList.toggle("active", ann.flipV ?? false);
   }
+  // Reflects state.dxfDefaultTol so a tab switch (workspace restore) never
+  // leaves a stale value from a different tab showing in this field.
+  const defaultTolInput = document.getElementById("dxf-default-tol");
+  if (defaultTolInput) {
+    defaultTolInput.value = state.dxfDefaultTol != null ? state.dxfDefaultTol : "";
+  }
   const autoAlignBtn = document.getElementById("btn-auto-align");
   if (autoAlignBtn) {
     autoAlignBtn.disabled = !ann;
@@ -965,6 +971,21 @@ export function updateDxfControlsVisibility() {
     moveBtn.disabled = !ann;
     moveBtn.title = !ann ? "Load a DXF first" : "Drag to reposition DXF overlay";
   }
+}
+
+// Tolerance-cell display for one inspection result row. Precedence mirrors
+// the backend's scoring: a drawing spec (DXF diameter/radius dimension) is
+// shown in preference to a default-tol verdict, which is shown in
+// preference to today's plain global/popover ±warn/fail band.
+function formatToleranceCell(r) {
+  if (r.spec) {
+    const { nominal, upper, lower } = r.spec;
+    return { text: `${nominal.toFixed(3)} +${upper.toFixed(3)}/${lower.toFixed(3)}`, tag: "DWG" };
+  }
+  if (r.spec_source === "default" && r.default_tol_used != null) {
+    return { text: `±${r.default_tol_used}`, tag: "DEF" };
+  }
+  return { text: `±${r.tolerance_warn}/${r.tolerance_fail}`, tag: null };
 }
 
 // ── Inspection result table ────────────────────────────────────────────────────
@@ -1360,7 +1381,17 @@ export function renderInspectionTable() {
       devTd.textContent = deviationText;
       const tolTd = document.createElement("td");
       tolTd.className = "insp-tol";
-      tolTd.textContent = `±${r.tolerance_warn}/${r.tolerance_fail}`;
+      const tolCell = formatToleranceCell(r);
+      tolTd.textContent = tolCell.text;
+      if (tolCell.tag) {
+        const tolTag = document.createElement("span");
+        tolTag.className = "insp-source";
+        tolTag.textContent = tolCell.tag;
+        tolTag.title = tolCell.tag === "DWG"
+          ? "Tolerance from a DXF dimension"
+          : "Per-drawing default tolerance";
+        tolTd.appendChild(tolTag);
+      }
       const statusTd = document.createElement("td");
       const badge2 = document.createElement("span");
       badge2.className = `insp-badge ${badgeClass2}`;

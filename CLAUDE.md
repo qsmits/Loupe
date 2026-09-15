@@ -49,7 +49,7 @@ Priority order at startup:
 - `backend/vision/guided_inspection.py` — DXF-guided corridor inspection: per-feature edge detection within ±15px corridors, RANSAC-like inlier filtering, shadow-aware edge selection, line/arc fitting with deviation computation.
 - `backend/vision/line_arc_matching.py` — Legacy DXF↔detected feature matching (nearest-neighbor). Shared utility functions: `dxf_to_image_px` (coordinate projection), `perp_dist_point_to_line`.
 - `backend/vision/calibration.py` — Pixel↔mm conversion math.
-- `backend/vision/dxf_parser.py` — DXF → JSON geometry with layer names. Supports LINE, CIRCLE, ARC, LWPOLYLINE (decomposed into `polyline_line`/`polyline_arc` with bulge handling).
+- `backend/vision/dxf_parser.py` — DXF → JSON geometry with layer names. Supports LINE, CIRCLE, ARC, LWPOLYLINE (decomposed into `polyline_line`/`polyline_arc` with bulge handling) + diameter/radius DIMENSION tolerances → `dim_specs`.
 - `backend/vision/dxf_export.py` — Measurements → DXF export for reverse engineering. Converts pixel annotations to mm-space DXF entities.
 - `backend/vision/alignment.py` — Circle-based (RANSAC) and edge-based (template matching) DXF auto-alignment.
 - `backend/api.py` — REST endpoints: `/stream` (MJPEG), `/freeze`, `/snapshot`, `/detect-*`, `/load-dxf`, `/export-dxf`, `/align-dxf`, `/align-dxf-edges`, `/cameras`, `/inspect-guided`, `/fit-feature`.
@@ -94,7 +94,7 @@ Priority order at startup:
 - **Measurement grouping**: Named groups with uniform color, collapsible sidebar sections.
 - **Zoom & pan**: Scroll-wheel zoom (frozen mode only), Pan tool (H key), middle-mouse pan, zoom badge with preset dropdown, minimap, measurement grid.
 - **DXF auto-alignment**: Edge-based template matching (no circles required), with angle refinement and rotation bias penalty. Also supports circle-based RANSAC alignment.
-- **DXF-guided inspection**: Corridor-based per-feature edge detection, manual point-pick with compound features, RANSAC inlier filtering, shadow-aware edge selection, Punch/Die tolerance tagging.
+- **DXF-guided inspection**: Corridor-based per-feature edge detection, manual point-pick with compound features, RANSAC inlier filtering, shadow-aware edge selection, Punch/Die tolerance tagging. Diameter/radius DXF dimension tolerances are read automatically and applied per-feature (diameter-basis size verdict, doubled for radius-kind dims), plus a per-drawing default tolerance for features without their own drawing spec; precedence is popover override > drawing spec > default tolerance > global warn/fail.
 - **Draggable labels**: Deviation labels can be repositioned with leader lines. Hover tooltips with full feature detail.
 - **Grouped inspection results**: Sidebar groups results by compound feature with collapsible headers, worst-case badges, Punch/Die indicators, numbered cross-references to canvas and PDF.
 - **Projects & persistence**: Autosave to browser-local IndexedDB every ~2s while dirty (plus flush on tab switch / `beforeunload`); `.loupe` export/import round-trips image + measurements + calibration + viewport; legacy v3 session JSON is still importable (adopted as a new project); the open-tab set is restored on refresh. See "Projects & tabs" below.
