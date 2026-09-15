@@ -151,6 +151,15 @@ export function snapPoint(rawPt, bypass = false) {
       }
     } else if (["circle", "arc-fit", "detected-circle"].includes(ann.type)) {
       targets.push({ x: ann.cx, y: ann.cy });
+      // Partial arc-fits (not full circles) additionally expose their two
+      // computed endpoints, so a mixed distance+arc contour can close onto
+      // the arc's actual end rather than only its center.
+      if (ann.type === "arc-fit" && ann.startAngle !== undefined) {
+        const ep = _extractEndpoints(ann);
+        if (ep) targets.push(ep.a, ep.b);
+      }
+    } else if (ann.type === "arc-measure") {
+      targets.push(ann.p1, ann.p3);
     } else if (ann.type === "spline" || ann.type === "fit-line") {
       (ann.points || []).forEach(p => targets.push(p));
     } else if (ann.type === "origin") {
