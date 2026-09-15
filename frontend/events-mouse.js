@@ -30,6 +30,7 @@ import { handleGearPickClick } from './gear.js';
 import { validConstraintsForPair, addConstraint, CONSTRAINT_LABELS, CONSTRAINT_ICONS, constraintsForAnnotation, removeConstraint, toggleConstraint } from './constraints.js';
 import { hitTestReticleHandle } from './render-reticle.js';
 import { setReticleRotation } from './reticle.js';
+import { formatToleranceTooltipLines } from './tolerance-format.js';
 
 // ── Sub-pixel snap preview (debounced) ────────────────────────────────────────
 let _subpixelDebounce = null;
@@ -719,7 +720,7 @@ export function initMouseHandlers() {
           if (r.center_dev_mm != null) lines.push(`Center dev: ${r.center_dev_mm.toFixed(4)} mm`);
           if (r.radius_dev_mm != null) lines.push(`Radius dev: ${r.radius_dev_mm.toFixed(4)} mm`);
           lines.push("");
-          lines.push(`Tolerance: warn \xb1${r.tolerance_warn}  fail \xb1${r.tolerance_fail}`);
+          lines.push(...formatToleranceTooltipLines(r));
           lines.push(`Result: ${r.pass_fail?.toUpperCase() ?? "?"}`);
           lines.push(`Source: ${r.source ?? "auto"}`);
           tooltip.textContent = lines.join("\n");

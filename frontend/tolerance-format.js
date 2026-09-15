@@ -63,3 +63,31 @@ export const INSPECTION_CSV_HEADERS = [
   "deviation_mm", "size_dev_mm", "tp_dev_mm", "angle_error_deg", "profile_mm",
   "tolerance", "tolerance_tag", "result", "notes",
 ];
+
+/** "Tolerance: ..." line(s) for the canvas hover tooltip
+ *  (events-mouse.js's label-tooltip). A thin, prose-shaped variant of
+ *  formatToleranceCell — the tooltip's plain "warn ±x  fail ±y" fallback
+ *  text predates this feature and is intentionally preserved verbatim for
+ *  the no-spec/no-default case, rather than switching it to
+ *  formatToleranceCell's "±x/y" cell-shaped fallback text.
+ *
+ *  Returns an array of one or two lines: the tolerance band, plus a size-
+ *  deviation line when r.spec is set (mirrors the sidebar table's
+ *  deviation-cell/tooltip addition, so hovering the canvas and reading the
+ *  sidebar row show the same size-basis information). */
+export function formatToleranceTooltipLines(r) {
+  if (r.spec) {
+    const cell = formatToleranceCell(r);
+    const lines = [`Tolerance: ${cell.text} (${cell.tag})`];
+    if (r.size_dev_mm != null) {
+      const nomD = r.spec.kind === "radius" ? 2 * r.spec.nominal : r.spec.nominal;
+      const sign = r.size_dev_mm >= 0 ? "+" : "";
+      lines.push(`Size dev: ${sign}${r.size_dev_mm.toFixed(4)} mm (⌀ nominal ${nomD.toFixed(3)})`);
+    }
+    return lines;
+  }
+  if (r.spec_source === "default" && r.default_tol_used != null) {
+    return [`Tolerance: ±${r.default_tol_used} (DEF)`];
+  }
+  return [`Tolerance: warn ±${r.tolerance_warn}  fail ±${r.tolerance_fail}`];
+}

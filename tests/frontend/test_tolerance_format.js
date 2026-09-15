@@ -15,6 +15,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   formatToleranceCell, buildInspectionCsvRow, INSPECTION_CSV_HEADERS,
+  formatToleranceTooltipLines,
 } from '../../frontend/tolerance-format.js';
 
 function baseResult(overrides = {}) {
@@ -125,5 +126,67 @@ describe('buildInspectionCsvRow', () => {
   it('row length matches INSPECTION_CSV_HEADERS length', () => {
     const row = buildInspectionCsvRow(baseResult(), 'partA', 't');
     assert.equal(row.length, INSPECTION_CSV_HEADERS.length);
+  });
+});
+
+// Fix round 2: the canvas hover tooltip (events-mouse.js) printed a raw
+// `Tolerance: warn ±x  fail ±y` line unconditionally, showing the stale
+// global band for a DWG/DEF-scored feature. formatToleranceTooltipLines is
+// the thin, prose-shaped sibling of formatToleranceCell that fixes it.
+describe('formatToleranceTooltipLines', () => {
+  it('a diameter-kind spec renders "Tolerance: ⌀nominal +u/-l (DWG)"', () => {
+    const r = baseResult({ spec: { kind: 'diameter', nominal: 20, upper: 0.05, lower: -0.02 } });
+    const lines = formatToleranceTooltipLines(r);
+    assert.equal(lines[0], 'Tolerance: ⌀20.000 +0.050/-0.020 (DWG)');
+  });
+
+  it('a radius-kind spec is R-prefixed, not ⌀ (must read differently — scoring doubles it)', () => {
+    const r = baseResult({ spec: { kind: 'radius', nominal: 10, upper: 0.01, lower: -0.01 } });
+    const lines = formatToleranceTooltipLines(r);
+    assert.equal(lines[0], 'Tolerance: R10.000 +0.010/-0.010 (DWG)');
+  });
+
+  it('includes a size-deviation line when r.spec and r.size_dev_mm are set', () => {
+    const r = baseResult({
+      spec: { kind: 'diameter', nominal: 20, upper: 0.05, lower: -0.02 },
+      size_dev_mm: 0.01,
+    });
+    const lines = formatToleranceTooltipLines(r);
+    assert.equal(lines.length, 2);
+    assert.match(lines[1], /^Size dev: \+0\.0100 mm/);
+  });
+
+  it('a radius-kind spec\'s size-deviation line reports the diameter-basis nominal (2x), not the radius', () => {
+    const r = baseResult({
+      spec: { kind: 'radius', nominal: 10, upper: 0.01, lower: -0.01 },
+      size_dev_mm: -0.005,
+    });
+    const lines = formatToleranceTooltipLines(r);
+    assert.match(lines[1], /nominal 20\.000/);
+  });
+
+  it('omits the size-deviation line when r.size_dev_mm is absent, even with a spec', () => {
+    const r = baseResult({ spec: { kind: 'diameter', nominal: 20, upper: 0.05, lower: -0.02 } });
+    const lines = formatToleranceTooltipLines(r);
+    assert.equal(lines.length, 1);
+  });
+
+  it('a default-tol-judged (no-spec) feature renders "Tolerance: ±x (DEF)"', () => {
+    const r = baseResult({ spec_source: 'default', default_tol_used: 0.15 });
+    assert.deepEqual(formatToleranceTooltipLines(r), ['Tolerance: ±0.15 (DEF)']);
+  });
+
+  it('no spec, no default_tol keeps today\'s exact "warn ±x  fail ±y" prose', () => {
+    const r = baseResult({ tolerance_warn: 0.1, tolerance_fail: 0.25 });
+    assert.deepEqual(formatToleranceTooltipLines(r), ['Tolerance: warn ±0.1  fail ±0.25']);
+  });
+
+  it('ignores hostile globals when a spec is present', () => {
+    const r = baseResult({
+      spec: { kind: 'diameter', nominal: 20, upper: 0.05, lower: -0.02 },
+      tolerance_warn: 999, tolerance_fail: 9999,
+    });
+    const lines = formatToleranceTooltipLines(r);
+    assert.ok(!lines.join('\n').includes('999'));
   });
 });
