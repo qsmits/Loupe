@@ -636,9 +636,7 @@ export function redraw() {
   const badge = document.getElementById("zoom-badge");
   if (badge) {
     if (viewport.zoom !== 1.0 || viewport.panX !== 0 || viewport.panY !== 0) {
-      badge.textContent = viewport.zoom >= 1
-        ? `${viewport.zoom.toFixed(1)}x`
-        : `${(viewport.zoom * 100).toFixed(0)}%`;
+      badge.textContent = `${(viewport.zoom * 100).toFixed(0)}%`;
       badge.hidden = false;
     } else {
       badge.hidden = true;
