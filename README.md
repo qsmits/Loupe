@@ -15,6 +15,8 @@ Specular surface measurement using an iPad as a phase-shifting display. 8-step p
 ### Fringe Analysis
 Interferometric surface flatness measurement using an optical flat and monochromatic light. Single-image DFT phase extraction, 2D phase unwrapping, Zernike polynomial fitting (up to 66 terms, Noll indexing), PV/RMS/Strehl statistics, PSF and MTF computation, wavefront averaging, contour lines, 3D WebGL viewer, horizontal/vertical profiles, reference standards (ISO 3650, JIS B 7506, ASME B89.1.9, DIN 861), PDF and CSV export.
 
+Drop an interferogram anywhere in the image/result view or camera preview to load it. The full view highlights during file drags; the smaller drop box remains available.
+
 ---
 
 ## Features

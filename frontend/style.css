@@ -3075,6 +3075,24 @@ body.no-camera .camera-section { display: none; }
   border-color: var(--accent);
   background: rgba(10, 132, 255, 0.08);
 }
+.fringe-image-drop-target.fringe-drop-active::after {
+  content: "Drop interferogram to load";
+  position: absolute;
+  inset: 6px;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  border: 2px dashed var(--accent);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 16px;
+  font-weight: 600;
+  text-align: center;
+  pointer-events: none;
+}
 
 .fringe-setting-group {
   display: flex;
@@ -4009,4 +4027,3 @@ body.no-camera .camera-section { display: none; }
 .palette-tt { font-weight: 600; font-size: 12.5px; color: var(--text); }
 .palette-td { font-size: 11px; color: var(--text-secondary); }
 .palette-empty { padding: 18px 14px; color: var(--muted); font-size: 12px; }
-

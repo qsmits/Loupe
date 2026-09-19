@@ -153,7 +153,7 @@ function buildWorkspace() {
       </div>
 
       <!-- Right column: results -->
-      <div class="fringe-results-col">
+      <div class="fringe-results-col fringe-image-drop-target">
         ${buildResultsHtml()}
       </div>
     </div>

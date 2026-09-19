@@ -13,6 +13,7 @@ import { switchMode } from './modes.js';
 import { imageWidth, imageHeight } from './viewport.js';
 import { lensK1ToDiagNormalized } from './math.js';
 import { showToast } from './shell.js';
+import { bindImageDropTargets } from './image-drop.js';
 import { loadFringeLensProfiles, renderFringeLensDropdown, saveFringeLensProfile } from './fringe-lens-profiles.js';
 import {
   getActiveCalibration,
@@ -152,8 +153,8 @@ export function getCorrect2piJumps() {
 
 export function buildPanelHtml() {
   return `
-        <div class="fringe-preview-container" id="fringe-preview-container" style="position:relative;cursor:pointer" title="Click to expand preview">
-          <img id="fringe-preview" alt="Camera preview" />
+        <div class="fringe-preview-container fringe-image-drop-target" id="fringe-preview-container" style="position:relative;cursor:pointer" title="Drop an interferogram here, or click to expand preview">
+          <img id="fringe-preview" alt="Camera preview" draggable="false" />
           <canvas id="fringe-roi-canvas" style="position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none"></canvas>
         </div>
         <div class="fringe-focus-bar-container">
@@ -207,7 +208,7 @@ export function buildPanelHtml() {
         </div>
 
         <div class="fringe-drop-zone" id="fringe-drop-zone" style="margin-top:8px">
-          <span style="opacity:0.5;font-size:12px">or drag &amp; drop an image</span>
+          <span style="opacity:0.7;font-size:12px">Drop an interferogram here or anywhere in the image view</span>
         </div>
   `;
 }
@@ -790,25 +791,11 @@ export function wirePanelEvents() {
     fr.avgRejectThreshold = parseFloat(e.target.value) || 3;
   });
 
-  // Drag and drop
-  const dropZone = $("fringe-drop-zone");
-  if (dropZone) {
-    dropZone.addEventListener("dragover", (e) => {
-      e.preventDefault();
-      dropZone.classList.add("fringe-drop-active");
-    });
-    dropZone.addEventListener("dragleave", () => {
-      dropZone.classList.remove("fringe-drop-active");
-    });
-    dropZone.addEventListener("drop", (e) => {
-      e.preventDefault();
-      dropZone.classList.remove("fringe-drop-active");
-      const file = e.dataTransfer?.files?.[0];
-      if (file && file.type.startsWith("image/")) {
-        analyzeFromFile(file);
-      }
-    });
-  }
+  bindImageDropTargets([
+    $("fringe-drop-zone"),
+    $("fringe-preview-container"),
+    document.querySelector(".fringe-results-col"),
+  ], analyzeFromFile, () => showToast("Drop an image file to load an interferogram."));
 
   // Preview click to expand
   $("fringe-preview-container")?.addEventListener("click", (e) => {

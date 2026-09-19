@@ -187,7 +187,8 @@ export function buildResultsHtml() {
         <div class="fringe-tab-panel" id="fringe-panel-surface">
           <div class="fringe-empty-state" id="fringe-empty">
             <div style="max-width:420px;text-align:left;line-height:1.6">
-              <div style="font-size:14px;font-weight:600;margin-bottom:8px;text-align:center">Freeze a frame or drop an interferogram to analyze</div>
+              <div style="font-size:14px;font-weight:600;margin-bottom:8px;text-align:center">Drop an interferogram anywhere in this view</div>
+              <div style="font-size:12px;text-align:center;opacity:0.7">Or use Freeze &amp; Analyze to capture a camera frame.</div>
               <div style="font-size:12px;opacity:0.7;margin-top:12px">
                 <div style="font-weight:600;margin-bottom:4px">Tips for best results:</div>
                 <ul style="margin:0;padding-left:18px">
