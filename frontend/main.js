@@ -641,29 +641,14 @@ document.getElementById("btn-export-loupe")?.addEventListener("click", async () 
   document.dispatchEvent(new CustomEvent("export-project", { detail: { id } }));
 });
 
-// ── Scan webcams button ──────────────────────────────────────────────────────────
-document.getElementById("btn-refresh-cameras")?.addEventListener("click", async () => {
-  const btn = document.getElementById("btn-refresh-cameras");
-  if (btn) { btn.disabled = true; btn.textContent = "Refreshing…"; }
-  try {
-    await loadCameraList({ refresh: true });
-    showStatus("Camera list refreshed");
-  } finally {
-    if (btn) {
-      btn.disabled = false;
-      btn.textContent = "Refresh cameras";
-    }
-  }
+// Device discovery is explicit after the first menu open. The list owns the
+// busy/error UI so overlapping calls cannot clear choices or report false success.
+document.getElementById("btn-refresh-cameras")?.addEventListener("click", () => {
+  loadCameraList({ refresh: true });
 });
 
-document.getElementById("btn-scan-webcams")?.addEventListener("click", async () => {
-  const btn = document.getElementById("btn-scan-webcams");
-  if (btn) { btn.disabled = true; btn.textContent = "Scanning…"; }
-  try {
-    await loadCameraList({ includeWebcams: true });
-  } finally {
-    if (btn) btn.disabled = false;
-  }
+document.getElementById("btn-scan-webcams")?.addEventListener("click", () => {
+  loadCameraList({ includeWebcams: true });
 });
 
 // ── Session load file input ────────���──────────────────────────────────────────
@@ -1288,6 +1273,7 @@ async function switchHardwareCamera(camera_id) {
     const deviceId = camera_id.startsWith("browser-cam-")
       ? camera_id.slice("browser-cam-".length) : null;
     await startBrowserCamera(deviceId);
+    await loadCameraList();
     return;
   }
 

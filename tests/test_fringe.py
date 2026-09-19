@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 import cv2
 import scipy.ndimage as ndimage
+from tests.fringe_step_helper import frontend_step
 
 from backend.vision.fringe import (
     WAVEFRONT_ORIGINS,
@@ -134,6 +135,7 @@ class TestPhysicsCorrections:
         truth_nm = 160.0 * (xn * xn - yn * yn)
         wavelength_nm = 589.3
         pv_by_angle = {}
+        true_pv_by_angle = {}
         for angle_deg in (30.0, 150.0):
             a = math.radians(angle_deg)
             carrier = 2 * np.pi * 5.0 * (xx * math.cos(a)
@@ -147,10 +149,15 @@ class TestPhysicsCorrections:
                 use_full_mask=True, correct_2pi_jumps=False,
             )
             pv_by_angle[angle_deg] = result["pv_nm"]
+            # The frame-edge band is now correctly excluded. Compare to
+            # truth on the SAME returned aperture, not excluded extrema.
+            evaluated = np.array(result["mask_grid"],dtype=bool).reshape(h,w)
+            true_pv_by_angle[angle_deg] = float(np.ptp(truth_nm[evaluated]))
         # The fx < 0 branch has to hold the same tolerance as fx > 0 does.
         for angle_deg, pv in pv_by_angle.items():
-            assert abs(pv / 320.0 - 1.0) < 0.10, \
-                f"{angle_deg:.0f} deg carrier reported {pv:.1f} nm for 320 nm"
+            expected = true_pv_by_angle[angle_deg]
+            assert abs(pv / expected - 1.0) < 0.10, \
+                f"{angle_deg:.0f} deg carrier reported {pv:.1f} nm for {expected:.1f} nm"
         # And the two must agree with each other, which is the real invariant:
         # a tolerance both happen to sit inside would not catch a sign bug that
         # merely degrades one branch.
@@ -172,7 +179,8 @@ class TestPhysicsCorrections:
             image, wavelength_nm=wavelength_nm, subtract_terms=[1],
             use_full_mask=True, correct_2pi_jumps=False,
         )
-        assert abs(result["pv_nm"] / 320.0 - 1.0) < 0.10
+        evaluated = np.array(result["mask_grid"],dtype=bool).reshape(h,w)
+        assert abs(result["pv_nm"] / np.ptp(truth_nm[evaluated]) - 1.0) < 0.10
 
     def test_default_lpf_keeps_dc_outside_the_passband(self):
         """DC leaking into the demodulation passband beats against the carrier
@@ -1980,19 +1988,12 @@ def _grid_to_2d(result):
 
 
 class TestPhysicalUnitsValidation:
-    @pytest.mark.xfail(
-        reason="Single-shot step recovery: a step's 1/f spectrum biases the "
-               "sub-pixel carrier estimate, producing a residual slope that "
-               "dwarfs sub-λ/4 steps. Use dual-mask protocol for step "
-               "measurements (see test_dual_mask_protocol_for_larger_step)."
-    )
     def test_physical_step_recovery_nm(self):
         """Synthesize an interferogram with a known +100 nm step (<λ/4).
 
-        Single-shot recovery does not work for step features because the
-        step's low-frequency spectral leakage biases carrier detection,
-        producing a slope that overwhelms the step. For smooth features
-        (bumps, gradual slopes, optical flat form) the pipeline works.
+        Regional mean differences are biased by carrier error. The actual
+        step tool now fits two parallel plateaus with a shared slope, so
+        this former expected failure is a positive end-to-end regression.
         """
         h, w = 256, 256
         wavelength_nm = 632.8
@@ -2029,7 +2030,7 @@ class TestPhysicalUnitsValidation:
 
         mean_A = float(np.mean(plateau_A[mask_A])) if mask_A.any() else 0.0
         mean_B = float(np.mean(plateau_B[mask_B])) if mask_B.any() else 0.0
-        measured_step = mean_B - mean_A
+        measured_step = -frontend_step(result)["step"]  # estimator is A-B
 
         assert abs(measured_step - true_step_nm) < 0.10 * true_step_nm, (
             f"Recovered step {measured_step:.1f} nm differs from {true_step_nm} nm "
@@ -2152,10 +2153,6 @@ class TestPhysicalUnitsValidation:
             f"Z5(1,pi/4) = {z5}, expected sqrt(6) ≈ {math.sqrt(6):.6f} (oblique astig)"
         )
 
-    @pytest.mark.xfail(
-        reason="Single-shot step recovery with diagonal carrier — same "
-               "limitation as test_physical_step_recovery_nm."
-    )
     def test_diagonal_carrier_works(self):
         """A diagonal carrier should recover a +100 nm step like an on-axis carrier."""
         h, w = 256, 256
@@ -2191,7 +2188,7 @@ class TestPhysicalUnitsValidation:
         mask_B = mask[margin_y:gh - margin_y, gw // 2 + gw // 8: 7 * gw // 8]
         mean_A = float(np.mean(plateau_A[mask_A])) if mask_A.any() else 0.0
         mean_B = float(np.mean(plateau_B[mask_B])) if mask_B.any() else 0.0
-        measured_step = mean_B - mean_A
+        measured_step = -frontend_step(result)["step"]  # estimator is A-B
 
         assert abs(measured_step - true_step_nm) < 0.15 * true_step_nm, (
             f"Diagonal-carrier step recovery: {measured_step:.1f} nm, "
@@ -3646,7 +3643,7 @@ class TestSubtractWavefronts:
 
     def test_subtract_self_is_zero(self):
         r = _make_wrapped_result()
-        out = subtract_wavefronts(r, r)
+        out = subtract_wavefronts(r, r, reference_polarity=1)
         assert out["origin"] == "subtracted"
         disp = np.asarray(out["display_height_grid_nm"], dtype=np.float64)
         mask = np.asarray(out["mask_grid"], dtype=bool)
@@ -3661,14 +3658,14 @@ class TestSubtractWavefronts:
     def test_subtract_wavelength_mismatch_warns(self):
         m = _fake_wrapped_result(8, 8, wavelength_nm=632.8)
         r = _fake_wrapped_result(8, 8, wavelength_nm=589.3)
-        out = subtract_wavefronts(m, r)
+        out = subtract_wavefronts(m, r, reference_polarity=1)
         assert any("Wavelength mismatch" in w for w in out["warnings"])
 
     def test_subtract_shape_mismatch_raises(self):
         m = _fake_wrapped_result(8, 8)
         r = _fake_wrapped_result(16, 8)
         with pytest.raises(ValueError) as ei:
-            subtract_wavefronts(m, r)
+            subtract_wavefronts(m, r, reference_polarity=1)
         assert "Grid shapes differ" in str(ei.value)
 
     def test_subtract_calibration_mismatch_warns(self):
@@ -3678,7 +3675,7 @@ class TestSubtractWavefronts:
         r = _fake_wrapped_result(8, 8,
                                  calibration={"mm_per_pixel": 0.010,
                                               "method": "x"})
-        out = subtract_wavefronts(m, r)
+        out = subtract_wavefronts(m, r, reference_polarity=1)
         assert any("Calibration mm_per_pixel differs" in w for w in out["warnings"])
 
     def test_subtract_low_overlap_warns(self):
@@ -3701,13 +3698,13 @@ class TestSubtractWavefronts:
         m["raw_mask_grid"] = m_mask
         r["mask_grid"] = r_mask
         r["raw_mask_grid"] = r_mask
-        out = subtract_wavefronts(m, r)
+        out = subtract_wavefronts(m, r, reference_polarity=1)
         assert any("Low overlap" in w for w in out["warnings"])
 
     def test_subtract_sets_source_ids_and_origin(self):
         m = _fake_wrapped_result(8, 8)
         r = _fake_wrapped_result(8, 8)
-        out = subtract_wavefronts(m, r)
+        out = subtract_wavefronts(m, r, reference_polarity=1)
         assert out["origin"] == "subtracted"
         assert out["source_ids"] == [m["id"], r["id"]]
 
@@ -3735,7 +3732,7 @@ class TestSubtractWavefronts:
         measurement_rms = float(np.sqrt(np.mean(
             (np.asarray(heights_m) - np.mean(heights_m)) ** 2
         )))
-        out = subtract_wavefronts(measurement, reference)
+        out = subtract_wavefronts(measurement, reference, reference_polarity=1)
         assert out["rms_nm"] < measurement_rms * 0.5, (
             f"expected subtraction to cut RMS in half; got "
             f"measurement_rms={measurement_rms:.2f}, "
@@ -3758,7 +3755,7 @@ class TestSubtractWavefronts:
                     "raw_height_grid_nm"):
             measurement[key] = z2_nm.astype(np.float32).ravel().tolist()
 
-        out = subtract_wavefronts(measurement, reference, register=False)
+        out = subtract_wavefronts(measurement, reference, register=False, reference_polarity=1)
 
         expected_phase_rad = amplitude_nm * 4.0 * np.pi / wavelength_nm
         assert out["coefficient_unit"] == "phase_rad"
@@ -3786,7 +3783,7 @@ class TestSubtractWavefronts:
         r["trusted_mask_grid"] = [
             1 if (i // cols) >= 2 else 0 for i in range(rows * cols)
         ]
-        out = subtract_wavefronts(m, r, register=False)
+        out = subtract_wavefronts(m, r, register=False, reference_polarity=1)
         assert out["trusted_area_pct"] == pytest.approx(25.0, abs=1.0)
         assert out["trusted_area_pct"] < 100.0
         out_trusted = np.asarray(
@@ -3809,19 +3806,19 @@ class TestSubtractWavefronts:
         m["trusted_mask_grid"] = [1] * (rows * cols)
 
         r_missing = _fake_wrapped_result(rows, cols)  # no key at all
-        out_missing = subtract_wavefronts(m, r_missing, register=False)
+        out_missing = subtract_wavefronts(m, r_missing, register=False, reference_polarity=1)
         assert "trusted_area_pct" not in out_missing
         assert "trusted_mask_grid" not in out_missing
 
         r_none = _fake_wrapped_result(rows, cols)
         r_none["trusted_mask_grid"] = None
-        out_none = subtract_wavefronts(m, r_none, register=False)
+        out_none = subtract_wavefronts(m, r_none, register=False, reference_polarity=1)
         assert "trusted_area_pct" not in out_none
         assert "trusted_mask_grid" not in out_none
 
         r_bad_shape = _fake_wrapped_result(rows, cols)
         r_bad_shape["trusted_mask_grid"] = [1] * (rows * cols - 1)
-        out_bad_shape = subtract_wavefronts(m, r_bad_shape, register=False)
+        out_bad_shape = subtract_wavefronts(m, r_bad_shape, register=False, reference_polarity=1)
         assert "trusted_area_pct" not in out_bad_shape
         assert "trusted_mask_grid" not in out_bad_shape
 
@@ -3907,7 +3904,7 @@ class TestSubtractRawDomainCorrectness:
         r = self._wrapped_from_grids(r_raw, r_disp, form_model="plane",
                                      subtracted_terms=())
 
-        out = subtract_wavefronts(m, r, register=False)
+        out = subtract_wavefronts(m, r, register=False, reference_polarity=1)
 
         raw_diff = np.asarray(out["raw_height_grid_nm"],
                               dtype=np.float64).reshape(rows, cols)
@@ -3940,7 +3937,7 @@ class TestSubtractRawDomainCorrectness:
         for k in ("raw_height_grid_nm", "display_height_grid_nm", "height_grid",
                   "mask_grid", "raw_mask_grid"):
             r[k] = list(m[k])
-        out = subtract_wavefronts(m, r, register=False)
+        out = subtract_wavefronts(m, r, register=False, reference_polarity=1)
 
         raw_diff = np.asarray(out["raw_height_grid_nm"], dtype=np.float64)
         disp_diff = np.asarray(out["display_height_grid_nm"], dtype=np.float64)
@@ -4057,7 +4054,7 @@ class TestFringeSubtractAPI:
         assert r1.status_code == 200 and r2.status_code == 200
         id1 = r1.json()["id"]
         id2 = r2.json()["id"]
-        rs = client.post("/fringe/subtract", json={
+        rs = client.post("/fringe/subtract", json={"reference_polarity": 1,
             "measurement_id": id1,
             "reference_id": id2,
         })
@@ -4071,13 +4068,13 @@ class TestFringeSubtractAPI:
         r1 = client.post("/fringe/analyze", json={"image_b64": b64})
         assert r1.status_code == 200
         id1 = r1.json()["id"]
-        rs = client.post("/fringe/subtract", json={
+        rs = client.post("/fringe/subtract", json={"reference_polarity": 1,
             "measurement_id": id1,
             "reference_id": "deadbeef" * 4,
         })
         assert rs.status_code == 404
         # Also: unknown measurement_id.
-        rs2 = client.post("/fringe/subtract", json={
+        rs2 = client.post("/fringe/subtract", json={"reference_polarity": 1,
             "measurement_id": "deadbeef" * 4,
             "reference_id": id1,
         })
@@ -4088,7 +4085,7 @@ class TestFringeSubtractAPI:
         r1 = client.post("/fringe/analyze", json={"image_b64": b64})
         r2 = client.post("/fringe/analyze", json={"image_b64": b64})
         id1, id2 = r1.json()["id"], r2.json()["id"]
-        rs = client.post("/fringe/subtract", json={
+        rs = client.post("/fringe/subtract", json={"reference_polarity": 1,
             "measurement_id": id1,
             "reference_id": id2,
         })
@@ -4106,11 +4103,11 @@ class TestFringeSubtractAPI:
         id_a = client.post("/fringe/analyze", json={"image_b64": b64}).json()["id"]
         id_b = client.post("/fringe/analyze", json={"image_b64": b64}).json()["id"]
         id_c = client.post("/fringe/analyze", json={"image_b64": b64}).json()["id"]
-        rs1 = client.post("/fringe/subtract", json={
+        rs1 = client.post("/fringe/subtract", json={"reference_polarity": 1,
             "measurement_id": id_a, "reference_id": id_b})
         assert rs1.status_code == 200
         id_d = rs1.json()["id"]
-        rs2 = client.post("/fringe/subtract", json={
+        rs2 = client.post("/fringe/subtract", json={"reference_polarity": 1,
             "measurement_id": id_d, "reference_id": id_c})
         assert rs2.status_code == 200
         assert rs2.json()["origin"] == "subtracted"
@@ -4608,7 +4605,7 @@ class TestAverageWavefronts:
         r2["surface_height"] = r1["surface_height"]
         r2["surface_width"] = r1["surface_width"]
 
-        out = average_wavefronts([r1, r2])
+        out = average_wavefronts([r1, r2], source_polarities=[1] * len([r1, r2]))
         a = np.asarray(out["display_height_grid_nm"], dtype=np.float64)
         b = np.asarray(r1["display_height_grid_nm"], dtype=np.float64)
         # Masked pixels zero on both sides; valid pixels equal.
@@ -4633,7 +4630,7 @@ class TestAverageWavefronts:
             result["raw_height_grid_nm"] = values
             results.append(result)
 
-        out = average_wavefronts(results)
+        out = average_wavefronts(results, source_polarities=[1] * len(results))
 
         expected_phase_rad = amplitude_nm * 4.0 * np.pi / wavelength_nm
         assert out["coefficient_unit"] == "phase_rad"
@@ -4665,7 +4662,7 @@ class TestAverageWavefronts:
             (np.asarray(results[0]["display_height_grid_nm"]) -
              np.mean(results[0]["display_height_grid_nm"])) ** 2
         )))
-        out = average_wavefronts(results)
+        out = average_wavefronts(results, source_polarities=[1] * len(results))
         avg_rms = float(out["rms_nm"])
         # Expect ≈ single_rms / sqrt(5); allow generous slack for finite sample size.
         expected = single_rms / math.sqrt(n)
@@ -4695,7 +4692,7 @@ class TestAverageWavefronts:
         outlier = self._make_constant_layer(rows, cols, 5000.0)
         all_layers = clean + [outlier]
         out = average_wavefronts(all_layers, rejection="sigma",
-                                 rejection_threshold=1.5)
+                                 rejection_threshold=1.5, source_polarities=[1] * len(all_layers))
         heights = np.asarray(out["display_height_grid_nm"], dtype=np.float64)
         mask = np.asarray(out["mask_grid"], dtype=bool)
         clean_mean = float(np.mean(clean_vals))
@@ -4713,7 +4710,7 @@ class TestAverageWavefronts:
         outlier = self._make_constant_layer(rows, cols, 500.0)
         all_layers = clean + [outlier]
         out = average_wavefronts(all_layers, rejection="mad",
-                                 rejection_threshold=2.0)
+                                 rejection_threshold=2.0, source_polarities=[1] * len(all_layers))
         heights = np.asarray(out["display_height_grid_nm"], dtype=np.float64)
         mask = np.asarray(out["mask_grid"], dtype=bool)
         clean_mean = float(np.mean(clean_vals))
@@ -4724,19 +4721,19 @@ class TestAverageWavefronts:
         a = _fake_wrapped_result(8, 8)
         b = _fake_wrapped_result(16, 8)
         with pytest.raises(ValueError) as ei:
-            average_wavefronts([a, b])
+            average_wavefronts([a, b], source_polarities=[1] * len([a, b]))
         assert "Grid shapes differ" in str(ei.value)
 
     def test_average_requires_two_inputs(self):
         a = _fake_wrapped_result(8, 8)
         with pytest.raises(ValueError) as ei:
-            average_wavefronts([a])
+            average_wavefronts([a], source_polarities=[1] * len([a]))
         assert "at least 2" in str(ei.value)
 
     def test_average_envelope_origin_and_source_ids(self):
         a = _fake_wrapped_result(8, 8)
         b = _fake_wrapped_result(8, 8)
-        out = average_wavefronts([a, b])
+        out = average_wavefronts([a, b], source_polarities=[1] * len([a, b]))
         assert out["origin"] == "average"
         assert out["source_ids"] == [a["id"], b["id"]]
         # wrap_wavefront_result stamps the averaged result with a fresh id.
@@ -4745,7 +4742,7 @@ class TestAverageWavefronts:
     def test_average_wavelength_mismatch_warns(self):
         a = _fake_wrapped_result(8, 8, wavelength_nm=632.8)
         b = _fake_wrapped_result(8, 8, wavelength_nm=589.3)
-        out = average_wavefronts([a, b])
+        out = average_wavefronts([a, b], source_polarities=[1] * len([a, b]))
         assert any("Wavelength mismatch" in w for w in out["warnings"])
 
     def test_average_mask_intersection(self):
@@ -4765,7 +4762,7 @@ class TestAverageWavefronts:
         a["raw_mask_grid"] = m_a
         b["mask_grid"] = m_b
         b["raw_mask_grid"] = m_b
-        out = average_wavefronts([a, b])
+        out = average_wavefronts([a, b], source_polarities=[1] * len([a, b]))
         mask = np.asarray(out["mask_grid"], dtype=np.uint8)
         expected = np.array(
             [1 if (m_a[i] == 1 and m_b[i] == 1) else 0
@@ -4804,7 +4801,7 @@ class TestAverageWavefronts:
         a["trusted_mask_grid"] = region(lambda r, c: r < 6)              # rows 0-5, all cols
         b["trusted_mask_grid"] = region(lambda r, c: c < 6)              # all rows, cols 0-5
         c["trusted_mask_grid"] = region(lambda r, c: r >= 2 and c >= 2)  # bottom-right 6x6 block
-        out = average_wavefronts([a, b, c])
+        out = average_wavefronts([a, b, c], source_polarities=[1] * len([a, b, c]))
         # a ∩ b ∩ c = rows 2-5 x cols 2-5 = 16 of 64 pixels = 25%.
         assert out["trusted_area_pct"] == pytest.approx(25.0, abs=1.0)
         # Any single source dropped gives a different, larger answer:
@@ -4825,7 +4822,7 @@ class TestAverageWavefronts:
         a["trusted_mask_grid"] = [1] * (rows * cols)
         b["trusted_mask_grid"] = [1] * (rows * cols)
         # c has no trusted_mask_grid key at all.
-        out = average_wavefronts([a, b, c])
+        out = average_wavefronts([a, b, c], source_polarities=[1] * len([a, b, c]))
         assert "trusted_area_pct" not in out
         assert "trusted_mask_grid" not in out
 
@@ -4869,7 +4866,7 @@ class TestFringeAverageAPI:
             r = client.post("/fringe/analyze", json={"image_b64": b64})
             assert r.status_code == 200, r.text
             ids.append(r.json()["id"])
-        rs = client.post("/fringe/average", json={"source_ids": ids})
+        rs = client.post("/fringe/average", json={"source_polarities": [1] * len(ids), "source_ids": ids})
         assert rs.status_code == 200, rs.text
         data = rs.json()
         assert data["origin"] == "average"
@@ -4880,7 +4877,7 @@ class TestFringeAverageAPI:
         r = client.post("/fringe/analyze", json={"image_b64": b64})
         assert r.status_code == 200
         id1 = r.json()["id"]
-        rs = client.post("/fringe/average", json={"source_ids": [id1]})
+        rs = client.post("/fringe/average", json={"source_polarities": [1] * len([id1]), "source_ids": [id1]})
         # Pydantic min_length=2 → 422, but accept 400 as well.
         assert rs.status_code in (400, 422)
 
@@ -4889,7 +4886,7 @@ class TestFringeAverageAPI:
         r = client.post("/fringe/analyze", json={"image_b64": b64})
         assert r.status_code == 200
         good = r.json()["id"]
-        rs = client.post("/fringe/average", json={
+        rs = client.post("/fringe/average", json={"source_polarities": [1] * len([good, "deadbeef" * 4]),
             "source_ids": [good, "deadbeef" * 4],
         })
         assert rs.status_code == 404
@@ -4902,7 +4899,7 @@ class TestFringeAverageAPI:
         for _ in range(2):
             r = client.post("/fringe/analyze", json={"image_b64": b64})
             ids.append(r.json()["id"])
-        rs = client.post("/fringe/average", json={"source_ids": ids})
+        rs = client.post("/fringe/average", json={"source_polarities": [1] * len(ids), "source_ids": ids})
         assert rs.status_code == 200
         avg_id = rs.json()["id"]
         caps = client.get("/fringe/session/captures").json()["captures"]
@@ -4917,10 +4914,10 @@ class TestFringeAverageAPI:
         id_a = client.post("/fringe/analyze", json={"image_b64": b64}).json()["id"]
         id_b = client.post("/fringe/analyze", json={"image_b64": b64}).json()["id"]
         id_c = client.post("/fringe/analyze", json={"image_b64": b64}).json()["id"]
-        rs1 = client.post("/fringe/average", json={"source_ids": [id_a, id_b]})
+        rs1 = client.post("/fringe/average", json={"source_polarities": [1] * len([id_a, id_b]), "source_ids": [id_a, id_b]})
         assert rs1.status_code == 200, rs1.text
         id_d = rs1.json()["id"]
-        rs2 = client.post("/fringe/average", json={"source_ids": [id_d, id_c]})
+        rs2 = client.post("/fringe/average", json={"source_polarities": [1] * len([id_d, id_c]), "source_ids": [id_d, id_c]})
         assert rs2.status_code == 200, rs2.text
         assert rs2.json()["origin"] == "average"
         assert rs2.json()["source_ids"] == [id_d, id_c]
@@ -4946,7 +4943,7 @@ class TestFringeAverageAPI:
 
         n_recomputes = 10
         for _ in range(n_recomputes):
-            rs = client.post("/fringe/average", json={
+            rs = client.post("/fringe/average", json={"source_polarities": [1] * len(ids),
                 "source_ids": ids,
                 "record": False,
             })
@@ -4967,7 +4964,7 @@ class TestFringeAverageAPI:
         b64 = self._b64_image()
         id_a = client.post("/fringe/analyze", json={"image_b64": b64}).json()["id"]
         id_b = client.post("/fringe/analyze", json={"image_b64": b64}).json()["id"]
-        rs = client.post("/fringe/average", json={"source_ids": [id_a, id_b]})
+        rs = client.post("/fringe/average", json={"source_polarities": [1] * len([id_a, id_b]), "source_ids": [id_a, id_b]})
         assert rs.status_code == 200, rs.text
         avg_id = rs.json()["id"]
 
@@ -4977,7 +4974,7 @@ class TestFringeAverageAPI:
 
         # And it stays resolvable by id for chaining, per test_average_chain_supported.
         id_c = client.post("/fringe/analyze", json={"image_b64": b64}).json()["id"]
-        rs2 = client.post("/fringe/average", json={"source_ids": [avg_id, id_c]})
+        rs2 = client.post("/fringe/average", json={"source_polarities": [1] * len([avg_id, id_c]), "source_ids": [avg_id, id_c]})
         assert rs2.status_code == 200, rs2.text
 
 
@@ -5136,8 +5133,8 @@ class TestSubtractWithRegistration:
         m = _make_result_from_grid(measurement_grid)
         r = _make_result_from_grid(reference_grid)
 
-        out_reg = subtract_wavefronts(m, r, register=True)
-        out_nore = subtract_wavefronts(m, r, register=False)
+        out_reg = subtract_wavefronts(m, r, register=True, reference_polarity=1)
+        out_nore = subtract_wavefronts(m, r, register=False, reference_polarity=1)
 
         assert out_reg["rms_nm"] < out_nore["rms_nm"], (
             f"Registration should reduce RMS: "
@@ -5150,7 +5147,7 @@ class TestSubtractWithRegistration:
         surf = _synth_surface(32, 32, seed=13)
         m = _make_result_from_grid(surf)
         r = _make_result_from_grid(surf)
-        out = subtract_wavefronts(m, r, register=False)
+        out = subtract_wavefronts(m, r, register=False, reference_polarity=1)
         assert "registration" in out
         assert out["registration"]["method"] == "disabled"
 
@@ -5163,7 +5160,7 @@ class TestSubtractWithRegistration:
         r = _make_result_from_grid(b)
         # Skip registration so the warning fires deterministically from
         # the residual-RMS check.
-        out = subtract_wavefronts(m, r, register=False)
+        out = subtract_wavefronts(m, r, register=False, reference_polarity=1)
         warnings_text = " ".join(out.get("warnings") or [])
         assert "Residual RMS exceeds measurement RMS" in warnings_text
 
@@ -5181,7 +5178,7 @@ class TestSubtractWithRegistration:
         shifted = _fourier_translate(surf, truth_dy, truth_dx)
         ref_mask = np.ones((rows, cols), dtype=bool)
         r = _make_result_from_grid(shifted, mask=ref_mask)
-        out = subtract_wavefronts(m, r, register=True)
+        out = subtract_wavefronts(m, r, register=True, reference_polarity=1)
 
         out_mask = np.asarray(out["mask_grid"], dtype=np.uint8).reshape(rows, cols)
         # Exposed edges after a (-15, -15) shift: bottom rows and right
@@ -5235,7 +5232,7 @@ class TestFringeSubtractAPIWithRegistration:
                           json={"image_b64": b64}).json()["id"]
         id2 = client.post("/fringe/analyze",
                           json={"image_b64": b64}).json()["id"]
-        rs = client.post("/fringe/subtract", json={
+        rs = client.post("/fringe/subtract", json={"reference_polarity": 1,
             "measurement_id": id1,
             "reference_id": id2,
         })
@@ -5252,7 +5249,7 @@ class TestFringeSubtractAPIWithRegistration:
                           json={"image_b64": b64}).json()["id"]
         id2 = client.post("/fringe/analyze",
                           json={"image_b64": b64}).json()["id"]
-        rs = client.post("/fringe/subtract", json={
+        rs = client.post("/fringe/subtract", json={"reference_polarity": 1,
             "measurement_id": id1,
             "reference_id": id2,
             "register": False,
@@ -5914,7 +5911,7 @@ class TestDerivedPSFMTF:
         r1 = client.post("/fringe/analyze", json={"image_b64": b64})
         r2 = client.post("/fringe/analyze", json={"image_b64": b64})
         assert r1.status_code == 200 and r2.status_code == 200
-        rs = client.post("/fringe/subtract", json={
+        rs = client.post("/fringe/subtract", json={"reference_polarity": 1,
             "measurement_id": r1.json()["id"],
             "reference_id": r2.json()["id"],
         })
@@ -5930,7 +5927,7 @@ class TestDerivedPSFMTF:
         r1 = client.post("/fringe/analyze", json={"image_b64": b64})
         r2 = client.post("/fringe/analyze", json={"image_b64": b64})
         assert r1.status_code == 200 and r2.status_code == 200
-        ra = client.post("/fringe/average", json={
+        ra = client.post("/fringe/average", json={"source_polarities": [1] * len([r1.json()["id"], r2.json()["id"]]),
             "source_ids": [r1.json()["id"], r2.json()["id"]],
         })
         assert ra.status_code == 200, ra.text

@@ -20,7 +20,7 @@ import { imageWidth, imageHeight } from './viewport.js';
 import { ctx, showStatus, redraw, pw, drawHandle } from './render.js';
 import { cacheImageData } from './subpixel-js.js';
 import { uploadCorrectedFrame } from './api.js';
-import { lensK1ToDiagNormalized } from './math.js';
+import { lensK1ToDiagNormalized, correctedRadialLength, fitRadialK1 } from './math.js';
 
 // ── Module-private state ──────────────────────────────────────────────────────
 let _active    = false;
@@ -261,36 +261,11 @@ async function _confirmCal() {
 
 // ── Fitting ───────────────────────────────────────────────────────────────────
 function _correctedLength(s, k1) {
-  const cx = imageWidth / 2, cy = imageHeight / 2;
-  const diag2 = (imageWidth ** 2 + imageHeight ** 2) / 4;
-  const ud = p => {
-    const dx = p.x - cx, dy = p.y - cy;
-    const sc = 1 / (1 + k1 * (dx * dx + dy * dy) / diag2);
-    return { x: cx + dx * sc, y: cy + dy * sc };
-  };
-  const u1 = ud(s.p1), u2 = ud(s.p2);
-  return Math.hypot(u2.x - u1.x, u2.y - u1.y);
-}
-
-function _variance(k1, samples) {
-  const L = samples.map(s => _correctedLength(s, k1));
-  const mean = L.reduce((a, b) => a + b, 0) / L.length;
-  return L.reduce((s, l) => s + (l - mean) ** 2, 0) / L.length;
+  return correctedRadialLength(s, k1, imageWidth, imageHeight);
 }
 
 function _fitK1(samples) {
-  if (samples.length < 2) return 0;
-  // Search the dimensionless half-diagonal-normalized coefficient directly.
-  const phi = (Math.sqrt(5) - 1) / 2;
-  let a = -0.8, b = 0.8;
-  for (let i = 0; i < 120; i++) {
-    const c = b - phi * (b - a);
-    const d = a + phi * (b - a);
-    if (_variance(c, samples) < _variance(d, samples)) b = d;
-    else a = c;
-    if (Math.abs(b - a) < 1e-18) break;
-  }
-  return (a + b) / 2;
+  return fitRadialK1(samples, imageWidth, imageHeight);
 }
 
 function _spreadPct(k1, samples) {

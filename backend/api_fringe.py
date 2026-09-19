@@ -31,6 +31,7 @@ from .vision.fringe import (
     rasterize_polygon_mask,
     reanalyze,
     subtract_wavefronts,
+    undistort_frame,
     wrap_wavefront_result,
 )
 
@@ -185,6 +186,7 @@ def _record_capture(session_id: str, result: dict) -> None:
         "origin": result.get("origin"),
         "captured_at": result.get("captured_at"),
         "source_ids": list(result.get("source_ids") or []),
+        "source_polarities": result.get("source_polarities"),
         "pv_nm": result.get("pv_nm"),
         "rms_nm": result.get("rms_nm"),
         "pv_waves": result.get("pv_waves"),
@@ -348,6 +350,7 @@ class SubtractBody(BaseModel):
     # M3.5 — when True (default), apply sub-pixel registration before
     # subtraction. Set False to use the pixel-aligned M3.4 behavior.
     register: bool = True
+    reference_polarity: Optional[Literal[-1, 1]] = None
 
 
 class AverageBody(BaseModel):
@@ -355,6 +358,7 @@ class AverageBody(BaseModel):
     wavelength_nm: Optional[float] = Field(default=None, gt=0)
     rejection: Literal["none", "sigma", "mad"] = "none"
     rejection_threshold: float = Field(default=3.0, gt=0, le=10)
+    source_polarities: Optional[list[Literal[-1, 1]]] = None
     # Task 9: the frontend's running-average widget recomputes on every
     # capture add/toggle -- a live preview, not a save. Recording each of
     # those recomputes as a new capture let ~51 averaged frames push past
@@ -434,6 +438,35 @@ class ImportBody(BaseModel):
     result: dict[str, Any]
 
 
+def _prepare_fringe_image(image: np.ndarray, body: BaseModel,
+                          roi=None) -> tuple[np.ndarray, np.ndarray | None, bool]:
+    """Correct camera geometry in the full-frame domain BEFORE any ROI crop.
+
+    Polygon coordinates refer to the corrected preview. Cache callers keep
+    the raw full frame separately, so carrier reanalysis can repeat this
+    transform exactly once, including when k1 changes.
+    """
+    if body.lens_k1:
+        image = undistort_frame(image.astype(np.float64), body.lens_k1)
+    roi = roi if roi is not None else getattr(body, "roi", None)
+    cropped = False
+    if roi is not None and not body.mask_polygons:
+        ih, iw = image.shape[:2]
+        x0, y0 = int(roi.x * iw), int(roi.y * ih)
+        x1 = min(int((roi.x + roi.w) * iw), iw)
+        y1 = min(int((roi.y + roi.h) * ih), ih)
+        if x1 - x0 > 10 and y1 - y0 > 10:
+            image = image[y0:y1, x0:x1]
+            cropped = True
+    custom_mask = None
+    if body.mask_polygons:
+        custom_mask = rasterize_polygon_mask(
+            [{"vertices": p.vertices, "include": p.include} for p in body.mask_polygons],
+            *image.shape[:2],
+        )
+    return image, custom_mask, cropped
+
+
 def make_fringe_router(camera: BaseCamera) -> APIRouter:
     router = APIRouter()
 
@@ -469,26 +502,9 @@ def make_fringe_router(camera: BaseCamera) -> APIRouter:
 
         image = _cap_image_size(image, request)
 
-        # Crop to ROI if specified (legacy rectangle mode)
-        if body.roi and not body.mask_polygons:
-            ih, iw = image.shape[:2]
-            x0 = int(body.roi.x * iw)
-            y0 = int(body.roi.y * ih)
-            x1 = min(int((body.roi.x + body.roi.w) * iw), iw)
-            y1 = min(int((body.roi.y + body.roi.h) * ih), ih)
-            if x1 - x0 > 10 and y1 - y0 > 10:
-                image = image[y0:y1, x0:x1]
-
-        # Build polygon mask if provided
-        custom_mask = None
-        if body.mask_polygons:
-            ih, iw = image.shape[:2]
-            custom_mask = rasterize_polygon_mask(
-                [{"vertices": p.vertices, "include": p.include} for p in body.mask_polygons],
-                ih, iw,
-            )
-
         _fringe_cache.put(session_id, "last_image", image.copy())
+        _fringe_cache.put(session_id, "last_roi", body.roi if not body.mask_polygons else None)
+        image, custom_mask, cropped = _prepare_fringe_image(image, body)
 
         try:
             result = analyze_interferogram(
@@ -497,10 +513,11 @@ def make_fringe_router(camera: BaseCamera) -> APIRouter:
                 mask_threshold=body.mask_threshold,
                 subtract_terms=body.subtract_terms,
                 n_zernike=body.n_zernike,
-                use_full_mask=body.roi is not None and not body.mask_polygons,
+                use_full_mask=cropped,
                 custom_mask=custom_mask,
                 form_model=body.form_model,
                 lens_k1=body.lens_k1,
+                image_is_undistorted=True,
                 correct_2pi_jumps=body.correct_2pi_jumps,
                 lpf_sigma_frac=body.lpf_sigma_frac,
                 dc_margin_override=body.dc_margin_override,
@@ -575,26 +592,9 @@ def make_fringe_router(camera: BaseCamera) -> APIRouter:
 
         image = _cap_image_size(image, request)
 
-        # Crop to ROI if specified (legacy rectangle mode)
-        if body.roi and not body.mask_polygons:
-            ih, iw = image.shape[:2]
-            x0 = int(body.roi.x * iw)
-            y0 = int(body.roi.y * ih)
-            x1 = min(int((body.roi.x + body.roi.w) * iw), iw)
-            y1 = min(int((body.roi.y + body.roi.h) * ih), ih)
-            if x1 - x0 > 10 and y1 - y0 > 10:
-                image = image[y0:y1, x0:x1]
-
-        # Build polygon mask if provided
-        custom_mask = None
-        if body.mask_polygons:
-            ih, iw = image.shape[:2]
-            custom_mask = rasterize_polygon_mask(
-                [{"vertices": p.vertices, "include": p.include} for p in body.mask_polygons],
-                ih, iw,
-            )
-
         _fringe_cache.put(session_id, "last_image", image.copy())
+        _fringe_cache.put(session_id, "last_roi", body.roi if not body.mask_polygons else None)
+        image, custom_mask, cropped = _prepare_fringe_image(image, body)
         # Capture session_id for use inside the closure
         sid = session_id
 
@@ -612,11 +612,12 @@ def make_fringe_router(camera: BaseCamera) -> APIRouter:
                         mask_threshold=body.mask_threshold,
                         subtract_terms=body.subtract_terms,
                         n_zernike=body.n_zernike,
-                        use_full_mask=body.roi is not None and not body.mask_polygons,
+                        use_full_mask=cropped,
                         custom_mask=custom_mask,
                         on_progress=_on_progress,
                         form_model=body.form_model,
                         lens_k1=body.lens_k1,
+                        image_is_undistorted=True,
                         correct_2pi_jumps=body.correct_2pi_jumps,
                         lpf_sigma_frac=body.lpf_sigma_frac,
                         dc_margin_override=body.dc_margin_override,
@@ -721,13 +722,8 @@ def make_fringe_router(camera: BaseCamera) -> APIRouter:
             else:
                 raise HTTPException(400, detail="No cached image. Run /fringe/analyze first or provide image_b64.")
 
-        custom_mask = None
-        if body.mask_polygons:
-            ih, iw = image.shape[:2]
-            custom_mask = rasterize_polygon_mask(
-                [{"vertices": p.vertices, "include": p.include} for p in body.mask_polygons],
-                ih, iw,
-            )
+        cached_roi = None if body.image_b64 else _fringe_cache.get(session_id, "last_roi")
+        image, custom_mask, cropped = _prepare_fringe_image(image, body, cached_roi)
 
         try:
             result = analyze_interferogram(
@@ -737,8 +733,10 @@ def make_fringe_router(camera: BaseCamera) -> APIRouter:
                 subtract_terms=body.subtract_terms,
                 n_zernike=body.n_zernike,
                 custom_mask=custom_mask,
+                use_full_mask=cropped,
                 carrier_override=(body.carrier_y, body.carrier_x),
                 lens_k1=body.lens_k1,
+                image_is_undistorted=True,
                 correct_2pi_jumps=body.correct_2pi_jumps,
                 lpf_sigma_frac=body.lpf_sigma_frac,
                 dc_margin_override=body.dc_margin_override,
@@ -805,6 +803,7 @@ def make_fringe_router(camera: BaseCamera) -> APIRouter:
                 wavelength_nm=body.wavelength_nm,
                 register=bool(body.register),
                 hosted=hosted_flag,
+                reference_polarity=body.reference_polarity,
             )
         except ValueError as exc:
             raise HTTPException(400, detail=str(exc))
@@ -857,6 +856,7 @@ def make_fringe_router(camera: BaseCamera) -> APIRouter:
                 wavelength_nm=body.wavelength_nm,
                 rejection=body.rejection,
                 rejection_threshold=body.rejection_threshold,
+                source_polarities=body.source_polarities,
             )
         except ValueError as exc:
             raise HTTPException(400, detail=str(exc))

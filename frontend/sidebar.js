@@ -1,4 +1,6 @@
 import { apiFetch } from './api.js';
+import { renderCameraList } from './camera-list.js';
+export { loadCameraList } from './camera-list.js';
 import { state, DETECTION_TYPES, camBounds, pushUndo } from './state.js';
 import { redraw, resizeCanvas, showStatus, getStatus, canvas, listEl } from './render.js';
 import { constraintsForAnnotation, CONSTRAINT_ICONS, CONSTRAINT_LABELS } from './constraints.js';
@@ -556,6 +558,7 @@ export async function loadCameraInfo() {
     }
     // Cache camera info for ROI "Set from view"
     state._cameraInfo = d;
+    renderCameraList();
 
     // Populate settings dialog camera info
     const modelEl = document.getElementById("settings-model");
@@ -808,120 +811,6 @@ export function stopCameraStatsPolling() {
   }
 }
 
-function renderCameraSelectPlaceholder(text) {
-  for (const target of [
-    document.getElementById("camera-select"),
-    document.getElementById("camera-select-top"),
-  ]) {
-    if (!target) continue;
-    target.innerHTML = "";
-    const opt = document.createElement("option");
-    opt.value = "";
-    opt.disabled = true;
-    opt.selected = true;
-    opt.textContent = text;
-    target.appendChild(opt);
-    target.disabled = true;
-  }
-}
-
-export async function loadCameraList({ includeWebcams = false, refresh = false } = {}) {
-  const sel = document.getElementById("camera-select");
-  const selTop = document.getElementById("camera-select-top");
-  if (includeWebcams) state.includeWebcams = true;
-  const scanWebcams = state.includeWebcams === true;
-  // Aravis discovery does a UDP broadcast and waits for replies; show a
-  // "discovering" state immediately so the dropdown isn't stuck on its
-  // previous contents while the request is in-flight.
-  renderCameraSelectPlaceholder("Discovering cameras…");
-  try {
-    const params = new URLSearchParams();
-    if (scanWebcams) params.set("include_webcams", "true");
-    if (refresh) params.set("refresh", "true");
-    const qs = params.toString();
-    const [camerasResp, infoResp] = await Promise.all([
-      apiFetch(`/cameras${qs ? `?${qs}` : ""}`),
-      apiFetch("/camera/info"),
-    ]);
-    const camerasPayload = await camerasResp.json();
-    const info = await infoResp.json();
-    const cameras = camerasPayload?.cameras ?? [];
-    if (camerasPayload?.status === "timeout" && cameras.length === 0) {
-      renderCameraSelectPlaceholder(
-        "Camera discovery timed out — reopen menu to retry"
-      );
-      return;
-    }
-    if (camerasPayload?.status === "error" && cameras.length === 0) {
-      renderCameraSelectPlaceholder(
-        camerasPayload.error || "Camera discovery failed"
-      );
-      return;
-    }
-    const activeDeviceId = state.browserCamera?.deviceId;
-    const currentId = state.browserCamera?.active
-      ? (activeDeviceId ? `browser-cam-${activeDeviceId}` : "browser-cam")
-      : (info.device_id ?? "");
-    // Group cameras by backend so the dropdown visually separates the "real"
-    // scientific camera from webcams and browser devices. Aravis cameras come
-    // from /cameras with non-"Webcam" vendors; OpenCV entries have id starting
-    // with "opencv-"; the rest are browser devices we synthesize locally.
-    const sciCams = cameras.filter(c => !c.id.startsWith("opencv-"));
-    const webCams = cameras.filter(c => c.id.startsWith("opencv-"));
-    const browserDevices = state.browserCameraDevices;
-    const browserEntries = browserDevices && browserDevices.length > 0
-      ? browserDevices.map(d => ({ id: `browser-cam-${d.deviceId}`, label: d.label }))
-      : [{ id: "browser-cam", label: "Default webcam" }];
-
-    // When no hardware cameras are available and browser cam isn't active yet,
-    // a placeholder forces the user to make a real selection — without it the
-    // browser-cam entry is pre-selected and change never fires.
-    const needsPlaceholder = cameras.length === 0 && !state.browserCamera?.active;
-
-    const groups = [
-      ["Scientific cameras", sciCams],
-      ["Webcams", webCams],
-      ["Browser cameras", browserEntries],
-    ];
-
-    for (const target of [sel, selTop]) {
-      if (!target) continue;
-      target.innerHTML = "";
-      if (needsPlaceholder) {
-        const ph = document.createElement("option");
-        ph.value = "";
-        ph.disabled = true;
-        ph.selected = true;
-        ph.textContent = "Select camera…";
-        target.appendChild(ph);
-      }
-      for (const [label, entries] of groups) {
-        if (entries.length === 0) continue;
-        const og = document.createElement("optgroup");
-        og.label = label;
-        for (const c of entries) {
-          const opt = document.createElement("option");
-          opt.value = c.id;
-          opt.textContent = c.label;
-          if (!needsPlaceholder && c.id === currentId) opt.selected = true;
-          og.appendChild(opt);
-        }
-        target.appendChild(og);
-      }
-      target.disabled = false;
-    }
-    const scanBtn = document.getElementById("btn-scan-webcams");
-    if (scanBtn) {
-      scanBtn.textContent = scanWebcams ? "Rescan webcams" : "Scan webcams";
-    }
-    const refreshBtn = document.getElementById("btn-refresh-cameras");
-    if (refreshBtn) {
-      refreshBtn.textContent = "Refresh cameras";
-    }
-  } catch {
-    renderCameraSelectPlaceholder("Unavailable");
-  }
-}
 
 function scaleText() {
   const cal = state.calibration;

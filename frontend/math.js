@@ -1,5 +1,64 @@
 // ── Math helpers ─────────────────────────────────────────────────────────────
 
+// Inverse of the SAME half-diagonal-normalized forward model used by the
+// browser remapper and OpenCV: rd = ru * (1 + k1 * ru²). The radius in that
+// expression is undistorted; dividing by a factor evaluated at rd is not its
+// inverse. Return null where the monotonic inverse does not exist.
+export function undistortRadialPoint(p, k1, width, height) {
+  const cx = width / 2, cy = height / 2;
+  const radius = Math.hypot(width, height) / 2;
+  if (!(radius > 0) || !Number.isFinite(k1)) return null;
+  const dx = p.x - cx, dy = p.y - cy;
+  const rd = Math.hypot(dx, dy) / radius;
+  if (!Number.isFinite(rd)) return null;
+  if (rd === 0 || k1 === 0) return { x: p.x, y: p.y };
+  let lo = 0;
+  let hi = k1 < 0 ? Math.sqrt(-1 / (3 * k1)) : rd;
+  if (hi * (1 + k1 * hi * hi) < rd) return null;
+  for (let i = 0; i < 64; i++) {
+    const mid = (lo + hi) / 2;
+    if (mid * (1 + k1 * mid * mid) < rd) lo = mid;
+    else hi = mid;
+  }
+  const scale = ((lo + hi) / 2) / rd;
+  return { x: cx + dx * scale, y: cy + dy * scale };
+}
+
+export function correctedRadialLength(sample, k1, width, height) {
+  const a = undistortRadialPoint(sample.p1, k1, width, height);
+  const b = undistortRadialPoint(sample.p2, k1, width, height);
+  return a && b ? Math.hypot(b.x - a.x, b.y - a.y) : Infinity;
+}
+
+export function fitRadialK1(samples, width, height) {
+  if (samples.length < 2) return 0;
+  const variance = k => {
+    const lengths = samples.map(s => correctedRadialLength(s, k, width, height));
+    if (!lengths.every(Number.isFinite)) return Infinity;
+    const mean = lengths.reduce((a, b) => a + b, 0) / lengths.length;
+    return lengths.reduce((v, l) => v + (l - mean) ** 2, 0) / lengths.length;
+  };
+  // The forward map must be one-to-one over the output frame (ru <= 1):
+  // d(rd)/d(ru) = 1 + 3*k1*ru² > 0. Bracket from a coarse search so an
+  // invalid inverse at one end cannot misdirect golden-section search.
+  const lower = -1 / 3 + 1e-6, upper = 0.8, step = (upper - lower) / 100;
+  let best = 0, bestValue = Infinity;
+  for (let i = 0; i <= 100; i++) {
+    const v = variance(lower + i * step);
+    if (v < bestValue) { best = i; bestValue = v; }
+  }
+  if (!Number.isFinite(bestValue)) throw new Error('No invertible radial calibration fits these samples');
+  let a = Math.max(lower, lower + (best - 1) * step);
+  let b = Math.min(upper, lower + (best + 1) * step);
+  const phi = (Math.sqrt(5) - 1) / 2;
+  for (let i = 0; i < 90; i++) {
+    const c = b - phi * (b - a), d = a + phi * (b - a);
+    if (variance(c) < variance(d)) b = d;
+    else a = c;
+  }
+  return (a + b) / 2;
+}
+
 export function parseDistanceInput(input) {
   // accepts "1.5 mm", "500 µm", "0.5mm", etc.
   const m = input.trim().match(/^([0-9.]+)\s*(mm|µm|um)?$/i);

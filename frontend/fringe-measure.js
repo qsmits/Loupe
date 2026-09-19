@@ -1,5 +1,6 @@
 // fringe-measure.js — Surface map measurement tools for fringe mode.
 import { fr, $ } from './fringe.js';
+import { fitParallelStep } from './fringe-math.js';
 
 // ── Utility functions ──────────────────────────────────────────────────
 
@@ -384,29 +385,16 @@ export function computeAreaStats(p1, p2) {
   });
 }
 
-// ── Step tool (mean height difference between two regions) ─────────────
-//
-// Step tool — measures the mean height difference between two rectangular
-// regions on a fringe-analyzed surface. It's a post-processing step on
-// an already-unwrapped height map, so its correctness inherits from the
-// underlying single-analysis unwrap. Valid for:
-//   - smooth surfaces where the 2D unwrap is unambiguous (flats, bumps)
-//   - sharp steps smaller than λ/4 (~158 nm for He-Ne)
-// It is NOT valid for larger step heights: single-shot single-wavelength
-// interferometry cannot resolve the integer-λ/2 ambiguity, and no amount
-// of post-processing recovers the correct step from the wrapped data.
-// When |step| > λ/4 the readout shows an aliasing warning; the displayed
-// number could equally correspond to step ± n·λ/2 for any integer n.
-//
-// Uncertainty: the ±σ we report is an "effective-N" standard error of the
-// mean, derived from the region RMS and the number of *independent* grid
-// cells (not the raw cell count). The demodulation LPF correlates neighbor
-// pixels over roughly π·(LPF_SIGMA_FACTOR_AUTO·fringe_period_px)² of
-// original-image area, so the naive RMS/√N would be wildly over-optimistic.
-// We divide N by the number of grid cells per LPF correlation area to get an
-// effective N, then compute σ_mean = RMS / √N_eff and σ_step = √(σ_A² + σ_B²).
-// This is still just a scatter-based indicator — it doesn't include
-// carrier-estimation bias, unwrap errors, or systematic tilt/curvature.
+// ── Step tool (two parallel plateaus with a shared slope) ───────────────
+// Use raw height, before polynomial/Zernike form removal. Regional means
+// alone confound physical step height with carrier-error slope because the
+// regions have different centroids. fitParallelStep removes a COMMON slope,
+// not two independently chosen planes. Pick genuinely flat, parallel
+// plateaus away from the transition. Nonparallel slopes get a model warning.
+// Integer fringe order and absolute sign are still unknowable from one
+// exposure, even if the returned number is small: warn on every result.
+// SEM includes slope-estimation covariance and approximate LPF correlation
+// inflation (4πσxσy), but is scatter-only, not traceable total uncertainty.
 
 const STEP_COLORS = ["#00d4ff", "#ff9944"];
 
@@ -574,7 +562,7 @@ export function updateStepReadout() {
   const readout = $("fringe-measure-readout");
   if (!readout) return;
   const n = fr.stepRegions.length;
-  const header = "Step (A\u2212B) \u2014 valid for small steps only";
+  const header = "Step (A\u2212B) — parallel-plateau fit to raw gap";
   if (n === 0) {
     setMeasureReadout(`${header}  \u2192 drag to mark Region A (reference)`);
     return;
@@ -593,11 +581,17 @@ export function updateStepReadout() {
     setMeasureReadout(`${header}  \u2014  Region ${which} is empty \u2014 reposition or clear (Esc)`);
     return;
   }
-  const step = sA.mean - sB.mean;
-  // Effective-N SEM combination. sA.sem is RMS / √N_eff, which accounts
-  // for the demodulation LPF correlating neighbor cells. Still scatter-only
-  // — excludes carrier/unwrap/tilt bias.
-  const sigmaStep = Math.sqrt(sA.sem * sA.sem + sB.sem * sB.sem);
+  const result = fitParallelStep(
+    fr.lastResult?.raw_height_grid_nm,
+    fr.useTrustedOnly && fr.trustedMaskGrid ? fr.trustedMaskGrid : fr.maskGrid,
+    fr.gridRows, fr.gridCols, fr.stepRegions[0], fr.stepRegions[1], _corrCellsPerLpf(),
+  );
+  if (result.error) {
+    setMeasureReadout(`${header} — ${result.error}`);
+    return;
+  }
+  const step = result.step;
+  const sigmaStep = result.sem;
   const wl = (fr.lastResult && fr.lastResult.wavelength_nm) || 0;
   const inWaves = wl > 0
     ? ` [${(step / wl).toFixed(3)} gap \u03bb \u00b7 ${(2 * step / wl).toFixed(3)} fringes]`
@@ -608,16 +602,16 @@ export function updateStepReadout() {
   // > λ/4 (the conservative threshold: at λ/4 an adversarial noise step
   // already wraps, and above λ/4 even ideal unwrap can't recover the
   // correct integer-fringe offset).
-  let warnHtml = "";
+  // Ambiguity is present even when an aliased result happens to be small.
+  let warnHtml = ' <span style="color:#ff9f0a">Fringe order and absolute sign unverified; result is ambiguous by multiples of λ/2. Select flat plateaus away from the transition.</span>';
+  for (const warning of result.warnings) warnHtml += ` <span style="color:#ff9f0a">${warning}</span>`;
   const aliased = wl > 0 && Math.abs(step) > wl / 4;
   if (aliased) {
     const quarterWl = wl / 4;
-    warnHtml = `  <span style="background:#ff453a;color:#fff;font-weight:700;padding:2px 6px;border-radius:3px;margin-left:6px" title="Single-shot single-wavelength interferometry cannot distinguish this from a step of step \u00b1 n\u00b7\u03bb/2. The reported number is whatever the 2D unwrap happened to produce; it is not traceable to the true step.">\u26a0 |step| &gt; \u03bb/4 (${quarterWl.toFixed(0)} nm) \u2014 may be aliased by 2\u03c0 ambiguity</span>`;
+    warnHtml += ` <span style="color:#ff453a">⚠ |step| &gt; λ/4 (${quarterWl.toFixed(0)} nm): independent fringe-order information required.</span>`;
   }
 
-  const aSemTitle = `Effective-N SEM: RMS / \u221aN_eff where N_eff corrects for the demodulation LPF (\u03c3 \u2248 0.18\u00b7fringe_period in auto mode) correlating neighbor cells. Scatter-only; excludes carrier/unwrap/tilt bias.`;
-  const bSemTitle = aSemTitle;
-  const stepSemTitle = `Effective-N uncertainty: \u221a(\u03c3_A\u00b2 + \u03c3_B\u00b2), each using RMS / \u221aN_eff. Scatter-only \u2014 not a full metrology uncertainty.`;
+  const stepSemTitle = 'Approximate scatter-only SEM from the shared-plane fit, including slope extrapolation and LPF correlation area. Excludes fringe-order, reference-flat and model bias; not a full metrology uncertainty.';
 
   // M1.6 — trusted-only tag (matches PV/RMS summary styling).
   const useTrusted = fr.useTrustedOnly && !!fr.trustedMaskGrid;
@@ -628,12 +622,10 @@ export function updateStepReadout() {
   // Rendered as HTML so we can include the warning badge and help tooltips.
   const html =
     `<strong>${header}${trustedTag}</strong>` +
-    `  \u2014  A: ${fmtNm(sA.mean)} ` +
-    `<span title="${aSemTitle}">(\u00b1${fmtNm(sA.sem)} eff-N, \u03c3 region=${fmtNm(sA.rms)}, N=${sA.n}, N_eff=${sA.nEff.toFixed(1)})</span>` +
-    `  |  B: ${fmtNm(sB.mean)} ` +
-    `<span title="${bSemTitle}">(\u00b1${fmtNm(sB.sem)} eff-N, \u03c3 region=${fmtNm(sB.rms)}, N=${sB.n}, N_eff=${sB.nEff.toFixed(1)})</span>` +
+    ` — A: residual RMS=${fmtNm(result.regions[0].rms)}, N=${result.regions[0].n}` +
+    ` | B: residual RMS=${fmtNm(result.regions[1].rms)}, N=${result.regions[1].n}` +
     `  |  step = ${_fmtSigned(step)} ` +
-    `<span title="${stepSemTitle}">\u00b1 ${fmtNm(sigmaStep)} eff-N</span>` +
+    `<span title="${stepSemTitle}">± ${fmtNm(sigmaStep)} scatter SEM</span>` +
     `${inWaves}` +
     warnHtml;
   readout.innerHTML = html;

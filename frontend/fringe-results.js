@@ -88,7 +88,7 @@ export function buildResultsHtml() {
           <div class="fringe-stat" style="margin-right:4px">
             <select id="fringe-mode-select" title="Workflow mode \u2014 gates which tools show. UI-only; backend ignores it." style="font-size:11px;padding:2px 4px">
               <option value="surface">Surface</option>
-              <option value="step">Small-step (&lt; \u03bb/4)</option>
+              <option value="step">Parallel-plateau step</option>
               <option value="averaging">Averaging</option>
               <option value="subtraction">Subtraction</option>
             </select>
@@ -1496,6 +1496,7 @@ export function wavefrontView(result) {
     id: result.id ?? null,
     origin: result.origin ?? "capture",
     source_ids: Array.isArray(result.source_ids) ? result.source_ids : [],
+    source_polarities: result.source_polarities ?? null,
     captured_at: result.captured_at ?? null,
     calibration_snapshot: result.calibration_snapshot ?? null,
     warnings: Array.isArray(result.warnings) ? result.warnings : [],
@@ -2542,6 +2543,14 @@ function _openCompareDialog(measurementId) {
       ${banners.join("")}
       ${summaryLine}
 
+      <label>Reference height polarity
+        <select id="_cmp-polarity">
+          <option value="1">Same physical sign (+1)</option>
+          <option value="-1">Reverse reference (−1)</option>
+        </select>
+      </label>
+      <p style="color:#ff9f0a">Verify the wedge/height sign independently. Opposite wedges can invert the figure; Fourier direction does not establish physical polarity.</p>
+
       <div id="_cmp-err" style="color:#ff453a;font-size:11px;margin-top:6px;min-height:14px"></div>
 
       <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">
@@ -2570,6 +2579,7 @@ async function _doSubtract(measurementId, referenceId, panel, close) {
   const label = panel.querySelector("#_cmp-ok-label");
   const err = panel.querySelector("#_cmp-err");
   if (!btn || !label) return;
+  if (!window.confirm("Have you verified that the selected reference polarity gives the same physical height sign as the measurement? Do not continue based only on Fourier carrier direction.")) return;
 
   err.textContent = "";
   btn.disabled = true;
@@ -2592,7 +2602,10 @@ async function _doSubtract(measurementId, referenceId, panel, close) {
     }
   } catch (_e) { /* getActiveCalibration may not be available in edge cases */ }
 
-  const payload = { measurement_id: measurementId, reference_id: referenceId };
+  const payload = {
+    measurement_id: measurementId, reference_id: referenceId,
+    reference_polarity: Number(panel.querySelector("#_cmp-polarity").value),
+  };
   if (activeWl != null) payload.wavelength_nm = activeWl;
 
   try {
@@ -2648,6 +2661,7 @@ function _openAverageDialog(selectedIds) {
 
   let method = "none";
   let threshold = 3.0;
+  const polarities = ordered.map(() => 1);
 
   const root = document.createElement("div");
   root.className = "fringe-average-modal";
@@ -2741,6 +2755,10 @@ function _openAverageDialog(selectedIds) {
       const rms = _fmtNum(c.rms_nm, 1);
       return `<li style="font-size:11px;opacity:0.85;margin:1px 0">
         <strong>#${n}</strong> &middot; ${_escapeHtml(origin)} &middot; PV ${pv} nm &middot; RMS ${rms} nm
+        <select data-polarity-index="${i}" aria-label="Height polarity of capture ${n}">
+          <option value="1" ${polarities[i] === 1 ? "selected" : ""}>Same physical sign (+1)</option>
+          <option value="-1" ${polarities[i] === -1 ? "selected" : ""}>Reverse height (−1)</option>
+        </select>
       </li>`;
     }).join("");
 
@@ -2825,17 +2843,23 @@ function _openAverageDialog(selectedIds) {
     }
     panel.querySelector("#_avg-ok").addEventListener("click", () =>
       _doAverage(ordered.map(c => c.id), method, threshold,
-                 Number.isFinite(wl0) ? wl0 : null, panel, close));
+                 Number.isFinite(wl0) ? wl0 : null, panel, close, polarities));
+    panel.querySelectorAll("[data-polarity-index]").forEach(select => {
+      select.addEventListener("change", () => {
+        polarities[Number(select.dataset.polarityIndex)] = Number(select.value);
+      });
+    });
   }
 
   render();
 }
 
-async function _doAverage(sourceIds, method, threshold, wl0, panel, close) {
+async function _doAverage(sourceIds, method, threshold, wl0, panel, close, polarities) {
   const btn = panel.querySelector("#_avg-ok");
   const label = panel.querySelector("#_avg-ok-label");
   const err = panel.querySelector("#_avg-err");
   if (!btn || !label) return;
+  if (!window.confirm("Have you independently verified that all selected height polarities agree? A reversed optical-flat wedge can invert the recovered surface and cancel real figure in an average. Use each capture's polarity selector if needed.")) return;
 
   err.textContent = "";
   btn.disabled = true;
@@ -2852,6 +2876,7 @@ async function _doAverage(sourceIds, method, threshold, wl0, panel, close) {
     source_ids: sourceIds,
     rejection: method,
     rejection_threshold: threshold,
+    source_polarities: polarities,
   };
   // Prefer the active calibration's wavelength (same behavior as subtract).
   try {
@@ -2974,7 +2999,7 @@ function _applyModeVisibility(mode) {
   }
   const labels = {
     surface: "Surface",
-    step: "Small-step (\u003c \u03bb/4)",
+    step: "Parallel-plateau step",
     averaging: "Averaging",
     subtraction: "Subtraction",
   };

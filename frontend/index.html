@@ -348,8 +348,9 @@
       <button class="top-btn" id="btn-menu-camera">Camera ▾</button>
       <div class="dropdown camera-panel" id="dropdown-camera" hidden>
         <div class="camera-panel-header">
-          <select id="camera-select-top" class="camera-select-dropdown"></select>
-          <button class="dropdown-item" id="btn-refresh-cameras" title="Refresh Aravis/GigE/USB3 Vision discovery">Refresh cameras</button>
+          <select id="camera-select-top" class="camera-select-dropdown" aria-label="Camera"></select>
+          <div class="camera-info-line" id="camera-discovery-status" role="status" aria-live="polite" hidden></div>
+          <button class="dropdown-item" id="btn-refresh-cameras" title="Look for connected scientific cameras">Refresh cameras</button>
           <button class="dropdown-item" id="btn-reconnect-camera" title="Close and reopen the currently selected hardware camera">Reconnect current</button>
           <button class="dropdown-item" id="btn-scan-webcams" title="Probe webcams (may prompt phone/Continuity Camera)">Scan webcams</button>
           <div class="camera-info-line">

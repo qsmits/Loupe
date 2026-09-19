@@ -1351,7 +1351,11 @@ def _carrier_extend(image: np.ndarray, fy: float, fx: float,
     ``create_fringe_mask`` does discard the frame corners when there is an
     aperture to find (0.0% of them survive on a round, vignetted aperture),
     but a uniformly illuminated or gently vignetted frame takes its
-    "full-frame interferogram" branch and keeps 100% of them.
+    "full-frame interferogram" branch and initially keeps 100% of them.
+    The quantitative pipeline now explicitly marks the sensor boundary as
+    missing support and excludes that band from statistics and fitting;
+    the full-frame errors above remain diagnostics of this extension rule,
+    not a claim that every extended-edge sample is measurable.
     """
     h, w = image.shape
     pad_y = int(max(0, min(pad_y, h - 2)))
@@ -2219,9 +2223,13 @@ def unwrap_phase_2d(wrapped: np.ndarray, mask: np.ndarray | None = None,
     if fringe_period_px and fringe_period_px > 1 and mask is not None:
         kernel_size = max(3, int(fringe_period_px))
         kernel = np.ones((kernel_size, kernel_size), dtype=np.uint8)
-        eroded = cv2.erode(mask.astype(np.uint8), kernel)
+        # Pixels beyond the sensor are missing support, just like pixels
+        # beyond an interior aperture. OpenCV's default erosion border is
+        # effectively valid, which used to leave a full-frame mask untouched.
+        eroded = cv2.erode(mask.astype(np.uint8), kernel,
+                           borderType=cv2.BORDER_CONSTANT, borderValue=0)
         edge_zone = mask.astype(bool) & ~eroded.astype(bool)
-        risk_mask[edge_zone & (risk_mask == 0)] = 2
+        risk_mask[edge_zone] = 2
 
     if mask is not None:
         valid = mask.astype(bool)
@@ -2755,7 +2763,8 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 589.3,
                           correct_2pi_jumps: bool = True,
                           lpf_sigma_frac: float | None = None,
                           dc_margin_override: int | None = None,
-                          dc_cutoff_cycles: float | None = 1.5) -> dict:
+                          dc_cutoff_cycles: float | None = 1.5,
+                          image_is_undistorted: bool = False) -> dict:
     """Full analysis pipeline: single image in, all results out.
 
     Parameters
@@ -2778,6 +2787,9 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 589.3,
         preserves the legacy median-filter cleanup. Set False when the
         sample has true physical steps (≥ λ/4) that the cleanup would
         round away — e.g., gage-block validation.
+    image_is_undistorted : internal API handoff. True when the full-frame
+        lens correction has already been applied before cropping. Keep
+        ``lens_k1`` for provenance, but do not remap the image twice.
 
     Returns
     -------
@@ -2799,7 +2811,7 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 589.3,
     if img.ndim == 3:
         img = img.mean(axis=-1)
 
-    if lens_k1:
+    if lens_k1 and not image_is_undistorted:
         img = undistort_frame(img, lens_k1)
 
     _progress("carrier", 0.0, "Detecting carrier...")
@@ -3017,7 +3029,10 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 589.3,
         corrected = subtract_zernike(work_unwrapped, coeffs, subtract_terms,
                                      rho, theta, work_mask)
         plane_coeffs = None
-        if 2 in subtract_terms or 3 in subtract_terms:
+        if {1, 2, 3}.issubset(subtract_terms):
+            # A full plane removes piston AND both tilts; it is only allowed
+            # when all three were requested. Selective Zernike removal must
+            # preserve the other axis (and an unselected piston).
             # M2.4: Zernike tilt (terms 2 & 3) is defined on the unit disk,
             # so for non-circular apertures it doesn't fully capture the bulk
             # slope. An explicit least-squares plane fit on the already-tilt-
@@ -3170,6 +3185,11 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 589.3,
     modulation_grid_list = [round(float(v), 3) for v in mod_resized.ravel()]
 
     analysis_warnings: list[str] = [region_warning] if region_warning else []
+    if n_edge_risk:
+        analysis_warnings.append(
+            f"Excluded {n_edge_risk} boundary-contaminated pixels; PV/RMS "
+            "describe the remaining measurement aperture, not the whole specimen."
+        )
     carrier_cycles = float(carrier_info.get("distance_px", 0.0))
     if carrier_cycles < 8.0:
         analysis_warnings.append(
@@ -3670,6 +3690,24 @@ def _reshape_trust_mask(source: dict, rows: int, cols: int) -> np.ndarray | None
         return None
 
 
+def _orient_wavefront(result: dict, polarity: int) -> dict:
+    """Apply an explicitly supplied relative polarity, never infer it from shape.
+
+    Single-shot intensity cannot identify the physical wedge sign. In
+    particular, choosing the same Fourier half-plane in two images does not
+    establish a common height sign. Keep the stored source immutable.
+    """
+    if isinstance(polarity, bool) or polarity not in (-1, 1):
+        raise ValueError("Relative polarities must be +1 or -1")
+    oriented = dict(result)
+    if polarity == -1:
+        for key in ("height_grid", "display_height_grid_nm", "raw_height_grid_nm",
+                    "coefficients"):
+            if key in oriented:
+                oriented[key] = (-np.asarray(oriented[key], dtype=np.float64)).tolist()
+    return oriented
+
+
 def subtract_wavefronts(
     measurement: dict,
     reference: dict,
@@ -3677,6 +3715,7 @@ def subtract_wavefronts(
     wavelength_nm: float | None = None,
     register: bool = True,
     hosted: bool = False,
+    reference_polarity: int | None = None,
 ) -> dict:
     """Wavefront subtraction with optional sub-pixel registration (M3.5).
 
@@ -3684,6 +3723,11 @@ def subtract_wavefronts(
     :func:`wrap_wavefront_result`).  Returns a new WavefrontResult-shaped
     dict with ``origin='subtracted'`` and ``source_ids`` set to
     ``[measurement['id'], reference['id']]``.
+
+    ``reference_polarity`` is required: +1 explicitly confirms a common
+    physical height sign; -1 reverses the reference first. The measurement
+    sets the relative sign convention. Carrier direction cannot supply this
+    information. Stored sources are never modified.
 
     When ``register=True`` (default) the reference grids and masks are shifted
     together with normalized, zero-filled interpolation. Invalid zero values
@@ -3715,6 +3759,13 @@ def subtract_wavefronts(
             f"Grid shapes differ: M={mh}x{mw} vs R={rh}x{rw}"
         )
 
+    if reference_polarity is None:
+        raise ValueError(
+            "Confirm relative height polarity before subtraction: supply "
+            "reference_polarity=+1 for the same physical sign or -1 to reverse "
+            "the reference. Fourier carrier direction alone cannot establish it."
+        )
+    reference = _orient_wavefront(reference, reference_polarity)
     warnings_list: list[str] = []
 
     # ── Wavelength resolution + mismatch warning ─────────────────────
@@ -3886,7 +3937,7 @@ def subtract_wavefronts(
             # Mop up residual plane when Zernike tilt terms are requested
             # (mirrors analyze_interferogram behavior for non-circular
             # apertures).
-            if 2 in subtract_terms or 3 in subtract_terms:
+            if {1, 2, 3}.issubset(subtract_terms):
                 display_diff_f64 = _subtract_plane(display_diff_f64,
                                                    combined_mask)
     else:
@@ -3992,6 +4043,7 @@ def subtract_wavefronts(
         "grid_cols": mw,
         "carrier": measurement.get("carrier"),
         "tuning": measurement.get("tuning"),
+        "source_polarities": [1, reference_polarity],
     }
     if trusted_mask is not None:
         result["trusted_mask_grid"] = [
@@ -4020,10 +4072,14 @@ def average_wavefronts(
     wavelength_nm: float | None = None,
     rejection: str = "none",
     rejection_threshold: float = 3.0,
+    source_polarities: list[int] | None = None,
 ) -> dict:
     """Per-pixel average of multiple WavefrontResults with optional outlier rejection.
 
     Inputs: list of result dicts (>= 2). All must share grid_rows/grid_cols.
+    ``source_polarities`` is required: one independently verified +1/-1
+    multiplier per source. These express a common relative height sign, not
+    knowledge of absolute specimen sign, and are retained in provenance.
     Output: new WavefrontResult with origin='average', source_ids=[r.id for r in results],
     display_height_grid_nm = per-pixel (robust) mean, raw_height_grid_nm similarly,
     mask_grid = intersection of input mask_grids AND pixels with at least 2 valid
@@ -4062,6 +4118,13 @@ def average_wavefronts(
             f"rejection must be 'none', 'sigma' or 'mad'; got {rejection!r}"
         )
 
+    if source_polarities is None or len(source_polarities) != len(results):
+        raise ValueError(
+            "Confirm relative height polarity before averaging: supply one "
+            "+1 or -1 source_polarities entry per capture. A reversed wedge "
+            "can invert the recovered figure and cancel it in an average."
+        )
+    results = [_orient_wavefront(r, p) for r, p in zip(results, source_polarities)]
     warnings_list: list[str] = []
     n = len(results)
 
@@ -4291,6 +4354,7 @@ def average_wavefronts(
         "grid_cols": gw0,
         "carrier": results[0].get("carrier"),
         "tuning": results[0].get("tuning"),
+        "source_polarities": list(source_polarities),
         "rejection_method": rejection,
         "rejection_threshold": float(rejection_threshold),
         "rejection_stats": {
@@ -4410,7 +4474,7 @@ def reanalyze(coefficients: list[float], subtract_terms: list[int],
         else:
             corrected = subtract_zernike(raw_height_nm, fit_coeffs, subtract_terms,
                                          rho, theta, mask)
-            if 2 in subtract_terms or 3 in subtract_terms:
+            if {1, 2, 3}.issubset(subtract_terms):
                 corrected = _subtract_plane(corrected, mask)
             plane_coeffs = None
 
@@ -4453,7 +4517,7 @@ def reanalyze(coefficients: list[float], subtract_terms: list[int],
         else:
             corrected = subtract_zernike(full_surface, coeffs, subtract_terms,
                                          rho, theta, mask)
-            if 2 in subtract_terms or 3 in subtract_terms:
+            if {1, 2, 3}.issubset(subtract_terms):
                 corrected = _subtract_plane(corrected, mask)
             plane_coeffs = None
 

@@ -504,8 +504,19 @@ async function recomputeAverage() {
     return;
   }
 
+  // New captures need an explicit physical-polarity check. Retain that
+  // decision on the capture entry, so toggling/recomputing the same set
+  // does not repeatedly prompt. Resetting starts a new set.
+  if (accepted.some(c => c.polarity !== 1)) {
+    if (!window.confirm("Confirm that these running-average captures share the same physical height sign and the optical-flat wedge has not reversed. If unsure, cancel and use the Session average's per-capture polarity selectors.")) {
+      _reportAvgError("Average not updated: relative height polarity was not confirmed. Showing the last successful result.");
+      return;
+    }
+    accepted.forEach(c => { c.polarity = 1; });
+  }
   const body = {
     source_ids: accepted.map(c => c.id),
+    source_polarities: accepted.map(c => c.polarity),
     wavelength_nm: getWavelength(),
     rejection: "none",
     // Task 9: this is a live-preview recompute (fires on every capture
