@@ -496,7 +496,7 @@ export async function initTabManager() {
     else showHomeScreen();
   });
 
-  // Per-tab server sessions: X-Session-ID = active project UUID.
+  // Public project namespace; hosted backend also requires a private browser cookie.
   setSessionIdProvider(() => getActiveTab()?.id ?? null);
 
   // Autosave: 2 s dirty-poll (writes at most every 2 s after a change —

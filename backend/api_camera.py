@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 
 from .cameras.base import BaseCamera
 from .config import save_config
-from .session_store import safe_error_detail
+from .session_store import safe_error_detail, issue_session_cookie
 from .session_store import SessionFrameStore, get_session_id_dep
 from .stream import mjpeg_generator, BOUNDARY
 
@@ -76,8 +76,9 @@ def make_camera_router(camera: BaseCamera, frame_store: SessionFrameStore, start
     _warning = [startup_warning]   # mutable container for pop semantics
 
     @router.post("/session/new")
-    async def create_session():
-        """Issue a server-generated session token."""
+    async def create_session(request: Request, response: Response):
+        """Issue a private browser credential, independent of exported projects."""
+        issue_session_cookie(request, response)
         return {"session_id": str(uuid.uuid4())}
 
     @router.get("/camera/startup-warning")

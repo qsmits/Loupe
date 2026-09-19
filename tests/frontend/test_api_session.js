@@ -147,3 +147,19 @@ describe('withTimeout — AbortController/timer factory for capping upload durat
     assert.equal(didTimeout(), false);
   });
 });
+
+it('bootstraps a private cookie and retries in the initiating project namespace', async () => {
+  let project = 'project-a';
+  setSessionIdProvider(() => project);
+  const seen = [];
+  globalThis.fetch = async (url, options) => {
+    seen.push([url, options.headers?.get('X-Session-ID')]);
+    if (seen.length === 1) {
+      project = 'project-b';
+      return new Response('{}', { status: 401, headers: {'X-Loupe-Session-Required':'1'} });
+    }
+    return new Response('{}', {status:200});
+  };
+  assert.equal((await apiFetch('/frame')).status, 200);
+  assert.deepEqual(seen, [['/frame','project-a'], ['/session/new',undefined], ['/frame','project-a']]);
+});

@@ -1,5 +1,8 @@
 """Per-session frame storage for multi-user hosted mode."""
 import re
+import hashlib
+import hmac
+import secrets
 import threading
 import time
 
@@ -8,6 +11,37 @@ from fastapi import Request, HTTPException
 
 _UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 DEFAULT_SESSION_ID = "_default"
+SESSION_COOKIE = "loupe_owner"
+SESSION_MAX_AGE = 30 * 24 * 3600
+# Caches are process-local too: a restart invalidates credentials and cached data.
+_SESSION_KEY = secrets.token_bytes(32)
+
+
+def session_owner(token: str | None) -> str | None:
+    if not token or len(token) > 200:
+        return None
+    try:
+        owner, issued, signature = token.split(".")
+        message = f"{owner}.{issued}"
+        expected = hmac.new(_SESSION_KEY, message.encode(), hashlib.sha256).hexdigest()
+        age = time.time() - int(issued)
+        if not hmac.compare_digest(signature, expected) or not 0 <= age <= SESSION_MAX_AGE:
+            return None
+        return owner
+    except (ValueError, TypeError):
+        return None
+
+
+def issue_session_cookie(request, response) -> None:
+    token = request.cookies.get(SESSION_COOKIE)
+    if session_owner(token) is None:
+        message = f"{secrets.token_hex(32)}.{int(time.time())}"
+        signature = hmac.new(_SESSION_KEY, message.encode(), hashlib.sha256).hexdigest()
+        token = f"{message}.{signature}"
+    response.set_cookie(SESSION_COOKIE, token, httponly=True, samesite="strict",
+                        secure=request.url.scheme == "https", max_age=SESSION_MAX_AGE,
+                        path="/")
+    response.headers["Cache-Control"] = "no-store"
 
 
 def safe_error_detail(request: Request, exc: Exception, fallback: str = "Operation failed") -> str:
@@ -34,6 +68,15 @@ def get_session_id_dep(request: Request) -> str:
         return DEFAULT_SESSION_ID
     if not validate_session_id(session_id):
         raise HTTPException(400, detail="Invalid session ID format")
+    if getattr(request.app.state, "hosted", False):
+        if session_id == DEFAULT_SESSION_ID:
+            raise HTTPException(400, detail="A project UUID is required")
+        owner = session_owner(request.cookies.get(SESSION_COOKIE))
+        if owner is None:
+            raise HTTPException(401, detail="Session required",
+                                headers={"X-Loupe-Session-Required": "1"})
+        # Project IDs are public/exportable namespaces, never credentials.
+        return hmac.new(_SESSION_KEY, f"{owner}:{session_id}".encode(), hashlib.sha256).hexdigest()
     return session_id
 
 

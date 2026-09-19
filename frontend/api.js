@@ -2,7 +2,7 @@
 //
 // X-Session-ID is resolved PER CALL:
 //   1. the registered provider (tab-manager registers the active project's
-//      UUID — the project id doubles as the server session id, spec §tabs)
+//      UUID — a public project namespace, scoped by a private HttpOnly cookie)
 //   2. fallback: a stable client-generated UUID (kept in sessionStorage so
 //      reloads reuse it; plain variable when sessionStorage is unavailable)
 //
@@ -62,13 +62,30 @@ export function withTimeout(ms) {
 }
 
 /** Drop-in replacement for fetch() that adds X-Session-ID. */
+let _sessionBootstrap = null;
+async function ensureSession() {
+  if (!_sessionBootstrap) {
+    _sessionBootstrap = fetch('/session/new', { method: 'POST', credentials: 'same-origin' })
+      .then(r => { if (!r.ok) throw new Error('Could not initialize session'); })
+      .finally(() => { _sessionBootstrap = null; });
+  }
+  return _sessionBootstrap;
+}
+
 export async function apiFetch(url, options = {}) {
+  const sessionId = getSessionId(); // preserve the initiating project across awaits
   // Hosted instances: first frame-compute call shows a one-time
   // "image is sent to the server" notice and waits for acknowledgment.
   await maybeShowUploadNotice(url);
   const headers = new Headers(options.headers || {});
-  headers.set("X-Session-ID", getSessionId());
-  return fetch(url, { ...options, headers });
+  headers.set("X-Session-ID", sessionId);
+  const requestOptions = { ...options, headers };
+  const response = await fetch(url, requestOptions);
+  if (response.status === 401 && response.headers.get('X-Loupe-Session-Required') === '1') {
+    await ensureSession();
+    return fetch(url, requestOptions);
+  }
+  return response;
 }
 
 let _frameProvider = null;
