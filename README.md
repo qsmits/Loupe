@@ -10,7 +10,7 @@ Modes replace each other — calibration units, tool availability, and workflows
 Precision measurement and feature inspection using a video microscope or machine-vision camera. Covers all measurement tools, DXF-guided inspection, SPC, and surface metrology via Z-stack.
 
 ### Deflectometry
-Specular surface measurement using an iPad as a phase-shifting display. 8-step phase shifting with gamma pre-correction, Gaussian smoothing, sphere calibration, Frankot-Chellappa height integration, inline 3D viewer, and a diagnostics tab. Requires a controlled enclosure to suppress stray light.
+Specular surface measurement using an iPad as a phase-shifting display. 8-step phase shifting with gamma pre-correction, Gaussian smoothing, sphere calibration, Frankot-Chellappa height integration, inline 3D viewer, and a diagnostics tab. Requires a local camera/display setup and a controlled enclosure to suppress stray light. Deflectometry projects cannot be created, opened, or imported on the hosted instance.
 
 ### Fringe Analysis
 Interferometric surface flatness measurement using an optical flat and monochromatic light. Single-image DFT phase extraction, 2D phase unwrapping, Zernike polynomial fitting (up to 66 terms, Noll indexing), PV/RMS/Strehl statistics, PSF and MTF computation, wavefront averaging, contour lines, 3D WebGL viewer, horizontal/vertical profiles, reference standards (ISO 3650, JIS B 7506, ASME B89.1.9, DIN 861), PDF and CSV export.
@@ -27,7 +27,7 @@ Interferometric surface flatness measurement using an optical flat and monochrom
 - Pixel ↔ mm calibration (two-point or circle-based), coordinate origin with rotation
 - Calibration profiles with per-magnification settings, export/import
 - Lens distortion correction, perspective (tilt) correction via 4-point homography
-- Undo/redo for all operations
+- Undo/redo for measurement edits; perspective correction has a separate undo that also restores the image and calibration
 - Sub-pixel edge snapping (parabola + Gaussian, client-side, instant preview); manually drawn segments also snap to nearby annotation and arc endpoints, and closing a loop this way offers a one-click "Create area"
 - Numbered `[n]` canvas labels (name + deviation, pass/fail tint) that match the sidebar's numbering exactly
 
@@ -67,9 +67,9 @@ Interferometric surface flatness measurement using an optical flat and monochrom
 
 ### SPC & Analytics
 - SQLite run storage (parts → runs → results)
-- Cpk with feature-type-aware one-sided/two-sided calculation, capability rating
+- Cpk with feature-type-aware one-sided/two-sided calculation and capability rating; zero observed variation is reported as unavailable, not as a numeric capability score
 - Canvas 2D trend charts with tolerance bands
-- SPC CSV export (disabled in hosted mode)
+- SPC CSV export (all SPC features are disabled in hosted mode)
 
 ### Camera & Session
 - Live MJPEG stream from industrial cameras (Baumer/Aravis, OpenCV, browser MediaDevices API)
@@ -77,7 +77,8 @@ Interferometric surface flatness measurement using an optical flat and monochrom
 - Live 32-bin luma histogram with clip warnings; client-side auto-exposure loop
 - 4-quadrant image comparison (Keyence-style: 4 live views, independent settings)
 - Freeze frame for measurement; auto-freeze on detection
-- **Projects**: typed project tabs (microscopy is multi-tab; deflectometry/fringe are singleton, one tab of each) with a home screen and recents grid; autosaves to browser-local IndexedDB (~2s while dirty, plus a flush on tab switch and page close) — no manual save step or unsaved-work warning; `.loupe` project files (image + measurements + calibration + viewport) for export/import; legacy v3 session JSON is still importable
+- **Projects**: typed project tabs (microscopy is multi-tab; deflectometry/fringe are singleton, one tab of each) with a home screen and recents grid; browser-local IndexedDB autosave roughly every 2 seconds after changes and on project tab switch/close
+- **Portable projects**: `.loupe` export/import preserves the microscopy image, measurements, calibration, and viewport, or the latest instrument result and its saved settings, masks, and measurements. Imported fringe images and retained original lens images are included when available. Server capture history, running averages, and live hardware jobs are temporary; export captures/runs separately. Legacy v3 session JSON still imports but contains no image
 - Snapshot capture and drag-and-drop image load
 - Export: annotated PNG, measurement CSV, inspection CSV, inspection PDF (jsPDF, bundled locally), DXF (reverse engineering — measurements → DXF in mm)
 
@@ -89,11 +90,22 @@ Interferometric surface flatness measurement using an optical flat and monochrom
 - Minimap overview when zoomed in; measurement grid overlay
 
 ### Hosted Mode
-- Multi-user image-upload-only mode with per-session frame isolation (SessionFrameStore, UUID keys, TTL)
+- Image processing with isolated browser/project sessions: a signed HttpOnly, SameSite=Strict owner cookie scopes each public project UUID to its browser. Sharing a `.loupe` file does not share access to the original browser's live server data
+- Projects stay in browser-local IndexedDB; processing uploads images and analysis data to temporary server memory. A notice appears before the first upload. Expiry or a server restart clears transient frames/results
 - CSP headers, rate limiting, input validation, error scrubbing
-- Concurrent operation limit; stitch, super-res, Z-stack, and SPC disabled in hosted mode
-- Server-issued session tokens; jsPDF bundled locally (no third-party CDN)
-- Deploy scripts for Ubuntu + Apache + supervisord
+- Image upload limits: 20 MiB encoded, 16,777,216 decoded pixels, and 8192 pixels per side; fringe analysis downsamples to a maximum dimension of 2048 pixels
+- Three concurrent fringe compute jobs, with slots retained until computation finishes even if the client disconnects. Excess work returns HTTP 503 for retry; retained frame and fringe caches have memory budgets
+- Stitch, super-resolution, Z-stack, SPC, and hardware-only deflectometry are unavailable
+- jsPDF bundled locally (no third-party CDN)
+- Deployment helpers for Ubuntu/Apache: `deploy.sh` updates the existing systemd installation; `deploy/install.sh` and `deploy/update.sh` use supervisord
+
+When hosting behind a TLS reverse proxy, forward the original HTTPS scheme (Apache: `RequestHeader set X-Forwarded-Proto "https"` in the TLS virtual host) and configure Uvicorn to trust only the proxy. Bind the backend to loopback when the proxy is on the same host. Verify that the session cookie includes `Secure`, `HttpOnly`, and `SameSite=Strict` on the public HTTPS endpoint. Browser session isolation does not provide user accounts or access control for the public app.
+
+### Image corrections and measurement validity
+
+Apply **lens correction first, then perspective correction**, before making measurements. Lens corrections always resample the retained original image; applying the same coefficient again leaves it unchanged. Loading a zero-coefficient lens profile restores the original pixels. Changing or resetting the correction clears old measurements, DXF geometry, inspection results, and ordinary undo/redo history because their pixel coordinates no longer match the image.
+
+Perspective correction sets the pixel-to-mm scale from the known rectangle dimensions and clears the old geometry. Its dedicated undo restores the preceding image, calibration, geometry, and undo history within that open project; it does not survive a reload or `.loupe` export/import. Undo perspective correction before changing the lens correction, or reload the original image. Older corrected projects without a retained original can keep their current lens correction but require the original image to change or reset it.
 
 ### Help System
 - Two-panel layout (nav tree + content page), 20+ pages covering every tool, algorithm, workflow, and export format
@@ -143,7 +155,7 @@ Open [http://localhost:8000](http://localhost:8000). Logs in `.server.log`.
 NO_CAMERA=1 .venv/bin/python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000
 ```
 
-Load images via drag-and-drop or the File menu. All tools work normally.
+Load images via drag-and-drop or the File menu for image measurement and analysis. Live capture and hardware workflows require the corresponding camera/display setup.
 
 ### Camera priority
 
@@ -172,8 +184,8 @@ Runtime settings in `config.json`:
 ## Tests
 
 ```bash
-.venv/bin/pytest tests/        # all tests
-.venv/bin/pytest tests/ -v     # verbose
+.venv/bin/pytest tests/                 # backend tests
+node --test tests/frontend/test_*.js    # frontend tests (Node.js required)
 ```
 
 No camera hardware required.
@@ -223,6 +235,8 @@ backend/
   main.py                App factory, camera selection, router registration
   stream.py              Background-thread camera reader
   session_store.py       Per-session frame isolation (SessionFrameStore) for hosted mode
+  compute_pool.py        Bounded fringe computation, including disconnected clients
+  image_upload.py        Hosted upload size/dimension checks before image decoding
   calibration_store.py   Persistent deflectometry CalibrationSession JSON store
   screen_shape_store.py  Persistent ScreenShape (iPad panel geometry) JSON store
   run_store.py           SQLite SPC run storage
@@ -232,6 +246,9 @@ frontend/
   main.js                    Entry point, event wiring, undo/redo, context menu, point-pick
   state.js                   Global state, undo stack, type classifications
   workspace.js               Swap-on-activate workspace state for project tabs (STATE_FIELDS, _epoch)
+  instrument-workspace.js    Instrument settings/result persistence helpers
+  image-geometry.js          Geometry snapshots and invalidation after image corrections
+  perspective-math.js        Perspective destination geometry and metric scale
   modes.js                   Mode switcher (Microscope / Deflectometry / Fringe)
   shell.js                   Preact app bar (tab strip), modal dialogs and toasts
   toolbar.js                 Flat row-2 toolbar: every tool as icon+text, sub-mode segment

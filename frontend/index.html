@@ -827,7 +827,7 @@
             <div class="help-section-label">Tips</div>
             <div class="help-tip">Hover over the image with a measurement tool active — the cursor snaps to the nearest detected edge automatically. Hold <kbd>Alt</kbd> to bypass snapping and place a point exactly where you click.</div>
             <div class="help-tip">Use <kbd>?</kbd> at any time to open this documentation.</div>
-            <div class="help-tip">Your work auto-saves to the browser (IndexedDB) within a couple of seconds of any change, and open tabs are restored when you come back. Use <strong>File ▾ → Export project (.loupe)</strong> to save a portable file you can move or back up elsewhere.</div>
+            <div class="help-tip">Your workspace and latest instrument result auto-save to the browser (IndexedDB) within a couple of seconds of a change, and open tabs are restored when you come back. Use <strong>File ▾ → Export project (.loupe)</strong> for a portable backup. Server capture history, running averages, and live hardware jobs are temporary; export captures or runs separately to retain them.</div>
           </div>
 
           <!-- Modes Overview -->
@@ -835,7 +835,7 @@
             <h2 class="help-page-title">Modes</h2>
             <p class="help-page-sub">Loupe is a multi-instrument platform. Each mode provides a dedicated workspace tailored to a different measurement technique.</p>
             <div class="help-section-label">Switching modes</div>
-            <p class="help-p">Each instrument opens as a <strong>project tab</strong> from the home screen, not from a mode dropdown. The three available project types are:</p>
+            <p class="help-p">Each instrument opens as a <strong>project tab</strong> from the home screen, not from a mode dropdown. Local installations support all three project types below. The hosted instance supports Microscope and Fringe Analysis; Deflectometry requires a local camera/display setup.</p>
             <table>
               <thead><tr><th>Mode</th><th>Purpose</th></tr></thead>
               <tbody>
@@ -845,7 +845,7 @@
               </tbody>
             </table>
             <div class="help-section-label">Workspace isolation</div>
-            <p class="help-p">Each open project has its own workspace — switching tabs does not discard your work in another tab. Toolbar contents, sidebar panels, and keyboard shortcuts are scoped to the active tab's mode. Microscopy allows any number of tabs open at once; Deflectometry and Fringe Analysis each allow only <strong>one</strong> open tab at a time — opening a second one of either prompts you to close the first.</p>
+            <p class="help-p">Each open project has its own saved workspace and latest result. Toolbar contents, sidebar panels, and keyboard shortcuts are scoped to the active tab's mode. Microscopy allows any number of tabs open at once; Deflectometry and Fringe Analysis each allow only <strong>one</strong> open tab at a time — opening a second one of either prompts you to close the first. Export temporary captures and running averages before leaving an instrument workspace.</p>
             <div class="help-tip">Press <kbd>?</kbd> from any mode to open this help dialog.</div>
           </div>
 
@@ -855,11 +855,12 @@
             <p class="help-page-sub">The home screen manages your saved projects; each one you open becomes a tab in the top bar.</p>
             <div class="help-section-label">Home screen</div>
             <p class="help-p">Click a project-type card — <strong>Microscopy</strong>, <strong>Deflectometry</strong>, or <strong>Fringe analysis</strong> — to create and open a new project immediately. There's no naming dialog; it gets an auto-generated name (timestamped) that you can rename later. The <strong>Recents</strong> grid below shows your existing projects as thumbnail cards with name and last-modified date — click one to open it as a tab.</p>
+            <div class="help-tip">On the hosted instance, only Microscopy and Fringe analysis cards are available. Deflectometry projects must be opened or imported in a local installation connected to the camera and display.</div>
             <p class="help-p">Each recent card has a <strong>⋯</strong> menu with three actions: <strong>Rename</strong>, <strong>Export .loupe</strong>, and <strong>Delete…</strong>.</p>
             <div class="help-section-label">Tabs</div>
             <div class="help-step"><span class="help-step-num">1</span><span>Microscopy projects open as any number of tabs at once. Deflectometry and Fringe Analysis each allow only <strong>one</strong> open tab — opening a second prompts <strong>Close &amp; open</strong> to swap it in.</span></div>
             <div class="help-step"><span class="help-step-num">2</span><span>Double-click a tab to rename it.</span></div>
-            <div class="help-step"><span class="help-step-num">3</span><span>Closing a tab never deletes the project — it just removes it from the open set. The project stays in Recents exactly as it was.</span></div>
+            <div class="help-step"><span class="help-step-num">3</span><span>Closing a tab saves its workspace and removes it from the open set. The saved project stays in Recents; temporary server capture history and live jobs are not part of that saved workspace.</span></div>
             <div class="help-tip">The only destructive action is <strong>Delete…</strong> from the home screen's ⋯ menu, which asks for confirmation before permanently removing a project. Export as .loupe first if you're not sure.</div>
             <div class="help-section-label">Autosave</div>
             <p class="help-p">Microscopy workspaces and the latest instrument result, settings, masks and measurements auto-save to the browser roughly every 2 seconds after a change, and again whenever you switch or close a tab. Open tabs are restored automatically the next time you load Loupe. Server capture history, running averages and live hardware jobs are temporary; export captures or runs separately to retain them.</p>
@@ -868,23 +869,27 @@
           <!-- Saving & Sharing -->
           <div class="help-page" id="help-page-saving" hidden>
             <h2 class="help-page-title">Saving &amp; Sharing</h2>
-            <p class="help-page-sub">Everything stays in your browser. Export a portable file to move or back up a project.</p>
+            <p class="help-page-sub">Projects save in your browser; hosted processing sends images to the server temporarily. Export a portable file to move or back up a project.</p>
             <div class="help-section-label">Where your data lives</div>
             <p class="help-p">Projects are stored locally in your browser's IndexedDB. The server never stores or lists your projects — uploaded images and analysis results are kept temporarily in server memory, separately from your locally saved projects.</p>
             <div class="help-section-label">Export &amp; import (.loupe)</div>
             <p class="help-p"><strong>File ▾ → Export project (.loupe)</strong> downloads a single file containing the image, all measurements, calibration, and view state. Re-import it by dragging the file anywhere onto the app, or dropping it on the import zone on the home screen. Images can also be pasted directly (<kbd>Ctrl</kbd>/<kbd>⌘</kbd><kbd>V</kbd>) — into the workspace, or onto the home screen to start a new project.</p>
+            <p class="help-p">For instrument projects, the file preserves the latest result and saved settings, masks, and measurements, plus the imported fringe image when available. It does not include server capture history, running averages, live hardware jobs, or undo history. A retained original lens image is included when available so you can change or reset lens correction later. Export named calibration profile lists separately from their own panels.</p>
             <p class="help-p">Old session JSON (the pre-project v3 format) still imports. Note that v3 sessions never stored the image, so their measurements and calibration come back attached to a blank canvas.</p>
             <div class="help-tip">If a pre-project autosave from an older app version is found in your browser, a one-time dialog offers to convert it into a project (<strong>Discard</strong> / <strong>Convert to project</strong>).</div>
             <div class="help-section-label">Private browsing</div>
             <div class="help-tip">If IndexedDB is unavailable — private/incognito windows in some browsers — a red "storage unavailable" banner appears on the home screen and nothing survives closing the tab. Export as .loupe before you close it.</div>
             <div class="help-section-label">Hosted instance</div>
             <p class="help-p">On the hosted instance, server-side features — auto-detection, DXF alignment, guided inspection, gear analysis — send the frozen image to the server for processing. Opening an image or running fringe analysis also uploads image data. A one-time notice appears before the first upload; the frame is kept only for your session and expires automatically.</p>
+            <p class="help-p">Live server data is private to your browser session and project. Sharing a project file does not grant access to that live data. Server restarts or session expiry can clear temporary frames and captures; your browser's saved projects remain separate.</p>
+            <div class="help-tip">Hosted image uploads are limited to 20 MiB, 16,777,216 pixels (about 16 megapixels), and 8192 pixels per side. Resize larger images before uploading; recalibrate if you resize a measurement image. Fringe analysis uses images up to 2048 pixels on the longest side. If analysis is busy, retry shortly. If capture storage is full, export captures you need before clearing them and retrying.</div>
           </div>
 
           <!-- Deflectometry: How It Works -->
           <div class="help-page" id="help-page-defl-overview" hidden>
             <h2 class="help-page-title">How It Works</h2>
             <p class="help-page-sub">Phase-shifting deflectometry for measuring the surface form of specular (mirror-like, reflective) parts.</p>
+            <div class="help-tip">Requires a local Loupe installation connected to your camera and display. Deflectometry projects cannot be created, opened, or imported on the hosted instance.</div>
             <div class="help-section-label">Principle</div>
             <p class="help-p">An iPad displays sinusoidal fringe patterns. The camera observes their reflection off the part surface. Distortions in the reflected fringes encode the surface slope, which is integrated (Frankot-Chellappa) to recover surface height. Eight phase-shifted captures per direction suppress LCD harmonic artifacts.</p>
             <div class="help-section-label">iPad connection</div>
@@ -1224,7 +1229,7 @@
             <div class="help-section-label">Profiles tab</div>
             <p class="help-p">Cross-sections through the center of the air-gap map: one horizontal, one vertical. Useful for identifying whether departures are primarily in one direction.</p>
             <div class="help-section-label">Session tab</div>
-            <p class="help-p">In-session capture browser. Every new analysis, average, subtraction, and import appears here with origin tags, source links, export buttons, and a details panel.</p>
+            <p class="help-p">In-session capture browser. Every new analysis, average, subtraction, and import appears here with origin tags, source links, export buttons, and a details panel. This server history is temporary and can be cleared by expiry or a server restart. Project autosave preserves the latest result, not the whole capture history; export captures separately to keep them.</p>
             <div class="help-section-label">Trend tab</div>
             <p class="help-p">Plots PV and RMS across the current session. Use it to spot drift, compare calibrations, and visualize the effect of repeated polishing or lapping passes.</p>
           </div>
@@ -1343,6 +1348,7 @@
             <p class="help-p">If a circle annotation is already placed, click it while in Calibrate mode and enter the known diameter — useful when you have a precision reference hole or pin.</p>
             <div class="help-section-label">Cal Profiles</div>
             <p class="help-p">Open <strong>Setup ▾ → Cal Profiles…</strong> to save the current calibration (px/mm scale, display unit, and lens distortion coefficient) under a name — e.g. one profile per objective or magnification. Type a name and click <strong>Save current</strong>. Click <strong>Load</strong> on a saved profile to apply it instantly, or the <strong>✕</strong> to delete it. The panel also has <strong>Export…</strong> / <strong>Import…</strong> buttons to move your whole profile list as a JSON file.</p>
+            <div class="help-tip">If a loaded profile changes the lens correction, Loupe resamples the original image and clears old measurements, DXF geometry, inspection results, and ordinary undo/redo history. A zero-coefficient profile restores the original pixels. Apply profiles before measuring.</div>
             <div class="help-tip">For best accuracy, calibrate across the longest available reference distance to minimise the effect of pixel quantisation errors.</div>
           </div>
 
@@ -1356,32 +1362,34 @@
             <div class="help-step"><span class="help-step-num">2</span><span>Open the <strong>Setup ▾</strong> menu in the toolbar and click <strong>Lens Cal</strong>.</span></div>
             <div class="help-step"><span class="help-step-num">3</span><span>Click two points to measure the dimension at one position. Repeat at 3–8 positions spread across the image — include measurements near the centre, the middle, and the edges.</span></div>
             <div class="help-step"><span class="help-step-num">4</span><span>The dialog shows the <strong>spread</strong> (max deviation from mean) before and after correction, and a dot plot of each measurement vs its radial distance from centre. Grey = raw, green = corrected. When the green dots cluster near the horizontal axis, the fit is good.</span></div>
-            <div class="help-step"><span class="help-step-num">5</span><span>Press <strong>Apply</strong>. The correction is applied directly to the frozen image — all subsequent measurements are automatically corrected.</span></div>
+            <div class="help-step"><span class="help-step-num">5</span><span>Press <strong>Apply</strong>. Loupe resamples the retained original image with the chosen correction. Changing the correction clears old measurements, DXF geometry, inspection results, and ordinary undo/redo history; make new measurements on the corrected image.</span></div>
             <div class="help-section-label">Tips</div>
             <div class="help-tip">You do not need to know the true physical length of what you're measuring — only that all samples represent the <em>same</em> dimension.</div>
             <div class="help-tip">Spread after correction above ~1% may indicate k₂ (higher-order) distortion or inconsistent point placement. Try placing points more carefully first.</div>
             <div class="help-tip">Apply lens calibration <em>before</em> placing measurement annotations for best accuracy. Re-calibrate if you change the lens, zoom level, or camera position significantly.</div>
+            <div class="help-tip">Applying the same lens coefficient again leaves the image unchanged. Changing it always uses the retained original pixels; loading a zero-coefficient profile restores those pixels but does not restore cleared measurements. Older corrected projects without an original image require you to reload the original before changing or resetting the correction.</div>
             <div class="help-section-label">Technical note</div>
-            <p class="help-p">The model used is first-order radial distortion: a point at distance r from the image centre is corrected by dividing by (1 + k₁r²). k₁ is found by a golden-section search that minimises the variance of corrected lengths across all your samples. The correction is applied by remapping each output pixel to its source in the original distorted image using bilinear interpolation.</p>
+            <p class="help-p">The model uses a dimensionless first-order radial coefficient k₁. With R equal to half the image diagonal and r the distance from the image centre, the sample-length approximation divides by (1 + k₁r²/R²). A golden-section search minimises the variance of these corrected sample lengths. The image remap samples the original at centre + (output − centre) × (1 + k₁r²/R²), using bilinear interpolation.</p>
           </div>
 
           <div class="help-page" id="help-page-perspective-cal" hidden>
             <h2 class="help-page-title">Perspective Correction</h2>
             <p class="help-page-sub">Corrects tilt and perspective distortion when the camera is not perfectly perpendicular to the part — common when photographing with a phone or handheld camera.</p>
             <div class="help-section-label">When to use</div>
-            <p class="help-p">If you photograph a flat part at an angle (even a slight tilt), parallel edges appear to converge, circles become ellipses, and measurements are systematically skewed. Perspective correction remaps the image as if taken from directly above, restoring accurate geometry before you calibrate and measure.</p>
+            <p class="help-p">If you photograph a flat part at an angle (even a slight tilt), parallel edges appear to converge, circles become ellipses, and measurements are systematically skewed. Perspective correction remaps the image as if taken from directly above and sets its measurement scale from a known rectangle in the part's plane.</p>
             <div class="help-section-label">How to correct</div>
             <div class="help-step"><span class="help-step-num">1</span><span>Freeze the image first.</span></div>
             <div class="help-step"><span class="help-step-num">2</span><span>Open the <strong>Setup ▾</strong> menu in the toolbar and click <strong>Perspective Correct</strong>.</span></div>
             <div class="help-step"><span class="help-step-num">3</span><span>Click the four corners of a known rectangular feature — a reference square, graph paper grid cell, or part edge — in order: <strong>TL → TR → BR → BL</strong> (top-left first, then clockwise).</span></div>
             <div class="help-step"><span class="help-step-num">4</span><span>Enter the <strong>width</strong> and <strong>height</strong> of the rectangle in mm in the dialog.</span></div>
-            <div class="help-step"><span class="help-step-num">5</span><span>Click <strong>Apply</strong>. The frozen image is remapped and replaces the original.</span></div>
+            <div class="help-step"><span class="help-step-num">5</span><span>Click <strong>Apply</strong>. The frozen image is remapped and calibrated using the rectangle dimensions. Old measurements, DXF geometry, inspection results, and ordinary undo/redo history are cleared because their coordinates no longer match. Make new measurements on the corrected image.</span></div>
             <div class="help-section-label">Tips</div>
-            <div class="help-tip">Use graph paper or a calibration grid for best accuracy — a known square gives equal width and height, so one value suffices.</div>
-            <div class="help-tip">Apply perspective correction <em>before</em> lens calibration. Both corrections modify the frozen image in-place; re-applying one after the other is fine.</div>
+            <div class="help-tip">Use graph paper or a calibration grid for best accuracy. For a known square, enter the same dimension in both the width and height fields.</div>
+            <div class="help-tip">Apply <strong>lens correction first, then perspective correction</strong>. To change lens correction afterward, undo the perspective correction first or reload the original image.</div>
+            <div class="help-tip"><strong>Setup ▾ → Undo Perspective</strong> restores the preceding image, calibration, measurements, and undo history. It belongs to that project and is available while its corrected image remains current. It does not survive a page reload or project export/import.</div>
             <div class="help-tip">The corner markers are numbered on-canvas (1–4 with TL/TR/BR/BL labels). A dashed quadrilateral connects them so you can verify the shape before applying.</div>
             <div class="help-section-label">Technical note</div>
-            <p class="help-p">A full projective homography (DLT, 8 DOF) is computed from the four point correspondences. Each output pixel is backward-mapped to the source image using bilinear interpolation, preserving sharpness. The destination rectangle is scaled to match the perimeter of the source quad, so the output resolution stays close to the input.</p>
+            <p class="help-p">A full projective homography (DLT, 8 DOF) is computed from the four point correspondences. Each output pixel is backward-mapped to the source image using bilinear interpolation. The destination rectangle is scaled to match the perimeter of the source quad, so the output resolution stays close to the input. Its pixel width divided by the entered width in millimetres sets the new px/mm calibration.</p>
           </div>
 
           <div class="help-page" id="help-page-tool-note" hidden>
@@ -1701,6 +1709,7 @@
             <p class="help-p">Global warn/fail thresholds are set in Settings. Per-feature overrides can be set by clicking a deviation label on the canvas. Diameter/radius dimensions with a tolerance in the DXF (e.g. Ø25 +0.05/−0.02) are read automatically and applied to the matching circle or arc, tagged <strong>DWG</strong> in the results table; set <strong>Default tol ±</strong> in the DXF panel to give every feature without its own drawing tolerance a plain ± band instead of the global thresholds (tagged <strong>DEF</strong>). Priority: a per-feature override always wins, then a drawing tolerance, then the default tolerance, then the global thresholds.</p>
             <div class="help-section-label">SPC tracking</div>
             <p class="help-p">After running an inspection, click <strong>Save Run</strong> (next to Run Inspection) and name the part. This saves the current inspection results as one dated "run" against that part. The SPC dashboard in the sidebar then plots each feature's deviation across saved runs, with your warn/fail tolerance bands, and shows a Cpk summary (mean, standard deviation, and range) once at least two runs exist.</p>
+            <div class="help-tip">Cpk requires a tolerance and measurable variation. Zero or negligible observed variation is shown as <strong>Cpk unavailable (zero observed variation)</strong>; it is not a capability rating. SPC run storage and charts are available only in local installations.</div>
           </div>
 
           <!-- CAPTURE: 4-UP COMPARE -->
@@ -1904,8 +1913,8 @@
                 <tr><td><strong>Inspection CSV</strong></td><td>Guided inspection results: feature handle, deviation, pass/fail, Punch/Die</td><td>Overlay → Export Inspection CSV (requires inspection)</td></tr>
                 <tr><td><strong>Inspection PDF</strong></td><td>Formatted report with numbered features, deviation table, pass/fail summary</td><td>Overlay → Export Inspection PDF (requires inspection)</td></tr>
                 <tr><td><strong>DXF (reverse engineering)</strong></td><td>All measurement annotations converted to DXF entities in mm-space. Distances → lines, circles → circles, splines → SPLINE entities.</td><td>Overlay → Export DXF</td></tr>
-                <tr><td><strong>Session JSON</strong></td><td>Full session state including all annotations, calibration, DXF, and inspection results. Can be reloaded exactly.</td><td>File ▾ → Save session, or press <kbd>S</kbd></td></tr>
-                <tr><td><strong>Project (.loupe)</strong></td><td>Complete project — image, measurements, and calibration — as a single portable file.</td><td>File ▾ → Export project</td></tr>
+                <tr><td><strong>Session JSON</strong></td><td>Legacy annotations, calibration, DXF, and inspection results. Does not contain the image.</td><td>File ▾ → Save session, or press <kbd>S</kbd></td></tr>
+                <tr><td><strong>Project (.loupe)</strong></td><td>Saved workspace: microscopy image, measurements, calibration, and view state, or latest instrument result and saved settings, masks, and measurements. Includes retained original lens/imported fringe images when available. Excludes server capture history, running averages, live jobs, and undo history.</td><td>File ▾ → Export project</td></tr>
               </tbody>
             </table>
           </div>
