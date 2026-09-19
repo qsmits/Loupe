@@ -490,7 +490,9 @@ def compute_psd_1d(z: np.ndarray, spacing_mm: float) -> dict:
     freqs = np.fft.rfftfreq(n, d=spacing_mm)
     # PSD: |FFT|² × spacing / (N × win_power), one-sided so ×2 (except DC and Nyquist)
     psd = (np.abs(fft_vals) ** 2) * spacing_mm / (n * win_power)
-    psd[1:-1] *= 2.0  # one-sided doubling
+    # Only even-length transforms contain a self-conjugate Nyquist bin.
+    # With odd lengths the last positive bin still has a negative partner.
+    psd[1:-1 if n % 2 == 0 else None] *= 2.0
     # Skip DC
     freqs = freqs[1:]
     psd = psd[1:]
