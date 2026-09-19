@@ -23,6 +23,7 @@ from pydantic import BaseModel, ConfigDict, Field, FiniteFloat, model_validator
 from typing import Literal
 
 from .cameras.base import BaseCamera
+from .compute_pool import fringe_compute
 from .session_store import get_session_id_dep
 from .vision.fringe import (
     analyze_interferogram,
@@ -526,7 +527,7 @@ def make_fringe_router(camera: BaseCamera) -> APIRouter:
         image, custom_mask, cropped = _prepare_fringe_image(image, body)
 
         try:
-            result = analyze_interferogram(
+            result = await fringe_compute.run(analyze_interferogram,
                 image,
                 wavelength_nm=body.wavelength_nm,
                 mask_threshold=body.mask_threshold,
@@ -621,28 +622,28 @@ def make_fringe_router(camera: BaseCamera) -> APIRouter:
             event = {"stage": stage, "progress": progress, "message": message}
             loop.call_soon_threadsafe(queue.put_nowait, event)
 
+        job = fringe_compute.submit(
+            analyze_interferogram,
+            image,
+            wavelength_nm=body.wavelength_nm,
+            mask_threshold=body.mask_threshold,
+            subtract_terms=body.subtract_terms,
+            n_zernike=body.n_zernike,
+            use_full_mask=cropped,
+            custom_mask=custom_mask,
+            on_progress=_on_progress,
+            form_model=body.form_model,
+            lens_k1=body.lens_k1,
+            image_is_undistorted=True,
+            correct_2pi_jumps=body.correct_2pi_jumps,
+            lpf_sigma_frac=body.lpf_sigma_frac,
+            dc_margin_override=body.dc_margin_override,
+            dc_cutoff_cycles=body.dc_cutoff_cycles,
+        )
+
         async def _run_analysis():
             try:
-                result = await loop.run_in_executor(
-                    None,
-                    lambda: analyze_interferogram(
-                        image,
-                        wavelength_nm=body.wavelength_nm,
-                        mask_threshold=body.mask_threshold,
-                        subtract_terms=body.subtract_terms,
-                        n_zernike=body.n_zernike,
-                        use_full_mask=cropped,
-                        custom_mask=custom_mask,
-                        on_progress=_on_progress,
-                        form_model=body.form_model,
-                        lens_k1=body.lens_k1,
-                        image_is_undistorted=True,
-                        correct_2pi_jumps=body.correct_2pi_jumps,
-                        lpf_sigma_frac=body.lpf_sigma_frac,
-                        dc_margin_override=body.dc_margin_override,
-                        dc_cutoff_cycles=body.dc_cutoff_cycles,
-                    ),
-                )
+                result = await asyncio.wrap_future(job)
                 # Cache full-res mask before sending result to client
                 if "_mask_full" in result:
                     _fringe_cache.put(sid, "last_mask", result.pop("_mask_full"))
@@ -692,7 +693,7 @@ def make_fringe_router(camera: BaseCamera) -> APIRouter:
         mask = body.mask
         if mask is None:
             mask = _fringe_cache.get(session_id, "last_mask")
-        result = reanalyze(
+        result = await fringe_compute.run(reanalyze,
             coefficients=body.coefficients,
             subtract_terms=body.subtract_terms,
             wavelength_nm=body.wavelength_nm,
@@ -745,7 +746,7 @@ def make_fringe_router(camera: BaseCamera) -> APIRouter:
         image, custom_mask, cropped = _prepare_fringe_image(image, body, cached_roi)
 
         try:
-            result = analyze_interferogram(
+            result = await fringe_compute.run(analyze_interferogram,
                 image,
                 wavelength_nm=body.wavelength_nm,
                 mask_threshold=body.mask_threshold,
@@ -817,7 +818,7 @@ def make_fringe_router(camera: BaseCamera) -> APIRouter:
             raise HTTPException(404, detail=f"Unknown reference_id: {body.reference_id}")
         hosted_flag = bool(getattr(request.app.state, "hosted", False))
         try:
-            result = subtract_wavefronts(
+            result = await fringe_compute.run(subtract_wavefronts,
                 measurement, reference,
                 wavelength_nm=body.wavelength_nm,
                 register=bool(body.register),
@@ -870,7 +871,7 @@ def make_fringe_router(camera: BaseCamera) -> APIRouter:
                 raise HTTPException(404, detail=f"Unknown source_id: {sid}")
             sources.append(r)
         try:
-            result = average_wavefronts(
+            result = await fringe_compute.run(average_wavefronts,
                 sources,
                 wavelength_nm=body.wavelength_nm,
                 rejection=body.rejection,

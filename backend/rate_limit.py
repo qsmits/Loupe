@@ -86,7 +86,10 @@ _HEAVY_PATHS = frozenset({
     "/detect-lines-merged", "/detect-arcs-partial",
     "/inspect-guided", "/align-dxf-edges",
     "/load-image", "/load-dxf",
-    "/gradient-overlay", "/preprocessed-view",
+    "/gradient-overlay", "/preprocessed-view", "/update-frame",
+    "/fringe/analyze", "/fringe/analyze-stream", "/fringe/reanalyze",
+    "/fringe/reanalyze-carrier", "/fringe/subtract", "/fringe/average",
+    "/fringe/session/import",
 })
 
 
