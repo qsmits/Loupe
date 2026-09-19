@@ -319,6 +319,7 @@ export function buildResultsHtml() {
         </div>
 
         <div class="fringe-tab-panel" id="fringe-panel-session" hidden>
+          <p style="padding:8px;margin:0">Server capture history is temporary. Export captures you want to keep. The latest displayed result, imported image, settings, masks and measurements autosave in this project.</p>
           <div style="display:flex;flex:1;min-height:0;gap:8px;padding:8px">
             <div style="flex:1;display:flex;flex-direction:column;min-width:280px">
               <div style="display:flex;align-items:center;gap:8px;padding:4px 0;border-bottom:1px solid var(--border);margin-bottom:6px;flex-wrap:wrap">
@@ -522,6 +523,22 @@ export function refreshTrustedOverlay() {
   ctx.clearRect(0, 0, dispW, dispH);
   ctx.imageSmoothingEnabled = false;
   ctx.drawImage(off, 0, 0, dispW, dispH);
+}
+
+export function captureFringeOptions() { return {formModel, pillState: {...pillState}}; }
+export function restoreFringeResult(data, options) {
+  formModel = options?.formModel || data?.form_model || "zernike";
+  Object.assign(pillState, {tilt: true, power: false, astig: false, coma: false, spherical: false}, options?.pillState);
+  if (data) {
+    renderResults(data);
+    for (const id of ["fringe-btn-invert", "fringe-btn-export-pdf", "fringe-btn-export-csv"]) {
+      if ($(id)) $(id).disabled = false;
+    }
+  } else {
+    if ($("fringe-summary-bar")) $("fringe-summary-bar").hidden = true;
+    for (const image of document.querySelectorAll("#mode-fringe .fringe-results-col img")) image.removeAttribute("src");
+  }
+  renderSessionPanel();
 }
 
 // ── Rendering ───────────────────────────────────────────────────────────

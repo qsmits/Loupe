@@ -705,3 +705,23 @@ describe('lazy image restore', () => {
     assert.equal(reopened.record.state._dirty, true, 'repair is marked for persistence');
   });
 });
+
+describe('instrument workspace persistence', () => {
+  for (const type of ['fringe','deflectometry']) {
+    it(`autosaves and restores ${type} without relying on microscopy dirty flags`, async () => {
+      const tm = await freshTabManager();
+      let data = null;
+      tm.registerModeHooks(type, {serialize:()=>structuredClone(data),restore:saved=>{data=saved;}});
+      const tab = await tm.newProject(type);
+      data = {result:{height_grid_nm:[1,2,3]},mask:[1,0,1],settings:{wavelength:589.3}};
+      state._dirty=false;
+      await tm.flushAutosave();
+      assert.deepEqual((await getProject(tab.id)).workspace.opaque,data);
+      await tm.closeTab(tab.id);
+      data=null;
+      await tm.openProject(tab.id);
+      assert.deepEqual(data.result.height_grid_nm,[1,2,3]);
+      assert.equal(data.settings.wavelength,589.3);
+    });
+  }
+});

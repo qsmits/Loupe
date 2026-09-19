@@ -8,6 +8,8 @@
 //
 // Lives inside #mode-deflectometry, managed by modes.js.
 
+import { registerModeHooks } from './tab-manager.js';
+import { captureInstrument, restoreInstrument } from './instrument-workspace.js';
 import { apiFetch } from './api.js';
 import { state } from './state.js';
 import { initCrossMode } from './cross-mode.js';
@@ -38,6 +40,9 @@ const df = {
   // Summary of the currently bound CalibrationSession (from /status), or null
   activeCalSession: null,
 };
+
+const WORKSPACE_DEFAULTS = {maskPolygons: [], lastResult: null, lastHeightmap: null,
+  lastEnvelope: null, useTrustedOnly: false, captureStyle: "multi_freq", activeTab: "height"};
 
 // Phase 2 Track 3: consistency threshold used by the backend for the
 // "trusted" predicate. Keep in sync with DEFAULT_CONSISTENCY_THRESHOLD in
@@ -285,6 +290,7 @@ function buildWorkspace() {
           <button class="detect-btn" id="defl-btn-compute" style="padding:6px 16px;font-size:13px;font-weight:600">Compute</button>
           <span class="defl-step-status" id="defl-status-compute" style="font-size:11px;opacity:0.7">\u2014</span>
           <button class="detect-btn" id="defl-btn-reset" style="font-size:11px;padding:2px 8px">Reset</button>
+          <span style="font-size:11px">Latest results and settings autosave locally. Raw captures remain on the instrument; Export Run to retain them.</span>
           <button class="detect-btn" id="defl-btn-export" style="font-size:11px;padding:2px 8px">Export Run</button>
           <span style="margin-left:auto;display:flex;align-items:center;gap:8px;font-size:12px">
             Mask <input type="range" id="defl-mask-thresh" min="0" max="20" step="1" value="2" style="width:80px" />
@@ -4242,6 +4248,20 @@ async function runDiagnostics() {
 
 export function initDeflectometry() {
   buildWorkspace();
+  const initial = captureInstrument(df, WORKSPACE_DEFAULTS, $("mode-deflectometry"));
+  registerModeHooks("deflectometry", {
+    serialize: () => captureInstrument(df, WORKSPACE_DEFAULTS, $("mode-deflectometry")),
+    restore: snapshot => {
+      restoreInstrument(df, WORKSPACE_DEFAULTS, snapshot ?? initial, $("mode-deflectometry"));
+      if (df.lastResult) renderPhaseResult(df.lastResult);
+      if (df.lastHeightmap) {
+        if ($("defl-height-empty")) $("defl-height-empty").hidden = true;
+        if ($("defl-height-content")) $("defl-height-content").hidden = false;
+        render2dHeight(df.lastHeightmap);
+        render3d(df.lastHeightmap);
+      }
+    },
+  });
   loadProfileList();
   // Phase 3B Wave 2: surface any saved screen shape in the settings panel.
   refreshScreenShapeIndicator().catch(() => {});

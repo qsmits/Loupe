@@ -7,11 +7,13 @@
 //
 // Lives inside #mode-fringe, managed by modes.js.
 
+import { registerModeHooks } from './tab-manager.js';
+import { captureInstrument, restoreInstrument } from './instrument-workspace.js';
 import { apiFetch } from './api.js';
 import { state } from './state.js';
 import { wireMeasureEvents } from './fringe-measure.js';
 import { buildPanelHtml, wirePanelEvents, startPolling, stopPolling, clearDroppedImage } from './fringe-panel.js';
-import { buildResultsHtml, wireResultsEvents } from './fringe-results.js';
+import { buildResultsHtml, wireResultsEvents, restoreFringeResult, captureFringeOptions } from './fringe-results.js';
 
 export const fr = {
   polling: null,
@@ -54,6 +56,12 @@ export const fr = {
   // One of: "surface", "step", "averaging", "subtraction".
   mode: "surface",
   measurements: [],         // M4.1 — recorded Step/Area measurements with mode tag
+};
+
+const WORKSPACE_DEFAULTS = {
+  lastResult: null, lastMask: null, maskPolygons: [], measurements: [],
+  useTrustedOnly: false, lensK1: 0, droppedImageB64: null, carrierOverride: null,
+  mode: "surface", measureMode: null, lastAreaRect: null, stepRegions: [], avgRejectThreshold: 3,
 };
 
 export function $(id) { return document.getElementById(id); }
@@ -163,7 +171,25 @@ function wireEvents() {
 
 export function initFringe() {
   buildWorkspace();
-  loadWavelengthPresets();   // async — overrides defaults from config.json
+  const presetsReady = loadWavelengthPresets();
+  const initial = captureInstrument(fr, WORKSPACE_DEFAULTS, $("mode-fringe"));
+  registerModeHooks("fringe", {
+    serialize: () => ({...captureInstrument(fr, WORKSPACE_DEFAULTS, $("mode-fringe")), options: captureFringeOptions()}),
+    restore: async snapshot => {
+      await presetsReady;
+      clearDroppedImage();
+      restoreInstrument(fr, WORKSPACE_DEFAULTS, snapshot ?? initial, $("mode-fringe"));
+      fr.heightGrid = fr.maskGrid = fr.trustedMaskGrid = null;
+      fr.gridRows = fr.gridCols = 0;
+      fr.avgCaptures = []; fr.avgInverted = false;
+      fr.sessionCaptures = []; fr.selectedCaptureId = null;
+      if (fr.droppedImageB64) {
+        const preview = $("fringe-preview");
+        if (preview) preview.src = "data:image/png;base64," + fr.droppedImageB64;
+      }
+      restoreFringeResult(fr.lastResult, snapshot?.options);
+    },
+  });
 
   // Start/stop polling when mode becomes visible/hidden
   const observer = new MutationObserver(() => {
@@ -171,7 +197,7 @@ export function initFringe() {
     if (!root) return;
     if (root.hidden) {
       stopPolling();
-      if (!window.crossMode && !state._hosted) clearDroppedImage();
+
     } else {
       startPolling();
     }

@@ -50,14 +50,7 @@ export function getActiveTabId() { return activeTabId; }
 export function getActiveTab() { return tabs.find(t => t.id === activeTabId) ?? null; }
 export function isHomeVisible() { return homeVisible; }
 
-/** Optional per-type persistence seam (spec: deflectometry/fringe may
- *  persist little in v1 — today they persist nothing, no regression).
- *  DELIBERATELY UNWIRED in v1: nothing calls this yet, so `modeHooks` stays
- *  empty and the serialize/restore branches below that read from it
- *  (deactivateCurrent's `modeHooks[tab.type]?.serialize?.()`, activateTab's
- *  `modeHooks[tab.type]?.restore?.(...)`) are always no-ops by design, not
- *  a bug — a forward-compat seam for when those modes gain their own
- *  persisted state. */
+/** Persistence adapters for instrument workspaces. */
 export function registerModeHooks(type, hooks) { modeHooks[type] = hooks; }
 
 function emitChanged() {
@@ -116,7 +109,8 @@ async function makeThumbnail(imgEl) {
 /** Persist the ACTIVE microscopy tab to IndexedDB if dirty. Never throws. */
 export async function flushAutosave() {
   const tab = getActiveTab();
-  if (!tab || tab.type !== "microscopy") return;
+  if (!tab) return;
+  if (tab.type !== "microscopy") return flushInstrument(tab);
   if (!state._dirty || _saving) return;
   if (isCrossModeActive()) return;
   _saving = true;
@@ -186,6 +180,33 @@ export async function flushAutosave() {
   } finally {
     _saving = false;
   }
+}
+
+async function flushInstrument(tab) {
+  if (tab.restoring || isCrossModeActive() || !modeHooks[tab.type]?.serialize) return;
+  // Snapshot synchronously before an await can activate another project.
+  const opaque = modeHooks[tab.type].serialize();
+  tab.instrumentSnapshot = opaque;
+  const fingerprint = JSON.stringify(opaque);
+  if (fingerprint === tab.savedInstrument) return;
+  if (tab.instrumentSave) {
+    await tab.instrumentSave;
+    if (fingerprint === tab.savedInstrument) return;
+  }
+  tab.instrumentSave = (async () => {
+    try {
+      const proj = await getProject(tab.id);
+      if (!proj) return;
+      proj.workspace = {version: 4, opaque};
+      proj.updatedAt = new Date().toISOString();
+      await putProject(proj);
+      tab.savedInstrument = fingerprint;
+    } catch (e) {
+      console.warn("[autosave] instrument failed:", e);
+      showToast("Couldn't save instrument workspace — export your results before closing");
+    }
+  })();
+  try { await tab.instrumentSave; } finally { tab.instrumentSave = null; }
 }
 
 // ── Record loading (lazy, on first activation) ──────────────────────────────
@@ -263,17 +284,7 @@ async function deactivateCurrent() {
     const loadingEl = document.getElementById("loading-overlay");
     if (loadingEl) loadingEl.hidden = true;
   } else {
-    // Persist optional per-type state, then hide the container — the mode's
-    // own MutationObserver on [hidden] stops polling/capture.
-    const opaque = modeHooks[tab.type]?.serialize?.();
-    if (opaque !== undefined) {
-      getProject(tab.id).then(proj => {
-        if (!proj) return;
-        proj.workspace = { version: 4, opaque };
-        proj.updatedAt = new Date().toISOString();
-        return putProject(proj);
-      }).catch(e => console.warn("[tabs] singleton persist failed:", e));
-    }
+    await flushInstrument(tab);
     const el = document.getElementById("mode-" + MODE_FOR_TYPE[tab.type]);
     if (el) el.hidden = true;
   }
@@ -297,6 +308,7 @@ export async function activateTab(id) {
   if (id === activeTabId && !homeVisible) return;
   await deactivateCurrent();
   homeVisible = false;
+  activeTabId = tab.id;
   const home = document.getElementById("home-screen");
   if (home) home.hidden = true;
   if (tab.type === "microscopy") {
@@ -305,10 +317,13 @@ export async function activateTab(id) {
     restoreWorkspace(tab.record);        // bumps epoch; DOM hook re-fits
     startStreamIfLive();
   } else {
+    tab.restoring = true;
     switchMode(MODE_FOR_TYPE[tab.type]); // un-hides the container → observer starts
     let proj = null;
     try { proj = await getProject(tab.id); } catch { /* metadata only */ }
-    modeHooks[tab.type]?.restore?.(proj?.workspace?.opaque ?? null);
+    try { await modeHooks[tab.type]?.restore?.(tab.instrumentSnapshot ?? proj?.workspace?.opaque ?? null); }
+    finally { tab.restoring = false; }
+    tab.savedInstrument = null;
   }
   activeTabId = tab.id;
   persistOpenSet();
