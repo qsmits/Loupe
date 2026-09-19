@@ -148,7 +148,7 @@ export function drawTrendChart(canvas, history, tols = {}) {
  * Render Cpk summary stats into a container element.
  */
 export function renderCpkSummary(container, spc) {
-  if (!spc || spc.n < 2) {
+  if (!spc || (spc.count ?? spc.n ?? 0) < 2) {
     container.innerHTML = '<span style="color:#888">Need 2+ runs for SPC</span>';
     return;
   }
@@ -157,12 +157,15 @@ export function renderCpkSummary(container, spc) {
   if (spc.cpk >= 1.33) cpkClass = "cpk-good";
   else if (spc.cpk >= 1.0) cpkClass = "cpk-marginal";
 
+  const capability = Number.isFinite(spc.cpk)
+    ? `<span class="${cpkClass}">Cpk ${spc.cpk.toFixed(2)}</span>`
+    : `<span>Cpk unavailable${spc.cpk_unavailable_reason === "zero_variance" ? " (zero observed variation)" : ""}</span>`;
   container.innerHTML =
-    `<span class="${cpkClass}">Cpk ${spc.cpk.toFixed(2)}</span>` +
-    ` &nbsp; n=${spc.n} &nbsp; ` +
+    capability +
+    ` &nbsp; n=${spc.count ?? spc.n} &nbsp; ` +
     `\u03BC=${spc.mean.toFixed(3)} &nbsp; ` +
     `\u03C3=${spc.std.toFixed(3)} &nbsp; ` +
-    `range=${spc.range.toFixed(3)}`;
+    `range=${(spc.range ?? (spc.max - spc.min)).toFixed(3)}`;
 }
 
 /**

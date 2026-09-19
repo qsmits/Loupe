@@ -268,7 +268,9 @@ class RunStore:
         cpk = None
         if tol_fail is not None:
             if s < 1e-12:
-                cpk = 999.0
+                # No estimate of process spread: capability is undefined,
+                # even when every observed part is outside the tolerance.
+                cpk = None
             else:
                 is_circle_or_arc = feature_type in ("CIRCLE", "ARC", "circle", "arc")
                 if is_circle_or_arc:
@@ -287,5 +289,6 @@ class RunStore:
             "min": mn,
             "max": mx,
             "cpk": cpk,
+            "cpk_unavailable_reason": "zero_variance" if s < 1e-12 and tol_fail is not None else None,
             "feature_type": feature_type,
         }

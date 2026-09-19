@@ -163,3 +163,12 @@ class TestRunStore:
         ids1 = {r["id"] for r in page1}
         ids2 = {r["id"] for r in page2}
         assert ids1.isdisjoint(ids2)
+
+@pytest.mark.parametrize('kind,deviation', [('LINE', .2), ('LINE', -.2), ('CIRCLE', .2), ('LINE', 0.)])
+def test_identical_measurements_have_no_capability_estimate(store, kind, deviation):
+    pid = store.create_part('Identical')
+    for _ in range(3):
+        store.save_run(pid, [_make_result(feature_type=kind, deviation_mm=deviation)])
+    result = store.compute_spc(pid, 'H1')
+    assert result['cpk'] is None
+    assert result['cpk_unavailable_reason'] == 'zero_variance'
