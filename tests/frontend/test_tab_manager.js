@@ -725,3 +725,15 @@ describe('instrument workspace persistence', () => {
     });
   }
 });
+
+it('hosted projects reject hardware-only creation and import', async () => {
+  const tm = await freshTabManager();
+  state._hosted = true;
+  try {
+    assert.equal(await tm.newProject('deflectometry'),null);
+    const id = crypto.randomUUID();
+    assert.equal(await tm.adoptProject({id,type:'deflectometry',name:'Local rig'}),null);
+    assert.equal(await getProject(id),null);
+    assert.deepEqual(tm.getTabs(),[]);
+  } finally { state._hosted=false; }
+});

@@ -53,6 +53,13 @@ export function isHomeVisible() { return homeVisible; }
 /** Persistence adapters for instrument workspaces. */
 export function registerModeHooks(type, hooks) { modeHooks[type] = hooks; }
 
+function typeAvailable(type) { return !(state._hosted && type === "deflectometry"); }
+function requireAvailable(type) {
+  if (typeAvailable(type)) return true;
+  showToast("Deflectometry requires the local camera and display app. Open this project there.");
+  return false;
+}
+
 function emitChanged() {
   document.dispatchEvent(new CustomEvent("workspace-changed"));
 }
@@ -304,7 +311,7 @@ export async function activateTab(id) {
     return;
   }
   const tab = tabs.find(t => t.id === id);
-  if (!tab) return;
+  if (!tab || !requireAvailable(tab.type)) return;
   if (id === activeTabId && !homeVisible) return;
   await deactivateCurrent();
   homeVisible = false;
@@ -332,6 +339,7 @@ export async function activateTab(id) {
 }
 
 export async function newProject(type, { name } = {}) {
+  if (!requireAvailable(type)) return null;
   if (!MODE_FOR_TYPE[type]) throw new Error("unknown project type: " + type);
   if (isCrossModeActive()) {
     showToast("Finish the mask / calibration editing session first");
@@ -379,6 +387,7 @@ export async function openProject(id) {
   let proj = null;
   try { proj = await getProject(id); } catch { /* fall through */ }
   if (!proj) { showToast("Project not found"); return; }
+  if (!requireAvailable(proj.type)) return;
   if (proj.type !== "microscopy") {
     const existing = tabs.find(t => t.type === proj.type);
     if (existing) {
@@ -408,6 +417,7 @@ export async function openProject(id) {
  *  opening it would only produce a confusing second "Project not found"
  *  toast on top of the one below. */
 export async function adoptProject(proj) {
+  if (!requireAvailable(proj.type)) return null;
   try {
     if (await getProject(proj.id)) proj.id = crypto.randomUUID();
   } catch { /* memory mode */ }
@@ -534,7 +544,7 @@ export async function initTabManager() {
     const byId = new Map(summaries.map(s => [s.id, s]));
     for (const id of saved.open) {
       const s = byId.get(id);
-      if (s) tabs.push({ id: s.id, type: s.type, name: s.name, record: null });
+      if (s && typeAvailable(s.type)) tabs.push({ id: s.id, type: s.type, name: s.name, record: null });
     }
   }
   if (tabs.length > 0 && saved?.active && tabs.some(t => t.id === saved.active)) {

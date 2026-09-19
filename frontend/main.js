@@ -1635,7 +1635,7 @@ window.addEventListener("resize", resizeCanvas);
 setTool(state.tool);  // sync initial active state via setTool
 
 loadCameraInfo();
-loadUiConfig();
+const uiConfigReady = loadUiConfig();
 loadTolerances();
 updateCalibrationButton();
 checkStartupWarning();
@@ -1691,7 +1691,7 @@ updateFreezeUI();
 // handlers and offerAutosaveMigration() can both reach adoptProject() ->
 // openProject() -> activateTab(), so they must not fire until that restore
 // has fully settled, or the two activateTab() calls race each other.
-initTabManager().then(() => {
+uiConfigReady.then(() => initTabManager()).then(() => {
   initProjectIo();
   offerAutosaveMigration();
 });

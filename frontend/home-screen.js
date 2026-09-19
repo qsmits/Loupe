@@ -4,6 +4,7 @@
 // Rendered by shell.js into #home-screen-mount; tab-manager toggles the
 // #home-screen container's [hidden].
 
+import { state } from './state.js';
 import { html } from './shell.js';
 import { listProjectSummaries, isPersistent } from './projects-db.js';
 
@@ -101,8 +102,9 @@ export function HomeScreen() {
           closing this browser tab. Export anything you care about as .loupe.
         </div>` : null}
       <div class="home-section-label">New project</div>
+      ${state._hosted ? html`<p>Deflectometry requires the local camera and display app.</p>` : null}
       <div class="home-type-cards">
-        ${TYPE_CARDS.map(c => html`
+        ${TYPE_CARDS.filter(c => !state._hosted || c.type !== "deflectometry").map(c => html`
           <button key=${c.type} class="home-type-card"
             onClick=${() => dispatch("new-project", { type: c.type })}>
             <div class="home-type-title">${c.title}</div>

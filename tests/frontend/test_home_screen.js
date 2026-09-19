@@ -24,6 +24,7 @@ import assert from 'node:assert/strict';
 import './dom-stub.js';
 import { createIdbStub } from './idb-stub.js';
 import { _setIndexedDbFactory, putProject, isPersistent, listProjectSummaries } from '../../frontend/projects-db.js';
+import { state } from '../../frontend/state.js';
 import { HomeScreen, refreshHomeData } from '../../frontend/home-screen.js';
 
 // ── Shallow-expand helper (mirrors tests/frontend/test_toolbar.js) ─────────
@@ -319,4 +320,13 @@ describe('HomeScreen — import zone', () => {
     input.props.onChange({ target: { files: [], value: '' } });
     assert.equal(getDetail(), null);
   });
+});
+
+it('hosted home offers supported instruments only', () => {
+  state._hosted = true;
+  try {
+    const cards = render().filter(n => n.type === 'button' && hasClass(n,'home-type-card'));
+    assert.equal(cards.length,2);
+    assert.ok(cards.every(c => !flattenText(c).includes('Deflectometry')));
+  } finally { state._hosted = false; }
 });
