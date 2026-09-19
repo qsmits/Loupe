@@ -60,6 +60,8 @@ class LoadSnapshotBody(BaseModel):
     filename: str = Field(..., min_length=1, pattern=r'^[\w\-]+\.(jpg|jpeg|png)$')
 
 
+from .image_upload import validate_image_upload
+
 MAX_UPLOAD_BYTES = 100 * 1024 * 1024  # 100 MB (stitched panoramas can be large)
 
 
@@ -145,14 +147,15 @@ def make_camera_router(camera: BaseCamera, frame_store: SessionFrameStore, start
         )
 
     @router.post("/load-image")
-    async def load_image(session_id: str = Depends(get_session_id_dep), file: UploadFile = File(...)):
+    async def load_image(request: Request, session_id: str = Depends(get_session_id_dep), file: UploadFile = File(...)):
         data = await file.read(MAX_UPLOAD_BYTES + 1)
         if len(data) > MAX_UPLOAD_BYTES:
-            raise HTTPException(status_code=413, detail="Image too large (max 20 MB)")
+            raise HTTPException(status_code=413, detail="Image too large (max 100 MB)")
         # np.frombuffer is a zero-copy view (cheap), but cv2.imdecode is a
         # synchronous CPU-bound decode — run it off the event loop so it
         # doesn't contend with mjpeg_generator's per-frame encode on the
         # same loop while a live /stream connection is open.
+        validate_image_upload(data, getattr(request.app.state, "hosted", False))
         frame = await asyncio.to_thread(_decode_image, data)
         if frame is None:
             raise HTTPException(status_code=400, detail="Cannot decode image")
@@ -161,14 +164,15 @@ def make_camera_router(camera: BaseCamera, frame_store: SessionFrameStore, start
         return {"width": w, "height": h}
 
     @router.post("/update-frame")
-    async def update_frame(session_id: str = Depends(get_session_id_dep), file: UploadFile = File(...)):
+    async def update_frame(request: Request, session_id: str = Depends(get_session_id_dep), file: UploadFile = File(...)):
         """Replace the stored frame with a browser-corrected image (lens/perspective correction)."""
-        if frame_store.get(session_id) is None:
+        if not frame_store.has_frame(session_id):
             raise HTTPException(status_code=400, detail="No frame stored. Call /freeze first.")
         data = await file.read(MAX_UPLOAD_BYTES + 1)
         if len(data) > MAX_UPLOAD_BYTES:
-            raise HTTPException(status_code=413, detail="Image too large (max 20 MB)")
+            raise HTTPException(status_code=413, detail="Image too large (max 100 MB)")
         # See /load-image above: decode off the event loop.
+        validate_image_upload(data, getattr(request.app.state, "hosted", False))
         frame = await asyncio.to_thread(_decode_image, data)
         if frame is None:
             raise HTTPException(status_code=400, detail="Cannot decode image")

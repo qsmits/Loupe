@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import sys
 import threading
 import time
 import uuid
@@ -23,6 +24,7 @@ from pydantic import BaseModel, ConfigDict, Field, FiniteFloat, model_validator
 from typing import Literal
 
 from .cameras.base import BaseCamera
+from .image_upload import validate_image_upload
 from .compute_pool import fringe_compute
 from .session_store import get_session_id_dep
 from .vision.fringe import (
@@ -47,6 +49,22 @@ _HOSTED_MAX_DIM = 2048
 _CAPTURES_PER_SESSION = 100
 
 
+def _memory_size(value, seen=None):
+    """Count retained Python containers and array backing buffers once."""
+    seen = set() if seen is None else seen
+    if id(value) in seen:
+        return 0
+    seen.add(id(value))
+    size = sys.getsizeof(value)
+    if isinstance(value, np.ndarray):
+        return size + (_memory_size(value.base, seen) if value.base is not None else 0)
+    if isinstance(value, dict):
+        return size + sum(_memory_size(k, seen) + _memory_size(v, seen) for k, v in value.items())
+    if isinstance(value, (list, tuple)):
+        return size + sum(_memory_size(v, seen) for v in value)
+    return size
+
+
 class _FringeCache:
     """Per-session cache for fringe analysis state.
 
@@ -59,7 +77,8 @@ class _FringeCache:
     Hosted mode isolates each session and enforces limits.
     """
 
-    def __init__(self, max_sessions: int = 50, ttl_seconds: float = 1800):
+    def __init__(self, max_sessions: int = 50, ttl_seconds: float = 1800,
+                 max_bytes: int = 256 * 1024 * 1024, per_session_bytes: int = 64 * 1024 * 1024):
         # session_id -> (store_dict, captures_list, last_access_monotonic)
         self._data: dict[str, tuple[dict, list, float]] = {}
         # session_id -> {result_id: full_result_dict}
@@ -69,6 +88,8 @@ class _FringeCache:
         self._lock = threading.Lock()
         self._max_sessions = max_sessions
         self._ttl = ttl_seconds
+        self._max_bytes = max_bytes
+        self._per_session_bytes = per_session_bytes
 
     def get(self, session_id: str, key: str):
         with self._lock:
@@ -84,6 +105,7 @@ class _FringeCache:
             self._evict_expired()
             self._ensure_session(session_id)
             store, captures, _ = self._data[session_id]
+            self._check_budget(session_id, {**store, key: value}, captures, self._full_results.get(session_id, {}))
             store[key] = value
             self._data[session_id] = (store, captures, time.monotonic())
 
@@ -99,6 +121,7 @@ class _FringeCache:
             self._evict_expired()
             self._ensure_session(session_id)
             store, captures, _ = self._data[session_id]
+            self._check_budget(session_id, store, [*captures, summary], self._full_results.get(session_id, {}))
             captures.append(summary)
             # Honor the live module-level cap (tests may monkeypatch).
             cap = _CAPTURES_PER_SESSION
@@ -121,8 +144,16 @@ class _FringeCache:
         with self._lock:
             self._evict_expired()
             self._ensure_session(session_id)
-            self._full_results.setdefault(session_id, {})[result_id] = result
             store, captures, _ = self._data[session_id]
+            full = self._full_results.setdefault(session_id, {})
+            try:
+                self._check_budget(session_id, store, captures, {**full, result_id: result})
+            except HTTPException:
+                # Do not leave an unreadable summary behind after a rejected new capture.
+                if result_id not in full:
+                    captures[:] = [c for c in captures if c.get("id") != result_id]
+                raise
+            full[result_id] = result
             self._data[session_id] = (store, captures, time.monotonic())
 
     def get_full_result(self, session_id: str,
@@ -158,6 +189,13 @@ class _FringeCache:
             store.clear()
             captures.clear()
             self._data[session_id] = (store, captures, time.monotonic())
+
+    def _check_budget(self, session_id, store, captures, full):
+        candidate = _memory_size((store, captures, full))
+        total = candidate + sum(_memory_size((s, c, self._full_results.get(sid, {})))
+                                for sid, (s, c, _) in self._data.items() if sid != session_id)
+        if candidate > self._per_session_bytes or total > self._max_bytes:
+            raise HTTPException(503, "Fringe storage is full; export and clear captures before retrying")
 
     def _ensure_session(self, session_id: str) -> None:
         if session_id not in self._data:
@@ -504,11 +542,14 @@ def make_fringe_router(camera: BaseCamera) -> APIRouter:
             # Decode uploaded image
             try:
                 img_bytes = base64.b64decode(body.image_b64)
+                validate_image_upload(img_bytes, getattr(request.app.state, "hosted", False))
                 img_array = np.frombuffer(img_bytes, dtype=np.uint8)
                 image = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
                 if image is None:
                     raise ValueError("Could not decode image")
                 image = _best_gray(image)
+            except HTTPException:
+                raise
             except Exception as e:
                 raise HTTPException(400, detail=f"Invalid image: {e}")
         else:
@@ -590,11 +631,14 @@ def make_fringe_router(camera: BaseCamera) -> APIRouter:
         if body.image_b64:
             try:
                 img_bytes = base64.b64decode(body.image_b64)
+                validate_image_upload(img_bytes, getattr(request.app.state, "hosted", False))
                 img_array = np.frombuffer(img_bytes, dtype=np.uint8)
                 image = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
                 if image is None:
                     raise ValueError("Could not decode image")
                 image = _best_gray(image)
+            except HTTPException:
+                raise
             except Exception as e:
                 err_msg = str(e)
                 async def _error_stream(msg=err_msg):
@@ -727,12 +771,15 @@ def make_fringe_router(camera: BaseCamera) -> APIRouter:
         if body.image_b64:
             try:
                 img_bytes = base64.b64decode(body.image_b64)
+                validate_image_upload(img_bytes, getattr(request.app.state, "hosted", False))
                 img_array = np.frombuffer(img_bytes, dtype=np.uint8)
                 image = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
                 if image is None:
                     raise ValueError("Could not decode image")
                 image = _best_gray(image)
                 image = _cap_image_size(image, request)
+            except HTTPException:
+                raise
             except Exception as e:
                 raise HTTPException(400, detail=f"Invalid image: {e}")
         else:

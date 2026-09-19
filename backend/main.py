@@ -72,7 +72,8 @@ def create_app(camera: BaseCamera | None = None, no_camera: bool = False) -> Fas
     # Session frame store — env vars override config file settings
     max_sessions = int(os.environ.get("MAX_SESSIONS", cfg.get("max_sessions", 50)))
     session_ttl = int(os.environ.get("SESSION_TTL", cfg.get("session_ttl", 1800)))
-    frame_store = SessionFrameStore(max_sessions=max_sessions, ttl_seconds=session_ttl)
+    frame_store = SessionFrameStore(max_sessions=max_sessions, ttl_seconds=session_ttl,
+                                    max_bytes=256 * 1024 * 1024 if hosted else None)
 
     if _no_camera:
         camera = NullCamera()

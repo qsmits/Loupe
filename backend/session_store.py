@@ -83,11 +83,12 @@ def get_session_id_dep(request: Request) -> str:
 class SessionFrameStore:
     """Thread-safe per-session frame storage with auto-expiration."""
 
-    def __init__(self, max_sessions: int = 50, ttl_seconds: float = 1800):
+    def __init__(self, max_sessions: int = 50, ttl_seconds: float = 1800, max_bytes: int | None = None):
         self._frames: dict[str, tuple[np.ndarray, float]] = {}
         self._lock = threading.Lock()
         self._max_sessions = max_sessions
         self._ttl = ttl_seconds
+        self._max_bytes = max_bytes
 
     def store(self, frame_or_sid, frame: np.ndarray | None = None) -> None:
         # Backward-compatible: store(frame) or store(session_id, frame)
@@ -100,6 +101,9 @@ class SessionFrameStore:
             self._evict_expired()
             if len(self._frames) >= self._max_sessions and session_id not in self._frames:
                 raise RuntimeError("Too many active sessions")
+            total = sum(f.nbytes for sid, (f, _) in self._frames.items() if sid != session_id)
+            if self._max_bytes is not None and total + frame.nbytes > self._max_bytes:
+                raise HTTPException(503, "Frame storage is full; close unused sessions and retry")
             self._frames[session_id] = (frame.copy(), time.monotonic())
 
     def get(self, session_id: str = DEFAULT_SESSION_ID) -> np.ndarray | None:
@@ -118,6 +122,7 @@ class SessionFrameStore:
 
     def has_frame(self, session_id: str = DEFAULT_SESSION_ID) -> bool:
         with self._lock:
+            self._evict_expired()
             return session_id in self._frames
 
     def _evict_expired(self) -> None:
