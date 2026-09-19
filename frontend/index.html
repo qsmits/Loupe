@@ -870,7 +870,7 @@
             <h2 class="help-page-title">Saving &amp; Sharing</h2>
             <p class="help-page-sub">Everything stays in your browser. Export a portable file to move or back up a project.</p>
             <div class="help-section-label">Where your data lives</div>
-            <p class="help-p">Projects are stored locally in your browser's IndexedDB. The server never stores or lists your projects — it only ever sees a frozen frame, transiently, when you use a server-side processing feature (see below).</p>
+            <p class="help-p">Projects are stored locally in your browser's IndexedDB. The server never stores or lists your projects — uploaded images and analysis results are kept temporarily in server memory, separately from your locally saved projects.</p>
             <div class="help-section-label">Export &amp; import (.loupe)</div>
             <p class="help-p"><strong>File ▾ → Export project (.loupe)</strong> downloads a single file containing the image, all measurements, calibration, and view state. Re-import it by dragging the file anywhere onto the app, or dropping it on the import zone on the home screen. Images can also be pasted directly (<kbd>Ctrl</kbd>/<kbd>⌘</kbd><kbd>V</kbd>) — into the workspace, or onto the home screen to start a new project.</p>
             <p class="help-p">Old session JSON (the pre-project v3 format) still imports. Note that v3 sessions never stored the image, so their measurements and calibration come back attached to a blank canvas.</p>
@@ -878,7 +878,7 @@
             <div class="help-section-label">Private browsing</div>
             <div class="help-tip">If IndexedDB is unavailable — private/incognito windows in some browsers — a red "storage unavailable" banner appears on the home screen and nothing survives closing the tab. Export as .loupe before you close it.</div>
             <div class="help-section-label">Hosted instance</div>
-            <p class="help-p">On the hosted instance, server-side features — auto-detection, DXF alignment, guided inspection, gear analysis — send the frozen image to the server for processing. A one-time notice explains this the first time you trigger one; the frame is kept only for your session and expires automatically.</p>
+            <p class="help-p">On the hosted instance, server-side features — auto-detection, DXF alignment, guided inspection, gear analysis — send the frozen image to the server for processing. Opening an image or running fringe analysis also uploads image data. A one-time notice appears before the first upload; the frame is kept only for your session and expires automatically.</p>
           </div>
 
           <!-- Deflectometry: How It Works -->
@@ -1923,7 +1923,7 @@
       </div>
       <div style="padding: 14px 16px;">
         <p style="margin: 0 0 12px; line-height: 1.5;">
-          This feature sends the frozen image to the server for processing.
+          Continuing sends this image or analysis data to the server for processing.
           The frame is kept only for your session and expires automatically.
         </p>
         <label style="display: flex; align-items: center; gap: 6px; margin: 0 0 14px;">

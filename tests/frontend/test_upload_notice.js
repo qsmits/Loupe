@@ -12,6 +12,8 @@ import { isFrameUploadEndpoint, FRAME_UPLOAD_ENDPOINTS } from '../../frontend/up
 describe('isFrameUploadEndpoint', () => {
   it('matches every server-side frame-compute endpoint', () => {
     for (const url of [
+      '/load-image', '/update-frame', '/fringe/analyze', '/fringe/analyze-stream',
+      '/fringe/reanalyze-carrier', '/fringe/session/import',
       '/detect-edges', '/detect-circles', '/detect-lines', '/detect-lines-merged',
       '/detect-arcs-partial', '/preprocessed-view',
       '/align-dxf', '/align-dxf-edges',
@@ -32,9 +34,9 @@ describe('isFrameUploadEndpoint', () => {
     assert.equal(isFrameUploadEndpoint('/detect-circles?x=1'), true);
   });
 
-  it('does not match frame uploads or unrelated endpoints', () => {
+  it('does not match unrelated endpoints', () => {
     for (const url of [
-      '/freeze', '/load-image', '/update-frame', '/frame', '/stream',
+      '/freeze', '/frame', '/stream',
       '/camera/info', '/config/ui', '/session/new', '/load-dxf', '/export-dxf',
       '/parts', '/zstack/compute', '/stitch/compute', '/superres/compute',
     ]) {

@@ -1,7 +1,7 @@
 // upload-notice.js — one-time "image is sent to the server" notice (Track A #4).
 //
 // On the hosted instance (state._hosted, set from /config/ui), the first
-// server-side compute feature the user triggers (edge/circle/line/arc
+// image upload or server-side compute feature the user triggers (edge/circle/line/arc
 // detection, DXF alignment, guided inspection, feature fitting, server-side
 // sub-pixel refinement, gradient overlay) shows a dialog explaining that the
 // frozen image is sent to the server for processing. Acknowledged once per
@@ -17,6 +17,9 @@ const STORAGE_KEY = 'loupe-upload-notice-ack';
 // Endpoints that read the per-session frozen frame on the server.
 // Keep in sync with backend/api.py when adding compute endpoints.
 export const FRAME_UPLOAD_ENDPOINTS = [
+  '/load-image', '/update-frame',
+  '/fringe/analyze', '/fringe/analyze-stream', '/fringe/reanalyze-carrier',
+  '/fringe/session/import',
   '/detect-edges', '/detect-circles', '/detect-lines', '/detect-lines-merged',
   '/detect-arcs-partial', '/preprocessed-view',
   '/align-dxf', '/align-dxf-edges',
@@ -37,7 +40,7 @@ let _pending = null;         // in-flight dialog promise (double-click guard)
 
 /**
  * Resolve immediately unless this is the hosted instance's first
- * frame-compute call this page load, in which case show the notice dialog
+ * upload or frame-compute call this page load, in which case show the notice dialog
  * and resolve when the user clicks Continue.
  * @returns {Promise<void>}
  */
@@ -51,7 +54,7 @@ export function maybeShowUploadNotice(url) {
   const dialog = document.getElementById('upload-notice-dialog');
   const okBtn = document.getElementById('btn-upload-notice-ok');
   const dontShow = document.getElementById('upload-notice-dont-show');
-  if (!dialog || !okBtn) return Promise.resolve();  // markup missing — never block requests
+  if (!dialog || !okBtn) return Promise.reject(new Error('Upload notice unavailable; reload before uploading'));
 
   _pending = new Promise(resolve => {
     dialog.hidden = false;
