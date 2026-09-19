@@ -163,3 +163,17 @@ it('bootstraps a private cookie and retries in the initiating project namespace'
   assert.equal((await apiFetch('/frame')).status, 200);
   assert.deepEqual(seen, [['/frame','project-a'], ['/session/new',undefined], ['/frame','project-a']]);
 });
+
+it('does not upload a different project after a delayed no-frame response', async () => {
+  let project = 'project-a';
+  setSessionIdProvider(() => project);
+  setFrameProvider(() => new Blob(['private-b']));
+  globalThis.fetch = async (url, options) => {
+    calls.push({url,options});
+    project = 'project-b';
+    return new Response('No frame stored', {status:400});
+  };
+  const response = await apiFetchFrame('/detect-circles', {method:'POST'});
+  assert.equal(response.status,400);
+  assert.equal(calls.length,1);
+});

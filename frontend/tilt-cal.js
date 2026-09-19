@@ -21,17 +21,22 @@ import { _computeDstCorners, _computeHomography, _inv3x3 } from './perspective-m
 let _active   = false;
 let _points   = [];   // up to 4 {x, y} image-space points
 let _mousePos = null;
-let _savedBackground = null;  // pre-correction frozenBackground for one-level undo
+let _dialogEpoch = -1;
 
-export function hasPerspectiveCorrection() { return _savedBackground !== null; }
+export function hasPerspectiveCorrection() {
+  return !!state.perspectiveUndo && state.perspectiveUndo.corrected === state.frozenBackground;
+}
 
 export async function undoPerspectiveCorrection() {
-  if (!_savedBackground) return;
-  state.frozenBackground = _savedBackground.image;
-  restoreImageGeometry(_savedBackground.geometry);
+  if (!hasPerspectiveCorrection()) return;
+  const saved = state.perspectiveUndo;
+  const epoch = state._epoch;
+  state.frozenBackground = saved.image;
+  state.lensSource = saved.lensSource;
+  restoreImageGeometry(saved.geometry);
   renderSidebar();
   updateCalibrationButton();
-  _savedBackground = null;
+  state.perspectiveUndo = null;
   cacheImageData(state.frozenBackground, imageWidth, imageHeight);
   redraw();
   showStatus("Perspective correction undone — syncing to server…");
@@ -41,11 +46,12 @@ export async function undoPerspectiveCorrection() {
   offscreen.height = imageHeight;
   offscreen.getContext("2d").drawImage(state.frozenBackground, 0, 0);
   await uploadCorrectedFrame(offscreen);
+  if (state._epoch !== epoch) return;
   showStatus("Perspective correction undone");
   document.dispatchEvent(new CustomEvent("perspective-correction-changed"));
 }
 
-export function isTiltCalMode() { return _active; }
+export function isTiltCalMode() { return _active && _dialogEpoch === state._epoch; }
 
 // ── Public interface ──────────────────────────────────────────────────────────
 export function initTiltCal() {
@@ -58,7 +64,7 @@ export function initTiltCal() {
 }
 
 export function tiltCalClick(pt) {
-  if (!_active) return false;
+  if (!isTiltCalMode()) return false;
   if (_points.length >= 4) return true;
   _points.push({ x: pt.x, y: pt.y });
   _updateUI();
@@ -67,14 +73,14 @@ export function tiltCalClick(pt) {
 }
 
 export function tiltCalMouseMove(pt) {
-  if (!_active) return;
+  if (!isTiltCalMode()) return;
   _mousePos = pt;
   if (_points.length < 4) redraw();
 }
 
 // ── Overlay drawing (called by render.js inside the viewport transform) ───────
 export function drawTiltCalOverlay() {
-  if (!_active) return;
+  if (!isTiltCalMode()) return;
   const ctx = canvas.getContext("2d");
   const scale = window.devicePixelRatio ?? 1;
   const pw = s => s / (canvas.width / (canvas.getBoundingClientRect().width));
@@ -128,6 +134,7 @@ export function drawTiltCalOverlay() {
 // ── Open / close ──────────────────────────────────────────────────────────────
 export function openTiltCalDialog() {
   if (!state.frozenBackground) { showStatus("Freeze an image first"); return; }
+  _dialogEpoch = state._epoch;
   _active   = true;
   _points   = [];
   _mousePos = null;
@@ -145,7 +152,7 @@ function _cancelDialog() {
 
 // ── Apply perspective correction ──────────────────────────────────────────────
 async function _applyCorrection() {
-  if (_points.length < 4) return;
+  if (!isTiltCalMode() || _points.length < 4) return;
   const wMm = parseFloat(document.getElementById("tilt-cal-width").value);
   const hMm = parseFloat(document.getElementById("tilt-cal-height").value);
   if (!wMm || !hMm || wMm <= 0 || hMm <= 0) {
@@ -164,10 +171,13 @@ async function _applyCorrection() {
   const H_inv  = _inv3x3(H);
   if (!H_inv) { if (applyBtn) { applyBtn.disabled = false; applyBtn.textContent = "Apply"; } showStatus("Degenerate transform — points may be collinear"); return; }
 
-  _savedBackground = { image: state.frozenBackground, geometry: captureImageGeometry() };
-  const corrected = _warpImage(H_inv, _savedBackground.image);
+  const saved = { image: state.frozenBackground, geometry: captureImageGeometry(), lensSource: state.lensSource };
+  const corrected = _warpImage(H_inv, saved.image);
+  state.perspectiveUndo = { ...saved, corrected };
+  // The original lens source is in a different perspective coordinate system.
+  state.lensSource = { output: corrected, k1: state.lensK1, unavailable: true };
   clearImageGeometry({ pixelsPerMm: (dstPts[1].x - dstPts[0].x) / wMm,
-    displayUnit: _savedBackground.geometry.fields.calibration?.displayUnit || "mm" });
+    displayUnit: saved.geometry.fields.calibration?.displayUnit || "mm" });
   renderSidebar();
   updateCalibrationButton();
   state.frozenBackground = corrected;
@@ -180,6 +190,7 @@ async function _applyCorrection() {
   showStatus("Perspective correction applied — syncing to server…");
   await uploadCorrectedFrame(corrected);
   if (applyBtn) { applyBtn.disabled = false; applyBtn.textContent = "Apply"; }
+  if (state._epoch !== epoch) return;
   showStatus("Perspective corrected and calibrated; old measurements cleared. Undo restores them.");
   document.dispatchEvent(new CustomEvent("perspective-correction-changed"));
 }

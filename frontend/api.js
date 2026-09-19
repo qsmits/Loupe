@@ -72,8 +72,9 @@ async function ensureSession() {
   return _sessionBootstrap;
 }
 
-export async function apiFetch(url, options = {}) {
-  const sessionId = getSessionId(); // preserve the initiating project across awaits
+export async function apiFetch(url, options = {}, sessionId = getSessionId()) {
+  // Capture the session before any dialog or network await.
+  // // preserve the initiating project across awaits
   // Hosted instances: first frame-compute call shows a one-time
   // "image is sent to the server" notice and waits for acknowledgment.
   await maybeShowUploadNotice(url);
@@ -114,21 +115,25 @@ function rebuildFailure(text, original) {
  * callers qualify; never pass a ReadableStream).
  */
 export async function apiFetchFrame(url, options = {}) {
-  const first = await apiFetch(url, options);
+  const sessionId = getSessionId();
+  const epoch = state._epoch;
+  const first = await apiFetch(url, options, sessionId);
   if (first.status !== 400 && first.status !== 404) return first;
   const text = await first.text();
   if (!NO_FRAME_RE.test(text)) return rebuildFailure(text, first);
+  if (state._epoch !== epoch || getSessionId() !== sessionId) return rebuildFailure(text, first);
   const blob = await _frameProvider?.();
+  if (state._epoch !== epoch || getSessionId() !== sessionId) return rebuildFailure(text, first);
   if (!blob) return rebuildFailure(text, first);
   const fd = new FormData();
   fd.append("file", blob, "frame.jpg");
-  const up = await apiFetch("/load-image", { method: "POST", body: fd });
+  const up = await apiFetch("/load-image", { method: "POST", body: fd }, sessionId);
   if (!up.ok) {
     console.debug("[api] frame re-upload failed:", up.status);
     return rebuildFailure(text, first);
   }
   console.debug("[api] re-uploaded stored frame after 'No frame stored'; retrying", url);
-  return apiFetch(url, options);
+  return apiFetch(url, options, sessionId);
 }
 
 /**
@@ -138,8 +143,10 @@ export async function apiFetchFrame(url, options = {}) {
  * @param {HTMLCanvasElement} canvas
  */
 export async function uploadCorrectedFrame(canvas) {
-  const blob = await new Promise(resolve => canvas.toBlob(resolve, "image/jpeg", 0.95));
-  if (!blob) return;
+  const epoch = state._epoch;
+  const sessionId = getSessionId();
+  const blob = await new Promise(resolve => canvas.toBlob(resolve, "image/png"));
+  if (!blob || state._epoch !== epoch || getSessionId() !== sessionId) return;
   state.frozenBlob = blob;
   state._dirty = true;   // the corrected frame must be persisted by autosave
   const fd = new FormData();
