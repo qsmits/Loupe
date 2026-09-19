@@ -194,7 +194,7 @@ export function migrateV3ToV4(data) {
 }
 
 /** Assemble the single-JSON .loupe payload. */
-export function buildLoupeObject(project, workspace, imageDataUrl) {
+export function buildLoupeObject(project, workspace, imageDataUrl, lensOriginalDataUrl = null) {
   return {
     format: LOUPE_FORMAT,
     loupeVersion: LOUPE_VERSION,
@@ -207,6 +207,7 @@ export function buildLoupeObject(project, workspace, imageDataUrl) {
     },
     imageMeta: project.imageMeta ?? null,
     imageDataUrl: imageDataUrl ?? null,
+    lensOriginalDataUrl,
     workspace: workspace ?? null,
   };
 }
@@ -239,6 +240,9 @@ export function parseLoupe(text) {
     throw new Error(
       `Unsupported workspace version ${obj.workspace?.version} in .loupe file`);
   }
+  if (obj.lensOriginalDataUrl != null && !/^data:image\//.test(obj.lensOriginalDataUrl)) {
+    throw new Error("Invalid original lens image");
+  }
   if (obj.imageDataUrl != null && !/^data:image\//.test(obj.imageDataUrl)) {
     throw new Error("Invalid .loupe file: image is not an image data URL");
   }
@@ -252,6 +256,7 @@ export function parseLoupe(text) {
     },
     workspace: obj.workspace ?? null,
     imageDataUrl: obj.imageDataUrl ?? null,
+    lensOriginalDataUrl: obj.lensOriginalDataUrl ?? null,
     imageMeta: obj.imageMeta ?? null,
   };
 }

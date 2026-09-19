@@ -40,27 +40,18 @@ function _renderList(panel, profiles) {
   list.querySelectorAll(".cal-profile-load").forEach(btn => {
     btn.addEventListener("click", async () => {
       const p = profiles[parseInt(btn.dataset.index)];
+      const epoch = state._epoch;
+      const lensK1 = p.lensK1 || 0;
+      const lensSpace = p.lensK1Space || "pixel_v0";
+      if (!state.frozenBackground) setLensK1FromProfile(lensK1, lensSpace);
+      else if (!await applyLensCorrection(lensK1, lensSpace)) return;
+      if (state._epoch !== epoch) return;
       state.calibration = { pixelsPerMm: p.pixelsPerMm, displayUnit: p.displayUnit };
-      // The profile replaces the calibration wholesale — no measurement is its
-      // source any more, so no CAL badge may survive it. renderSidebar() is
-      // needed too: nothing else here re-renders the measurement list.
+      state._dirty = true;
       clearCalSource();
       updateCalibrationButton();
       renderSidebar();
       redraw();
-      if (p.lensK1) {
-        const lensSpace = p.lensK1Space || "pixel_v0";
-        if (!state.frozenBackground) {
-          // Store k1 for later — lens warp will be applied when image is
-          // frozen. setLensK1FromProfile defers rather than guesses when the
-          // image diagonal isn't known yet: it keeps the original magnitude
-          // AND remembers (via getLensK1Space()) that it is still pixel_v0,
-          // so saving a profile now can't mistag an unconverted value.
-          setLensK1FromProfile(p.lensK1, lensSpace);
-        } else {
-          await applyLensCorrection(p.lensK1, lensSpace);
-        }
-      }
     });
   });
   list.querySelectorAll(".cal-profile-del").forEach(btn => {

@@ -147,6 +147,8 @@ export async function flushAutosave() {
     proj.updatedAt = new Date().toISOString();
     proj.workspace = buildWorkspaceV4(record);
     proj.image = record.state.frozenBlob ?? null;
+    proj.lensOriginal = record.state.lensSource?.output === record.state.frozenBackground
+      ? record.state.lensSource.blob ?? null : null;
     proj.imageMeta = (proj.image && record.imageWidth > 0)
       ? {
           w: record.imageWidth, h: record.imageHeight,
@@ -214,6 +216,10 @@ async function ensureRecordLoaded(tab) {
     });
     if (el) {
       record.state.frozenBackground = el;
+      if (proj.lensOriginal || record.state.lensK1) {
+        record.state.lensSource = { image: null, blob: proj.lensOriginal ?? null,
+          output: el, k1: record.state.lensK1, unavailable: !proj.lensOriginal };
+      }
       // The blob is ground truth; imageMeta is derived bookkeeping that an
       // earlier bug could have written wrong (camera dimensions adopted over
       // a loaded image, detaching every annotation). When they disagree,

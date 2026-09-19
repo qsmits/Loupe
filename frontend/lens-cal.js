@@ -16,6 +16,8 @@
  */
 
 import { state } from './state.js';
+import { clearImageGeometry } from './image-geometry.js';
+import { renderSidebar, updateCalibrationButton } from './sidebar.js';
 import { imageWidth, imageHeight } from './viewport.js';
 import { ctx, showStatus, redraw, pw, drawHandle } from './render.js';
 import { cacheImageData } from './subpixel-js.js';
@@ -160,7 +162,7 @@ export function openLensCalDialog(opts) {
 
 /** Apply k1 directly to the current frozen frame (used by cal-profiles). */
 export async function applyLensCorrection(k1, coefficientSpace = "diag_normalized_v1") {
-  if (!state.frozenBackground || k1 === 0) return;
+  if (!state.frozenBackground) return false;
   const converted = normalizeLensK1(k1, coefficientSpace);
   if (converted === null) {
     // Should not normally happen — freeze always sets imageWidth/imageHeight
@@ -170,15 +172,44 @@ export async function applyLensCorrection(k1, coefficientSpace = "diag_normalize
     return;
   }
   k1 = converted;
-  const corrected = _applyK1(state.frozenBackground, k1);
+  const epoch = state._epoch;
+  let source = state.lensSource;
+  if (!source || source.output !== state.frozenBackground) {
+    source = { image: state.frozenBackground, blob: state.frozenBlob, output: state.frozenBackground, k1: 0 };
+  }
+  if (source.k1 === k1) return true;
+  if (source.unavailable) {
+    showStatus("This saved image has no original lens source. Load the original image to change lens correction.");
+    return false;
+  }
+  if (!source.image && source.blob) {
+    const url = URL.createObjectURL(source.blob);
+    try {
+      source.image = await new Promise((resolve, reject) => {
+        const im = new Image(); im.onload = () => resolve(im);
+        im.onerror = () => reject(new Error("Could not read original lens image")); im.src = url;
+      });
+    } finally { URL.revokeObjectURL(url); }
+    if (state._epoch !== epoch) return false;
+  }
+  // Always resample the original pixels, including when changing profiles.
+  const corrected = k1 === 0 ? source.image : _applyK1(source.image, k1);
+  state.lensSource = { ...source, output: corrected, k1 };
+  clearImageGeometry(state.calibration);
+  renderSidebar();
+  updateCalibrationButton();
   state.frozenBackground = corrected;
   state.lensK1 = k1;
   state.lensK1Space = "diag_normalized_v1";
   cacheImageData(corrected, imageWidth, imageHeight);
   redraw();
   showStatus(`Lens correction applied (k₁ = ${k1.toExponential(2)}) — syncing to server…`);
-  await uploadCorrectedFrame(corrected);
-  showStatus(`Lens correction applied (k₁ = ${k1.toExponential(2)})`);
+  const out = document.createElement("canvas");
+  out.width = imageWidth; out.height = imageHeight;
+  out.getContext("2d").drawImage(corrected, 0, 0);
+  await uploadCorrectedFrame(out);
+  if (state._epoch === epoch) showStatus(k1 === 0 ? "Original lens image restored; remeasure geometry" : `Lens correction applied (k₁ = ${k1.toExponential(2)}); remeasure geometry`);
+  return true;
 }
 
 function _openDialog() {
@@ -226,37 +257,13 @@ async function _confirmCal() {
     return;
   }
 
-  state.lensK1 = k1;
-  state.lensK1Space = "diag_normalized_v1";
-
-  // Disable confirm while remap runs (can be slow on large images)
   const confirmBtn = document.getElementById("btn-lens-cal-confirm");
   if (confirmBtn) { confirmBtn.disabled = true; confirmBtn.textContent = "Applying…"; }
-
-  // Give the browser a frame to render the button state, then run the remap
-  await new Promise(r => setTimeout(r, 30));
-
-  const corrected = _applyK1(state.frozenBackground, k1);
-  state.frozenBackground = corrected;
-  cacheImageData(corrected, imageWidth, imageHeight);
-
-  _active    = false;
-  _samples   = [];
-  _pendingP1 = null;
-  document.getElementById("lens-cal-dialog").hidden = true;
-
-  // Update the lens-cal button to reflect applied state
-  const btn = document.getElementById("btn-lens-cal");
-  if (btn) {
-    btn.textContent = "Lens ✓";
-    btn.classList.add("lens-calibrated");
+  try {
+    if (await applyLensCorrection(k1)) _cancelDialog();
+  } finally {
+    if (confirmBtn) { confirmBtn.disabled = false; confirmBtn.textContent = "Apply"; }
   }
-  if (confirmBtn) { confirmBtn.textContent = "Apply"; }
-
-  redraw();
-  showStatus(`Lens correction applied (k₁ = ${k1.toExponential(2)}) — syncing to server…`);
-  await uploadCorrectedFrame(corrected);
-  showStatus(`Lens correction applied (k₁ = ${k1.toExponential(2)})`);
 }
 
 // ── Fitting ───────────────────────────────────────────────────────────────────

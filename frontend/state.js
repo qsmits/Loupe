@@ -78,6 +78,7 @@ export const state = {
   _templateName: null,
   _subpixelSnapTarget: null, // { x, y } — live preview of where sub-pixel snap would place a point
   _previewCursor: null,      // { x, y } — snapped cursor (image space) while a measurement is in progress
+  lensSource: null,          // original pixels/blob plus identity of the corrected image
   lensK1: 0,                 // radial distortion coefficient (applied in-place to frozenBackground)
   lensK1Space: "diag_normalized_v1", // coefficient space of lensK1: "pixel_v0" (raw, unconverted — a
                               // deferred legacy profile load) | "diag_normalized_v1" (dimensionless, ready)

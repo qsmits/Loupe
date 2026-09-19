@@ -35,7 +35,8 @@ export async function exportProjectAsLoupe(id) {
   try { proj = await getProject(id); } catch { /* fall through */ }
   if (!proj) { showToast("Project not found"); return; }
   const imageDataUrl = proj.image ? await blobToDataUrl(proj.image) : null;
-  const obj = buildLoupeObject(proj, proj.workspace, imageDataUrl);
+  const original = proj.lensOriginal ? await blobToDataUrl(proj.lensOriginal) : null;
+  const obj = buildLoupeObject(proj, proj.workspace, imageDataUrl, original);
   const blob = new Blob([JSON.stringify(obj)], { type: "application/json" });
   const safeName = proj.name.replace(/[^\w\- ]+/g, "_").trim() || "project";
   downloadBlob(blob, `${safeName}.loupe`);
@@ -93,6 +94,7 @@ async function importLoupeText(text, filename) {
     updatedAt: now,
     thumbnail: null,
     image,
+    lensOriginal: parsed.lensOriginalDataUrl ? dataUrlToBlob(parsed.lensOriginalDataUrl) : null,
     imageMeta,
     workspace: parsed.workspace,
   });
