@@ -19,7 +19,7 @@ import cv2
 import numpy as np
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, FiniteFloat, model_validator
 from typing import Literal
 
 from .cameras.base import BaseCamera
@@ -302,21 +302,40 @@ class AnalyzeBody(BaseModel):
 
 
 class ReanalyzeBody(BaseModel):
-    coefficients: list[float]
+    coefficients: list[FiniteFloat] = Field(max_length=66)
     subtract_terms: list[int] = Field(default=[1, 2, 3])
     wavelength_nm: float = Field(default=589.3, gt=0, le=2000)
-    surface_height: int = Field(gt=0)
-    surface_width: int = Field(gt=0)
-    mask: Optional[list[int]] = Field(default=None)
+    surface_height: int = Field(gt=0, le=16384)
+    surface_width: int = Field(gt=0, le=16384)
+    mask: Optional[list[int]] = Field(default=None, max_length=1024 * 1024)
     n_zernike: int = Field(default=36, ge=1, le=66)
     form_model: str = Field(default="zernike", pattern="^(zernike|plane|poly2|poly3)$")
     # M1.3 raw-grid path: when all three are provided, reanalyze operates
     # on the cached pre-form-removal heightmap instead of reconstructing
     # from Zernike coefficients alone.
-    raw_height_grid_nm: Optional[list[float]] = Field(default=None)
+    raw_height_grid_nm: Optional[list[FiniteFloat]] = Field(default=None, max_length=256 * 256)
     raw_wavelength_nm: Optional[float] = Field(default=None, gt=0, le=2000)
-    raw_grid_rows: Optional[int] = Field(default=None, gt=0)
-    raw_grid_cols: Optional[int] = Field(default=None, gt=0)
+    raw_grid_rows: Optional[int] = Field(default=None, gt=0, le=256)
+    raw_grid_cols: Optional[int] = Field(default=None, gt=0, le=256)
+
+    @model_validator(mode="after")
+    def bounded_grid(self):
+        supplied = [self.raw_height_grid_nm is not None,
+                    self.raw_grid_rows is not None, self.raw_grid_cols is not None]
+        surface_pixels = self.surface_height * self.surface_width
+        if any(supplied) and not all(supplied):
+            raise ValueError("Raw grid values, rows and columns must be provided together")
+        if all(supplied):
+            pixels = self.raw_grid_rows * self.raw_grid_cols
+            if len(self.raw_height_grid_nm) != pixels:
+                raise ValueError("Raw grid length does not match its dimensions")
+        else:
+            pixels = surface_pixels
+            if pixels > 1024 * 1024:
+                raise ValueError("Coefficient reconstruction is limited to 1048576 pixels; supply the raw grid")
+        if self.mask is not None and len(self.mask) not in (pixels, surface_pixels):
+            raise ValueError("Mask length does not match the grid or surface")
+        return self
 
 
 class ReanalyzeCarrierBody(BaseModel):
