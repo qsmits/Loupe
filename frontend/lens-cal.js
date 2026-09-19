@@ -177,7 +177,12 @@ export async function applyLensCorrection(k1, coefficientSpace = "diag_normalize
   if (!source || source.output !== state.frozenBackground) {
     source = { image: state.frozenBackground, blob: state.frozenBlob, output: state.frozenBackground, k1: 0 };
   }
-  if (source.k1 === k1) return true;
+  if (source.k1 === k1) {
+    state.lensSource = source;
+    state.lensK1 = k1;
+    state.lensK1Space = "diag_normalized_v1";
+    return true;
+  }
   if (source.unavailable) {
     showStatus("This saved image has no original lens source. Load the original image to change lens correction.");
     return false;
@@ -194,6 +199,16 @@ export async function applyLensCorrection(k1, coefficientSpace = "diag_normalize
   }
   // Always resample the original pixels, including when changing profiles.
   const corrected = k1 === 0 ? source.image : _applyK1(source.image, k1);
+  showStatus("Syncing lens correction…");
+  const out = document.createElement("canvas");
+  out.width = imageWidth; out.height = imageHeight;
+  out.getContext("2d").drawImage(corrected, 0, 0);
+  try {
+    if (!await uploadCorrectedFrame(out)) return false;
+  } catch (e) {
+    if (state._epoch === epoch) showStatus(e.message);
+    return false;
+  }
   state.lensSource = { ...source, output: corrected, k1 };
   clearImageGeometry(state.calibration);
   renderSidebar();
@@ -203,11 +218,6 @@ export async function applyLensCorrection(k1, coefficientSpace = "diag_normalize
   state.lensK1Space = "diag_normalized_v1";
   cacheImageData(corrected, imageWidth, imageHeight);
   redraw();
-  showStatus(`Lens correction applied (k₁ = ${k1.toExponential(2)}) — syncing to server…`);
-  const out = document.createElement("canvas");
-  out.width = imageWidth; out.height = imageHeight;
-  out.getContext("2d").drawImage(corrected, 0, 0);
-  await uploadCorrectedFrame(out);
   if (state._epoch === epoch) showStatus(k1 === 0 ? "Original lens image restored; remeasure geometry" : `Lens correction applied (k₁ = ${k1.toExponential(2)}); remeasure geometry`);
   return true;
 }

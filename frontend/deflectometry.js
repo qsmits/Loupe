@@ -4252,7 +4252,11 @@ export function initDeflectometry() {
   registerModeHooks("deflectometry", {
     serialize: () => captureInstrument(df, WORKSPACE_DEFAULTS, $("mode-deflectometry")),
     restore: snapshot => {
-      restoreInstrument(df, WORKSPACE_DEFAULTS, snapshot ?? initial, $("mode-deflectometry"));
+      restoreInstrument(df, WORKSPACE_DEFAULTS, {...snapshot, controls: {...initial.controls, ...snapshot?.controls}}, $("mode-deflectometry"));
+      for (const id of TAB_IDS) {
+        if ($("defl-" + id + "-content")) $("defl-" + id + "-content").hidden = true;
+        if ($("defl-" + id + "-empty")) $("defl-" + id + "-empty").hidden = false;
+      }
       if (df.lastResult) renderPhaseResult(df.lastResult);
       if (df.lastHeightmap) {
         if ($("defl-height-empty")) $("defl-height-empty").hidden = true;

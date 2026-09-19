@@ -52,3 +52,19 @@ test('original image is included in portable project round trip', () => {
   const obj = buildLoupeObject({type:'microscopy',name:'Lens'},null,data,data);
   assert.equal(parseLoupe(JSON.stringify(obj)).lensOriginalDataUrl,data);
 });
+
+test('rejected correction leaves image, stored blob and measurements unchanged', async () => {
+  const original = {width:4,height:4};
+  const blob = new Blob(['original']);
+  state.frozenBackground=original;
+  state.frozenBlob=blob;
+  state.annotations=[{type:'circle',id:1}];
+  state.lensSource=null;
+  state.lensK1=0;
+  globalThis.fetch=async()=>new Response('Image too large',{status:413});
+  assert.equal(await applyLensCorrection(.1),false);
+  assert.equal(state.frozenBackground,original);
+  assert.equal(state.frozenBlob,blob);
+  assert.equal(state.lensK1,0);
+  assert.equal(state.annotations.length,1);
+});

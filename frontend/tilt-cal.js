@@ -31,22 +31,24 @@ export async function undoPerspectiveCorrection() {
   if (!hasPerspectiveCorrection()) return;
   const saved = state.perspectiveUndo;
   const epoch = state._epoch;
-  state.frozenBackground = saved.image;
-  state.lensSource = saved.lensSource;
-  restoreImageGeometry(saved.geometry);
-  renderSidebar();
-  updateCalibrationButton();
-  state.perspectiveUndo = null;
-  cacheImageData(state.frozenBackground, imageWidth, imageHeight);
-  redraw();
-  showStatus("Perspective correction undone — syncing to server…");
-  // uploadCorrectedFrame expects a canvas, so draw the image into one first
   const offscreen = document.createElement("canvas");
   offscreen.width = imageWidth;
   offscreen.height = imageHeight;
-  offscreen.getContext("2d").drawImage(state.frozenBackground, 0, 0);
-  await uploadCorrectedFrame(offscreen);
-  if (state._epoch !== epoch) return;
+  offscreen.getContext("2d").drawImage(saved.image, 0, 0);
+  try {
+    if (!await uploadCorrectedFrame(offscreen)) return;
+  } catch (e) {
+    if (state._epoch === epoch) showStatus(e.message);
+    return;
+  }
+  state.frozenBackground = saved.image;
+  state.lensSource = saved.lensSource;
+  restoreImageGeometry(saved.geometry);
+  state.perspectiveUndo = null;
+  cacheImageData(state.frozenBackground, imageWidth, imageHeight);
+  renderSidebar();
+  updateCalibrationButton();
+  redraw();
   showStatus("Perspective correction undone");
   document.dispatchEvent(new CustomEvent("perspective-correction-changed"));
 }
@@ -173,6 +175,14 @@ async function _applyCorrection() {
 
   const saved = { image: state.frozenBackground, geometry: captureImageGeometry(), lensSource: state.lensSource };
   const corrected = _warpImage(H_inv, saved.image);
+  try {
+    if (!await uploadCorrectedFrame(corrected)) return;
+  } catch (e) {
+    if (state._epoch === epoch) showStatus(e.message);
+    return;
+  } finally {
+    if (applyBtn) { applyBtn.disabled = false; applyBtn.textContent = "Apply"; }
+  }
   state.perspectiveUndo = { ...saved, corrected };
   // The original lens source is in a different perspective coordinate system.
   state.lensSource = { output: corrected, k1: state.lensK1, unavailable: true };
@@ -187,8 +197,6 @@ async function _applyCorrection() {
   _points = [];
   document.getElementById("tilt-cal-dialog").hidden = true;
   redraw();
-  showStatus("Perspective correction applied — syncing to server…");
-  await uploadCorrectedFrame(corrected);
   if (applyBtn) { applyBtn.disabled = false; applyBtn.textContent = "Apply"; }
   if (state._epoch !== epoch) return;
   showStatus("Perspective corrected and calibrated; old measurements cleared. Undo restores them.");

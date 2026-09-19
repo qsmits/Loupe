@@ -9,6 +9,7 @@
 
 import { registerModeHooks } from './tab-manager.js';
 import { captureInstrument, restoreInstrument } from './instrument-workspace.js';
+import { hideProgress } from './fringe-progress.js';
 import { apiFetch } from './api.js';
 import { state } from './state.js';
 import { wireMeasureEvents } from './fringe-measure.js';
@@ -57,6 +58,13 @@ export const fr = {
   mode: "surface",
   measurements: [],         // M4.1 — recorded Step/Area measurements with mode tag
 };
+
+function workspaceControls() {
+  return {querySelectorAll: selector => [
+    ...($("mode-fringe")?.querySelectorAll(selector) ?? []),
+    ...($("dropdown-fringe-settings")?.querySelectorAll(selector) ?? []),
+  ]};
+}
 
 const WORKSPACE_DEFAULTS = {
   lastResult: null, lastMask: null, maskPolygons: [], measurements: [],
@@ -171,14 +179,18 @@ function wireEvents() {
 
 export function initFringe() {
   buildWorkspace();
-  const presetsReady = loadWavelengthPresets();
-  const initial = captureInstrument(fr, WORKSPACE_DEFAULTS, $("mode-fringe"));
+  let initial;
+  const presetsReady = loadWavelengthPresets().then(() => {
+    initial = captureInstrument(fr, WORKSPACE_DEFAULTS, workspaceControls());
+  });
   registerModeHooks("fringe", {
-    serialize: () => ({...captureInstrument(fr, WORKSPACE_DEFAULTS, $("mode-fringe")), options: captureFringeOptions()}),
+    serialize: () => ({...captureInstrument(fr, WORKSPACE_DEFAULTS, workspaceControls()), options: captureFringeOptions()}),
     restore: async snapshot => {
       await presetsReady;
       clearDroppedImage();
-      restoreInstrument(fr, WORKSPACE_DEFAULTS, snapshot ?? initial, $("mode-fringe"));
+      restoreInstrument(fr, WORKSPACE_DEFAULTS, {...snapshot, controls: {...initial.controls, ...snapshot?.controls}}, workspaceControls());
+      hideProgress();
+      if ($("fringe-btn-analyze")) $("fringe-btn-analyze").disabled = false;
       fr.heightGrid = fr.maskGrid = fr.trustedMaskGrid = null;
       fr.gridRows = fr.gridCols = 0;
       fr.avgCaptures = []; fr.avgInverted = false;

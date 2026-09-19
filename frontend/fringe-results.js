@@ -535,7 +535,14 @@ export function restoreFringeResult(data, options) {
       if ($(id)) $(id).disabled = false;
     }
   } else {
-    if ($("fringe-summary-bar")) $("fringe-summary-bar").hidden = true;
+    for (const id of ["fringe-summary-bar", "fringe-confidence-row", "fringe-carrier-diagnostics",
+      "fringe-carrier-row", "fringe-subtract-warnings", "fringe-surface-content"]) {
+      if ($(id)) $(id).hidden = true;
+    }
+    if ($("fringe-empty")) $("fringe-empty").hidden = false;
+    for (const id of ["fringe-btn-invert", "fringe-btn-export-pdf", "fringe-btn-export-csv"]) {
+      if ($(id)) $(id).disabled = true;
+    }
     for (const image of document.querySelectorAll("#mode-fringe .fringe-results-col img")) image.removeAttribute("src");
   }
   renderSessionPanel();

@@ -43,6 +43,7 @@ export function createProgressBar() {
  * @param {function} [onRetry] - if provided, wired to the Retry button
  */
 export async function analyzeWithProgress(body, onResult, onError, onRetry) {
+  const epoch = state._epoch;
   const container = document.querySelector(".fringe-progress");
   const fill = $("fringe-progress-fill");
   const msg = $("fringe-progress-msg");
@@ -75,6 +76,7 @@ export async function analyzeWithProgress(body, onResult, onError, onRetry) {
     if (timeoutId) clearTimeout(timeoutId);
     timeoutId = setTimeout(() => {
       controller.abort();
+      if (state._epoch !== epoch) return;
       fill.className = "fringe-progress-fill timeout";
       msg.textContent = `Analysis timed out (no response for ${getTimeoutMs() / 1000}s).`;
       if (retryBtn && onRetry) retryBtn.hidden = false;
@@ -92,6 +94,7 @@ export async function analyzeWithProgress(body, onResult, onError, onRetry) {
       signal: controller.signal,
     });
 
+    if (state._epoch !== epoch) { controller.abort(); return; }
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}`);
     }
@@ -102,6 +105,7 @@ export async function analyzeWithProgress(body, onResult, onError, onRetry) {
 
     while (true) {
       const { done, value } = await reader.read();
+      if (state._epoch !== epoch) { await reader.cancel(); return; }
       if (done) break;
 
       resetTimeout();
@@ -125,7 +129,7 @@ export async function analyzeWithProgress(body, onResult, onError, onRetry) {
           fill.className = "fringe-progress-fill done";
           msg.textContent = "Complete";
           if (timeoutId) clearTimeout(timeoutId);
-          setTimeout(() => { container.hidden = true; }, 1500);
+          setTimeout(() => { if (state._epoch === epoch) container.hidden = true; }, 1500);
           onResult(event.result);
           return;
         }
@@ -158,11 +162,13 @@ export async function analyzeWithProgress(body, onResult, onError, onRetry) {
 
   } catch (e) {
     if (timeoutId) clearTimeout(timeoutId);
-    if (e.name === "AbortError") return; // timeout already handled
+    if (state._epoch !== epoch || e.name === "AbortError") return; // timeout already handled
     fill.className = "fringe-progress-fill error";
     msg.textContent = "Connection lost";
     if (retryBtn && onRetry) retryBtn.hidden = false;
     onError(e.message);
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
   }
 }
 

@@ -177,3 +177,21 @@ it('does not upload a different project after a delayed no-frame response', asyn
   assert.equal(response.status,400);
   assert.equal(calls.length,1);
 });
+
+it('invalidates an uncommitted correction in its original project after a tab switch', async () => {
+  const {uploadCorrectedFrame} = await import('../../frontend/api.js');
+  const {state} = await import('../../frontend/state.js');
+  let project='project-a';
+  setSessionIdProvider(()=>project);
+  const oldBlob=new Blob(['original']);
+  state.frozenBlob=oldBlob;
+  globalThis.fetch=async(url,options)=>{
+    calls.push({url,options});
+    if (url==='/update-frame') project='project-b';
+    return new Response('{}');
+  };
+  assert.equal(await uploadCorrectedFrame({toBlob:cb=>cb(new Blob(['corrected']))}),false);
+  assert.equal(state.frozenBlob,oldBlob);
+  assert.equal(calls[1].url,'/session');
+  assert.equal(calls[1].options.headers.get('X-Session-ID'),'project-a');
+});

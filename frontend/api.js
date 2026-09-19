@@ -146,10 +146,18 @@ export async function uploadCorrectedFrame(canvas) {
   const epoch = state._epoch;
   const sessionId = getSessionId();
   const blob = await new Promise(resolve => canvas.toBlob(resolve, "image/png"));
-  if (!blob || state._epoch !== epoch || getSessionId() !== sessionId) return;
-  state.frozenBlob = blob;
-  state._dirty = true;   // the corrected frame must be persisted by autosave
+  if (!blob || state._epoch !== epoch || getSessionId() !== sessionId) return false;
   const fd = new FormData();
-  fd.append("file", blob, "frame.jpg");
-  await apiFetchFrame("/update-frame", { method: "POST", body: fd });
+  fd.append("file", blob, "frame.png");
+  const response = await apiFetchFrame("/update-frame", { method: "POST", body: fd });
+  if (!response.ok) throw new Error(`Could not synchronize corrected image (HTTP ${response.status})`);
+  if (state._epoch !== epoch || getSessionId() !== sessionId) {
+    // The outgoing project still has its original pixels. Invalidate the
+    // now-uncommitted server correction so its next request rehydrates them.
+    await apiFetch("/session", {method: "DELETE"}, sessionId);
+    return false;
+  }
+  state.frozenBlob = blob;
+  state._dirty = true;
+  return true;
 }
