@@ -13,6 +13,7 @@ import { switchMode } from './modes.js';
 import { imageWidth, imageHeight } from './viewport.js';
 import { lensK1ToDiagNormalized } from './math.js';
 import { showToast } from './shell.js';
+import { prepareInterferogramUpload, bytesToBase64, mimeFromBase64, FRINGE_UPLOAD_MAX_DIM } from './fringe-upload.js';
 import { bindImageDropTargets } from './image-drop.js';
 import { loadFringeLensProfiles, renderFringeLensDropdown, saveFringeLensProfile } from './fringe-lens-profiles.js';
 import {
@@ -375,23 +376,21 @@ async function analyzeFromFile(file) {
   if (btn) btn.disabled = true;
 
   try {
-    const arrayBuf = await file.arrayBuffer();
-    const u8 = new Uint8Array(arrayBuf);
-    let binary = '';
-    const chunk = 8192;
-    for (let i = 0; i < u8.length; i += chunk) {
-      binary += String.fromCharCode.apply(null, u8.subarray(i, i + chunk));
-    }
-    const b64 = btoa(binary);
+    const prepared = await prepareInterferogramUpload(file);
+    const b64 = bytesToBase64(prepared.bytes);
 
     // Store dropped image so re-analysis (mask, settings) uses it
     fr.droppedImageB64 = b64;
     if (fr.droppedObjectUrl) URL.revokeObjectURL(fr.droppedObjectUrl);
-    fr.droppedObjectUrl = URL.createObjectURL(file);
+    fr.droppedObjectUrl = URL.createObjectURL(prepared.blob);
 
     // Update preview to show the dropped image
     const preview = $("fringe-preview");
     if (preview) preview.src = fr.droppedObjectUrl;
+
+    if (prepared.scaled) {
+      showToast(`Downscaled ${prepared.originalWidth}\u00d7${prepared.originalHeight} \u2192 ${prepared.width}\u00d7${prepared.height} for analysis (server limit ${FRINGE_UPLOAD_MAX_DIM} px).`);
+    }
 
     if (!state._hosted) _runAnalysis();
     if (btn) btn.disabled = false;
@@ -830,7 +829,7 @@ export function wirePanelEvents() {
         const bin = atob(fr.droppedImageB64);
         const u8 = new Uint8Array(bin.length);
         for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
-        blob = new Blob([u8], { type: "image/png" });
+        blob = new Blob([u8], { type: mimeFromBase64(fr.droppedImageB64) });
       } else {
         // Freeze the current camera frame so the mask edit uses a still image
         await apiFetch("/freeze", { method: "POST" });

@@ -96,7 +96,15 @@ export async function analyzeWithProgress(body, onResult, onError, onRetry) {
 
     if (state._epoch !== epoch) { controller.abort(); return; }
     if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
+      let detail = "";
+      try {
+        const raw = await response.text();
+        try {
+          const j = JSON.parse(raw);
+          if (j && typeof j.detail === "string") detail = j.detail;
+        } catch { detail = raw.trim().slice(0, 200); }
+      } catch { /* ignore */ }
+      throw new Error(detail ? `HTTP ${response.status}: ${detail}` : `HTTP ${response.status}`);
     }
 
     const reader = response.body.getReader();
@@ -164,7 +172,7 @@ export async function analyzeWithProgress(body, onResult, onError, onRetry) {
     if (timeoutId) clearTimeout(timeoutId);
     if (state._epoch !== epoch || e.name === "AbortError") return; // timeout already handled
     fill.className = "fringe-progress-fill error";
-    msg.textContent = "Connection lost";
+    msg.textContent = String(e.message || "").startsWith("HTTP ") ? e.message : "Connection lost";
     if (retryBtn && onRetry) retryBtn.hidden = false;
     onError(e.message);
   } finally {

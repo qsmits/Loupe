@@ -11,6 +11,7 @@ import { registerModeHooks } from './tab-manager.js';
 import { captureInstrument, restoreInstrument } from './instrument-workspace.js';
 import { hideProgress } from './fringe-progress.js';
 import { apiFetch } from './api.js';
+import { mimeFromBase64 } from './fringe-upload.js';
 import { state } from './state.js';
 import { wireMeasureEvents } from './fringe-measure.js';
 import { buildPanelHtml, wirePanelEvents, startPolling, stopPolling, clearDroppedImage } from './fringe-panel.js';
@@ -197,7 +198,7 @@ export function initFringe() {
       fr.sessionCaptures = []; fr.selectedCaptureId = null;
       if (fr.droppedImageB64) {
         const preview = $("fringe-preview");
-        if (preview) preview.src = "data:image/png;base64," + fr.droppedImageB64;
+        if (preview) preview.src = `data:${mimeFromBase64(fr.droppedImageB64)};base64,` + fr.droppedImageB64;
       }
       restoreFringeResult(fr.lastResult, snapshot?.options);
     },
