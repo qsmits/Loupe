@@ -97,6 +97,10 @@ ZERNIKE_NAMES: dict[int, str] = {
 # Optical-flat air-film analysis defaults. A narrower demodulation filter
 # preserves specimen detail while still rejecting the conjugate sideband.
 DEFAULT_LPF_SIGMA_FRAC = 0.18
+# The user's region (ROI or polygon) bounds the analysis; inside it the
+# automatic aperture removes non-fringe pixels unless that would keep less
+# than this fraction of the region.
+_USER_REGION_MIN_KEEP = 0.05
 MEASUREMENT_MODEL = "optical_flat_air_gap"
 
 # Mapping from common UI group names to Noll indices for the subtraction panel.
@@ -465,14 +469,95 @@ def _subtract_poly(surface: np.ndarray, mask: np.ndarray | None,
 # ── Fringe modulation, masking, DFT phase extraction, unwrapping ──────
 
 
-def _dominant_brightness_bbox(image: np.ndarray) -> tuple[int, int, int, int] | None:
-    """Return a dominant illuminated component bbox, if one is unambiguous.
+_CROP_MIN_CYCLES = 3.0     # a crop must hold at least this many carrier cycles
+_CROP_SCORE_MARGIN = 2.0   # ...and be this much more prominent than the full frame
+_CROP_MIN_SCORE = 30.0     # ...and at least this prominent in absolute terms (~5.5x over both backgrounds)
+_CROP_MAX_CANDIDATES = 4
 
-    This is used only for carrier detection. It helps when the useful fringe
-    patch occupies a small part of a larger frame, where aperture/lighting
-    gradients can otherwise dominate the lowest FFT bins. Ordinary full-field
-    fringes produce many similar Otsu components, so they intentionally do not
-    trigger this crop.
+
+def _spectrum_candidates(img: np.ndarray):
+    """Carrier candidates of ``img`` at <=1024 px: ``(cands, cy, cx, h, w)``.
+
+    Downsample (INTER_AREA), subtract the mean, Hann-window, FFT, DC-suppress
+    and score by prominence (floor on, harmonics suppressed). Candidate
+    coordinates are fftshift bins of the (possibly downsampled) image of
+    shape ``(h, w)``, so ``hypot(y - cy, x - cx)`` is cycles across it.
+    """
+    h, w = img.shape
+    scale = max(h, w) / 1024
+    if scale > 1:
+        img = cv2.resize(img, (int(w / scale), int(h / scale)),
+                         interpolation=cv2.INTER_AREA)
+        h, w = img.shape
+    img = img - img.mean()
+    magnitude = np.abs(np.fft.fftshift(
+        np.fft.fft2(img * np.outer(np.hanning(h), np.hanning(w)))))
+    cy, cx = h // 2, w // 2
+    mag_search = _carrier_search_magnitude(
+        magnitude, cy, cx, dc_margin_y=2, dc_margin_x=2, dc_cutoff_cycles=1.5)
+    cands = _score_carrier_candidates(magnitude, mag_search, cy, cx,
+                                      dc_radius=2.5, apply_floor=True)
+    return cands, cy, cx, h, w
+
+
+def _threshold_multiotsu3(img_u8: np.ndarray) -> tuple[int, int] | None:
+    """Two thresholds splitting a uint8 image into three classes by maximum
+    between-class variance (Otsu's criterion for three classes, the same
+    criterion as ``skimage.filters.threshold_multiotsu``; implemented here so
+    the crop does not depend on scikit-image, which the hosted server lacks).
+
+    Returns ``(t1, t2)``, the last grey level of the dark and of the middle
+    class, or None when fewer than three grey levels are populated.
+    """
+    hist = np.bincount(np.asarray(img_u8, dtype=np.uint8).ravel(),
+                       minlength=256).astype(np.float64)
+    if np.count_nonzero(hist) < 3:
+        return None
+    p = hist / hist.sum()
+    levels = np.arange(256, dtype=np.float64)
+    mass = np.cumsum(p)              # mass[k]   = probability of levels 0..k
+    moment = np.cumsum(p * levels)   # moment[k] = first moment of levels 0..k
+    t1 = np.arange(256)[:, None]     # dark class  = levels 0..t1
+    t2 = np.arange(256)[None, :]     # middle class = levels t1+1..t2
+    w0, m0 = mass[t1], moment[t1]
+    w1, m1 = mass[t2] - mass[t1], moment[t2] - moment[t1]
+    w2, m2 = 1.0 - mass[t2], moment[-1] - moment[t2]
+    valid = (t2 > t1) & (w0 > 0) & (w1 > 0) & (w2 > 0)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        # sum_k w_k * mu_k^2 (the between-class variance up to a constant)
+        sigma_b = (np.where(w0 > 0, m0 ** 2 / w0, 0.0)
+                   + np.where(w1 > 0, m1 ** 2 / w1, 0.0)
+                   + np.where(w2 > 0, m2 ** 2 / w2, 0.0))
+    sigma_b = np.where(valid, sigma_b, -np.inf)
+    i, j = np.unravel_index(int(np.argmax(sigma_b)), sigma_b.shape)
+    return int(i), int(j)
+
+
+def _dominant_brightness_bbox(image: np.ndarray) -> tuple[int, int, int, int] | None:
+    """Return the bbox (y0, y1, x0, x1) of a bright component worth cropping to.
+
+    Used only for carrier detection. The crop exists to find the carrier: when
+    the useful fringe patch occupies a small part of a larger frame (an
+    optical flat on a fixture), aperture and lighting steps dominate the
+    lowest FFT bins, and cropping to the patch finds the carrier at full
+    spectral resolution.
+
+    So a crop is accepted only when it demonstrably improves the carrier: its
+    own best carrier candidate must have at least ``_CROP_MIN_CYCLES`` cycles
+    across the crop, score at least ``_CROP_MIN_SCORE`` (an absolute floor: a
+    carrier-less full frame is easy to beat by 2x, and fringe-free crops score
+    <= 15 while the weakest real crop measured scores 73) and score more than
+    ``_CROP_SCORE_MARGIN`` times the best candidate of the full frame. This rejects a single bright fringe stripe
+    (<1 cycle across it), a uniform glare spot (no carrier) and fringe-free
+    scenes, and needs no area-ratio or texture heuristics. The accepted crop
+    with the highest score wins.
+
+    Candidate crops are bright connected components (2-class Otsu, opened
+    with a 15x15 ellipse). Two-class Otsu can lump a bright-ish fixture
+    together with the flat so the component fills the frame; then the bright
+    class is recomputed from a 3-class multi-Otsu split. Up to four
+    components (by area) with sane size/fill/border gates are tried, padded
+    by 5%.
     """
     img = np.asarray(image, dtype=np.float64)
     if img.ndim == 3:
@@ -482,65 +567,67 @@ def _dominant_brightness_bbox(image: np.ndarray) -> tuple[int, int, int, int] | 
         return None
 
     img_u8 = np.clip(img / max(img.max(), 1) * 255, 0, 255).astype(np.uint8)
-    _, bright_mask = cv2.threshold(img_u8, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (15, 15))
-    cleaned = cv2.morphologyEx(bright_mask, cv2.MORPH_OPEN, kernel)
-    n_labels, _, stats, _ = cv2.connectedComponentsWithStats(
-        (cleaned > 0).astype(np.uint8), 8
-    )
+
+    def _components(bright_mask):
+        cleaned = cv2.morphologyEx(bright_mask, cv2.MORPH_OPEN, kernel)
+        return cv2.connectedComponentsWithStats((cleaned > 0).astype(np.uint8), 8)
+
+    _, bright_mask = cv2.threshold(img_u8, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    n_labels, _, stats, _ = _components(bright_mask)
+    if n_labels > 1:
+        big = 1 + int(np.argmax(stats[1:, cv2.CC_STAT_AREA]))
+        if (stats[big, cv2.CC_STAT_WIDTH] * stats[big, cv2.CC_STAT_HEIGHT]
+                > 0.85 * h * w):
+            t = _threshold_multiotsu3(img_u8)
+            if t is not None:  # degenerate histogram: keep the 2-class components
+                n_labels, _, stats, _ = _components(
+                    ((img_u8 > t[1]) * 255).astype(np.uint8))
     if n_labels <= 1:
         return None
 
-    areas = stats[1:, cv2.CC_STAT_AREA].astype(np.int64)
-    order = np.argsort(areas)[::-1]
-    best_label = int(order[0] + 1)
-    best_area = int(areas[order[0]])
-    second_area = int(areas[order[1]]) if len(order) > 1 else 0
+    boxes = []  # (area, (y0, y1, x0, x1))
+    for label in range(1, n_labels):
+        x, y, bw, bh, area = (int(v) for v in stats[label])
+        # Ignore tiny bright specks (dust/glare) and thin outlines/text.
+        if area < 0.01 * h * w or bw < 32 or bh < 32:
+            continue
+        if area / max(bw * bh, 1) < 0.35:
+            continue
+        # A small component clipped by the border is a lighting-gradient tail.
+        touches_border = x <= 0 or y <= 0 or (x + bw) >= w or (y + bh) >= h
+        if touches_border and (bw * bh) < 0.25 * h * w:
+            continue
+        # Nearly filling the frame: cropping adds nothing.
+        if (bw * bh) > 0.85 * h * w:
+            continue
+        pad_y = max(4, int(0.05 * bh))
+        pad_x = max(4, int(0.05 * bw))
+        boxes.append((area, (max(0, y - pad_y), min(h, y + bh + pad_y),
+                             max(0, x - pad_x), min(w, x + bw + pad_x))))
+    if not boxes:
+        return None
+    boxes.sort(key=lambda b: -b[0])
+    boxes = boxes[:_CROP_MAX_CANDIDATES]
 
-    # Ignore tiny bright specks; they are usually dust/glare, not the aperture.
-    if best_area < 0.01 * h * w:
+    full, *_ = _spectrum_candidates(img)
+    if not full:
         return None
-    # Only crop when there is one clear illuminated target. Repeating bright
-    # fringe bands should not be mistaken for a part aperture.
-    if second_area > 0 and best_area / max(second_area, 1) < 5.0:
-        return None
+    full_score = full[0]["score"]
 
-    x = int(stats[best_label, cv2.CC_STAT_LEFT])
-    y = int(stats[best_label, cv2.CC_STAT_TOP])
-    bw = int(stats[best_label, cv2.CC_STAT_WIDTH])
-    bh = int(stats[best_label, cv2.CC_STAT_HEIGHT])
-    if bw < 32 or bh < 32:
-        return None
-    # Reject thin outlines/text/edges; the carrier crop is meant for filled
-    # illuminated regions.
-    if best_area / max(bw * bh, 1) < 0.35:
-        return None
-    # A dominant bright patch is often glare. Require actual repeated texture
-    # inside the proposed carrier crop before allowing it to replace the
-    # full-frame FFT. A nearly uniform crop has no defensible carrier.
-    candidate = img[y:y + bh, x:x + bw]
-    local_bg = cv2.GaussianBlur(candidate, (0, 0), 3.0)
-    texture_rms = float(np.sqrt(np.mean((candidate - local_bg) ** 2)))
-    dynamic = float(np.percentile(img, 99.0) - np.percentile(img, 1.0))
-    if texture_rms < max(1.0, 0.02 * dynamic):
-        return None
-    # A small component clipped by the image border is commonly a lighting
-    # gradient tail, not a stable analysis aperture.
-    touches_border = x <= 0 or y <= 0 or (x + bw) >= w or (y + bh) >= h
-    if touches_border and (bw * bh) < 0.25 * h * w:
-        return None
-    # If it nearly fills the frame, cropping adds no value and can distort
-    # diagnostics.
-    if (bw * bh) > 0.85 * h * w:
-        return None
-
-    pad_y = max(4, int(0.05 * bh))
-    pad_x = max(4, int(0.05 * bw))
-    y0 = max(0, y - pad_y)
-    y1 = min(h, y + bh + pad_y)
-    x0 = max(0, x - pad_x)
-    x1 = min(w, x + bw + pad_x)
-    return y0, y1, x0, x1
+    best = None  # (score, bbox)
+    for _, (y0, y1, x0, x1) in boxes:
+        cands, cy, cx, _, _ = _spectrum_candidates(img[y0:y1, x0:x1])
+        if not cands:
+            continue
+        top = cands[0]
+        cycles = math.hypot(top["y"] - cy, top["x"] - cx)
+        if (cycles >= _CROP_MIN_CYCLES
+                and top["score"] >= _CROP_MIN_SCORE
+                and top["score"] > _CROP_SCORE_MARGIN * full_score
+                and (best is None or top["score"] > best[0])):
+            best = (top["score"], (y0, y1, x0, x1))
+    return best[1] if best else None
 
 
 def _subpixel_peak_offset(m_minus: float, m_zero: float, m_plus: float) -> float:
@@ -641,6 +728,183 @@ def _paraboloid_subpixel_offset(magnitude: np.ndarray, py: int, px: int,
     return dy_star, dx_star, True
 
 
+# Carrier selection: the strongest local maxima of the DC-suppressed
+# half-plane spectrum compete on prominence, not magnitude (see
+# _select_carrier_peak). Candidates below the floor (fraction of the
+# strongest) are dropped before scoring.
+_CARRIER_CANDIDATES = 12
+_CARRIER_MAGNITUDE_FLOOR = 0.1
+
+
+def _score_carrier_candidates(magnitude: np.ndarray, mag_search: np.ndarray,
+                              cy: int, cx: int, dc_radius: float, *,
+                              apply_floor: bool = True,
+                              max_candidates: int = _CARRIER_CANDIDATES,
+                              ) -> list[dict]:
+    """Score the strongest local maxima of ``mag_search`` by prominence.
+
+    Returns candidates sorted by score descending, each
+    ``{"y", "x", "magnitude" (mag_search value), "score"}``.
+
+    Raw magnitude is the wrong criterion. The transform of the illuminated
+    aperture — a disk's jinc rings, a rectangle's sinc streaks, illumination
+    falloff — has sidelobes a few bins from DC that outweigh the fringe
+    carrier whenever fringe contrast is low: below ~8% for a bright flat on
+    a dimmer fixture, which is an ordinary phone photo of a sodium-lamp
+    setup. Those sidelobes are *extended* (rings, streaks); a carrier is a
+    *point*. Each candidate is scored by its magnitude over two background
+    estimates from the full spectrum:
+
+    - the median of the annulus at the candidate's radius — what else the
+      image has at that spatial frequency (defeats rings), and
+    - the maximum on a ring 4-6 bins around the candidate — whether the peak
+      is isolated in every direction (defeats streaks).
+
+    Either alone is fooled by one of the two shapes; the score is magnitude
+    over their geometric mean. The candidate's own core and its conjugate
+    are excluded from both estimates so a genuine 3-fringe carrier does not
+    shadow itself. The magnitude floor is applied first: at high frequencies
+    the background is near zero, so a negligible spike would otherwise score
+    arbitrarily high. ``apply_floor=False`` keeps every candidate (used by
+    the diagnostics, which must always have competitors to report).
+
+    Harmonic suppression. Clipped (saturated) fringes are not sinusoids: a
+    flat-topped waveform has strong 2f and 3f components, and because the
+    annular-median background falls with radius, a 3f harmonic can out-score
+    the fundamental. A peak at k*f (k = 2, 3) on the same ray from DC as
+    another candidate at f is the same fringe system, not an alternative, so
+    it is dropped (radial ratio within 15% of k, direction within 8 degrees).
+    Collinearity is essential: an aperture lobe may sit near f/3 in radius
+    but far off the carrier's ray, and must not suppress the carrier; and a
+    candidate whose prominence score is under a quarter of the peak's cannot be
+    its fundamental (an aperture lobe near f/2 or f/3 must not erase the
+    carrier).
+    Suppression runs after scoring and the magnitude floor, here rather than
+    in the selector, so selection and diagnostics agree.
+    """
+    from scipy.ndimage import maximum_filter
+    h, w = mag_search.shape
+    is_peak = (mag_search == maximum_filter(mag_search, size=5)) & (mag_search > 0)
+    ys, xs = np.nonzero(is_peak)
+    if ys.size == 0:
+        return []
+    order = np.argsort(mag_search[ys, xs])[::-1][:max_candidates]
+    ys, xs = ys[order], xs[order]
+    vals = mag_search[ys, xs]
+    if apply_floor:
+        keep = vals >= _CARRIER_MAGNITUDE_FLOOR * vals[0]
+        ys, xs, vals = ys[keep], xs[keep], vals[keep]
+
+    yy, xx = np.mgrid[0:h, 0:w]
+    rho = np.hypot(yy - cy, xx - cx)
+    not_dc = rho > dc_radius
+    core = 3      # half-size of the box excluded around a candidate / conjugate
+    ring_lo, ring_hi = 4.0, 6.0
+    out = []
+    for y, x, val in zip(ys, xs, vals):
+        y, x, val = int(y), int(x), float(val)
+        allowed = not_dc.copy()
+        for by, bx in ((y, x), (2 * cy - y, 2 * cx - x)):
+            allowed[max(0, by - core):by + core + 1,
+                    max(0, bx - core):bx + core + 1] = False
+
+        d = rho[y, x]
+        ann = allowed & (np.abs(rho - d) <= 1.5)
+        if np.count_nonzero(ann) < 8:
+            ann = allowed & (np.abs(rho - d) <= 2.5)
+        ann_med = float(np.median(magnitude[ann])) if ann.any() else val
+
+        r = int(ring_hi)
+        y0, y1 = max(0, y - r), min(h, y + r + 1)
+        x0, x1 = max(0, x - r), min(w, x + r + 1)
+        rr = np.hypot(yy[y0:y1, x0:x1] - y, xx[y0:y1, x0:x1] - x)
+        ring = allowed[y0:y1, x0:x1] & (rr >= ring_lo) & (rr <= ring_hi)
+        ring_max = float(magnitude[y0:y1, x0:x1][ring].max()) if ring.any() else val
+
+        score = val * val / (max(ann_med, 1e-12) * max(ring_max, 1e-12))
+        out.append({"y": y, "x": x, "magnitude": val, "score": score})
+    # Stable sort keeps magnitude order among ties (first-best wins, as before).
+    out.sort(key=lambda c: -c["score"])
+    return _suppress_harmonic_candidates(out, cy, cx)
+
+
+_HARMONIC_RATIO_TOL = 0.15
+_HARMONIC_MIN_FUNDAMENTAL_SCORE = 0.25   # fundamental score / harmonic score, at least
+_HARMONIC_ANGLE_COS = math.cos(math.radians(8.0))
+
+
+def _suppress_harmonic_candidates(cands: list[dict], cy: int, cx: int) -> list[dict]:
+    """Drop candidates that are the 2nd/3rd harmonic of another candidate."""
+    vecs = [(c["y"] - cy, c["x"] - cx) for c in cands]
+    radii = [math.hypot(vy, vx) for vy, vx in vecs]
+    keep = []
+    for i, c in enumerate(cands):
+        r = radii[i]
+        harmonic = False
+        if r > 1e-9:
+            for j, rf in enumerate(radii):
+                if j == i or rf <= 1e-9:
+                    continue
+                cos = (vecs[i][0] * vecs[j][0] + vecs[i][1] * vecs[j][1]) / (r * rf)
+                if cos < _HARMONIC_ANGLE_COS:
+                    continue
+                # A harmonic's fundamental is a comparable spectral feature:
+                # clipped fringes give fundamental/harmonic score ratios of
+                # about 0.6-0.7 (0.5 already over-suppresses). Aperture lobes
+                # and sinc streaks that merely sit at f/2 or f/3 on the ray
+                # score far below 0.25 of a true carrier (bakafish lobe
+                # ~0.05x, fringes_2 lobe ~0.001x) and must not claim it.
+                if cands[j]["score"] < _HARMONIC_MIN_FUNDAMENTAL_SCORE * c["score"]:
+                    continue
+                if any(abs(r / (k * rf) - 1.0) <= _HARMONIC_RATIO_TOL for k in (2, 3)):
+                    harmonic = True
+                    break
+        if not harmonic:
+            keep.append(c)
+    return keep
+
+
+def _select_carrier_peak(magnitude: np.ndarray, mag_search: np.ndarray,
+                         cy: int, cx: int, dc_radius: float) -> tuple[int, int]:
+    """Return the (y, x) of the top-scoring carrier candidate.
+
+    See ``_score_carrier_candidates`` for the prominence criterion.
+    """
+    cands = _score_carrier_candidates(magnitude, mag_search, cy, cx, dc_radius)
+    if not cands:
+        idx = np.unravel_index(np.argmax(mag_search), mag_search.shape)
+        return int(idx[0]), int(idx[1])
+    return cands[0]["y"], cands[0]["x"]
+
+
+def _carrier_search_magnitude(magnitude: np.ndarray, cy: int, cx: int, *,
+                              dc_margin_y: int, dc_margin_x: int,
+                              dc_cutoff_cycles: float | None) -> np.ndarray:
+    """DC-suppressed, +1-order half-plane copy of ``magnitude`` for carrier search.
+
+    Hard-zeros the DC box, multiplies by the exponential DC ramp
+    ``1 - exp(-(rho/dc_cutoff_cycles)^2)`` (when enabled), then zeroes the
+    upper half-plane and the left half of the centre row so only the +1 order
+    can be found (the conjugate has identical magnitude; without this,
+    tie-breaking could flip the recovered surface phase sign).
+    """
+    h, w = magnitude.shape
+    mag_search = magnitude.copy()
+    mag_search[cy - dc_margin_y:cy + dc_margin_y + 1,
+               cx - dc_margin_x:cx + dc_margin_x + 1] = 0
+    # M2.1: smooth exponential DC high-pass `a(rho) = 1 - exp(-(rho/rho_cutoff)^2)`
+    # on top of the hard zero (the hard zero stays so dc_margin_override still
+    # has bite; the ramp tames the cliff that caused ringing). rho is in FFT
+    # bins of this (possibly cropped/downsampled) frame.
+    if dc_cutoff_cycles is not None and dc_cutoff_cycles > 0:
+        yy_m, xx_m = np.mgrid[0:h, 0:w]
+        rho = np.sqrt((yy_m - cy) ** 2 + (xx_m - cx) ** 2)
+        mag_search = mag_search * (1.0 - np.exp(-(rho / float(dc_cutoff_cycles)) ** 2))
+    mag_search[:cy, :] = 0
+    mag_search[cy, :cx] = 0
+    return mag_search
+
+
 def _find_carrier(image: np.ndarray, *,
                   dc_margin_override: int | None = None,
                   dc_cutoff_cycles: float | None = 1.5,
@@ -715,56 +979,14 @@ def _find_carrier(image: np.ndarray, *,
     else:
         dc_margin_y = 2
         dc_margin_x = 2
-    mag_search = magnitude.copy()
-    mag_search[cy - dc_margin_y:cy + dc_margin_y + 1,
-               cx - dc_margin_x:cx + dc_margin_x + 1] = 0
+    mag_search = _carrier_search_magnitude(
+        magnitude, cy, cx, dc_margin_y=dc_margin_y, dc_margin_x=dc_margin_x,
+        dc_cutoff_cycles=dc_cutoff_cycles)
 
-    # M2.1: smooth exponential DC high-pass `a(ρ) = 1 - exp(-(ρ/ρ_cutoff)²)`
-    # applied on top of the hard zero. The hard zero stays so that
-    # dc_margin_override still has bite; the ramp tames the cliff that caused
-    # ringing in surface maps from otherwise-clean data. `ρ` is in FFT bins
-    # measured from the DC center in this (possibly cropped/downsampled)
-    # frame; the cutoff is in the same units so a single scalar works across
-    # image sizes.
-    if dc_cutoff_cycles is not None and dc_cutoff_cycles > 0:
-        yy_m, xx_m = np.mgrid[0:h, 0:w]
-        rho = np.sqrt((yy_m - cy) ** 2 + (xx_m - cx) ** 2)
-        dc_ramp = 1.0 - np.exp(-(rho / float(dc_cutoff_cycles)) ** 2)
-        mag_search = mag_search * dc_ramp
-
-    # Zero out the upper half-plane (and left half of center row) so we can
-    # only ever find the +1 order peak — the surface-bearing sideband for
-    # `cos(+carrier + surface)`. Conjugate symmetry means the −1 order has
-    # identical magnitude in the upper-left, so without this constraint
-    # argmax tie-breaking could flip and globally invert the recovered
-    # surface phase.
-    mag_search[:cy, :] = 0
-    mag_search[cy, :cx] = 0
-
-    peak_idx = np.unravel_index(np.argmax(mag_search), mag_search.shape)
-    py, px = int(peak_idx[0]), int(peak_idx[1])
-    peak_val = float(mag_search[py, px])
-
-    dist = math.sqrt((py - cy) ** 2 + (px - cx) ** 2)
-    if dist <= 6 and peak_val > 0:
-        # Very-low-frequency peaks are often residual aperture/illumination
-        # structure. If a slightly higher-frequency carrier is nearly as strong,
-        # prefer it; if not, keep the low-frequency result so genuine 3-5 fringe
-        # interferograms still work.
-        retry_margin_y = 6
-        retry_margin_x = 6
-        mag_retry = magnitude.copy()
-        mag_retry[cy - retry_margin_y:cy + retry_margin_y + 1,
-                  cx - retry_margin_x:cx + retry_margin_x + 1] = 0
-        mag_retry[:cy, :] = 0
-        mag_retry[cy, :cx] = 0
-        retry_idx = np.unravel_index(np.argmax(mag_retry), mag_retry.shape)
-        rpy, rpx = int(retry_idx[0]), int(retry_idx[1])
-        retry_val = float(mag_retry[rpy, rpx])
-        retry_dist = math.sqrt((rpy - cy) ** 2 + (rpx - cx) ** 2)
-        if retry_dist > dist and retry_val >= 0.70 * peak_val:
-            py, px = rpy, rpx
-            dist = retry_dist
+    py, px = _select_carrier_peak(
+        magnitude, mag_search, cy, cx,
+        dc_radius=max(dc_margin_y, dc_margin_x) + 0.5,
+    )
 
     # Sub-pixel refinement.
     # M2.2: prefer a 2-D paraboloid fit over an annulus of ±2 bins around the
@@ -809,7 +1031,9 @@ def _find_carrier(image: np.ndarray, *,
     return py_orig, px_orig, dist_orig
 
 
-def _analyze_carrier(image: np.ndarray, mask: np.ndarray | None = None) -> dict:
+def _analyze_carrier(image: np.ndarray, mask: np.ndarray | None = None, *,
+                     dc_margin_override: int | None = None,
+                     dc_cutoff_cycles: float | None = 1.5) -> dict:
     """Analyze carrier frequency and return diagnostic information.
 
     Parameters
@@ -819,13 +1043,22 @@ def _analyze_carrier(image: np.ndarray, mask: np.ndarray | None = None) -> dict:
            the image is cropped to the mask bounding box (+5% padding) before
            FFT so fringes fill the analysis region, improving peak_ratio for
            partial-coverage images.
+    dc_margin_override, dc_cutoff_cycles : the DC suppression used by the
+           analysis (see ``_find_carrier``); forwarded so the diagnostics see
+           the same spectrum the selection did.
 
     Returns dict with keys:
     - peak_y, peak_x: carrier peak position in fftshift coords
     - distance_px: distance from DC in pixels
     - fringe_period_px: fringe period in pixels
     - fringe_angle_deg: fringe orientation in degrees (0-180)
-    - peak_ratio: ratio of carrier peak to secondary peak (confidence metric)
+    - peak_ratio: sqrt(carrier score / best competing candidate score), where
+      score = magnitude^2 / (annular median * local ring max) -- the same
+      score ``_select_carrier_peak`` ranks by; the square root puts the ratio
+      on a magnitude-like scale. Aperture sidelobes score low and so are not
+      rivals. >5 unambiguous, 2-5 fair, <2 the selection was close. Exactly
+      1.0 when no candidate lies within 5 bins of the carrier ``_find_carrier``
+      reported (the selection is not corroborated by the diagnostics).
     - fx_cpp, fy_cpp: carrier frequency in cycles per pixel
     """
     img = np.asarray(image, dtype=np.float64)
@@ -833,7 +1066,9 @@ def _analyze_carrier(image: np.ndarray, mask: np.ndarray | None = None) -> dict:
         img = img.mean(axis=-1)
     h, w = img.shape
 
-    py, px, dist = _find_carrier(img)
+    py, px, dist = _find_carrier(img, dc_margin_override=dc_margin_override,
+                                 dc_cutoff_cycles=dc_cutoff_cycles)
+    dc_margin = 2 if dc_margin_override is None else int(dc_margin_override)
 
     # Frequency in cycles per pixel
     fy = (py - h // 2) / h
@@ -877,71 +1112,86 @@ def _analyze_carrier(image: np.ndarray, mask: np.ndarray | None = None) -> dict:
     F = np.fft.fftshift(np.fft.fft2(img_windowed))
     magnitude = np.abs(F)
 
-    # Find carrier peak in the (possibly cropped) magnitude spectrum
+    # Find carrier peak in the (possibly cropped) magnitude spectrum. The
+    # diagnostics use the SAME search spectrum and prominence score as the
+    # selector, so "competitor" means one thing in both places.
     acy, acx = ah // 2, aw // 2
-    dc_margin = 2
-    mag_search = magnitude.copy()
-    mag_search[acy - dc_margin:acy + dc_margin + 1, acx - dc_margin:acx + dc_margin + 1] = 0
+    mag_search = _carrier_search_magnitude(
+        magnitude, acy, acx, dc_margin_y=dc_margin, dc_margin_x=dc_margin,
+        dc_cutoff_cycles=dc_cutoff_cycles)
+    cands = _score_carrier_candidates(
+        magnitude, mag_search, acy, acx, dc_radius=dc_margin + 0.5,
+        apply_floor=False)
 
-    # Score the same carrier selected by _find_carrier(), expressed in the
-    # diagnostic crop's FFT coordinates. This keeps displayed diagnostics
-    # aligned with the carrier used for modulation and phase extraction.
+    # Express the carrier _find_carrier() selected in the diagnostic crop's FFT
+    # coordinates; the chosen candidate is the best-scoring one near it.
     expected_y = int(round(acy + fy * ah))
     expected_x = int(round(acx + fx * aw))
+    chosen = None
     if 0 <= expected_y < ah and 0 <= expected_x < aw:
-        r_local = 5
-        y0 = max(0, expected_y - r_local)
-        y1 = min(ah, expected_y + r_local + 1)
-        x0 = max(0, expected_x - r_local)
-        x1 = min(aw, expected_x + r_local + 1)
-        local = mag_search[y0:y1, x0:x1]
-        local_idx = np.unravel_index(np.argmax(local), local.shape)
-        apy = int(y0 + local_idx[0])
-        apx = int(x0 + local_idx[1])
+        near = [c for c in cands
+                if max(abs(c["y"] - expected_y), abs(c["x"] - expected_x)) <= 5]
+        if near:
+            chosen = max(near, key=lambda c: c["score"])
+    if chosen is not None:
+        apy, apx = chosen["y"], chosen["x"]
+        chosen_score = chosen["score"]
     else:
-        a_peak_idx = np.unravel_index(np.argmax(mag_search), mag_search.shape)
-        apy, apx = int(a_peak_idx[0]), int(a_peak_idx[1])
+        # No candidate near the reported carrier (a manual pick, or one the
+        # prominence filter would not have chosen). Do not describe some other
+        # peak as the carrier: keep the reported position and say the
+        # selection is not corroborated (peak_ratio 1.0).
+        apy = int(np.clip(expected_y, 0, ah - 1))
+        apx = int(np.clip(expected_x, 0, aw - 1))
+        chosen_score = None
     carrier_peak_val = magnitude[apy, apx]
 
-    # Mask carrier and conjugate (±5px neighborhood)
+    # Mask carrier and conjugate (±5px neighborhood) for the noise floor.
     r = 5
-    y_lo, y_hi = max(0, apy - r), min(ah, apy + r + 1)
-    x_lo, x_hi = max(0, apx - r), min(aw, apx + r + 1)
-    mag_search[y_lo:y_hi, x_lo:x_hi] = 0
     conj_y, conj_x = 2 * acy - apy, 2 * acx - apx
-    cy_lo, cy_hi = max(0, conj_y - r), min(ah, conj_y + r + 1)
-    cx_lo, cx_hi = max(0, conj_x - r), min(aw, conj_x + r + 1)
-    mag_search[cy_lo:cy_hi, cx_lo:cx_hi] = 0
+    noise_spec = magnitude.copy()
+    noise_spec[acy - 2:acy + 3, acx - 2:acx + 3] = 0
+    noise_spec[max(0, apy - r):min(ah, apy + r + 1),
+               max(0, apx - r):min(aw, apx + r + 1)] = 0
+    noise_spec[max(0, conj_y - r):min(ah, conj_y + r + 1),
+               max(0, conj_x - r):min(aw, conj_x + r + 1)] = 0
 
-    secondary_peak_val = mag_search.max()
-    peak_ratio = carrier_peak_val / max(secondary_peak_val, 1e-10)
+    # Alternates: competing candidates (> 5 bins from the carrier and its
+    # conjugate), in score order, top 3.
+    alt_cands = [
+        c for c in cands
+        if max(abs(c["y"] - apy), abs(c["x"] - apx)) > r
+        and max(abs(c["y"] - conj_y), abs(c["x"] - conj_x)) > r
+    ][:3]
+    # Scores are quadratic in magnitude, so the ratio is reported as its
+    # square root: a magnitude-like ratio on the scale compute_confidence's
+    # thresholds were calibrated for.
+    if chosen_score is None:
+        peak_ratio = 1.0
+    elif alt_cands:
+        peak_ratio = math.sqrt(chosen_score / max(alt_cands[0]["score"], 1e-12))
+    else:
+        peak_ratio = min(math.sqrt(max(chosen_score, 0.0)), 1e6)
+    if not math.isfinite(peak_ratio):
+        peak_ratio = 1e6
 
     # SNR: carrier peak vs noise floor (median of non-DC, non-carrier region)
-    noise_floor = float(np.median(mag_search[mag_search > 0])) if np.any(mag_search > 0) else 1e-10
+    noise_floor = float(np.median(noise_spec[noise_spec > 0])) if np.any(noise_spec > 0) else 1e-10
     snr_db = float(10 * np.log10(max(carrier_peak_val / max(noise_floor, 1e-10), 1e-10)))
 
     # DC margin: distance from carrier peak to DC mask boundary (full-image coords)
     cy_full, cx_full = h // 2, w // 2
-    dc_margin_full = 2
+    dc_margin_full = dc_margin
     dc_margin_px = float(np.sqrt((py - cy_full) ** 2 + (px - cx_full) ** 2) - dc_margin_full)
     dc_margin_px = max(0.0, dc_margin_px)
 
-    # Alternate peaks: top 3 remaining peaks after masking carrier.
-    # Each entry carries the same frequency-derived fields as the chosen
-    # peak, expressed in the diagnostic crop's (ah, aw) coord system so the
-    # UI can display alternates identically to the primary carrier.
+    # Each alternate carries the same frequency-derived fields as the chosen
+    # peak, in the diagnostic crop's (ah, aw) coord system so the UI can
+    # display alternates identically to the primary carrier.
     alternate_peaks = []
-    for _ in range(3):
-        if not np.any(mag_search > 0):
-            break
-        alt_idx = np.unravel_index(np.argmax(mag_search), mag_search.shape)
-        alt_y, alt_x = int(alt_idx[0]), int(alt_idx[1])
-        alt_val = float(mag_search[alt_y, alt_x])
-        if alt_val <= 0:
-            break
+    for c in alt_cands:
+        alt_y, alt_x = c["y"], c["x"]
         alt_dist = float(np.sqrt((alt_y - acy) ** 2 + (alt_x - acx) ** 2))
-        alt_ratio = carrier_peak_val / max(alt_val, 1e-10)
-        # Frequency in cycles/pixel in the crop's FFT coord system.
         alt_fx = (alt_x - acx) / max(aw, 1)
         alt_fy = (alt_y - acy) / max(ah, 1)
         alt_freq = math.sqrt(alt_fx ** 2 + alt_fy ** 2)
@@ -950,16 +1200,15 @@ def _analyze_carrier(image: np.ndarray, mask: np.ndarray | None = None) -> dict:
         alternate_peaks.append({
             "y": alt_y, "x": alt_x,
             "distance_px": round(alt_dist, 1),
-            "peak_ratio": round(alt_ratio, 2),
+            "peak_ratio": round(float(math.sqrt(
+                (chosen_score if chosen_score is not None else c["score"])
+                / max(c["score"], 1e-12))), 2),
             "fx_cpp": float(alt_fx),
             "fy_cpp": float(alt_fy),
             "fringe_period_px": float(alt_period),
             "fringe_angle_deg": float(alt_angle),
-            "magnitude": round(alt_val, 2),
+            "magnitude": round(float(magnitude[alt_y, alt_x]), 2),
         })
-        ay_lo, ay_hi = max(0, alt_y - 5), min(ah, alt_y + 6)
-        ax_lo, ax_hi = max(0, alt_x - 5), min(aw, alt_x + 6)
-        mag_search[ay_lo:ay_hi, ax_lo:ax_hi] = 0
 
     return {
         "peak_y": int(py),
@@ -999,11 +1248,12 @@ def compute_confidence(carrier_info: dict, modulation: np.ndarray,
     dict with keys ``carrier``, ``modulation``, ``unwrap``, ``overall``
     (all floats rounded to one decimal, in [0, 100]).
     """
-    # Carrier confidence: normalize peak_ratio to 0–100.
-    # Thresholds are lenient because high-contrast fringes produce strong
-    # harmonics (2f, 3f) that lower the ratio even on excellent data.
-    # A peak_ratio of 2–3 is perfectly usable; the bandpass filter around
-    # the carrier already rejects harmonic content.
+    # Carrier confidence: normalize peak_ratio to 0–100. peak_ratio is the
+    # prominence ratio (carrier score / best competing candidate score; see
+    # _analyze_carrier; sqrt of the score ratio, so magnitude-like). >5 unambiguous, 2–5 fair,
+    # <2 the selection was close. Thresholds are lenient: a ratio of 2–3 is
+    # perfectly usable; the bandpass filter around the carrier already
+    # rejects harmonic content.
     pr = carrier_info.get("peak_ratio", 0)
     if pr >= 5:
         carrier_score = 100.0
@@ -1034,10 +1284,15 @@ def compute_confidence(carrier_info: dict, modulation: np.ndarray,
         n_good_mod = 0
         mod_score = 0.0
 
-    # Unwrap confidence: % of valid pixels that are reliable (risk == 0)
-    if n_valid > 0:
-        n_reliable = int(np.sum((risk_mask[valid] == 0)))
-        unwrap_score = 100.0 * n_reliable / n_valid
+    # Unwrap confidence: % of the returned aperture that unwrapped without a
+    # 2π correction. The boundary band (risk == 2) is excluded from the
+    # quantitative output by design — a wider band is a deliberate exclusion,
+    # not an unreliable unwrap — so it is left out of the denominator too.
+    quantitative = valid & (risk_mask != 2)
+    n_quantitative = int(quantitative.sum())
+    if n_quantitative > 0:
+        n_reliable = int(np.sum(risk_mask[quantitative] == 0))
+        unwrap_score = 100.0 * n_reliable / n_quantitative
     else:
         unwrap_score = 0.0
 
@@ -1052,6 +1307,34 @@ def compute_confidence(carrier_info: dict, modulation: np.ndarray,
         "unwrap": round(unwrap_score, 1),
         "overall": round(overall, 1),
     }
+
+
+def _wide_gaussian_blur(img: np.ndarray, sigma: float) -> np.ndarray:
+    """Gaussian blur whose cost does not grow with ``sigma``.
+
+    ``cv2.GaussianBlur`` uses a ~6σ-tap separable kernel, so the
+    illumination/background blurs below — whose sigma scales with the fringe
+    period — cost 8-14 s each on a 2016x1512 frame when the carrier is a few
+    cycles across the field (σ ≈ 250-380 px). Their output is smooth by
+    construction, so blur on a grid decimated to ~σ/8 per pixel and
+    interpolate back. INTER_AREA decimation is itself a box filter of
+    variance f²/12 (in full-res pixels); the residual sigma accounts for it.
+    The small grid mirrors about its outer edge (BORDER_REFLECT): its default
+    REFLECT_101 axis is the first coarse pixel's centre, ~f/2 full-res pixels
+    inside the frame, which visibly shifts the result when σ is frame-sized.
+    """
+    if sigma <= 16.0:
+        return cv2.GaussianBlur(img, (0, 0), sigma)
+    h, w = img.shape[:2]
+    f = sigma / 8.0
+    sw, sh = max(1, int(round(w / f))), max(1, int(round(h / f)))
+    fx, fy = w / sw, h / sh
+    small = cv2.resize(img, (sw, sh), interpolation=cv2.INTER_AREA)
+    sigma_x = math.sqrt(max((sigma / fx) ** 2 - 1.0 / 12.0, 0.25))
+    sigma_y = math.sqrt(max((sigma / fy) ** 2 - 1.0 / 12.0, 0.25))
+    small = cv2.GaussianBlur(small, (0, 0), sigmaX=sigma_x, sigmaY=sigma_y,
+                             borderType=cv2.BORDER_REFLECT)
+    return cv2.resize(small, (w, h), interpolation=cv2.INTER_LINEAR)
 
 
 def compute_fringe_modulation(image: np.ndarray) -> np.ndarray:
@@ -1092,7 +1375,7 @@ def compute_fringe_modulation(image: np.ndarray) -> np.ndarray:
     # brightness into the envelope passband and glare can look like excellent
     # fringe modulation.
     bg_sigma = max(3.0, 0.5 * fringe_period)
-    background = cv2.GaussianBlur(img, (0, 0), bg_sigma)
+    background = _wide_gaussian_blur(img, bg_sigma)
     enhanced = img - background
 
     # Step 2: complex demodulation — shift carrier to DC
@@ -1174,7 +1457,7 @@ def create_fringe_mask(image: np.ndarray, modulation: np.ndarray,
     fx = (px - img.shape[1] // 2) / img.shape[1]
     period = 1.0 / max(math.hypot(fy, fx), 1e-10)
     illum_sigma = max(3.0, 0.75 * period)
-    illumination = cv2.GaussianBlur(img, (0, 0), illum_sigma)
+    illumination = _wide_gaussian_blur(img, illum_sigma)
     lo, hi = np.percentile(illumination, [5.0, 95.0])
     raw_lo, raw_hi = np.percentile(img, [1.0, 99.0])
     if (hi - lo) < max(2.0, 0.03 * (raw_hi - raw_lo)):
@@ -2120,10 +2403,85 @@ def _phase_consistency(wrapped: np.ndarray) -> np.ndarray:
     return np.exp(-var)
 
 
+def _keep_largest_region(mask: np.ndarray) -> tuple[np.ndarray, int, str | None]:
+    """Connectivity gate: keep the largest region, warn if others were dropped."""
+    mask, n_components = _connected_analysis_mask(mask)
+    region_warning: str | None = None
+    if n_components > 1:
+        # Separate components have independent, indeterminate relative fringe
+        # orders at one wavelength — measuring across them would be as
+        # physically unjustified as the check above says. Rather than
+        # aborting (which turned legitimate multi-polygon masks and stray
+        # dust glints into a hard failure), keep the largest region and warn
+        # so the operator knows part of the mask was excluded.
+        excluded_px = int(mask.sum())
+        mask = _largest_component_mask(mask)
+        excluded_px -= int(mask.sum())
+        region_warning = (
+            f"Analysis aperture had {n_components} disconnected regions; "
+            f"measured the largest ({int(mask.sum())} px) and excluded the "
+            f"other {n_components - 1} region(s) ({excluded_px} px total)."
+        )
+    return mask, n_components, region_warning
+
+
+
+# Flood-priority multiplier for the mask-boundary band in unwrap_phase_2d. A
+# multiplier rather than zero so a mask thinner than two periods — all band —
+# still unwraps in modulation order instead of raster order.
+_EDGE_ZONE_PRIORITY = 1e-3
+
+
+_FOLDOVER_DEV_FRAC = 0.8   # local fringe frequency departs from the carrier by more than this fraction of the carrier -> no measurable carrier (same threshold as the "carrier is marginal" warning)
+_FOLDOVER_DENSITY = 0.5    # fraction of fold-over pixels within a period-sized window that makes a region an island
+
+
+def _foldover_islands(wrapped: np.ndarray, mask: np.ndarray,
+                      fringe_period_px: float | None) -> np.ndarray:
+    """Boolean hole mask (True = punch out) of fringe-free islands in the aperture.
+
+    Inside a fringe-free island (a cap, a label, a hole in the part) the
+    demodulated phase has no carrier to lock onto: it is noise, so its local
+    frequency reads as a ~100 % departure from the carrier. Such a region has
+    no mask boundary, so nothing protects the unwrap from its garbage phase;
+    it is made into one by punching it out of the mask, after which
+    ``unwrap_phase_2d`` excludes the boundary band around it like any edge.
+
+    ``wrapped`` is the carrier-removed phase from ``extract_phase_dft``.
+    Regions smaller than one period squared are dropped (specks would cost a
+    whole boundary band each).
+    """
+    mask = np.asarray(mask, dtype=bool)
+    empty = np.zeros(mask.shape, dtype=bool)
+    P = fringe_period_px
+    if (not P or not np.isfinite(P) or P <= 1 or not mask.any()):
+        return empty
+    dy = np.angle(np.exp(1j * np.diff(wrapped, axis=0, prepend=wrapped[:1])))
+    dx = np.angle(np.exp(1j * np.diff(wrapped, axis=1, prepend=wrapped[:, :1])))
+    dev = np.hypot(dy, dx) / (2 * np.pi) * P
+    fold = (mask & (dev > _FOLDOVER_DEV_FRAC)).astype(np.float64)
+    win = int(round(P)) | 1
+    density = cv2.blur(fold, (win, win))
+    support = cv2.blur(mask.astype(np.float64), (win, win))
+    dens = np.where(support > 0, density / np.maximum(support, 1e-9), 0.0)
+    core = mask & (dens >= _FOLDOVER_DENSITY)
+    k = int(P / 2) | 1
+    hole = cv2.dilate(core.astype(np.uint8),
+                      cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k))) > 0
+    hole &= mask
+    n, labels, stats, _ = cv2.connectedComponentsWithStats(
+        hole.astype(np.uint8), connectivity=8)
+    for i in range(1, n):
+        if stats[i, cv2.CC_STAT_AREA] < P * P:
+            hole[labels == i] = False
+    return hole
+
+
 def unwrap_phase_2d(wrapped: np.ndarray, mask: np.ndarray | None = None,
                     quality: np.ndarray | None = None,
                     fringe_period_px: float | None = None,
                     correct_2pi_jumps: bool = True,
+                    edge_band_px: float | None = None,
                     ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """2D spatial phase unwrapping using skimage's algorithm.
 
@@ -2145,7 +2503,13 @@ def unwrap_phase_2d(wrapped: np.ndarray, mask: np.ndarray | None = None,
               skimage's raster-order algorithm.
     fringe_period_px : optional fringe period in pixels. When provided
               together with a mask, marks pixels near mask edges (within
-              one fringe period) as edge-contamination in the risk mask.
+              0.75 fringe period, ~3 sigma of the DFT low-pass whose
+              sigma is ~0.25 period) as edge-contamination in the risk mask.
+    edge_band_px : optional width in pixels of the edge-contamination band
+              (distance from a mask boundary). When ``None`` the band is
+              0.75 fringe periods (kernel ``1.5 * P``); the pipeline passes
+              ``max(0.75 * P, 3 * sigma_lpf)`` so the band follows the actual
+              low-pass width when ``lpf_sigma_frac`` is changed.
     correct_2pi_jumps : when True (default), apply a 9x9 median-filter
               based correction that snaps pixels deviating by ~2π from
               their local median back onto the surface. This fixes
@@ -2165,7 +2529,10 @@ def unwrap_phase_2d(wrapped: np.ndarray, mask: np.ndarray | None = None,
                     provided, returns the phase-consistency map alone (so
                     callers can still visualize where unwrapping was
                     likely reliable). When `quality` IS provided,
-                    returns ``quality * phase_consistency(wrapped)``.
+                    returns ``quality * phase_consistency(wrapped)``. In
+                    both cases the edge-contamination zone (risk == 2) is
+                    scaled down by ``_EDGE_ZONE_PRIORITY`` so the flood
+                    reaches it last; the returned map reflects that.
     """
     from scipy.ndimage import median_filter
 
@@ -2181,6 +2548,32 @@ def unwrap_phase_2d(wrapped: np.ndarray, mask: np.ndarray | None = None,
         quality_map = np.clip(q_norm, 0.0, 1.0) * phase_consistency
     else:
         quality_map = phase_consistency
+
+    # Edge contamination zone: pixels within 0.75 fringe period of a mask
+    # boundary (the DFT low-pass has sigma ~ 0.18*sqrt(2)*P ~ 0.25*P, so its
+    # support reaches ~3 sigma = 0.75*P; hence a square kernel of ~1.5*P) mix valid and invalid data through the DFT bandpass, so their
+    # wrapped phase is unreliable — but smoothly so, which phase consistency
+    # cannot see, and bright-edge leakage usually gives them *higher*
+    # modulation than the interior. Left alone, the flood below unwraps that
+    # band first and carries its 2π mistakes into good pixels (measured on a
+    # phone photo of a flat: 5-30% of the trusted interior off by one fringe).
+    # Push the band to the back of the queue so it is unwrapped last, from the
+    # interior, and its errors stay inside the zone flagged risk == 2 below.
+    edge_zone: np.ndarray | None = None
+    if fringe_period_px and fringe_period_px > 1 and mask is not None:
+        if edge_band_px is None:
+            kernel_size = max(3, int(round(1.5 * fringe_period_px)) | 1)
+        else:
+            kernel_size = max(3, int(round(2.0 * edge_band_px)) | 1)
+        kernel = np.ones((kernel_size, kernel_size), dtype=np.uint8)
+        # Pixels beyond the sensor are missing support, just like pixels
+        # beyond an interior aperture. OpenCV's default erosion border is
+        # effectively valid, which used to leave a full-frame mask untouched.
+        eroded = cv2.erode(mask.astype(np.uint8), kernel,
+                           borderType=cv2.BORDER_CONSTANT, borderValue=0)
+        edge_zone = mask.astype(bool) & ~eroded.astype(bool)
+        quality_map = np.where(edge_zone, quality_map * _EDGE_ZONE_PRIORITY,
+                               quality_map)
 
     if quality is not None:
         unwrapped = _quality_guided_unwrap(phase, quality_map, mask)
@@ -2218,17 +2611,9 @@ def unwrap_phase_2d(wrapped: np.ndarray, mask: np.ndarray | None = None,
         unwrapped -= 2.0 * np.pi * np.round(jump_diff / (2.0 * np.pi))
         risk_mask[jump_pixels] = 1
 
-    # Edge contamination detection: pixels near mask boundary within one
-    # fringe period are suspect because they mix valid/invalid data.
-    if fringe_period_px and fringe_period_px > 1 and mask is not None:
-        kernel_size = max(3, int(fringe_period_px))
-        kernel = np.ones((kernel_size, kernel_size), dtype=np.uint8)
-        # Pixels beyond the sensor are missing support, just like pixels
-        # beyond an interior aperture. OpenCV's default erosion border is
-        # effectively valid, which used to leave a full-frame mask untouched.
-        eroded = cv2.erode(mask.astype(np.uint8), kernel,
-                           borderType=cv2.BORDER_CONSTANT, borderValue=0)
-        edge_zone = mask.astype(bool) & ~eroded.astype(bool)
+    # Edge contamination zone (computed above, before the flood): diagnostic
+    # only, excluded from quantitative output by the caller.
+    if edge_zone is not None:
         risk_mask[edge_zone] = 2
 
     if mask is not None:
@@ -2777,7 +3162,10 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 589.3,
     use_full_mask : when True, skip auto-masking and treat every pixel as
         valid.  Use this when the caller already cropped to an ROI — Otsu
         thresholding inside a user-selected region often picks up rim
-        artifacts that the user explicitly wanted to exclude.
+        artifacts that the user explicitly wanted to exclude. The ROI is
+        trusted as-is until fold-over detection finds non-fringe regions
+        inside it; it is then bounded by the automatic aperture, as a
+        polygon would be (unless that keeps under 5% of it).
     custom_mask : optional boolean mask to use instead of auto-masking.
         When provided, overrides both use_full_mask and the auto-masking
         logic.  Intended for polygon-based ROI selection from the UI.
@@ -2828,7 +3216,7 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 589.3,
         mask = user_region & auto_mask
         # Fall back to the raw polygon if intersection is too aggressive
         # (e.g. threshold_frac too high for this image)
-        if mask.sum() < 0.05 * user_region.sum():
+        if mask.sum() < _USER_REGION_MIN_KEEP * user_region.sum():
             mask = user_region
     elif use_full_mask:
         mask = np.ones(img.shape, dtype=bool)
@@ -2837,23 +3225,7 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 589.3,
                                   carrier_override=carrier_override,
                                   dc_margin_override=dc_margin_override,
                                   dc_cutoff_cycles=dc_cutoff_cycles)
-    mask, n_components = _connected_analysis_mask(mask)
-    region_warning: str | None = None
-    if n_components > 1:
-        # Separate components have independent, indeterminate relative fringe
-        # orders at one wavelength — measuring across them would be as
-        # physically unjustified as the check above says. Rather than
-        # aborting (which turned legitimate multi-polygon masks and stray
-        # dust glints into a hard failure), keep the largest region and warn
-        # so the operator knows part of the mask was excluded.
-        excluded_px = int(mask.sum())
-        mask = _largest_component_mask(mask)
-        excluded_px -= int(mask.sum())
-        region_warning = (
-            f"Analysis aperture had {n_components} disconnected regions; "
-            f"measured the largest ({int(mask.sum())} px) and excluded the "
-            f"other {n_components - 1} region(s) ({excluded_px} px total)."
-        )
+    mask, n_components, region_warning = _keep_largest_region(mask)
     if not mask.any():
         raise ValueError("No connected fringe aperture remains after masking")
     n_total = int(mask.size)
@@ -2867,7 +3239,8 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 589.3,
 
     # Step 2b: Carrier analysis (needed for fringe_period_px before unwrap)
     if carrier_override is not None:
-        carrier_info = _analyze_carrier(img, mask)
+        carrier_info = _analyze_carrier(img, mask, dc_margin_override=dc_margin_override,
+                                        dc_cutoff_cycles=dc_cutoff_cycles)
         carrier_info["peak_y"] = carrier_override[0]
         carrier_info["peak_x"] = carrier_override[1]
         fy = (carrier_override[0] - img.shape[0] // 2) / max(img.shape[0], 1)
@@ -2880,7 +3253,8 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 589.3,
         carrier_info["fx_cpp"] = fx
         carrier_info["fy_cpp"] = fy
     else:
-        carrier_info = _analyze_carrier(img, mask)
+        carrier_info = _analyze_carrier(img, mask, dc_margin_override=dc_margin_override,
+                                        dc_cutoff_cycles=dc_cutoff_cycles)
 
     # M1.5: build a nested diagnostics envelope alongside the existing flat
     # keys. Consumers that already read the flat layout (e.g. compute_confidence,
@@ -2903,11 +3277,63 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 589.3,
     }
     carrier_info["override"] = carrier_override is not None
 
-    # Step 3: Phase unwrapping
+    # Step 2c: fringe-free islands inside the aperture (a cap, a label, a
+    # hole in the part) are not mask boundaries, so nothing keeps their
+    # garbage out of the measurement. Where the fringes fold over across a
+    # whole period-sized neighbourhood there is no measurable carrier:
+    # punch a hole so the unwrap treats it like any other boundary.
+    foldover_warning: str | None = None
+    holes = _foldover_islands(wrapped, mask, carrier_info.get("fringe_period_px"))
+    fold_frac = 0.0
+    if holes.any():
+        n_hole = int(holes.sum())
+        fold_frac = n_hole / max(int(mask.sum()), 1)
+        punched = mask & ~holes
+        # Punching fold-over leaves ragged remnants of the non-fringe
+        # surround attached to the aperture (fringe-free pixels whose noise
+        # phase did not read as fold-over everywhere), which moves the true
+        # aperture rim into the "interior" where no edge band protects it.
+        # With use_full_mask the ROI was trusted as-is; once fold-over holes
+        # prove it contains non-fringe regions, the ROI is bounded by the
+        # automatic aperture like a polygon would be (same keep rule).
+        auto_mask = create_fringe_mask(
+            img, modulation, threshold_frac=mask_threshold,
+            carrier_override=carrier_override,
+            dc_margin_override=dc_margin_override,
+            dc_cutoff_cycles=dc_cutoff_cycles)
+        refined = punched & auto_mask
+        if refined.sum() >= _USER_REGION_MIN_KEEP * punched.sum():
+            punched = refined
+        mask, _, hole_region_warning = _keep_largest_region(punched)
+        if not mask.any():
+            raise ValueError("No connected fringe aperture remains after masking")
+        if hole_region_warning:
+            region_warning = (f"{region_warning} " if region_warning else "") + hole_region_warning
+        foldover_warning = (
+            f"Excluded {n_hole} px ({fold_frac:.0%} of the aperture) where the "
+            "fringes fold over (local fringe frequency departs from the carrier by more than 80%) "
+            "\u2014 either non-fringe regions inside the mask (fixture, cap, "
+            "label, hole in the part: draw the aperture tighter) or surface "
+            "slope beyond what this carrier can resolve: Add tilt (more "
+            "fringes across the aperture). The boundary band around the "
+            "excluded region is dropped like any other edge."
+        )
+
+    # Step 3: Phase unwrapping. The edge-contamination band must cover the
+    # support of the low-pass actually used: ~3 sigma_lpf, where
+    # sigma_lpf = lpf_sigma_frac * P * sqrt(2) (0.18 -> 0.76 P, the old 0.75 P).
+    _edge_band_px = None
+    _p_carrier = carrier_info.get("fringe_period_px")
+    if _p_carrier and math.isfinite(_p_carrier) and _p_carrier > 1:
+        _frac = (DEFAULT_LPF_SIGMA_FRAC if lpf_sigma_frac is None
+                 else float(lpf_sigma_frac))
+        _edge_band_px = max(0.75 * _p_carrier,
+                            3.0 * _frac * _p_carrier * math.sqrt(2.0))
     unwrapped, unwrap_risk, quality_map = unwrap_phase_2d(
         wrapped, mask, quality=modulation,
         fringe_period_px=carrier_info.get("fringe_period_px"),
-        correct_2pi_jumps=correct_2pi_jumps)
+        correct_2pi_jumps=correct_2pi_jumps,
+        edge_band_px=_edge_band_px)
     _progress("unwrap", 0.50, "Unwrapping phase...")
 
     # Confidence metrics (computed after unwrap, before form removal)
@@ -3185,6 +3611,8 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 589.3,
     modulation_grid_list = [round(float(v), 3) for v in mod_resized.ravel()]
 
     analysis_warnings: list[str] = [region_warning] if region_warning else []
+    if foldover_warning:
+        analysis_warnings.append(foldover_warning)
     if n_edge_risk:
         analysis_warnings.append(
             f"Excluded {n_edge_risk} boundary-contaminated pixels; PV/RMS "
@@ -3228,6 +3656,9 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 589.3,
         # Fold-over starts in earnest at 100% of the carrier; warn a little
         # ahead of it. A 320 nm astigmatism across five fringes sits near 50%
         # and is still recovered faithfully, so the threshold has to clear that.
+        # Folded pixels were punched out of the mask before this statistic;
+        # the punch has its own warning (Step 2c), which cannot tell fixture
+        # from slope, so this test sees only the remaining pixels.
         if wavefront_bw > 0.8 * carrier_cpp:
             analysis_warnings.append(
                 f"Carrier is marginal for the wavefront slope present: the "

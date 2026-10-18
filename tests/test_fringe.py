@@ -896,6 +896,54 @@ class TestUnwrapRiskMask:
         assert np.any(risk == 2)
         assert risk[30, 30] != 2
 
+    def test_edge_zone_follows_filter_support(self):
+        """The DFT bandpass leaks ~3 sigma = 0.75 period from a boundary, so
+        the risk band must be 0.75 period wide, not half a period."""
+        from backend.vision.fringe import unwrap_phase_2d
+        h = w = 256
+        yy, xx = np.mgrid[0:h, 0:w]
+        mask = np.hypot(xx - 128, yy - 128) < 100
+        P = 20.0
+        rng = np.random.default_rng(1)
+        wrapped = rng.uniform(-np.pi, np.pi, (h, w))
+        _, risk, _ = unwrap_phase_2d(wrapped, mask, fringe_period_px=P)
+        d = cv2.distanceTransform(mask.astype(np.uint8), cv2.DIST_L2, 5)
+        dmin = d[mask & (risk != 2)].min()
+        assert 0.7 * P <= dmin <= 0.85 * P
+
+    def test_corrupted_boundary_band_does_not_seed_interior(self):
+        """The DFT bandpass garbles the wrapped phase within ~a period of every
+        mask boundary, yet that band often has *higher* modulation than the
+        interior (bright-edge leakage) and phase consistency saturates there.
+        A quality-guided flood must not unwrap the band first and carry its
+        2π mistakes into the trusted interior."""
+        from scipy.ndimage import gaussian_filter
+        from backend.vision.fringe import unwrap_phase_2d
+        h, w = 256, 256
+        yy, xx = np.mgrid[0:h, 0:w]
+        true_phase = 2 * np.pi * 0.03 * xx + 0.8 * np.sin(2 * np.pi * yy / h)
+        mask = np.hypot(xx - 128, yy - 128) < 110
+        period = 20.0
+        dist = cv2.distanceTransform(mask.astype(np.uint8), cv2.DIST_L2, 5)
+        band = mask & (dist <= 0.4 * period)      # inside the risk == 2 zone
+        # Smooth but wrong, like filter fold-over: the band's phase winds
+        # 2.5 turns around the aperture, so unwrapping the ring first leaves
+        # the interior entered with different 2π offsets at different angles.
+        theta = np.arctan2(yy - 128, xx - 128)
+        phase = np.where(band, true_phase + 2.5 * theta, true_phase)
+        wrapped = np.angle(np.exp(1j * phase))
+        rng = np.random.default_rng(0)
+        smooth = gaussian_filter(rng.normal(size=(h, w)), 12)
+        interior_q = 0.8 + 0.1 * smooth / np.abs(smooth).max()   # real modulation varies
+        quality = np.where(band, 0.95, interior_q)   # band looks better than interior
+        unwrapped, risk, _ = unwrap_phase_2d(
+            wrapped, mask, quality=quality, fringe_period_px=period)
+        interior = mask & (risk != 2)
+        err = unwrapped[interior] - true_phase[interior]
+        err -= 2 * np.pi * np.round(np.median(err) / (2 * np.pi))   # piston is free
+        bad = float(np.mean(np.abs(err) > np.pi / 2))
+        assert bad < 0.01, f"{bad:.1%} of trusted interior pixels carry 2π errors"
+
 
 class TestFocusQuality:
     def test_sharp_image_scores_high(self):
@@ -1692,6 +1740,102 @@ class TestAnalyzeStream:
         assert len(error_events) > 0, "No error event received"
         assert "message" in error_events[0]
 
+    def test_stream_sends_keepalive_during_slow_stage(self, client, monkeypatch):
+        """A stage longer than the heartbeat must still put bytes on the wire,
+        or the client's inactivity timer aborts a healthy analysis."""
+        import time
+        import backend.api_fringe as api_fringe
+
+        real = api_fringe.analyze_interferogram
+
+        def slow(*args, **kwargs):
+            time.sleep(0.3)
+            return real(*args, **kwargs)
+
+        monkeypatch.setattr(api_fringe, "_SSE_HEARTBEAT_S", 0.05)
+        monkeypatch.setattr(api_fringe, "analyze_interferogram", slow)
+        _, buf = cv2.imencode(".png", _make_fringe_image(64, 64, n_fringes=4))
+        b64 = base64.b64encode(buf.tobytes()).decode("ascii")
+        with client.stream("POST", "/fringe/analyze-stream",
+                           json={"image_b64": b64, "n_zernike": 15}) as resp:
+            raw = resp.read().decode("utf-8")
+
+        assert ": keepalive" in raw
+        assert any(e["stage"] == "done" for e in self._parse_sse(raw))
+
+    def test_stream_stops_at_wall_clock_cap(self, client, monkeypatch):
+        """A hung analysis must not hold the stream open forever."""
+        import time
+        import backend.api_fringe as api_fringe
+
+        def hang(*args, **kwargs):
+            time.sleep(1.0)
+
+        monkeypatch.setattr(api_fringe, "_SSE_MAX_WALL_S", 0.2)
+        monkeypatch.setattr(api_fringe, "_SSE_HEARTBEAT_S", 0.05)
+        monkeypatch.setattr(api_fringe, "analyze_interferogram", hang)
+        _, buf = cv2.imencode(".png", _make_fringe_image(64, 64, n_fringes=4))
+        b64 = base64.b64encode(buf.tobytes()).decode("ascii")
+        with client.stream("POST", "/fringe/analyze-stream",
+                           json={"image_b64": b64, "n_zernike": 15}) as resp:
+            raw = resp.read().decode("utf-8")
+        events = self._parse_sse(raw)
+        assert events[-1]["stage"] == "error"
+        assert "exceeded" in events[-1]["message"]
+
+    def test_uploaded_image_is_capped_locally(self, client, monkeypatch):
+        """Local (non-hosted) uploads are downsampled to the analysis cap."""
+        import backend.api_fringe as api_fringe
+
+        monkeypatch.setattr(api_fringe, "_MAX_ANALYSIS_DIM", 64)
+        _, buf = cv2.imencode(".png", _make_fringe_image(128, 96, n_fringes=6))
+        b64 = base64.b64encode(buf.tobytes()).decode("ascii")
+        resp = client.post("/fringe/analyze", json={"image_b64": b64, "n_zernike": 15})
+        assert resp.status_code == 200, resp.text
+        result = resp.json()
+        assert (result["image_height"], result["image_width"]) == (64, 48)
+
+    def test_local_camera_frame_is_not_capped(self, monkeypatch):
+        import backend.api_fringe as api_fringe
+        from backend.main import create_app
+        from tests.conftest import FakeCamera
+        from fastapi.testclient import TestClient
+
+        monkeypatch.setattr(api_fringe, "_MAX_ANALYSIS_DIM", 64)
+        camera = FakeCamera()
+        frame = _make_fringe_image(128, 96, n_fringes=6)
+        monkeypatch.setattr(camera, "get_frame", lambda: frame)
+        with TestClient(create_app(camera)) as c:
+            resp = c.post("/fringe/analyze", json={"n_zernike": 15})
+        assert resp.status_code == 200, resp.text
+        result = resp.json()
+        assert (result["image_height"], result["image_width"]) == (128, 96)
+
+
+class TestWideGaussianBlur:
+    def test_matches_exact_blur_at_frame_sized_sigma(self):
+        """The decimated blur must agree with cv2.GaussianBlur, including at
+        the borders, when sigma is a large fraction of the frame."""
+        from backend.vision.fringe import _wide_gaussian_blur
+
+        rng = np.random.default_rng(0)
+        h, w = 300, 400
+        yy, xx = np.mgrid[0:h, 0:w]
+        img = (100 + 80 * ((xx - 200) ** 2 + (yy - 150) ** 2 < 120 ** 2)
+               + 30 * np.cos(2 * np.pi * xx / 23) + rng.normal(0, 5, (h, w)))
+        for sigma in (20.0, 60.0, 150.0):
+            exact = cv2.GaussianBlur(img, (0, 0), sigma)
+            fast = _wide_gaussian_blur(img, sigma)
+            assert fast.shape == img.shape
+            assert np.abs(fast - exact).max() < 1.0, sigma
+
+    def test_small_sigma_is_exact(self):
+        from backend.vision.fringe import _wide_gaussian_blur
+
+        img = np.random.default_rng(1).normal(size=(50, 60))
+        np.testing.assert_array_equal(_wide_gaussian_blur(img, 3.0),
+                                      cv2.GaussianBlur(img, (0, 0), 3.0))
+
 
 class TestConfidenceMetrics:
     def test_high_confidence(self):
@@ -1733,6 +1877,19 @@ class TestConfidenceMetrics:
         mask = np.ones((64, 64), dtype=bool)
         result = compute_confidence(carrier, modulation, risk_mask, mask, threshold_frac=0.15)
         assert result["unwrap"] < 10
+
+    def test_boundary_band_does_not_lower_unwrap_confidence(self):
+        """risk == 2 is the deliberately excluded boundary band, not a failed
+        unwrap; widening it must not read as lower unwrap confidence."""
+        from backend.vision.fringe import compute_confidence
+        carrier = {"peak_ratio": 15.0}
+        modulation = np.full((64, 64), 0.8)
+        risk_mask = np.zeros((64, 64), dtype=np.uint8)
+        risk_mask[:12, :] = risk_mask[-12:, :] = 2
+        risk_mask[:, :12] = risk_mask[:, -12:] = 2
+        mask = np.ones((64, 64), dtype=bool)
+        result = compute_confidence(carrier, modulation, risk_mask, mask, threshold_frac=0.15)
+        assert result["unwrap"] == 100.0
 
 
 class TestConfidenceMaps:
@@ -1959,7 +2116,7 @@ class TestLensK1Integration:
         from tests.conftest import FakeCamera
         from fastapi.testclient import TestClient
 
-        camera = FakeCamera()
+        camera = _with_synthetic_fringes(FakeCamera())
         app = create_app(camera)
         with TestClient(app) as c:
             yield c
@@ -3439,30 +3596,27 @@ class TestTrustedArea:
             f"expected >70%% trusted on clean fringes, got {result['trusted_area_pct']:.1f}%%"
         )
 
-    def test_low_modulation_region_reduces_trusted_area(self):
-        # Use use_full_mask=True so the analysis mask covers the whole image
-        # and the low-modulation region counts as "valid but not trusted",
-        # dropping the ratio rather than being excluded from the denominator.
+    def test_fringe_free_region_is_excluded_from_aperture(self):
+        """Semantic change: a fringe-free region (here the flat right half) has
+        no measurable carrier, so it leaves the returned aperture instead of
+        staying in as "valid but untrusted" with its garbage phase inside
+        PV/RMS. ``trusted_area_pct`` stays the trusted fraction of the
+        *returned* aperture (Task 5), so it does not drop; the warning carries
+        the excluded count and fraction instead."""
         img_full = self._clean_fringe_image(h=192, w=192, n_fringes=8)
         r_full = analyze_interferogram(img_full, wavelength_nm=632.8,
                                        mask_threshold=0.15, use_full_mask=True)
-        pct_full = r_full["trusted_area_pct"]
-
-        # Test: left half strong fringes, right half completely uniform DC.
         h, w = 192, 192
         yy, xx = np.mgrid[0:h, 0:w]
         carrier = 2 * np.pi * 8 * xx / w
         strong = 128 + 100 * np.cos(carrier)
-        # Right half: truly flat DC so modulation is essentially zero there.
         flat = np.full((h, w), 128.0)
         img_half = np.where(xx < w // 2, strong, flat).astype(np.uint8)
         r_half = analyze_interferogram(img_half, wavelength_nm=632.8,
                                        mask_threshold=0.15, use_full_mask=True)
-        pct_half = r_half["trusted_area_pct"]
-        assert pct_half < pct_full - 20.0, (
-            f"expected half-modulated image to be >=20pp lower; full={pct_full:.1f}%% "
-            f"half={pct_half:.1f}%%"
-        )
+        assert any("fold over" in m for m in r_half["warnings"]), r_half["warnings"]
+        assert r_half["n_valid_pixels"] < 0.6 * r_full["n_valid_pixels"]
+        assert r_half["trusted_area_pct"] >= r_full["trusted_area_pct"] - 5.0
 
     def test_trusted_area_matches_unwrap_stats(self):
         img = self._clean_fringe_image()
@@ -3527,11 +3681,13 @@ class TestTrustStatsOnReturnedAperture:
         speckle_count = {"n": 0}
 
         def speckled_unwrap(wrapped, mask=None, quality=None,
-                             fringe_period_px=None, correct_2pi_jumps=True):
+                             fringe_period_px=None, correct_2pi_jumps=True,
+                             edge_band_px=None):
             unwrapped, risk, qmap = real_unwrap(
                 wrapped, mask, quality=quality,
                 fringe_period_px=fringe_period_px,
                 correct_2pi_jumps=correct_2pi_jumps,
+                edge_band_px=edge_band_px,
             )
             if mask is not None:
                 valid = np.asarray(mask, dtype=bool)
@@ -4197,7 +4353,9 @@ class TestTunableParams:
         )
         r_large = analyze_interferogram(
             img, wavelength_nm=632.8, n_zernike=15,
-            use_full_mask=True, lpf_sigma_frac=3.0,
+            # 0.5, not 3.0: the edge band follows the low-pass width, so an
+            # absurdly wide filter correctly leaves no trusted interior.
+            use_full_mask=True, lpf_sigma_frac=0.5,
         )
         rms_small = r_small["rms_nm"]
         rms_large = r_large["rms_nm"]
@@ -4416,6 +4574,368 @@ class TestM22SubpixelCarrier:
         assert abs(px - expected_px) < 0.5, (
             f"Step-biased carrier: found px={px:.3f}, expected {expected_px:.3f}"
         )
+
+
+def _fixture_disk_interferogram(h=768, w=1024, period=40.0, angle_deg=20.0,
+                                contrast=0.06, r_disk=300, disk_level=200.0,
+                                fixture_level=140.0, ring_level=40.0, seed=0):
+    """Phone-photo geometry: a bright optical flat on a dimmer fixture plate
+    with a dark mounting ring, carrying low-contrast fringes.
+
+    The step from fixture to disk puts jinc sidelobes of the aperture a few
+    bins from DC; below ~8% fringe contrast those sidelobes outweigh the
+    carrier in raw spectral magnitude.
+    """
+    yy, xx = np.mgrid[0:h, 0:w]
+    r = np.hypot(yy - h / 2, xx - w / 2)
+    img = np.full((h, w), fixture_level)
+    img[(r >= r_disk) & (r < r_disk * 1.18)] = ring_level
+    th = math.radians(angle_deg)
+    carrier = np.cos(2 * np.pi * (xx * math.cos(th) + yy * math.sin(th)) / period)
+    disk = r < r_disk
+    img[disk] = disk_level * (1 + contrast * carrier[disk])
+    img += np.random.RandomState(seed).randn(h, w) * 2
+    return np.clip(img, 0, 255)
+
+
+def _carrier_period_angle(py, px, h, w):
+    fy = (py - h // 2) / h
+    fx = (px - w // 2) / w
+    return 1.0 / math.hypot(fy, fx), (math.degrees(math.atan2(fy, fx)) + 90.0) % 180.0
+
+
+class TestFoldoverIslands:
+    """Fringe-free islands inside the aperture become mask holes."""
+
+    @staticmethod
+    def _wrapped(patch_only=False):
+        from backend.vision.fringe import _foldover_islands  # noqa: F401
+        h = w = 256
+        yy, xx = np.mgrid[0:h, 0:w]
+        mask = np.hypot(xx - 128, yy - 128) < 110
+        wrapped = 0.3 * np.sin(2 * np.pi * yy / 256)
+        rng = np.random.RandomState(0)
+        noise = rng.uniform(-np.pi, np.pi, (h, w))
+        if patch_only:
+            sel = np.zeros((h, w), bool)
+            sel[126:129, 126:129] = True
+        else:
+            sel = np.hypot(xx - 128, yy - 128) < 40
+        return np.where(sel, noise, wrapped), mask, np.hypot(xx - 128, yy - 128)
+
+    def test_island_is_punched_unit(self):
+        from backend.vision.fringe import _foldover_islands
+        wrapped, mask, r = self._wrapped()
+        hole = _foldover_islands(wrapped, mask, 20.0)
+        assert hole[r < 40].mean() >= 0.9
+        assert not hole[r > 40 + 20].any()
+
+    def test_specks_are_not_punched(self):
+        from backend.vision.fringe import _foldover_islands
+        wrapped, mask, _ = self._wrapped(patch_only=True)
+        assert not _foldover_islands(wrapped, mask, 20.0).any()
+
+    def test_pipeline_excludes_fringe_free_cap(self):
+        h = w = 512
+        yy, xx = np.mgrid[0:h, 0:w]
+        img = 180 * (1 + 0.4 * np.cos(2 * np.pi * xx / 32))
+        r = np.hypot(xx - 256, yy - 256)
+        img[r < 45] = 150.0
+        img = img + np.random.RandomState(0).randn(h, w) * 2
+        img = np.clip(img, 0, 255)
+        result = analyze_interferogram(img, wavelength_nm=589.0,
+                                        use_full_mask=True)
+        mfull = np.asarray(result["_mask_full"]).reshape(h, w).astype(bool)
+        assert (~mfull[r < 45]).mean() >= 0.9
+        assert any("fold over" in x for x in result["warnings"])
+        assert result["pv_nm"] < 60
+
+
+class TestEdgeBandWidth:
+    def test_edge_band_px_sets_the_risk_band_width(self):
+        from scipy.ndimage import distance_transform_edt
+        h = w = 256
+        yy, xx = np.mgrid[0:h, 0:w]
+        mask = np.hypot(yy - 128, xx - 128) < 110
+        wrapped = np.angle(np.exp(1j * 2 * np.pi * xx / 20.0))
+        _, risk, _ = unwrap_phase_2d(wrapped, mask, quality=np.ones((h, w)),
+                                     fringe_period_px=20, edge_band_px=20)
+        dist = distance_transform_edt(mask)
+        band = mask & (risk == 2)
+        assert band.any()
+        assert abs(float(dist[mask & ~band].min()) - 20.0) <= 2.0, \
+            dist[mask & ~band].min()
+
+
+class TestFoldoverWarning:
+    def test_roi_around_dark_ring_matches_polygon_result(self):
+        """use_full_mask punches the fixture as fold-over; the phase must be
+        re-extracted for the post-punch aperture, or the all-ones-mask phase
+        leaks the disk rim into the measurement."""
+        img = _fixture_disk_interferogram(contrast=0.06)
+        result = analyze_interferogram(img, wavelength_nm=589.0,
+                                       use_full_mask=True)
+        assert result["rms_nm"] < 12, result["rms_nm"]
+        assert result["pv_nm"] < 150, result["pv_nm"]
+
+    def test_roi_corner_punch_does_not_claim_marginal_carrier(self):
+        """Fixture corners of an ROI-cropped round flat are punched as
+        fold-over; that must yield one honest warning naming both causes, not
+        a contradictory 'carrier is marginal' as well."""
+        img = _fixture_disk_interferogram(contrast=0.06)
+        result = analyze_interferogram(img, wavelength_nm=589.0,
+                                       use_full_mask=True)
+        warns = [str(m) for m in result["warnings"]]
+        assert any("draw the aperture tighter" in m for m in warns), warns
+        assert not any(m.startswith("Carrier is marginal") for m in warns), warns
+
+
+class TestCarrierSelectionProminence:
+    """The carrier is chosen by prominence over the aperture's own spectral
+    structure, not by raw magnitude."""
+
+    @pytest.mark.parametrize("contrast", [0.08, 0.06, 0.04])
+    def test_low_contrast_fringes_beat_aperture_sidelobes(self, contrast):
+        img = _fixture_disk_interferogram(contrast=contrast)
+        py, px, _ = _find_carrier(img)
+        period, angle = _carrier_period_angle(py, px, *img.shape)
+        assert abs(period - 40.0) < 1.0, (
+            f"contrast {contrast}: picked period {period:.1f}px, expected 40 "
+            f"(aperture sidelobe instead of carrier)")
+        assert abs(angle - 110.0) < 2.0, f"contrast {contrast}: angle {angle:.1f}"
+
+    @pytest.mark.parametrize("nf,gain", [(8, 3.0), (12, 2.0), (12, 3.0), (20, 3.0)])
+    def test_clipped_fringes_pick_fundamental_not_harmonic(self, nf, gain):
+        """Saturated fringes carry strong 2f/3f harmonics; the harmonic must
+        not out-score the fundamental."""
+        h, w = 600, 800
+        yy, xx = np.mgrid[0:h, 0:w]
+        rn = np.hypot(yy - h / 2, xx - w / 2) / (h / 2)
+        phase = 2 * np.pi * nf * (xx * math.cos(0.3) + yy * math.sin(0.3)) / w
+        img = np.where(rn < 1, np.clip(128 + gain * 100 * np.cos(phase), 0, 255), 60.0)
+        img = img + np.random.RandomState(0).randn(h, w) * 2
+        py, px, _ = _find_carrier(img)
+        cycles = math.hypot((py - h // 2) / h, (px - w // 2) / w) * w
+        assert abs(cycles - nf) < 0.5, f"nf={nf} gain={gain}: picked {cycles:.2f} cycles"
+
+    def test_weak_low_frequency_lobe_does_not_suppress_strong_carrier(self):
+        """A weak lobe near f/3 on the carrier's ray is not its fundamental:
+        a harmonic is never stronger than the fundamental it belongs to."""
+        h, w = 512, 512
+        yy, xx = np.mgrid[0:h, 0:w]
+        ang = math.radians(26.6)
+        u = (xx * math.cos(ang) + yy * math.sin(ang)) / w
+        # Weak lobe at ~10.8 cycles, 7 degrees off the carrier's ray.
+        ang2 = math.radians(33.7)
+        u2 = (xx * math.cos(ang2) + yy * math.sin(ang2)) / w
+        img = (128 + 90 * np.cos(2 * np.pi * 29.0 * u)
+               + 10 * np.cos(2 * np.pi * 10.8 * u2 + 1.0))
+        py, px, _ = _find_carrier(img)
+        cycles = math.hypot((py - h // 2) / h, (px - w // 2) / w) * w
+        assert abs(cycles - 29.0) < 0.5, f"picked {cycles:.2f} cycles"
+
+    def test_negligible_prominent_spike_does_not_win(self):
+        """A high-frequency spike has near-zero spectral background, so its
+        prominence is enormous; the magnitude floor must still reject it."""
+        h, w = 256, 256
+        yy, xx = np.mgrid[0:h, 0:w]
+        img = 128 + 80 * np.cos(2 * np.pi * 4 * xx / w)
+        img = img + 0.6 * np.cos(2 * np.pi * (40 * xx + 37 * yy) / w)
+        py, px, _ = _find_carrier(img)
+        period, _ = _carrier_period_angle(py, px, h, w)
+        assert abs(period - w / 4) < 1.0, f"picked period {period:.1f}px"
+
+    def test_peak_ratio_ignores_aperture_sidelobes(self):
+        """Diagnostics share the selector's notion of competitor: the aperture
+        lobe the selector discounts must not be reported as a rival."""
+        from backend.vision.fringe import _analyze_carrier
+        info = _analyze_carrier(_fixture_disk_interferogram(contrast=0.06))
+        assert abs(info["fringe_period_px"] - 40.0) < 1.0
+        assert info["peak_ratio"] > 2.0, f"peak_ratio {info['peak_ratio']:.2f}"
+
+    def test_peak_ratio_is_one_when_expected_peak_is_not_a_candidate(self, monkeypatch):
+        """If no candidate lies near the carrier _find_carrier reported, the
+        diagnostics must not silently describe a different peak as chosen."""
+        import backend.vision.fringe as fr
+        h = w = 128
+        yy, xx = np.mgrid[0:h, 0:w]
+        img = 128 + 80 * np.cos(2 * np.pi * (xx + 0.5 * yy) / 16.0)
+        monkeypatch.setattr(fr, "_find_carrier",
+                            lambda *a, **k: (64.0, 64.0 + 30.0, 30.0))
+        info = fr._analyze_carrier(img)
+        assert info["peak_ratio"] == 1.0, info["peak_ratio"]
+        assert info["alternate_peaks"], "alternates should still be listed"
+
+    @pytest.mark.parametrize("cycles,contrast", [(10, 0.06), (8, 0.06), (12, 0.04)])
+    def test_axis_aligned_fringes_survive_stronger_aperture_lobe_on_same_ray(
+            self, cycles, contrast, monkeypatch):
+        """A bright square aperture with axis-aligned fringes has aperture
+        lobes on the carrier's own ray; a lobe near f/2 must not claim the
+        carrier as its harmonic (crop disabled: this is the full-frame path)."""
+        import backend.vision.fringe as fr
+        h, w = 600, 800
+        yy, xx = np.mgrid[0:h, 0:w]
+        img = np.full((h, w), 40.0)
+        y0, x0 = (h - 480) // 2, (w - 480) // 2
+        sq = (yy >= y0) & (yy < y0 + 480) & (xx >= x0) & (xx < x0 + 480)
+        fr_ = np.cos(2 * np.pi * cycles * (yy - y0) / 480.0)
+        img[sq] = 200.0 * (1 + contrast * fr_[sq])
+        img += np.random.RandomState(0).randn(h, w) * 2
+        monkeypatch.setattr(fr, "_dominant_brightness_bbox", lambda im: None)
+        py, px, _ = _find_carrier(img)
+        period, _ = _carrier_period_angle(py, px, h, w)
+        truth = 480.0 / cycles
+        assert abs(period - truth) / truth < 0.02, f"period {period:.1f}, truth {truth:.1f}"
+
+    def test_analyze_carrier_forwards_dc_override(self):
+        from backend.vision.fringe import _analyze_carrier
+        h = w = 256
+        yy, xx = np.mgrid[0:h, 0:w]
+        img = 128 + 80 * np.cos(2 * np.pi * (3 * xx + 1 * yy) / w)
+        py, px, _ = _find_carrier(img, dc_margin_override=8)
+        expected, _ = _carrier_period_angle(py, px, h, w)
+        info = _analyze_carrier(img, dc_margin_override=8)
+        assert abs(info["fringe_period_px"] - expected) < 0.5, (
+            info["fringe_period_px"], expected)
+
+    def test_alternates_are_competing_candidates(self):
+        from backend.vision.fringe import _analyze_carrier
+        img = _fixture_disk_interferogram(contrast=0.06)
+        info = _analyze_carrier(img)
+        h, w = img.shape
+        chosen = (info["peak_y"], info["peak_x"])
+        assert info["alternate_peaks"]
+        for alt in info["alternate_peaks"]:
+            assert alt["peak_ratio"] > 1.0, alt
+            # peak_y/x are in full-frame coords; alternates are in the
+            # diagnostic crop's coords, which for this uncropped scene match.
+            assert max(abs(alt["y"] - chosen[0]), abs(alt["x"] - chosen[1])) > 5
+        res = analyze_interferogram(img, wavelength_nm=589.0)["carrier"]
+        assert res["candidates"] == res["alternate_peaks"]
+
+    def test_uniform_field_unchanged(self):
+        """No aperture structure: selection must agree with the magnitude peak."""
+        h, w = 384, 512
+        xx = np.arange(w)
+        img = np.tile(128 + 80 * np.cos(2 * np.pi * xx / 24.0), (h, 1))
+        py, px, _ = _find_carrier(img)
+        period, _ = _carrier_period_angle(py, px, h, w)
+        assert abs(period - 24.0) < 0.2
+
+
+def _small_flat_scene(strips: bool, contrast: float = 0.06):
+    """Small optical flat (r=120, 6% fringes, period 24) on a 140-level fixture
+    with a dark ring; optionally two bright fixture strips of comparable area."""
+    h, w = 768, 1024
+    yy, xx = np.mgrid[0:h, 0:w]
+    r = np.hypot(yy - h / 2, xx - w / 2)
+    img = np.full((h, w), 140.0)
+    img[(r >= 120) & (r < 141.6)] = 40.0
+    th = math.radians(20.0)
+    carrier = np.cos(2 * np.pi * (xx * math.cos(th) + yy * math.sin(th)) / 24.0)
+    disk = r < 120
+    img[disk] = 200.0 * (1 + contrast * carrier[disk])
+    if strips:
+        img[40:100, 150:874] = 215.0
+        img[668:728, 150:874] = 215.0
+    img += np.random.RandomState(0).randn(h, w) * 2
+    return np.clip(img, 0, 255)
+
+
+def _stripe_scene():
+    """Full-aperture disk with 8 clipped fringes across 800 px (period 100):
+    the bright fringe stripes are bright components with <1 cycle in them."""
+    h, w = 600, 800
+    yy, xx = np.mgrid[0:h, 0:w]
+    rn = np.hypot(yy - h / 2, xx - w / 2) / (h / 2)
+    phase = 2 * np.pi * 8 * (xx * math.cos(0.3) + yy * math.sin(0.3)) / w
+    img = np.where(rn < 1, np.clip(128 + 100 * np.cos(phase), 0, 255), 60.0)
+    return img + np.random.RandomState(0).randn(h, w) * 2
+
+
+def _glare_scene(period=40.0, glare=240.0):
+    """Fringed flat (r=200 at (384, 330)) next to a uniform glare disk
+    (r=110 at (384, 760)) with no fringes."""
+    h, w = 768, 1024
+    yy, xx = np.mgrid[0:h, 0:w]
+    img = np.full((h, w), 140.0)
+    r1 = np.hypot(yy - 384, xx - 330)
+    r2 = np.hypot(yy - 384, xx - 760)
+    th = math.radians(20.0)
+    carrier = np.cos(2 * np.pi * (xx * math.cos(th) + yy * math.sin(th)) / period)
+    img[r1 < 200] = 200.0 * (1 + 0.06 * carrier[r1 < 200])
+    img[r2 < 110] = glare
+    return np.clip(img + np.random.RandomState(0).randn(h, w) * 2, 0, 255)
+
+
+class TestApertureCrop:
+    """The carrier crop is accepted only when it demonstrably improves the
+    carrier: at least 3 cycles across it and clearly more prominent than the
+    full frame. (Edge geometry alone says nothing about fringes.)"""
+
+    @pytest.mark.parametrize("strips", [True, False])
+    def test_small_flat_crop_contains_disk_and_carrier_found(self, strips):
+        from backend.vision.fringe import _dominant_brightness_bbox
+        img = _small_flat_scene(strips)
+        bbox = _dominant_brightness_bbox(img)
+        assert bbox is not None
+        y0, y1, x0, x1 = bbox
+        assert y0 <= 264 and y1 >= 504 and x0 <= 392 and x1 >= 632, bbox
+        py, px, _ = _find_carrier(img)
+        period, _ = _carrier_period_angle(py, px, *img.shape)
+        assert abs(period - 24.0) < 1.0, f"strips={strips}: period {period:.1f}"
+
+    def test_zero_contrast_flat_has_no_crop(self):
+        from backend.vision.fringe import _dominant_brightness_bbox
+        assert _dominant_brightness_bbox(_small_flat_scene(True, contrast=0.0)) is None
+
+    def test_single_fringe_stripe_is_not_a_crop(self):
+        from backend.vision.fringe import _dominant_brightness_bbox
+        img = _stripe_scene()
+        assert _dominant_brightness_bbox(img) is None
+        py, px, _ = _find_carrier(img)
+        period, _ = _carrier_period_angle(py, px, *img.shape)
+        assert abs(period - 100.0) < 3.0, f"period {period:.1f}"
+
+    def test_uniform_glare_spot_is_not_the_crop(self):
+        from backend.vision.fringe import _dominant_brightness_bbox
+        img = _glare_scene()
+        bbox = _dominant_brightness_bbox(img)
+        assert bbox is not None
+        y0, y1, x0, x1 = bbox
+        assert y0 <= 384 < y1 and x0 <= 330 < x1, bbox
+        assert not (x0 <= 760 < x1), f"crop includes the glare spot: {bbox}"
+        py, px, _ = _find_carrier(img)
+        period, _ = _carrier_period_angle(py, px, *img.shape)
+        assert abs(period - 40.0) < 1.5, f"period {period:.1f}"
+
+
+class TestThreeClassOtsu:
+    """The crop's 3-class Otsu fallback is implemented in numpy so the hosted
+    server (which has no scikit-image installed) takes the same path as the
+    tests. It must agree with skimage's reference implementation."""
+
+    def test_matches_skimage_on_trimodal_image(self):
+        skfilters = pytest.importorskip("skimage.filters")
+        from backend.vision.fringe import _threshold_multiotsu3
+        rs = np.random.RandomState(1)
+        samples = np.concatenate([rs.normal(50, 8, 20000),
+                                  rs.normal(130, 10, 30000),
+                                  rs.normal(210, 6, 10000)])
+        img_u8 = np.clip(samples, 0, 255).astype(np.uint8).reshape(300, 200)
+        ours = _threshold_multiotsu3(img_u8)
+        ref = skfilters.threshold_multiotsu(img_u8, classes=3)
+        assert ours is not None
+        assert abs(ours[0] - ref[0]) <= 1 and abs(ours[1] - ref[1]) <= 1, (ours, ref)
+        assert 50 < ours[0] < 130 < ours[1] < 210, ours
+
+    def test_degenerate_histogram_returns_none(self):
+        from backend.vision.fringe import _threshold_multiotsu3
+        flat = np.full((64, 64), 77, dtype=np.uint8)
+        assert _threshold_multiotsu3(flat) is None
+        two_level = flat.copy()
+        two_level[:32] = 200
+        assert _threshold_multiotsu3(two_level) is None
 
 
 class TestM23HybridQualityMap:

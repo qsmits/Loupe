@@ -41,8 +41,16 @@ from .vision.fringe import (
 
 # ── Session-scoped fringe cache ───────────────────────────────────────────
 
-# Max image dimension in hosted mode (caps memory + CPU per request)
-_HOSTED_MAX_DIM = 2048
+# Max analysis dimension for uploaded images (all modes) and for every frame in
+# hosted mode (caps memory + CPU per request). A 48 MP phone photo of a flat
+# takes minutes through the pipeline and gains nothing: the fringe period is
+# hundreds of pixels at that size.
+_MAX_ANALYSIS_DIM = 2048
+
+# Seconds between SSE keep-alive comments while an analysis stage runs; the
+# client aborts after 30 s (120 s hosted) without receiving any bytes.
+_SSE_HEARTBEAT_S = 5.0
+_SSE_MAX_WALL_S = 600.0   # hard server-side cap on one analysis stream
 
 # Maximum number of capture summaries retained per session (FIFO; oldest evicted).
 # Module-level so tests can monkeypatch.
@@ -263,14 +271,17 @@ def _best_gray(image: np.ndarray) -> np.ndarray:
     return image[:, :, best]
 
 
-def _cap_image_size(image: np.ndarray, request: Request) -> np.ndarray:
-    """Downsample image if it exceeds the hosted-mode size limit."""
-    if not getattr(request.app.state, "hosted", False):
+def _cap_image_size(image: np.ndarray, request: Request, *, uploaded: bool) -> np.ndarray:
+    """Downsample uploads (and, when hosted, any frame) above the analysis cap.
+
+    Local camera frames are left at native resolution.
+    """
+    if not uploaded and not getattr(request.app.state, "hosted", False):
         return image
     h, w = image.shape[:2]
-    if max(h, w) <= _HOSTED_MAX_DIM:
+    if max(h, w) <= _MAX_ANALYSIS_DIM:
         return image
-    scale = _HOSTED_MAX_DIM / max(h, w)
+    scale = _MAX_ANALYSIS_DIM / max(h, w)
     new_w = int(w * scale)
     new_h = int(h * scale)
     return cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_AREA)
@@ -561,7 +572,7 @@ def make_fringe_router(camera: BaseCamera) -> APIRouter:
             if image.ndim == 3:
                 image = _best_gray(image)
 
-        image = _cap_image_size(image, request)
+        image = _cap_image_size(image, request, uploaded=bool(body.image_b64))
 
         _fringe_cache.put(session_id, "last_image", image.copy())
         _fringe_cache.put(session_id, "last_roi", body.roi if not body.mask_polygons else None)
@@ -654,7 +665,7 @@ def make_fringe_router(camera: BaseCamera) -> APIRouter:
             if image.ndim == 3:
                 image = _best_gray(image)
 
-        image = _cap_image_size(image, request)
+        image = _cap_image_size(image, request, uploaded=bool(body.image_b64))
 
         _fringe_cache.put(session_id, "last_image", image.copy())
         _fringe_cache.put(session_id, "last_roi", body.roi if not body.mask_polygons else None)
@@ -718,9 +729,24 @@ def make_fringe_router(camera: BaseCamera) -> APIRouter:
 
         async def _event_stream():
             task = asyncio.ensure_future(_run_analysis())
+            started = time.monotonic()
             try:
                 while True:
-                    event = await queue.get()
+                    if time.monotonic() - started > _SSE_MAX_WALL_S:
+                        job.cancel()  # best effort: a running worker cannot be interrupted
+                        task.cancel()
+                        yield ("data: " + json.dumps({
+                            "stage": "error",
+                            "message": f"Analysis exceeded {_SSE_MAX_WALL_S:.0f} s and was stopped",
+                        }) + "\n\n")
+                        break
+                    try:
+                        event = await asyncio.wait_for(queue.get(), _SSE_HEARTBEAT_S)
+                    except asyncio.TimeoutError:
+                        # SSE comment: ignored by the client's parser, but it
+                        # resets the inactivity timer during long stages.
+                        yield ": keepalive\n\n"
+                        continue
                     yield f"data: {json.dumps(event)}\n\n"
                     if event.get("stage") in ("done", "error"):
                         break
@@ -777,7 +803,7 @@ def make_fringe_router(camera: BaseCamera) -> APIRouter:
                 if image is None:
                     raise ValueError("Could not decode image")
                 image = _best_gray(image)
-                image = _cap_image_size(image, request)
+                image = _cap_image_size(image, request, uploaded=True)
             except HTTPException:
                 raise
             except Exception as e:
