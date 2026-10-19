@@ -311,6 +311,7 @@ export function buildResultsHtml() {
                   <tbody>
                     <tr><td style="padding:2px 8px;opacity:0.6">Reliable</td><td id="fringe-diag-reliable" style="padding:2px 8px">--</td></tr>
                     <tr><td style="padding:2px 8px;opacity:0.6">Corrected</td><td id="fringe-diag-corrected" style="padding:2px 8px">--</td></tr>
+                    <tr title="Pixels whose fringe order was re-ordered by the 2π island merge (blue in the risk map). Reliable; counted in Reliable."><td style="padding:2px 8px;opacity:0.6">Re-ordered</td><td id="fringe-diag-reordered" style="padding:2px 8px">--</td></tr>
                     <tr><td style="padding:2px 8px;opacity:0.6">Edge risk</td><td id="fringe-diag-edge-risk" style="padding:2px 8px">--</td></tr>
                   </tbody>
                 </table>
@@ -1164,6 +1165,8 @@ function updateCarrierDisplay(data) {
     if (relEl) relEl.textContent = us.n_reliable.toLocaleString();
     const corEl = $("fringe-diag-corrected");
     if (corEl) corEl.textContent = us.n_corrected.toLocaleString();
+    const reoEl = $("fringe-diag-reordered");
+    if (reoEl) reoEl.textContent = (us.n_reordered ?? 0).toLocaleString();
     const edgeEl = $("fringe-diag-edge-risk");
     if (edgeEl) edgeEl.textContent = us.n_edge_risk.toLocaleString();
   }

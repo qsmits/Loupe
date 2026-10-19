@@ -1237,7 +1237,9 @@ def compute_confidence(carrier_info: dict, modulation: np.ndarray,
     modulation : 2-D float ndarray
         Fringe modulation map (values in [0, 1]).
     risk_mask : 2-D uint8 ndarray
-        Unwrap risk/correction mask (0 = reliable, non-zero = corrected).
+        Unwrap risk mask from ``unwrap_phase_2d``: 0 = reliable,
+        1 = median-snap corrected, 2 = edge band (excluded),
+        3 = re-ordered by the island merge (reliable).
     mask : 2-D bool ndarray
         Valid-pixel mask (True where pixel should be included).
     threshold_frac : float
@@ -1291,7 +1293,9 @@ def compute_confidence(carrier_info: dict, modulation: np.ndarray,
     quantitative = valid & (risk_mask != 2)
     n_quantitative = int(quantitative.sum())
     if n_quantitative > 0:
-        n_reliable = int(np.sum(risk_mask[quantitative] == 0))
+        # Re-ordered islands (risk 3) are fixed, not suspect.
+        rq = risk_mask[quantitative]
+        n_reliable = int(np.sum((rq == 0) | (rq == _RISK_REORDERED)))
         unwrap_score = 100.0 * n_reliable / n_quantitative
     else:
         unwrap_score = 0.0
@@ -2704,18 +2708,328 @@ def _foldover_islands(wrapped: np.ndarray, mask: np.ndarray,
     return hole
 
 
+_ISLAND_MIN_PX = 9          # components smaller than this are left to the 9x9 median snap
+_ISLAND_VOTE_FRAC = 0.6     # a component is re-ordered only if this fraction of its boundary pairs agree
+_ISLAND_MAX_ROUNDS = 64     # nested-island propagation rounds (each round settles one ring of components)
+# unwrap_phase_2d risk code for pixels re-ordered by _merge_unwrap_islands and
+# not snapped again by the 9x9 median pass: a whole region moved by a voted
+# fringe order. Reliable (counts as trusted, like 0); see unwrap_phase_2d.
+_RISK_REORDERED = 3
+
+
+def _residue_cuts(wrapped: np.ndarray, mask: np.ndarray,
+                  max_cut_px: float) -> np.ndarray:
+    """Boolean image of straight branch cuts between nearby phase residues.
+
+    Each residue (a 2×2 plaquette whose wrapped differences sum to ±2π) is
+    joined to its nearest opposite-sign residue, or to the nearest pixel
+    outside ``mask`` if that is closer, provided the distance is at most
+    ``max_cut_px``. Cuts are rasterised at ≤ 0.5 px steps so they are
+    8-connected and block 4-connected labelling. The distance to the
+    aperture edge is read at the plaquette's top-left pixel rather than its
+    centre, so it can be off by up to ~0.7 px.
+    """
+    from scipy.spatial import cKDTree
+
+    TWO_PI = 2.0 * np.pi
+    h, w = mask.shape
+    cuts = np.zeros((h, w), dtype=bool)
+
+    def _wrap(a):
+        return (a + np.pi) % TWO_PI - np.pi
+
+    wr = wrapped
+    s = (_wrap(wr[:-1, 1:] - wr[:-1, :-1]) + _wrap(wr[1:, 1:] - wr[:-1, 1:])
+         + _wrap(wr[1:, :-1] - wr[1:, 1:]) + _wrap(wr[:-1, :-1] - wr[1:, :-1]))
+    res = np.rint(s / TWO_PI).astype(np.int8)
+    quad = mask[:-1, :-1] & mask[1:, 1:] & mask[:-1, 1:] & mask[1:, :-1]
+    res[~quad] = 0
+    ry, rx = np.nonzero(res)
+    if ry.size == 0:
+        return cuts
+    # Residue position = plaquette centre.
+    pts = np.column_stack([ry + 0.5, rx + 0.5])
+    sign = res[ry, rx] > 0
+    n_res = ry.size
+    best_d = np.full(n_res, np.inf)
+    best_p = np.zeros((n_res, 2))
+    for sgn in (True, False):
+        src = np.nonzero(sign == sgn)[0]
+        dst = np.nonzero(sign != sgn)[0]
+        if src.size == 0 or dst.size == 0:
+            continue
+        dd, ii = cKDTree(pts[dst]).query(pts[src], k=1,
+                                         distance_upper_bound=max_cut_px)
+        hit = np.isfinite(dd)
+        best_d[src[hit]] = dd[hit]
+        best_p[src[hit]] = pts[dst[ii[hit]]]
+    # Nearest pixel outside the mask.
+    outside = (~mask).astype(np.uint8)
+    if outside.any():
+        dist, lab = cv2.distanceTransformWithLabels(
+            1 - outside, cv2.DIST_L2, 5, labelType=cv2.DIST_LABEL_PIXEL)
+        oy, ox = np.nonzero(outside)
+        cy = np.clip(ry, 0, h - 1)
+        cx = np.clip(rx, 0, w - 1)
+        bd = dist[cy, cx].astype(np.float64)
+        closer = (bd < best_d) & (bd <= max_cut_px)
+        li = lab[cy[closer], cx[closer]] - 1
+        best_d[closer] = bd[closer]
+        best_p[closer] = np.column_stack([oy[li], ox[li]]).astype(np.float64) + 0.5
+    use = np.isfinite(best_d)
+    if not use.any():
+        return cuts
+    p0 = pts[use]
+    p1 = best_p[use]
+    nstep = np.ceil(2.0 * np.hypot(*(p1 - p0).T)).astype(np.int64) + 1
+    seg = np.repeat(np.arange(p0.shape[0]), nstep)
+    start = np.repeat(np.cumsum(nstep) - nstep, nstep)
+    t = (np.arange(seg.size) - start) / np.maximum(np.repeat(nstep, nstep) - 1, 1)
+    yy = np.rint(p0[seg, 0] + t * (p1[seg, 0] - p0[seg, 0]) - 0.5).astype(np.int64)
+    xx = np.rint(p0[seg, 1] + t * (p1[seg, 1] - p0[seg, 1]) - 0.5).astype(np.int64)
+    ok = (yy >= 0) & (yy < h) & (xx >= 0) & (xx < w)
+    cuts[yy[ok], xx[ok]] = True
+    # Block the residue plaquette itself, so the cut joins the wall ending
+    # at one of its corners without a 4-connected leak.
+    uy, ux = ry[use], rx[use]
+    for oy_, ox_ in ((0, 0), (0, 1), (1, 0), (1, 1)):
+        cuts[uy + oy_, ux + ox_] = True
+    return cuts
+
+
+def _merge_unwrap_islands(unwrapped: np.ndarray, wrapped: np.ndarray,
+                          mask: np.ndarray, max_cut_px: float = 64.0,
+                          fill_mask: np.ndarray | None = None,
+                          ) -> tuple[np.ndarray, np.ndarray]:
+    """Re-order closed 2π "islands" left by the quality-guided flood.
+
+    When the flood enters a region through a phase residue, the whole region
+    comes out one (or more) fringe orders off. Such an island is attached to
+    the rest of the map by its entry edge(s) only; across the rest of its
+    boundary the unwrapped difference disagrees with the wrapped difference
+    by ±2π. A genuine surface feature, in contrast, has continuous wrapped
+    phase across its edge and produces no such boundary.
+
+    1. Every 4-neighbour edge inside ``mask`` gets the integer
+       ``k = round((Δunwrapped − wrap(Δwrapped)) / 2π)``; edges with k ≠ 0
+       are inconsistent and one endpoint of each forms a wall (one endpoint
+       suffices: every 4-path across the cut uses an inconsistent edge).
+       Keeping the wall 1 px thin lets the vote below see across it.
+       An island's wall is a branch cut ending at residues; the gap the
+       flood entered through is closed by ``_residue_cuts``.
+    2. The 4-connected components of ``mask & ~wall`` are labelled; the
+       largest is the reference ("settled"). Components below
+       ``_ISLAND_MIN_PX`` do not vote.
+    3. Unsettled components vote against settled ones over all pairs of
+       pixels within 2 px of each other: the mode of the pairwise integer
+       order difference, if supported by ≥ 60 % of the pairs, is subtracted
+       from the component (a mode of 0 settles it unchanged). A component
+       without a consensus is re-evaluated in later rounds as long as its
+       vote total keeps growing (more neighbours settled); once it stops
+       growing it is left alone and never becomes a reference. Rounds
+       repeat so nested islands settle from the outside in; whatever is
+       still unsettled after ``_ISLAND_MAX_ROUNDS`` rounds is left alone.
+    4. Every other pixel of ``fill_mask`` (default ``mask``) -- wall and
+       residue-cut pixels, tiny components, and pixels of ``fill_mask``
+       outside ``mask`` such as the edge band -- takes the order shift of a
+       4-neighbour in a voting component across a consistent edge, else of
+       its nearest voting component, so no 2π step is left between a
+       re-ordered island and the pixels around it. Thin wall rings that
+       still end up off are repaired by the 9×9 median snap that runs next
+       in ``unwrap_phase_2d``.
+
+    The reference is the largest component. If the wrong-order region is
+    larger than the rest (more than half the free aperture), the correct
+    part is the one shifted: the result is still self-consistent (off by
+    a constant 2π piston, which form removal takes out), but the
+    ``shifted`` flags then mark the correct region, not the island.
+
+    Like the median snap, this destroys genuine phase steps ≥ λ/4 whose
+    wrapped phase is discontinuous; it must only run when
+    ``correct_2pi_jumps`` is requested.
+
+    Returns ``(unwrapped, shifted)`` where ``shifted`` marks the pixels whose
+    fringe order was changed.
+    """
+    TWO_PI = 2.0 * np.pi
+    mask = np.asarray(mask, dtype=bool)
+    shifted = np.zeros(mask.shape, dtype=bool)
+    if mask.sum() < 2 * _ISLAND_MIN_PX:
+        return unwrapped, shifted
+    h, w = mask.shape
+    u = unwrapped
+    wr = wrapped
+
+    # 1. Inconsistent 4-neighbour edges -> wall pixels.
+    def _wrap(a):
+        return (a + np.pi) % TWO_PI - np.pi
+
+    wall = np.zeros((h, w), dtype=bool)
+    ev = mask[1:, :] & mask[:-1, :]
+    kv = np.rint((u[1:, :] - u[:-1, :] - _wrap(wr[1:, :] - wr[:-1, :])) / TWO_PI)
+    bad_v = ev & (kv != 0)
+    wall[1:, :] |= bad_v
+    eh = mask[:, 1:] & mask[:, :-1]
+    kh = np.rint((u[:, 1:] - u[:, :-1] - _wrap(wr[:, 1:] - wr[:, :-1])) / TWO_PI)
+    bad_h = eh & (kh != 0)
+    wall[:, 1:] |= bad_h
+    if not wall.any():
+        return unwrapped, shifted
+    # The wall of an island is a branch cut that ends at two residues (or a
+    # residue and the aperture edge); the flood got in through the gap
+    # between them, which can be many pixels wide. Close such gaps with a
+    # straight cut from every residue to its nearest opposite-sign residue,
+    # or to the aperture edge when that is nearer, within max_cut_px.
+    wall |= _residue_cuts(wr, mask, max_cut_px)
+
+    # 2. Components of the non-wall aperture.
+    free = mask & ~wall
+    n, labels, stats, _ = cv2.connectedComponentsWithStats(
+        free.astype(np.uint8), connectivity=4)
+    if n <= 2:
+        return unwrapped, shifted
+    area = stats[:, cv2.CC_STAT_AREA].astype(np.int64)
+    area[0] = 0
+    ref = int(np.argmax(area))
+    usable = area >= _ISLAND_MIN_PX
+    usable[0] = False
+
+    # 3. Cross-component pixel pairs within a 2 px radius. Only pixels close
+    # to a wall can have a neighbour in another component.
+    near_wall = cv2.dilate(wall.astype(np.uint8), np.ones((5, 5), np.uint8)) > 0
+    cand = near_wall & usable[labels]
+    py, px = np.nonzero(cand)
+    if py.size == 0:
+        return unwrapped, shifted
+    la_all = labels[py, px]
+    A: list[np.ndarray] = []
+    B: list[np.ndarray] = []
+    K: list[np.ndarray] = []
+    for dy in range(-2, 3):
+        for dx in range(-2, 3):
+            if (dy == 0 and dx == 0) or dy * dy + dx * dx > 4:
+                continue
+            qy = py + dy
+            qx = px + dx
+            ok = (qy >= 0) & (qy < h) & (qx >= 0) & (qx < w)
+            qy_c = np.clip(qy, 0, h - 1)
+            qx_c = np.clip(qx, 0, w - 1)
+            lb = labels[qy_c, qx_c]
+            ok &= (lb != la_all) & usable[lb]
+            if not ok.any():
+                continue
+            sy, sx, ty, tx = py[ok], px[ok], qy_c[ok], qx_c[ok]
+            k = np.rint((u[sy, sx] - u[ty, tx]
+                         - _wrap(wr[sy, sx] - wr[ty, tx])) / TWO_PI)
+            A.append(la_all[ok])
+            B.append(lb[ok])
+            K.append(k.astype(np.int64))
+    if not A:
+        return unwrapped, shifted
+    pa = np.concatenate(A)
+    pb = np.concatenate(B)
+    pk = np.concatenate(K)
+
+    KMAX = 3
+    NB = 2 * KMAX + 1
+    settled = np.zeros(n, dtype=bool)
+    settled[ref] = True
+    done = ~usable.copy()      # tiny / background labels never vote
+    done[ref] = True
+    order = np.zeros(n, dtype=np.int64)
+    last_tot = np.zeros(n, dtype=np.int64)
+    for _ in range(_ISLAND_MAX_ROUNDS):
+        sel = settled[pb] & ~done[pa]
+        if not sel.any():
+            break
+        a = pa[sel]
+        k = pk[sel] - order[a] + order[pb[sel]]
+        k = np.clip(k, -KMAX, KMAX) + KMAX
+        votes = np.bincount(a * NB + k, minlength=n * NB).reshape(n, NB)
+        tot = votes.sum(axis=1)
+        cand_lab = np.nonzero(tot > 0)[0]
+        best = np.argmax(votes[cand_lab], axis=1)
+        frac = votes[cand_lab, best] / tot[cand_lab]
+        agree = frac >= _ISLAND_VOTE_FRAC
+        win = cand_lab[agree]
+        order[win] += best[agree] - KMAX
+        settled[win] = True
+        done[win] = True
+        # No consensus: retry next round only while more settled neighbours
+        # keep adding votes; otherwise left alone, never a reference.
+        lose = cand_lab[~agree]
+        stalled = tot[lose] <= last_tot[lose]
+        done[lose[stalled]] = True
+        last_tot[cand_lab] = tot[cand_lab]
+    moved = order != 0
+    if not moved.any():
+        return unwrapped, shifted
+
+    # 4. Per-pixel order shift. Voting components carry their own; every
+    # other pixel of fill_mask (walls, cuts, tiny components, edge band) is
+    # grown from them across consistent 4-neighbour edges (k == 0 in the
+    # original map, so it follows the region it was unwrapped with and
+    # stops at inconsistent edges), else takes the nearest voting
+    # component's shift.
+    src = free & usable[labels]
+    fill = mask if fill_mask is None else (np.asarray(fill_mask, dtype=bool) | mask)
+    shift = np.where(src, order[labels], 0).astype(np.int64)
+    todo = fill & ~src
+    if todo.any():
+        flat_shift = shift.ravel()
+        known = src.ravel().copy()
+        fill_f = fill.ravel()
+        ty, tx = np.nonzero(todo)
+        ti = ty * w + tx
+        nbrs = []
+        # (neighbour offset, in-bounds, edge consistent) for up/down/left/right.
+        cy = np.clip(ty - 1, 0, h - 2)
+        cyd = np.clip(ty, 0, h - 2)
+        cx = np.clip(tx - 1, 0, w - 2)
+        cxr = np.clip(tx, 0, w - 2)
+        for dy, dx, inb, cons in (
+                (-1, 0, ty > 0, kv[cy, tx] == 0),
+                (1, 0, ty < h - 1, kv[cyd, tx] == 0),
+                (0, -1, tx > 0, kh[ty, cx] == 0),
+                (0, 1, tx < w - 1, kh[ty, cxr] == 0)):
+            ni = np.where(inb, (ty + dy) * w + (tx + dx), 0)
+            ok = inb & cons & fill_f[ni]
+            nbrs.append((ni, ok))
+        open_ = np.ones(ti.size, dtype=bool)
+        for _ in range(4 * (h + w)):
+            grew = False
+            for ni, ok in nbrs:
+                take = open_ & ok & known[ni]
+                if take.any():
+                    sel = ti[take]
+                    flat_shift[sel] = flat_shift[ni[take]]
+                    known[sel] = True
+                    open_ &= ~take
+                    grew = True
+            if not grew or not open_.any():
+                break
+        if open_.any():
+            _, lab = cv2.distanceTransformWithLabels(
+                (~src).astype(np.uint8), cv2.DIST_L2, 5,
+                labelType=cv2.DIST_LABEL_PIXEL)
+            sy, sx = np.nonzero(src)
+            lut = np.zeros(int(lab.max()) + 1, dtype=np.int64)
+            lut[lab[sy, sx]] = order[labels[sy, sx]]
+            rest = ti[open_]
+            flat_shift[rest] = lut[lab.ravel()[rest]]
+    shifted = (shift != 0) & fill
+    out = unwrapped - TWO_PI * np.where(fill, shift, 0)
+    return out, shifted
+
+
 def unwrap_phase_2d(wrapped: np.ndarray, mask: np.ndarray | None = None,
                     quality: np.ndarray | None = None,
                     fringe_period_px: float | None = None,
                     correct_2pi_jumps: bool = True,
                     edge_band_px: float | None = None,
                     ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """2D spatial phase unwrapping using skimage's algorithm.
-
-    Uses scikit-image's unwrap_phase which implements a proper 2D
-    unwrapping algorithm that handles complex wrap topologies
-    (closed-contour isophase lines) that simple row/column unwrapping
-    cannot.
+    """2D spatial phase unwrapping: quality-guided flood when ``quality`` is
+    given (the pipeline default), else scikit-image's ``unwrap_phase``.
 
     When a quality map is provided, uses a quality-guided Goldstein/Zebker
     approach that propagates from high-confidence pixels first, preventing
@@ -2739,7 +3053,10 @@ def unwrap_phase_2d(wrapped: np.ndarray, mask: np.ndarray | None = None,
               low-pass width when ``lpf_sigma_frac`` is changed.
     correct_2pi_jumps : when True (default), apply a 9x9 median-filter
               based correction that snaps pixels deviating by ~2π from
-              their local median back onto the surface. This fixes
+              their local median back onto the surface, preceded by
+              ``_merge_unwrap_islands`` which re-orders whole regions the
+              flood left a fringe order off (too large for the 9x9
+              window; these pixels are reported as risk 3). This fixes
               "clouds with hard lines" unwrap glitches but will silently
               destroy real physical steps of magnitude ≥ λ/4 (~158 nm
               at 632.8 nm), rounding them to the nearest 2π. Set to
@@ -2749,8 +3066,11 @@ def unwrap_phase_2d(wrapped: np.ndarray, mask: np.ndarray | None = None,
     -------
     tuple of (unwrapped, risk_mask, quality_map):
         unwrapped : float64 array — unwrapped phase map.
-        risk_mask : uint8 array — 0 = clean, 1 = 2π-jump corrected,
-                    2 = edge contamination zone.
+        risk_mask : uint8 array — 0 = clean, 1 = 2π-jump corrected by the
+                    9x9 median snap, 2 = edge contamination zone,
+                    3 = re-ordered as part of a whole region by
+                    ``_merge_unwrap_islands`` (``_RISK_REORDERED``; reliable,
+                    counted as trusted like 0). Precedence 2 > 1 > 3 > 0.
         quality_map : float64 array in [0, 1] — hybrid quality metric used
                     for seed selection (M2.3). When `quality` is not
                     provided, returns the phase-consistency map alone (so
@@ -2832,10 +3152,31 @@ def unwrap_phase_2d(wrapped: np.ndarray, mask: np.ndarray | None = None,
     # silently destroys real physical steps ≥ λ/4. Skip when the caller is
     # measuring a true stepped surface (e.g., gage-block validation).
     if correct_2pi_jumps:
+        # Whole regions the flood entered through a residue come out a fringe
+        # order off; they are far larger than the 9x9 median window below.
+        # Re-order them first (interior only: the edge band is unwrapped last
+        # by design and excluded from quantitative output anyway).
+        if mask is not None:
+            merge_mask = mask.astype(bool)
+            if edge_zone is not None:
+                interior = merge_mask & ~edge_zone
+                if interior.any():
+                    merge_mask = interior
+            cut_px = (float(fringe_period_px)
+                      if fringe_period_px and fringe_period_px > 1 else 64.0)
+            # Band and wall pixels follow their nearest re-ordered component
+            # (fill_mask), so no 2π step is left at the band boundary.
+            unwrapped, island_shifted = _merge_unwrap_islands(
+                unwrapped, phase, merge_mask, max_cut_px=cut_px,
+                fill_mask=mask.astype(bool))
+            risk_mask[island_shifted] = _RISK_REORDERED
         med = median_filter(unwrapped, size=9)
         jump_diff = unwrapped - med
         jump_pixels = np.abs(jump_diff) > np.pi
         unwrapped -= 2.0 * np.pi * np.round(jump_diff / (2.0 * np.pi))
+        # Precedence 2 (edge band, below) > 1 (snapped here) > 3 (re-ordered
+        # by the island merge) > 0: a re-ordered pixel becomes 1 only if the
+        # median snap actually moves it again (the thin wall ring).
         risk_mask[jump_pixels] = 1
 
     # Edge contamination zone (computed above, before the flood): diagnostic
@@ -3248,13 +3589,20 @@ def render_confidence_maps(modulation: np.ndarray, risk_mask: np.ndarray,
                            quality_map: np.ndarray | None = None) -> dict:
     """Render confidence maps as base64 PNGs.
     Returns dict with 'unwrap_risk', 'composite', and (M2.3) 'quality' keys.
+
+    Unwrap-risk legend: black = clean (0), red = median-snap corrected (1),
+    orange = edge contamination band (2), blue = region re-ordered by the
+    island merge (3, reliable), dark grey = outside the mask. In the
+    composite, risk 3 counts as reliable (like 0).
     """
     h, w = modulation.shape
 
-    # Unwrap risk map: red=corrected, orange=edge contamination
+    # Unwrap risk map: red=corrected, orange=edge contamination,
+    # blue=re-ordered island (reliable)
     risk_rgb = np.zeros((h, w, 3), dtype=np.uint8)
     risk_rgb[risk_mask == 1] = [0, 0, 255]   # Red (BGR)
     risk_rgb[risk_mask == 2] = [0, 128, 255]  # Orange (BGR)
+    risk_rgb[risk_mask == _RISK_REORDERED] = [255, 128, 0]  # Blue (BGR)
     if mask is not None:
         risk_rgb[~mask.astype(bool)] = [40, 40, 40]
 
@@ -3619,6 +3967,9 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 589.3,
     # restriction above) rather than the wider pre-restriction mask, so
     # trusted_area_pct/unwrap_stats agree with n_valid_pixels and mask_grid.
     n_corrected = int(np.sum(work_risk[work_mask] == 1))
+    # Re-ordered by the island merge (risk 3): reliable, so part of
+    # n_reliable, reported separately for diagnostics.
+    n_reordered = int(np.sum(work_risk[work_mask] == _RISK_REORDERED))
     # Informational only: pixels excluded above because they were flagged
     # edge-contamination. Not part of the returned aperture, so not folded
     # into n_valid/n_reliable.
@@ -3627,11 +3978,12 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 589.3,
         "n_corrected": n_corrected,
         "n_edge_risk": n_edge_risk,
         "n_reliable": n_valid - n_corrected,
+        "n_reordered": n_reordered,
     }
 
     # M1.6: trusted-area mask — subset of the *returned* aperture that is
     # both well-modulated (>= mask_threshold) AND unwrap-reliable
-    # (risk == 0). Uses the same work_mask/work_modulation/work_risk domain
+    # (risk 0, or 3 = re-ordered island). Uses the same work_mask/work_modulation/work_risk domain
     # as the trusted_grid built below, so trusted_area_pct is exactly the
     # trusted_mask_grid fraction of mask_grid.
     # NOTE: mask_threshold is used here as an ABSOLUTE modulation floor,
@@ -3640,7 +3992,8 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 589.3,
     # well-modulated in absolute terms, not merely relative to this capture.
     # At the 0.30 default on fringes_2 (aperture median 0.345) the trusted
     # gate sits at ≈ 0.87× median while the aperture gate sits at 0.30×.
-    trusted_mask_full = work_mask & (work_modulation >= mask_threshold) & (work_risk == 0)
+    trusted_mask_full = (work_mask & (work_modulation >= mask_threshold)
+                         & ((work_risk == 0) | (work_risk == _RISK_REORDERED)))
     _n_trusted_full = int(trusted_mask_full.sum())
     trusted_area_pct = round(100.0 * _n_trusted_full / max(n_valid, 1), 1)
     unwrap_stats["trusted_area_pct"] = trusted_area_pct
@@ -3796,7 +4149,7 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 589.3,
     trusted_work = (
         work_mask.astype(bool)
         & (work_modulation >= mask_threshold)
-        & (work_risk == 0)
+        & ((work_risk == 0) | (work_risk == _RISK_REORDERED))
     )
     if trusted_work.shape != (grid_h, grid_w):
         trusted_resized = cv2.resize(trusted_work.astype(np.uint8), (grid_w, grid_h),
