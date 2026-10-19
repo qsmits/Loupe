@@ -115,7 +115,7 @@ function _persistWavelengthChange() {
 
 export function getMaskThreshold() {
   const el = $("fringe-mask-thresh");
-  return el ? parseInt(el.value, 10) / 100 : 0.15;
+  return el ? parseInt(el.value, 10) / 100 : 0.30;
 }
 
 /**

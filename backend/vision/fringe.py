@@ -1386,9 +1386,16 @@ def compute_fringe_modulation(image: np.ndarray) -> np.ndarray:
     # Window size ~2x the true fringe period for good locality. Compute this
     # from cycles/pixel, not from the FFT distance in pixels; h/dist is only
     # correct for square images with a purely vertical carrier.
+    # The 2P box has a null at fc and 2fc, which is what keeps the residual
+    # background (-fc after demodulation) and the conjugate sideband (-2fc)
+    # out of the envelope. Do not cap it below 2P: uniform_filter is a
+    # running sum, so its cost does not depend on the size, and the old
+    # 61 px cap broke the null for every period over ~30 px (box gain 0.21
+    # at 2fc for P = 80), striping the envelope at the fringe pitch. Bounded
+    # only by the image.
     from scipy.ndimage import uniform_filter
     ksize = max(5, int(fringe_period * 2)) | 1  # odd
-    ksize = min(ksize, 61)  # cap for efficiency
+    ksize = max(5, min(ksize, (min(h, w) // 2) | 1))
     envelope = np.abs(uniform_filter(demod.real, size=ksize) +
                       1j * uniform_filter(demod.imag, size=ksize))
 
@@ -1402,7 +1409,7 @@ def compute_fringe_modulation(image: np.ndarray) -> np.ndarray:
 
 
 def create_fringe_mask(image: np.ndarray, modulation: np.ndarray,
-                       threshold_frac: float = 0.15,
+                       threshold_frac: float = 0.30,
                        carrier_override: tuple[float, float] | None = None,
                        *,
                        dc_margin_override: int | None = None,
@@ -1510,7 +1517,43 @@ def create_fringe_mask(image: np.ndarray, modulation: np.ndarray,
                                             (seam_size, seam_size))
     mask = cv2.morphologyEx(mask.astype(np.uint8), cv2.MORPH_CLOSE,
                             seam_kernel).astype(bool)
-    return mask
+    return mask & ~_modulation_holes(mask, aperture, period)
+
+
+def _modulation_holes(mask: np.ndarray, aperture: np.ndarray,
+                      period: float) -> np.ndarray:
+    """Weak-fringe regions the threshold rejected, dilated by P/2.
+
+    The modulation envelope is a 2P box average, so where a weak-fringe
+    region (a cap, a low-contrast zone) meets good fringes the envelope
+    ramps over ±P and the threshold crossing lands somewhere inside that
+    ramp. Pixels near the crossing survive as a ragged fringe of peninsulas
+    and islands around the hole; the seam closing bridges them back to the
+    aperture, and the boundary band — measured from the *final* mask edge —
+    does not reach the ones that survived deepest. Their phase is garbage
+    (on IMG_3248 one such blob made the PV). ``_foldover_islands`` has the
+    same problem for fold-over holes and solves it by dilating the hole P/2
+    before punching it; this mirrors that for modulation holes.
+
+    Rejected components smaller than P² are specks, not regions, and are
+    left to the seam closing. Returns the hole mask (True = remove),
+    clipped to the aperture.
+    """
+    rejected = aperture & ~mask
+    if not rejected.any() or not math.isfinite(period) or period <= 1:
+        return np.zeros(mask.shape, dtype=bool)
+    n, labels, stats, _ = cv2.connectedComponentsWithStats(
+        rejected.astype(np.uint8), connectivity=8)
+    big = [i for i in range(1, n) if stats[i, cv2.CC_STAT_AREA] >= period * period]
+    if not big:
+        return np.zeros(mask.shape, dtype=bool)
+    core = np.isin(labels, big)
+    # Dilate by radius P/2 via a distance transform (O(N) whatever P is); a
+    # (P+1)² elliptical cv2.dilate costs O(N·P²) — 19 s at P = 800 on a
+    # 1536×2048 frame.
+    dist = cv2.distanceTransform((~core).astype(np.uint8), cv2.DIST_L2, 5)
+    hole = dist <= period / 2.0
+    return hole & aperture
 
 
 def _connected_analysis_mask(mask: np.ndarray) -> tuple[np.ndarray, int]:
@@ -1924,80 +1967,238 @@ def _normalized_lowpass(field: np.ndarray, weight: np.ndarray,
     -------
     Complex field of the same shape as ``field``.
     """
+    return _LowpassPlan(weight, sig_across, sig_along, theta, pad).apply(field)
+
+
+class _LowpassPlan:
+    """The weight-only half of ``_normalized_lowpass``, built once.
+
+    Everything in the first-order normalized convolution that depends only on
+    ``(weight, sig_across, sig_along, theta, pad)`` — the transfer function
+    ``W`` and its two derivative multipliers, the FFT of the padded weight,
+    and the moment / covariance maps derived from it (``inv``, ``mu``,
+    ``mv``, ``cuu``, ``cvv``, ``cuv``, ``det``) — is computed here. ``apply``
+    then costs one forward FFT of the weighted field and three inverse FFTs,
+    instead of two forward and eight inverse. ``_subtract_carrier_leak``
+    low-passes seven fields against the same two plans, so this is where
+    its runtime goes.
+
+    ``apply`` performs exactly the operations ``_normalized_lowpass`` used
+    to perform, in the same order, so the result is bit-identical; see that
+    function for the method and its rationale.
+    """
+
+    def __init__(self, weight: np.ndarray, sig_across: float,
+                 sig_along: float, theta: float, pad: int) -> None:
+        h, w = weight.shape
+        self.weight = weight
+        self.padding = ((pad, pad), (pad, pad))
+        m_pad = np.pad(weight, self.padding, mode="constant")
+        ph, pw = m_pad.shape
+
+        # Frequency grids, rotated so u runs across the fringes and v along them.
+        fy_axis = (np.arange(ph) - (ph // 2)) / ph
+        fx_axis = (np.arange(pw) - (pw // 2)) / pw
+        fy_grid, fx_grid = np.meshgrid(fy_axis, fx_axis, indexing='ij')
+        ct, st = math.cos(theta), math.sin(theta)
+        u_across = ct * fx_grid + st * fy_grid
+        v_along = -st * fx_grid + ct * fy_grid
+
+        # Q is the frequency coordinate scaled by the Gaussian's own width, so
+        # the basis is (1, t_u/σ_u, t_v/σ_v) and every moment below is O(1).
+        # The low-pass itself is exp(-½(Qu² + Qv²)) — the same Gaussian the
+        # isotropic and anisotropic branches used before, just written in
+        # scaled units.
+        Qu = np.fft.ifftshift(2.0 * math.pi * sig_across * u_across)
+        Qv = np.fft.ifftshift(2.0 * math.pi * sig_along * v_along)
+        W = np.exp(-0.5 * (Qu ** 2 + Qv ** 2))
+
+        # Correlating with t_u^p·t_v^q·w is a multiply by the corresponding
+        # derivative of W: FT{t_u·w} = -i·Qu·W and FT{t_u²·w} = (1 - Qu²)·W in
+        # these scaled units, and correlation (not convolution) conjugates
+        # the odd ones back to +i.
+        self.W = W
+        self.iQuW = 1j * Qu * W
+        self.iQvW = 1j * Qv * W
+        crop = (slice(pad, pad + h), slice(pad, pad + w))
+        self.crop = crop
+
+        Fm = np.fft.fft2(m_pad)
+
+        def _corr_real(mult):
+            return np.fft.ifft2(Fm * mult).real[crop]
+
+        # Moments of the weight over the surviving support.
+        a00 = _corr_real(W)
+        have = a00 > 1e-3
+        inv = np.divide(1.0, a00, out=np.zeros_like(a00), where=have)
+        self.inv = inv
+
+        mu = _corr_real(self.iQuW) * inv      # kernel centroid, scaled units
+        mv = _corr_real(self.iQvW) * inv
+        cuu = _corr_real((1.0 - Qu ** 2) * W) * inv - mu * mu
+        cvv = _corr_real((1.0 - Qv ** 2) * W) * inv - mv * mv
+        cuv = _corr_real(-Qu * Qv * W) * inv - mu * mv
+        self.mu, self.mv = mu, mv
+        self.cuu, self.cvv, self.cuv = cuu, cvv, cuv
+
+        # 2x2 weighted-covariance solve for the plane's slopes. Reject
+        # degenerate support before it is fitted, not merely before it divides
+        # by zero. det is 1.0 on full support, 0.363 at a straight boundary
+        # and 0.132 at a right-angle corner, so anything under ~0.05 is a
+        # sliver the plane fit cannot see a slope through, and inverting it
+        # would put a gain of up to 1000x on whatever noise is in there. Those
+        # pixels fall back to the weighted mean, which is the best answer
+        # available when there is no usable second moment.
+        det = cuu * cvv - cuv * cuv
+        self.usable = have & (det > 0.05)
+        self.inv_det = np.divide(1.0, det, out=np.zeros_like(det),
+                                 where=self.usable)
+
+    def apply(self, field: np.ndarray) -> np.ndarray:
+        """Low-pass one complex field against this plan's weight."""
+        f_pad = np.pad(field * self.weight, self.padding, mode="constant")
+        Ff = np.fft.fft2(f_pad)
+        crop = self.crop
+
+        def _corr_cplx(mult):
+            return np.fft.ifft2(Ff * mult)[crop]
+
+        inv, mu, mv = self.inv, self.mu, self.mv
+        r0 = _corr_cplx(self.W)
+        mean = r0 * inv                       # zeroth-order normalized convolution
+        gu = _corr_cplx(self.iQuW) * inv - mu * mean
+        gv = _corr_cplx(self.iQvW) * inv - mv * mean
+        b = (self.cvv * gu - self.cuv * gv) * self.inv_det
+        c = (self.cuu * gv - self.cuv * gu) * self.inv_det
+        return np.where(self.usable, mean - b * mu - c * mv, mean)
+
+
+# Carrier-leak subtraction in the demodulation low-pass; see
+# ``_subtract_carrier_leak``.
+LEAK_EST_SCALE = 2.0   # estimator σ as a multiple of the demodulation σ
+LEAK_ITERS = 2         # estimate-and-subtract passes
+_LEAK_MAX_GAIN = 0.5   # at/above this low-pass gain at fc the correction is off
+_LEAK_TAPER_GAIN = 0.4  # at/below this gain the correction is at full strength
+_LEAK_MIN_GAIN = 1e-3   # below this gain nothing leaks; skip the subtraction
+
+
+def _subtract_carrier_leak(field: np.ndarray, weight: np.ndarray,
+                           sig_across: float, sig_along: float, theta: float,
+                           pad: int, fy: float, fx: float
+                           ) -> tuple[np.ndarray, np.ndarray]:
+    """Demodulation low-pass with the terms parked at ±fc subtracted first.
+
+    Returns ``(corrected, plain)``: what ``_normalized_lowpass(field, ...)``
+    would return minus the leak of the two narrowband terms that
+    demodulation parks one carrier away from the surface term, and the plain
+    low-pass itself (computed anyway by the first pass, so free). See
+    ``extract_phase_dft``'s ``return_plain`` for why the plain one is kept.
+
+    The physics.
+    ------------
+    After the single-sideband step and demodulation by ``exp(−j·carrier)``
+    the field holds three things: the surface term at DC (what we want), the
+    carrier-side half of whatever illumination background the high-pass left
+    behind — shifted to exactly −fc — and the second harmonic of the fringe
+    waveform (display gamma, JPEG, any non-sinusoidal fringe profile), which
+    the SSB step kept at +2fc and demodulation moved to +fc. The anisotropic
+    Gaussian's gain at fc is ``g = exp(−½(2π·σ_across·fc)²)``, 0.278 at the
+    default ``lpf_sigma_frac`` (σ_across ≈ 0.25 P), so 28% of both terms
+    passes into the baseband and beats with the surface term: a phase ripple
+    at exactly the fringe pitch whose amplitude is proportional to
+    background (or harmonic) over fringe amplitude. Low contrast amplifies
+    it. On a phone capture at 8% contrast (IMG_3248) the background term
+    carried 0.52x the surface term's energy and the harmonic 0.18x; the
+    ripple was 3.4 nm amplitude, and a synthetic perfectly flat disk under
+    the same conditions read 363 nm PV of pure striping.
+
+    Narrowing the low-pass to reject fc is not an option — the surface's own
+    sidebands sit there at low fringe counts (see step 5 of
+    ``extract_phase_dft``). Both leaking terms are narrowband about a *known*
+    frequency, though, so they can be estimated and subtracted:
+
+    1. ``R = (D − LPF(D))·weight`` is what the demodulation low-pass rejects.
+       It contains ``(1 − g)`` of each leaking term (the low-pass took ``g``).
+    2. Shift R by ``+fc`` (multiply by ``c = exp(+j·carrier)``) to move the
+       background term to DC, low-pass it, and divide by ``(1 − g)`` to scale
+       the estimate back up to the full term; shift by ``−fc`` likewise for
+       the harmonic.
+    3. Subtract both (shifted back to ±fc) from D, and iterate: the first
+       estimate itself carries some surface content at offsets near fc, which
+       the second pass corrects.
+
+    Why the estimator is twice as wide (``LEAK_EST_SCALE``).
+    -----------------------------------------------------
+    R also contains the surface's own content between ~0.3 and ~0.7 fc that
+    the demodulation low-pass rolled off; a same-width estimator lets that
+    leak into the estimate and subtracts genuine figure. On a synthetic
+    surface carrying a 150-px-period, 13 nm-rms patch at P = 63 px, a 1x
+    estimator returned the patch at 7.5 nm rms (it removes more ripple: flat
+    PV 25.5 nm, ripple 2.6 nm); a 2x estimator keeps it at 11-13.7 nm with
+    flat PV 49 nm and ripple 5.8 nm; 3x keeps the patch but leaves PV 65-88.
+    Two iterations at 2x is the settled compromise. A 30 nm, σ = 60 px bump
+    came back at 23-24 nm under every setting (the default low-pass's own
+    roll-off, unchanged by this step).
+
+    When the correction is skipped or tapered.
+    ------------------------------------------
+    * ``g < _LEAK_MIN_GAIN`` (1e-3): nothing measurable leaks — a large
+      ``lpf_sigma_frac`` override, or a very fine carrier: σ_across is
+      floored at 5 px (binding below P ≈ 20 px), which puts g under 1e-3
+      for P ≲ 8.5 px (g is 0.007 at P = 10 and 0.03 at P = 12, so those
+      still get the correction) — so the plain low-pass is returned
+      without doing the subtraction at all.
+    * ``g`` large (an ``lpf_sigma_frac`` override well below the default):
+      the low-pass passes nearly all of each term, so R holds little of it
+      and the ``1/(1 − g)`` scaling amplifies noise instead of recovering
+      the term. Rather than switch the correction off at a hard threshold
+      (a step in the result as the UI slider, which spans 0.05–3.0, crosses
+      g = 0.5 at ``lpf_sigma_frac`` ≈ 0.132), the subtracted terms are
+      scaled by ``clip((_LEAK_MAX_GAIN − g) / (_LEAK_MAX_GAIN −
+      _LEAK_TAPER_GAIN), 0, 1)``: full strength for g ≤ 0.4, a linear
+      taper to zero at g = 0.5, and the plain low-pass for g ≥ 0.5.
+
+    Runtime: both widths are low-passed against the same weight seven times
+    in total, so each width's weight-only work is built once as a
+    ``_LowpassPlan`` and reused (bit-identical to calling
+    ``_normalized_lowpass`` each time).
+
+    ``fy, fx`` are the carrier in cycles/px of ``field``'s own pixel grid.
+    The phase origin of ``c`` is irrelevant: it multiplies in and divides out
+    of each subtracted term.
+    """
+    fc = math.hypot(fy, fx)
+    g = math.exp(-0.5 * (2.0 * math.pi * sig_across * fc) ** 2)
+    taper = min(1.0, max(0.0, (_LEAK_MAX_GAIN - g)
+                         / (_LEAK_MAX_GAIN - _LEAK_TAPER_GAIN)))
+    lp = _LowpassPlan(weight, sig_across, sig_along, theta, pad)
+    if (fc <= 1e-10 or g < _LEAK_MIN_GAIN or taper <= 0.0
+            or LEAK_ITERS <= 0):
+        plain = lp.apply(field)
+        return plain, plain
     h, w = field.shape
-    padding = ((pad, pad), (pad, pad))
-    f_pad = np.pad(field * weight, padding, mode="constant")
-    m_pad = np.pad(weight, padding, mode="constant")
-    ph, pw = f_pad.shape
-
-    # Frequency grids, rotated so u runs across the fringes and v along them.
-    fy_axis = (np.arange(ph) - (ph // 2)) / ph
-    fx_axis = (np.arange(pw) - (pw // 2)) / pw
-    fy_grid, fx_grid = np.meshgrid(fy_axis, fx_axis, indexing='ij')
-    ct, st = math.cos(theta), math.sin(theta)
-    u_across = ct * fx_grid + st * fy_grid
-    v_along = -st * fx_grid + ct * fy_grid
-
-    # Q is the frequency coordinate scaled by the Gaussian's own width, so the
-    # basis is (1, t_u/σ_u, t_v/σ_v) and every moment below is O(1). The
-    # low-pass itself is exp(-½(Qu² + Qv²)) — the same Gaussian the isotropic
-    # and anisotropic branches used before, just written in scaled units.
-    Qu = np.fft.ifftshift(2.0 * math.pi * sig_across * u_across)
-    Qv = np.fft.ifftshift(2.0 * math.pi * sig_along * v_along)
-    W = np.exp(-0.5 * (Qu ** 2 + Qv ** 2))
-
-    # Correlating with t_u^p·t_v^q·w is a multiply by the corresponding
-    # derivative of W: FT{t_u·w} = -i·Qu·W and FT{t_u²·w} = (1 - Qu²)·W in
-    # these scaled units, and correlation (not convolution) conjugates the
-    # odd ones back to +i.
-    iQuW = 1j * Qu * W
-    iQvW = 1j * Qv * W
-    crop = (slice(pad, pad + h), slice(pad, pad + w))
-
-    Fm = np.fft.fft2(m_pad)
-    Ff = np.fft.fft2(f_pad)
-
-    def _corr_real(mult):
-        return np.fft.ifft2(Fm * mult).real[crop]
-
-    def _corr_cplx(mult):
-        return np.fft.ifft2(Ff * mult)[crop]
-
-    # Moments of the weight over the surviving support.
-    a00 = _corr_real(W)
-    have = a00 > 1e-3
-    inv = np.divide(1.0, a00, out=np.zeros_like(a00), where=have)
-
-    r0 = _corr_cplx(W)
-    mean = r0 * inv                       # zeroth-order normalized convolution
-
-    mu = _corr_real(iQuW) * inv           # kernel centroid, scaled units
-    mv = _corr_real(iQvW) * inv
-    cuu = _corr_real((1.0 - Qu ** 2) * W) * inv - mu * mu
-    cvv = _corr_real((1.0 - Qv ** 2) * W) * inv - mv * mv
-    cuv = _corr_real(-Qu * Qv * W) * inv - mu * mv
-
-    gu = _corr_cplx(iQuW) * inv - mu * mean
-    gv = _corr_cplx(iQvW) * inv - mv * mean
-
-    # 2x2 weighted-covariance solve for the plane's slopes. det is 1 for full
-    # support and 0.36 for a straight boundary through the pixel; it only
-    # collapses when the surviving support is degenerate (a line or a point),
-    # where there is no slope to estimate and the weighted mean is the best
-    # available answer.
-    # Reject degenerate support before it is fitted, not merely before it
-    # divides by zero. det is 1.0 on full support, 0.363 at a straight
-    # boundary and 0.132 at a right-angle corner, so anything under ~0.05 is a
-    # sliver the plane fit cannot see a slope through, and inverting it would
-    # put a gain of up to 1000x on whatever noise is in there. Those pixels
-    # fall back to the weighted mean, which is the best answer available when
-    # there is no usable second moment.
-    det = cuu * cvv - cuv * cuv
-    usable = have & (det > 0.05)
-    inv_det = np.divide(1.0, det, out=np.zeros_like(det), where=usable)
-    b = (cvv * gu - cuv * gv) * inv_det
-    c = (cuu * gv - cuv * gu) * inv_det
-    return np.where(usable, mean - b * mu - c * mv, mean)
+    yy, xx = np.mgrid[0:h, 0:w]
+    c = np.exp(2j * np.pi * (fy * yy + fx * xx))
+    c_conj = np.conj(c)
+    sa2 = sig_across * LEAK_EST_SCALE
+    sl2 = sig_along * LEAK_EST_SCALE
+    pad2 = int(math.ceil(pad * LEAK_EST_SCALE))
+    est = _LowpassPlan(weight, sa2, sl2, theta, pad2)
+    # taper is exactly 1.0 for g <= _LEAK_TAPER_GAIN, so the default path is
+    # unchanged by it.
+    scale = taper / (1.0 - g)
+    d = field
+    plain = None
+    for _ in range(LEAK_ITERS):
+        d_lp = lp.apply(d)
+        if plain is None:
+            plain = d_lp
+        rejected = (d - d_lp) * weight
+        background = est.apply(rejected * c) * scale
+        harmonic = est.apply(rejected * c_conj) * scale
+        d = d - background * c_conj - harmonic * c
+    return lp.apply(d), plain
 
 
 def extract_phase_dft(image: np.ndarray, mask: np.ndarray | None = None,
@@ -2007,7 +2208,8 @@ def extract_phase_dft(image: np.ndarray, mask: np.ndarray | None = None,
                       dc_margin_override: int | None = None,
                       dc_cutoff_cycles: float | None = 1.5,
                       anisotropic_lpf: bool = True,
-                      ) -> np.ndarray:
+                      return_plain: bool = False,
+                      ) -> np.ndarray | tuple[np.ndarray, np.ndarray]:
     """Extract wrapped phase via spatial-domain complex demodulation.
 
     Pipeline:
@@ -2040,9 +2242,21 @@ def extract_phase_dft(image: np.ndarray, mask: np.ndarray | None = None,
            pixel in the frame counts as valid and only the frame edge bounds
            the data.
 
+    return_plain : also return the wrapped phase of the plain low-pass,
+        without carrier-leak subtraction (identical to the first when no
+        subtraction ran). The leak subtraction removes the ±fc flanks of
+        whatever is in the field, which narrows the effective passband along
+        the carrier; inside a fringe-free region (pure noise) that makes the
+        noise phase smoother, and ``_foldover_islands`` — which finds such
+        regions by their rough phase — stopped seeing low-noise ones (a
+        noiseless fringe-free half-frame stayed in the aperture at 347 nm
+        PV). The fold-over gate is therefore fed the plain phase, exactly
+        what it saw before leak subtraction existed.
+
     Returns
     -------
-    Wrapped phase map in [-pi, pi], same shape as input.
+    Wrapped phase map in [-pi, pi], same shape as input; with
+    ``return_plain``, the tuple ``(wrapped, wrapped_plain)``.
     """
     img = np.asarray(image, dtype=np.float64)
     if img.ndim == 3:
@@ -2282,16 +2496,29 @@ def extract_phase_dft(image: np.ndarray, mask: np.ndarray | None = None,
     pad = min(256, max(8, int(math.ceil(
         3.0 * max(sig_along_img, sig_across_img)
     ))))
-    demod_lp = _normalized_lowpass(demod, valid_weight, sig_across_img,
-                                   sig_along_img, theta, pad)
+    if anisotropic_lpf and fringe_freq > 1e-10:
+        # The background left by the high-pass sits at -fc after
+        # demodulation and the fringe waveform's 2nd harmonic at +fc; this
+        # Gaussian passes ~28% of both, which reads as ripple at the fringe
+        # pitch. Estimate and subtract them first — see
+        # ``_subtract_carrier_leak``.
+        demod_lp, demod_plain = _subtract_carrier_leak(
+            demod, valid_weight, sig_across_img, sig_along_img, theta, pad,
+            fy, fx)
+    else:
+        demod_lp = _normalized_lowpass(demod, valid_weight, sig_across_img,
+                                       sig_along_img, theta, pad)
+        demod_plain = demod_lp
 
     # Step 6: extract wrapped phase
     # Note: np.angle() is amplitude-insensitive (phase of z doesn't depend
     # on |z|), so envelope normalization is unnecessary here. Illumination
     # gradients affect the input amplitude before demodulation but cannot
     # be corrected by post-hoc envelope division.
-    wrapped = np.angle(demod_lp)
-    return wrapped.astype(np.float64)
+    wrapped = np.angle(demod_lp).astype(np.float64)
+    if return_plain:
+        return wrapped, np.angle(demod_plain).astype(np.float64)
+    return wrapped
 
 
 def _quality_guided_unwrap(wrapped: np.ndarray, quality: np.ndarray,
@@ -3136,7 +3363,7 @@ def wrap_wavefront_result(
 
 
 def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 589.3,
-                          mask_threshold: float = 0.15,
+                          mask_threshold: float = 0.30,
                           subtract_terms: list[int] | None = None,
                           n_zernike: int = 36,
                           use_full_mask: bool = False,
@@ -3231,10 +3458,13 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 589.3,
     n_total = int(mask.size)
 
     # Step 2: DFT phase extraction
-    wrapped = extract_phase_dft(img, mask, carrier_override=carrier_override,
-                                lpf_sigma_frac=lpf_sigma_frac,
-                                dc_margin_override=dc_margin_override,
-                                dc_cutoff_cycles=dc_cutoff_cycles)
+    # wrapped_plain skips the carrier-leak subtraction; it feeds only the
+    # fold-over gate below (see extract_phase_dft's return_plain).
+    wrapped, wrapped_plain = extract_phase_dft(
+        img, mask, carrier_override=carrier_override,
+        lpf_sigma_frac=lpf_sigma_frac,
+        dc_margin_override=dc_margin_override,
+        dc_cutoff_cycles=dc_cutoff_cycles, return_plain=True)
     _progress("phase", 0.25, "Extracting phase...")
 
     # Step 2b: Carrier analysis (needed for fringe_period_px before unwrap)
@@ -3283,7 +3513,8 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 589.3,
     # whole period-sized neighbourhood there is no measurable carrier:
     # punch a hole so the unwrap treats it like any other boundary.
     foldover_warning: str | None = None
-    holes = _foldover_islands(wrapped, mask, carrier_info.get("fringe_period_px"))
+    holes = _foldover_islands(wrapped_plain, mask,
+                              carrier_info.get("fringe_period_px"))
     fold_frac = 0.0
     if holes.any():
         n_hole = int(holes.sum())
@@ -3403,6 +3634,12 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 589.3,
     # (risk == 0). Uses the same work_mask/work_modulation/work_risk domain
     # as the trusted_grid built below, so trusted_area_pct is exactly the
     # trusted_mask_grid fraction of mask_grid.
+    # NOTE: mask_threshold is used here as an ABSOLUTE modulation floor,
+    # whereas create_fringe_mask (and the UI slider) apply it relative to
+    # the aperture's median modulation. That is intentional: "trusted" means
+    # well-modulated in absolute terms, not merely relative to this capture.
+    # At the 0.30 default on fringes_2 (aperture median 0.345) the trusted
+    # gate sits at ≈ 0.87× median while the aperture gate sits at 0.30×.
     trusted_mask_full = work_mask & (work_modulation >= mask_threshold) & (work_risk == 0)
     _n_trusted_full = int(trusted_mask_full.sum())
     trusted_area_pct = round(100.0 * _n_trusted_full / max(n_valid, 1), 1)
@@ -3553,7 +3790,9 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 589.3,
 
     # M1.6: build trusted_mask on the cropped work domain so it shares
     # geometry with mask_grid, then downsample with INTER_NEAREST to the
-    # same grid shape.
+    # same grid shape. mask_threshold is an ABSOLUTE modulation floor here,
+    # on purpose — see the trusted_mask_full note above (not the
+    # median-relative use in create_fringe_mask).
     trusted_work = (
         work_mask.astype(bool)
         & (work_modulation >= mask_threshold)

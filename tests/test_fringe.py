@@ -4418,7 +4418,11 @@ class TestTunableParams:
             assert t is not None
             assert t["lpf_sigma_frac"] is None
             assert t["dc_margin_override"] is None
-            assert t["mask_threshold"] == 0.15
+            # Default raised 0.15 -> 0.30 with the carrier-leak fix: once the
+            # leak no longer striped the phase into the fold-over gate,
+            # weak-fringe regions (~0.26x median modulation on IMG_3248) had
+            # to be excluded on their own merits.
+            assert t["mask_threshold"] == 0.30
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -5089,17 +5093,29 @@ class TestM26AnisotropicLPF:
         w_aniso = extract_phase_dft(img, anisotropic_lpf=True)
         w_iso = extract_phase_dft(img, anisotropic_lpf=False)
         # Measure ripple amplitude at fx cycles/px on the central row.
+        # The row also carries a ~0.4 rad tilt (25.6 cycles across 256 px,
+        # so the estimated carrier is a fraction of a bin off), and a raw
+        # rfft bin of a ramp is dominated by the ramp's own leakage: that
+        # read 0.43 here for a true fx ripple of 6.4e-4 rad. Detrend, and
+        # project onto fx over 20 whole periods clear of the frame edges, so
+        # this measures the harmonic it is named for.
+        x = np.arange(w)
+
         def _ripple(wr):
-            row = wr[h // 2] - wr[h // 2].mean()
-            sp = np.abs(np.fft.rfft(row))
-            bin_fx = int(round(fx * w))
-            return float(sp[bin_fx])
+            row = wr[h // 2]
+            row = row - np.polyval(np.polyfit(x, row, 1), x)
+            core, xc = row[28:228], x[28:228]
+            return float(2 * abs((core * np.exp(-2j * np.pi * fx * xc)).mean()))
         r_aniso = _ripple(w_aniso)
         r_iso = _ripple(w_iso)
-        # Anisotropic should suppress this harmonic at least as well.
-        assert r_aniso <= r_iso * 1.10, (
+        # At P = 10 px both branches floor σ_across at 5 px, so the
+        # anisotropic and isotropic Gaussians are identical across the
+        # fringes (6.38e-4 rad each without leak subtraction). What this
+        # actually distinguishes now is the carrier-leak subtraction, which
+        # only the anisotropic branch runs: 2.07e-4 vs 6.38e-4 rad.
+        assert r_aniso < 0.5 * r_iso, (
             f"Anisotropic LPF didn't reduce cross-fringe harmonic: "
-            f"aniso ripple={r_aniso:.2f} vs iso={r_iso:.2f}"
+            f"aniso ripple={r_aniso:.3e} vs iso={r_iso:.3e}"
         )
 
 

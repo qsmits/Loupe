@@ -332,7 +332,7 @@ class ApertureRecipe(BaseModel):
 
 class AnalyzeBody(BaseModel):
     wavelength_nm: float = Field(default=589.3, gt=0, le=2000)
-    mask_threshold: float = Field(default=0.15, ge=0.0, le=1.0)
+    mask_threshold: float = Field(default=0.30, ge=0.0, le=1.0)
     subtract_terms: list[int] = Field(default=[1, 2, 3])
     n_zernike: int = Field(default=36, ge=1, le=66)
     image_b64: Optional[str] = Field(default=None)
@@ -393,7 +393,7 @@ class ReanalyzeCarrierBody(BaseModel):
     carrier_x: float
     image_b64: Optional[str] = Field(default=None)
     wavelength_nm: float = Field(default=589.3, gt=0, le=2000)
-    mask_threshold: float = Field(default=0.15, ge=0.0, le=1.0)
+    mask_threshold: float = Field(default=0.30, ge=0.0, le=1.0)
     subtract_terms: list[int] = Field(default=[1, 2, 3])
     n_zernike: int = Field(default=36, ge=1, le=66)
     mask_polygons: Optional[list[MaskPolygon]] = Field(default=None)
