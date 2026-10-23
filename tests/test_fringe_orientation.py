@@ -27,6 +27,8 @@ def test_asymmetric_image_preserves_landmark_positions(transform, monkeypatch, r
         monkeypatch.setattr(f, name, lambda *args, **kwargs: '')
     image, truth, carrier = [transform(a).copy() for a in asymmetric_scene()]
     result = f.analyze_interferogram(image, wavelength_nm=632.8, use_full_mask=True, n_zernike=15)
+    assert result['carrier_phase_sign'] == 1
+    assert result['absolute_sign_known'] is False
     shape = (result['grid_rows'], result['grid_cols'])
     assert shape == image.shape
     valid = np.array(result['mask_grid'], bool).reshape(shape)
@@ -89,3 +91,36 @@ def test_reference_interferogram_matches_offcentre_analysis_crop(lens_k1, monkey
     expected = np.clip(corrected[29:161, 48:217], 0, 255).astype(np.uint8)
     assert reference.shape == (result['surface_height'], result['surface_width'])
     np.testing.assert_array_equal(reference, expected)
+
+
+def test_zero_gap_contact_can_have_positive_gap_departure(monkeypatch):
+    """Physical convex part under a tilted flat: zero contact need not be blue."""
+    for name in ('render_surface_map', 'render_profile', 'render_fft_image',
+                 'render_modulation_map', 'render_confidence_maps', 'render_zernike_chart'):
+        monkeypatch.setattr(f, name, lambda *a, **kw: '')
+    rows, cols = 128, 160
+    y, x = np.mgrid[:rows, :cols]
+    xn = (x - (cols-1)/2) / ((cols-1)/2)
+    yn = (y - (rows-1)/2) / ((rows-1)/2)
+    specimen = 30 * (1 - xn*xn - yn*yn)  # Raised centre: convex specimen.
+    reference_flat = 12 * 632.8 / 2 * y / rows
+    gap = reference_flat - specimen
+    contact = np.unravel_index(np.argmin(gap), gap.shape)
+    gap -= gap[contact]  # Exact physical contact; nowhere is the gap negative.
+    assert gap[contact] == 0 and gap.min() == 0
+    image = np.rint(125 - 90*np.cos(4*np.pi*gap/632.8)).astype(np.uint8)
+    result = f.analyze_interferogram(image, wavelength_nm=632.8, use_full_mask=True,
+                                    n_zernike=15, form_model='plane')
+    # Orient from the independently specified physical wedge, which opens down.
+    sign = np.sign(result['carrier']['fy_cpp'])
+    recovered = sign*np.array(result['height_grid']).reshape(rows, cols)
+    valid = np.array(result['mask_grid'], bool).reshape(rows, cols)
+    # Boundary contacts are excluded from measured pixels. The near-contact
+    # interior still has positive residual although the physical gap there is
+    # much smaller than the centre's gap; residual ordering is not gap ordering.
+    upper = valid & (yn < -.65) & (np.abs(xn) < .2)
+    centre = valid & (np.abs(yn) < .2) & (np.abs(xn) < .2)
+    assert upper.any() and centre.any()
+    assert recovered[upper].mean() > 0
+    assert recovered[centre].mean() < 0
+    assert gap[upper].mean() < gap[centre].mean()

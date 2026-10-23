@@ -30,4 +30,7 @@ it('exports both images, aligned labels and all coefficients across pages', () =
   assert.ok(Math.abs((doc.circles[2][0]-b[2])/b[4]-.2)<1e-12);
   assert.ok(doc.texts.includes('80'));
   assert.ok(doc.pages>=3);
+  assert.ok(doc.texts.some(t=>typeof t === 'string' && /Surface direction unverified/.test(t)));
+  const checked=createFringeReport({surface_map:'map',wavelength_nm:632.8,physical_orientation:{polarity:'red-smaller-gap'}},{jsPDF:Pdf});
+  assert.ok(checked.texts.some(t=>typeof t === 'string' && /user-checked\): red = higher/.test(t)));
 });

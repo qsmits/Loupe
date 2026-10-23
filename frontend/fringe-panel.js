@@ -4,6 +4,7 @@
 // Extracted from fringe.js (Task 6 of fringe UI restructure).
 
 import { fr, $ } from './fringe.js';
+import { recoverOrientationObservations } from './fringe-orientation.js';
 import { state } from './state.js';
 import { getSubtractTerms, getFormModel, mergeReanalyzeResult, applySignFlipToLastResult, restoreFringeResult, captureFringeOptions } from './fringe-results.js';
 import { apiFetch } from './api.js';
@@ -329,8 +330,10 @@ function _onAnalysisResult(data) {
 
 // Invalidates file decoding/camera captures as well as streamed analyses.
 let sourceVersion = 0;
+let orientationRecovery = null;
 
 export function cancelFringeWork() {
+  orientationRecovery = null;
   sourceVersion++;
   cancelAnalysis();
   closeFringeSetup();
@@ -414,6 +417,8 @@ async function analyzeFromCamera() {
 function _runAnalysis(formModel = getFormModel()) {
   if (fr.analysisBusy || !fr.droppedImageB64) return;
   const version = sourceVersion, epoch = state._epoch;
+  const recovery=orientationRecovery;
+  orientationRecovery=null;
   _checkRecipeResolution();
   const payload = {
     wavelength_nm: getWavelength(),
@@ -438,12 +443,18 @@ function _runAnalysis(formModel = getFormModel()) {
     if (version !== sourceVersion || epoch !== state._epoch) return;
     fr.analysisBusy = false;
     fr.analyzedAt = new Date().toISOString();
+    const recovered=recovery && recoverOrientationObservations(recovery, data);
     _onAnalysisResult(data);
     closeFringeSetup();
+    if (recovery) {
+      $('fringe-orientation-open')?.click();
+      if (!recovered) showToast('The analysis image alignment changed. Place the contact mark again before checking direction.');
+    }
     updateAnalysisSource();
   }, errMsg => {
     if (version !== sourceVersion || epoch !== state._epoch) return;
     fr.analysisBusy = false;
+    orientationRecovery=recovery;
     updateAnalysisSource('Analysis failed — adjust settings and try again.');
     showFringeAnalysisError();
     console.warn('Fringe analysis failed:', errMsg);
@@ -872,6 +883,10 @@ export function wirePanelEvents() {
     if (file) analyzeFromFile(file);
   });
   document.addEventListener('fringe:setup', showAnalysisSetup);
+  document.addEventListener('fringe:orientation-reanalyze', () => {
+    orientationRecovery=fr.droppedImageB64 ? fr.lastResult : null;
+    showAnalysisSetup();
+  });
 
   // Averaging buttons
   $("fringe-btn-avg-add")?.addEventListener("click", addToAverage);

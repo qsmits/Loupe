@@ -42,11 +42,11 @@ export function createFringeReport(data, {jsPDF, sourceName = '', standard = nul
   const marks = referenceMarks(data);
   if (data.reference_image_b64) {
     doc.text('Interferogram - analysis crop', 10, 54);
-    doc.text('Surface map - air-gap departure', 153, 54);
+    doc.text('Surface deviation - slope/form removed', 153, 54);
     addImage(doc, data.reference_image_b64, {x:10,y:58,w:134,h:112}, marks);
     addImage(doc, data.surface_map, {x:153,y:58,w:134,h:112}, marks);
   } else if (data.surface_map) {
-    doc.text('Surface map - air-gap departure (aligned source unavailable)', 10, 54);
+    doc.text('Surface deviation - slope/form removed (aligned source unavailable)', 10, 54);
     addImage(doc, data.surface_map, {x:10,y:58,w:277,h:112});
   }
   doc.setFontSize(9);

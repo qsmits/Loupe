@@ -18,10 +18,11 @@ import {
   exportCalibrationsJson,
   importCalibrationsJson,
 } from './fringe-calibration.js';
-import { flipRecordedPolarity, orientationDescription, polarityDescription } from './fringe-orientation.js';
+import { flipRecordedPolarity, orientationDescription, polarityDescription, physicalOrientation } from './fringe-orientation.js';
 import { refreshQuality, qualityDescription } from './fringe-quality.js';
 import { createFringeReport } from './fringe-report.js';
 import { renderTrend } from './fringe-trend.js';
+import { surface3dValues, surface3dDescription } from './fringe-surface-3d.js';
 import { refreshReferenceMarks, wireReferenceMarks } from './fringe-reference.js';
 
 // ── Subtraction pill state ──────────────────────────────────────────────
@@ -179,6 +180,10 @@ export function buildResultsHtml() {
           <button class="fringe-pill" id="fringe-btn-invert" disabled title="Flip the displayed sign after orienting the interferogram from a known wedge/contact direction">\u2195 Invert</button>
         </div>
 
+        <div id="fringe-orientation-banner" class="fringe-orientation-banner" hidden>
+          <span id="fringe-polarity-status" role="status"></span>
+          <button type="button" id="fringe-orientation-open" disabled>Check surface direction…</button>
+        </div>
         <div class="fringe-tab-bar" id="fringe-tab-bar">
           <button class="fringe-tab active" data-tab="surface">Surface Map</button>
           <button class="fringe-tab" data-tab="3d">3D View</button>
@@ -201,7 +206,7 @@ export function buildResultsHtml() {
                   <li>Place the flat gently, don\u2019t press \u2014 pressure causes stress fringes</li>
                   <li>Slide slightly to \u201cwring\u201d the flat \u2014 this minimizes the air gap</li>
                   <li>Aim for 3\u20135 fringes across the surface for best accuracy</li>
-                  <li>Closed circular fringes indicate trapped dust or burrs</li>
+                  <li>Closed circular fringes may indicate curvature; this analysis needs a clear, directional fringe carrier</li>
                   <li>Use monochromatic light (sodium lamp or HeNe laser)</li>
                 </ul>
               </div>
@@ -236,7 +241,6 @@ export function buildResultsHtml() {
               </label>
               <button class="fringe-overlay-btn" id="fringe-fit-view" title="Show the complete surface map">Fit view</button>
               <button class="fringe-overlay-btn" id="fringe-reference-open" disabled>Reference marks…</button>
-              <span id="fringe-polarity-status" class="fringe-polarity-status"></span>
               <span class="fringe-measure-readout" id="fringe-measure-readout"></span>
             </div>
             <div class="fringe-surface-container" id="fringe-surface-viewport" style="overflow:hidden;cursor:grab">
@@ -253,7 +257,8 @@ export function buildResultsHtml() {
         <div class="fringe-tab-panel" id="fringe-panel-3d" hidden>
           <div class="fringe-empty-state" id="fringe-3d-empty">Analyze an image first.</div>
           <div id="fringe-3d-content" hidden style="display:flex;flex-direction:column;flex:1;min-height:0">
-            <p style="font-size:11px;opacity:0.6;margin:4px 12px">Drag to rotate, scroll to zoom. Z exaggeration amplifies air-gap differences for visibility.</p>
+            <p style="font-size:11px;opacity:0.6;margin:4px 12px">Drag to rotate, scroll to zoom. Z exaggeration amplifies height differences for visibility.</p>
+            <p id="fringe-3d-direction" role="status" style="font-size:12px;margin:4px 12px"></p>
             <div class="fringe-3d-host" id="fringe-3d-host">
               <div class="fringe-3d-controls" id="fringe-3d-controls">
                 <label style="font-size:12px">Z exaggeration:
@@ -546,6 +551,8 @@ export function refreshTrustedOverlay() {
 
 export function captureFringeOptions() { return {formModel, pillState: {...pillState}}; }
 export function restoreFringeResult(data, options) {
+  dispose3dView();
+  refreshOrientationStatus(data);
   refreshReferenceMarks(data);
   refreshQuality(data);
   formModel = options?.formModel || data?.form_model || "zernike";
@@ -583,9 +590,18 @@ export function restoreFringeResult(data, options) {
 
 // ── Rendering ───────────────────────────────────────────────────────────
 
+function refreshOrientationStatus(data) {
+  const banner=$('fringe-orientation-banner');
+  if (banner) {
+    banner.hidden=!data;
+    banner.dataset.verified=String(physicalOrientation(data).polarity !== 'unverified');
+  }
+  if ($('fringe-polarity-status')) $('fringe-polarity-status').textContent=data ? polarityDescription(data) : '';
+}
 function renderResults(data) {
+  dispose3dView();
   refreshReferenceMarks(data);
-  if ($('fringe-polarity-status')) $('fringe-polarity-status').textContent=polarityDescription(data);
+  refreshOrientationStatus(data);
   // Summary bar
   const summaryBar = $("fringe-summary-bar");
   if (summaryBar) summaryBar.hidden = false;
@@ -801,6 +817,7 @@ function renderResults(data) {
 
   // M1.6: keep trusted-only PV/RMS + overlay consistent across renders.
   refreshTrustedOnlyDisplay();
+  if ($("fringe-panel-3d") && !$("fringe-panel-3d").hidden) render3dView();
 }
 
 // ── Per-term Zernike table (M4.2) ──────────────────────────────────────
@@ -1389,8 +1406,20 @@ function drawProfile(canvas, profile, title) {
 
 // ── 3D View ─────────────────────────────────────────────────────────────
 
+let refresh3dOrientation = null;
+let cleanup3d = null;
+let render3dGeneration = 0;
+function dispose3dView() {
+  render3dGeneration++;
+  refresh3dOrientation = null;
+  cleanup3d?.();
+  cleanup3d = null;
+}
+
 async function render3dView() {
   if (!fr.lastResult) return;
+  dispose3dView();
+  const generation = render3dGeneration;
   const sourceResult = fr.lastResult;
   const empty = $("fringe-3d-empty");
   const content = $("fringe-3d-content");
@@ -1410,7 +1439,8 @@ async function render3dView() {
   }
   const THREE = fr.THREE;
   const OrbitControls = fr.OrbitControls;
-  if (fr.lastResult !== sourceResult) return;
+  if (fr.lastResult !== sourceResult || generation !== render3dGeneration) return;
+  if (!fr.heightGrid || !fr.maskGrid) return;
 
   const controlsEl = $("fringe-3d-controls");
   host.innerHTML = "";
@@ -1427,7 +1457,6 @@ async function render3dView() {
   const controls = new OrbitControls(camera, renderer.domElement);
 
   // Use actual height grid data (not profile approximation)
-  if (!fr.heightGrid || !fr.maskGrid) return;
 
   const gridSize = 128;
   const sw = fr.lastResult.surface_width || 1;
@@ -1437,7 +1466,6 @@ async function render3dView() {
   const planeH = aspect >= 1 ? 2 / aspect : 2;
   const geo = new THREE.PlaneGeometry(planeW, planeH, gridSize - 1, gridSize - 1);
   const pos = geo.attributes.position;
-  const colors = new Float32Array(pos.count * 3);
 
   // Build per-vertex mask: true if this vertex has valid height data
   const vertexValid = new Uint8Array(gridSize * gridSize);
@@ -1464,9 +1492,9 @@ async function render3dView() {
   const zSlider = $("fringe-3d-z-scale");
   const zLabel = $("fringe-3d-z-val");
   let zScale = zSlider ? parseFloat(zSlider.value) : 10;
+  if (zLabel) zLabel.textContent = zScale + "x";
 
   function applyZ() {
-    let zMin = Infinity, zMax = -Infinity;
     const zVals = new Float32Array(gridSize * gridSize);
     for (let r = 0; r < gridSize; r++) {
       for (let c = 0; c < gridSize; c++) {
@@ -1475,32 +1503,20 @@ async function render3dView() {
         const gi = Math.round(gy) * fr.gridCols + Math.round(gx);
         const z = fr.maskGrid[gi] ? fr.heightGrid[gi] : 0;
         zVals[r * gridSize + c] = z;
-        if (fr.maskGrid[gi]) {
-          if (z < zMin) zMin = z;
-          if (z > zMax) zMax = z;
-        }
       }
     }
-    if (!isFinite(zMin)) { zMin = 0; zMax = 1; }
-    const zRange = zMax - zMin || 1;
-    for (let r = 0; r < gridSize; r++) {
-      for (let c = 0; c < gridSize; c++) {
-        const idx = r * gridSize + c;
-        const z = zVals[idx];
-        const zNorm = ((z - zMin) / zRange - 0.5) * zScale * 0.01;
-        pos.setZ(idx, zNorm);
-        // Blue-white-red colormap
-        const t = (z - zMin) / zRange;
-        colors[idx * 3]     = t < 0.5 ? 0.3 + t * 1.4 : 1.0;
-        colors[idx * 3 + 1] = t < 0.5 ? 0.3 + t * 1.4 : 1.0 - (t - 0.5) * 1.4;
-        colors[idx * 3 + 2] = t < 0.5 ? 1.0 : 1.0 - (t - 0.5) * 1.4;
-      }
-    }
+    const { z, colors } = surface3dValues(sourceResult, zVals, vertexValid, zScale);
+    for (let i = 0; i < z.length; i++) pos.setZ(i, z[i]);
+    const direction = $("fringe-3d-direction");
+    if (direction) direction.textContent = surface3dDescription(sourceResult);
     geo.setAttribute("color", new THREE.BufferAttribute(colors, 3));
     pos.needsUpdate = true;
     geo.computeVertexNormals();
   }
   applyZ();
+  refresh3dOrientation = () => {
+    if (fr.lastResult === sourceResult) applyZ();
+  };
 
   const mat = new THREE.MeshStandardMaterial({ vertexColors: true, side: THREE.DoubleSide });
   const mesh = new THREE.Mesh(geo, mat);
@@ -1523,9 +1539,10 @@ async function render3dView() {
     };
   }
 
+  let frame;
   function animate() {
-    if (!host.isConnected) return;
-    requestAnimationFrame(animate);
+    if (!host.isConnected || generation !== render3dGeneration) return;
+    frame = requestAnimationFrame(animate);
     controls.update();
     renderer.render(scene, camera);
   }
@@ -1540,6 +1557,16 @@ async function render3dView() {
     }
   });
   ro.observe(host);
+  cleanup3d = () => {
+    cancelAnimationFrame(frame);
+    ro.disconnect();
+    controls.dispose();
+    geo.dispose();
+    mat.dispose();
+    renderer.dispose();
+    renderer.domElement.remove();
+    if (zSlider) zSlider.oninput = null;
+  };
 }
 
 // ── Analysis ────────────────────────────────────────────────────────────
@@ -3072,7 +3099,8 @@ function _renderTrendTab() {
 export function wireResultsEvents() {
   wireReferenceMarks(exportFringePdf);
   document.addEventListener('fringe:orientation-changed', () => {
-    if ($('fringe-polarity-status')) $('fringe-polarity-status').textContent=polarityDescription(fr.lastResult);
+    refreshOrientationStatus(fr.lastResult);
+    refresh3dOrientation?.();
   });
   // Tab switching
   document.querySelectorAll(".fringe-tab").forEach(tab => {

@@ -242,6 +242,51 @@ Inverting the display reverses the recorded red/blue meaning, while a fresh
 analysis starts without physical observations. Reports preserve both aligned
 images, their labels, and these observations.
 
+### Guided physical orientation
+
+The paired view now uses a user-marked contact and an independently observed
+thin-to-thick gap direction to suggest the color interpretation, assuming the
+reference flat is above the part. With selected carrier `(fx, fy)`, image-space
+gap direction `(dx, dy)`, and display phase multiplier `s` (+1 initially, reversed
+by Invert), the suggested gap polarity is `sign(s * (fx*dx + fy*dy))`.
+This follows the complex demodulation convention `exp(-2πi(fx*x + fy*y))`;
+it does **not** infer physical wedge direction from Fourier data. Carrier
+bookkeeping is emitted only for original analyses, not averages or differences.
+Legacy results have no trusted inversion history and require reanalysis. The guide
+offers a direct recovery action. It retains marks and physical observations only
+when the regenerated aligned image and dimensions match exactly, and clears
+verification so the operator must confirm again.
+
+The contact anchors the arrow and a check that it points into the measured area;
+it does not reconstruct the original gap or establish fringe order. Near-parallel
+gap/fringe directions (more than 45 degrees from either carrier normal), missing
+evidence, and fold-over warnings block the suggestion. These are usability guards,
+not an uncertainty estimate or proof of contact. A user must explicitly confirm
+the physical observations before the persistent banner changes from unverified
+to user-checked. Changing the contact or direction invalidates that confirmation;
+Undo restores the previous record. Invert preserves physical evidence and reverses
+the color legend. Independent manual physical checks remain supported.
+
+Larger gap departure means a lower specimen contribution relative to the removed
+slope/form. It is not an absolute gap map: even a verified zero-gap contact may
+have a nonzero residual of either sign. The UI and exports state this explicitly. For bowl-shaped parts with
+curvature retained, a lower centre relative to the rim indicates concavity and
+a higher centre indicates convexity; no global label is imposed on mixed forms.
+Reference-flat error is still included. The guide recommends Plane or retaining
+Zernike curvature, and warns about higher-order form removal. PDF and CSV exports
+carry the verification state and color meaning. Synthetic handedness tests and
+frontend direction/inversion tests check the sign convention; physical validation
+remains the operator's responsibility.
+
+The 3D view applies the checked specimen sign to its vertical geometry only:
+red/larger-gap regions are lower, while blue/smaller-gap regions are higher.
+Colors remain tied to the gap residual with a zero-centered scale, consistent
+with the 2D map. Confirmation and invalidation update the open mesh immediately.
+Before verification it explicitly shows an unoriented gap-departure mesh.
+This presentation transform does not alter measurement grids, coefficients,
+PV/RMS, or height zero; an explicit map inversion preserves checked specimen
+geometry while exchanging the colors.
+
 ### Large-fit memory use
 
 Large Zernike fits reduce blocks of at most 16,384 pixel rows by QR before a

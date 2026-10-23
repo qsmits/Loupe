@@ -4416,6 +4416,10 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 589.3,
         "grid_rows": grid_h,
         "grid_cols": grid_w,
         "carrier": carrier_info,
+        # Display phase follows this selected Fourier sideband (+1 initially).
+        # This is bookkeeping, NOT physical sign: an externally known wedge
+        # is required. Frontend inversion reverses it; derived results omit it.
+        "carrier_phase_sign": 1,
         "form_model": form_model,
         "plane_fit": plane_coeffs,
         # M2.4: PV (nm) of the additional plane subtracted on top of Zernike
