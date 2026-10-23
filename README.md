@@ -183,6 +183,68 @@ Load images via drag-and-drop or the File menu for image measurement and analysi
 
 Browser cameras (MediaDevices API) are selectable from the camera dropdown after granting permission.
 
+## Flatness and form removal
+
+New analyses default to **Flatness · Plane (tilt only)** in both execution modes.
+This subtracts height offset and a least-squares plane while retaining curvature,
+bow, saddle shape and local errors. PV/RMS describe departure from that plane;
+they are not minimum-zone flatness (the least separation of enclosing parallel
+planes). Reference-flat error remains included. Existing saved analyses retain
+their original model. Zernike remains an advanced diagnostic and selective
+removal option: fitting its coefficients does not itself remove surface errors.
+Subtracting terms above Z3, or using quadratic/cubic polynomial removal, reports
+**Residual after form removal**, with Residual PV/RMS and no flatness-limit
+comparison. CSV/PDF exports record the evaluation and removed form.
+
+## Experimental browser fringe analysis
+
+In the fringe setup dialog, choose **Analyze using → This browser (experimental)**.
+The existing Python analysis engine runs in a dedicated Web Worker through
+[Pyodide](https://pyodide.org/en/stable/usage/webworker.html), with WebAssembly
+builds of NumPy, SciPy, OpenCV, scikit-image and Matplotlib. This is browser
+execution of the shared implementation, not a second JavaScript reconstruction
+algorithm. Images and computed grids are not uploaded by this path. The app
+still downloads assets, configuration and the numerical runtime; it is not an
+offline standalone application.
+
+Server analysis remains the default. Browser images are explicitly capped at
+1024 pixels on the longest side; results and exports record the execution
+engine and any resizing. The first run downloads sizeable scientific libraries
+from the pinned Pyodide 0.29.3 distribution on jsDelivr. Workers keep libraries
+warm for immediate recomputations and release them after two idle minutes.
+Cancel/reset/project switching terminates active computation. There is no
+automatic fallback to uploading if browser execution fails.
+
+Analysis, masks, lens correction, diagnostics, form removal, inversion, carrier
+selection, 3D inspection, reports, session averaging and subtraction use the
+local result. Browser session history retains at most eight captures / 48 MiB
+across open projects and disappears on page reload; the current result and input
+remain in the normal saved project. Browser mode does not yet support capture
+JSON import or the live-camera running-average button. Camera acquisition and
+the lens-calibration workflow still use their existing connections.
+
+For numerical parity validation, copy the checkout to an isolated directory,
+then generate the synthetic reference results and test page into its frontend:
+
+```bash
+MPLCONFIGDIR=/tmp/loupe-mpl .venv/bin/python scripts/prepare-fringe-browser-validation.py /tmp/loupe-browser-review/frontend
+HOSTED=1 NO_CAMERA=1 .venv/bin/python -m uvicorn backend.main:app --app-dir /tmp/loupe-browser-review --port 8004
+```
+
+Open `http://localhost:8004/fringe-validation.html` and run validation. The harness
+compares raw execution across runtimes for asymmetric and mirrored inputs,
+off-centre masks with lens correction, a resized 1024-pixel image, form changes,
+averages and subtraction. Its 0.011 nm grid tolerance allows one 0.01 nm
+serialization rounding step; it is a software parity limit, not an optical
+accuracy claim. On the development Mac (2026-10-24), all six cases passed:
+mask grids matched exactly, maximum serialized-height difference was 0.01 nm,
+and maximum PV difference was 0.000085 nm. The 1024-pixel case took 18.7 seconds;
+small warm analyses took about one second. These timings are illustrative and
+will vary by browser and hardware. Use the hosted security policy during testing: WebAssembly and
+the pinned download origin are permitted only on the dedicated worker response;
+the main page retains its existing script policy. `/fringe-runtime/source.zip`
+contains only three explicitly allowlisted, public scientific source files.
+
 ## Configuration
 
 Runtime settings in `config.json`:

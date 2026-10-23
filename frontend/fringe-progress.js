@@ -5,12 +5,16 @@
 
 import { apiFetch } from './api.js';
 import { state } from './state.js';
+import { runBrowserAnalysis, cancelBrowserAnalysis } from './fringe-browser.js';
+import { rememberBrowserResult } from './fringe-compute.js';
+import { getSessionId } from './api.js';
 
 const $ = id => document.getElementById(id);
 let activeController = null;
 
-export function cancelAnalysis() {
+export function cancelAnalysis(preserveIdle=false) {
   activeController?.abort();
+  cancelBrowserAnalysis(preserveIdle);
   activeController = null;
 }
 
@@ -51,10 +55,12 @@ export function createProgressBar(host) {
  * @param {function} [onRetry] - if provided, wired to the Retry button
  */
 export async function analyzeWithProgress(body, onResult, onError, onRetry) {
-  cancelAnalysis();
+  cancelAnalysis(true);
   const controller = new AbortController();
   activeController = controller;
   const epoch = state._epoch;
+  const session = getSessionId();
+  const local = body.execution_engine === "browser";
   const current = () => state._epoch === epoch && activeController === controller && !controller.signal.aborted;
   const container = document.querySelector(".fringe-progress");
   const fill = $("fringe-progress-fill");
@@ -93,7 +99,7 @@ export async function analyzeWithProgress(body, onResult, onError, onRetry) {
   container.hidden = false;
   progress(0);
   fill.className = "fringe-progress-fill";
-  activity("Sending image and starting analysis…");
+  activity(local ? "Starting analysis in this browser — image stays on this device…" : "Sending image and starting analysis…");
   if (retryBtn) {
     retryBtn.hidden = true;
     if (onRetry) {
@@ -119,6 +125,16 @@ export async function analyzeWithProgress(body, onResult, onError, onRetry) {
   }
 
   try {
+    if (local) {
+      const result = await runBrowserAnalysis('analyze', body, {signal:controller.signal,
+        onProgress: event => { if (current()) { if (typeof event.progress === 'number') progress(event.progress); activity(event.message); } }});
+      if (!current()) return;
+      rememberBrowserResult(result, session);
+      progress(1); fill.className = 'fringe-progress-fill done';
+      activity('Complete in this browser — opening results.');
+      onResult(result);
+      return;
+    }
     resetTimeout();
 
     const response = await apiFetch("/fringe/analyze-stream", {
@@ -205,7 +221,7 @@ export async function analyzeWithProgress(body, onResult, onError, onRetry) {
     if (timeoutId) clearTimeout(timeoutId);
     if (!current() || e.name === "AbortError") return; // timeout already handled
     fill.className = "fringe-progress-fill error";
-    activity(String(e.message || "").startsWith("HTTP ") ? e.message : "Connection lost");
+    activity(local ? `Browser analysis failed: ${e.message}` : (String(e.message || "").startsWith("HTTP ") ? e.message : "Connection lost"));
     if (retryBtn && onRetry) retryBtn.hidden = false;
     onError(e.message);
   } finally {

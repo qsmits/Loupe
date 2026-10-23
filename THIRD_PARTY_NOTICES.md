@@ -31,3 +31,12 @@ redistributing those components.
 Python packages listed in `requirements.txt` and other separately installed
 dependencies retain their own licenses and notices. Consult the license files
 in the distributions you install or redistribute.
+
+## Browser scientific runtime
+
+Experimental browser analysis downloads Pyodide 0.29.3 and its scientific
+packages from the version-pinned official Pyodide distribution on jsDelivr.
+These runtime artifacts are not bundled into this repository. Pyodide and
+NumPy, SciPy, OpenCV, scikit-image, Matplotlib, Pillow and their dependencies
+retain the licenses and notices shipped in their distributions. Runtime
+source and license information: <https://github.com/pyodide/pyodide/tree/0.29.3>.

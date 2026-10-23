@@ -3,8 +3,10 @@
 //
 // Extracted from fringe.js (Task 7 of fringe UI restructure).
 
+import { describeFormRemoval } from './fringe-form.js';
 import { fr, $ } from './fringe.js';
 import { apiFetch } from './api.js';
+import { fringeFetch, isBrowserResult } from './fringe-compute.js';
 import { state } from './state.js';
 import { getWavelength, getMaskThreshold, getLpfSigmaFrac, getDcMarginOverride, getCorrect2piJumps, getCalibrationPayload, getAperturePayload, resetAverage } from './fringe-panel.js';
 import { getActiveRecipe, recipeToMaskPolygons } from './fringe-geometry.js';
@@ -37,7 +39,7 @@ const SUBTRACT_PILLS = [
 
 const pillState = { tilt: true, power: false, astig: false, coma: false, spherical: false };
 
-let formModel = "zernike";
+let formModel = "plane";
 export function getFormModel() { return formModel; }
 
 export function getSubtractTerms() {
@@ -56,6 +58,16 @@ export function getSubtractTerms() {
     if (pillState[pill.id]) terms.push(...pill.terms);
   }
   return terms;
+}
+
+// Preserve individually selected higher-order terms when a group pill changes.
+export function setPillSubtracted(id, enabled) {
+  const pill=SUBTRACT_PILLS.find(p=>p.id===id);
+  if (!pill || pill.locked) return;
+  const terms=new Set(getSubtractTerms());
+  pillState[id]=enabled;
+  for (const term of pill.terms) { if (enabled) terms.add(term); else terms.delete(term); }
+  if (fr.lastResult) fr.lastResult.subtracted_terms=[...terms].sort((a,b)=>a-b);
 }
 
 // M1.4 helpers — keep mask_polygons + aperture_recipe in sync for
@@ -100,14 +112,14 @@ export function buildResultsHtml() {
             </select>
           </div>
           <div class="fringe-stat">
-            <span class="fringe-stat-label" title="Peak-to-valley air-gap departure">Gap PV</span>
+            <span id="fringe-pv-label" class="fringe-stat-label" title="Peak-to-valley air-gap departure">Gap PV</span>
             <span class="fringe-stat-value" id="fringe-pv-waves">--</span>
             <span class="fringe-stat-unit">\u03bb</span>
             <span class="fringe-stat-value fringe-stat-nm" id="fringe-pv-nm">--</span>
             <span class="fringe-stat-unit">nm</span>
           </div>
           <div class="fringe-stat">
-            <span class="fringe-stat-label" title="RMS air-gap departure">Gap RMS</span>
+            <span id="fringe-rms-label" class="fringe-stat-label" title="RMS air-gap departure">Gap RMS</span>
             <span class="fringe-stat-value" id="fringe-rms-waves">--</span>
             <span class="fringe-stat-unit">\u03bb</span>
             <span class="fringe-stat-value fringe-stat-nm" id="fringe-rms-nm">--</span>
@@ -166,11 +178,13 @@ export function buildResultsHtml() {
 
         <div class="fringe-subtract-row" id="fringe-subtract-row">
           <select id="fringe-form-model" style="font-size:11px;padding:2px 4px;margin-right:4px"
-                  title="Form-removal model. Zernike: orthogonal basis on a circular aperture. Plane: linear tilt only. Poly2: 2nd-degree polynomial for non-circular apertures. Poly3: 3rd-degree polynomial for higher-order non-circular aberrations.">
-            <option value="zernike" title="Orthogonal basis on a circular aperture. Use when the aperture is ~round.">Zernike</option>
-            <option value="plane" title="Linear tilt only. Use when you want to keep curvature as part of the measurement.">Plane</option>
-            <option value="poly2" title="Low-order polynomial (2nd degree). Use for non-circular apertures.">Poly2</option>
-            <option value="poly3" title="3rd-degree polynomial. Handles higher-order non-circular aberrations.">Poly3</option>
+                  aria-label="Form removal" title="Flatness uses a best-fit plane: remove height offset and tilt, keep curvature. Advanced models can remove real flatness errors.">
+            <option value="plane">Flatness · Plane (tilt only)</option>
+            <optgroup label="Advanced form removal">
+              <option value="zernike">Zernike · selected terms</option>
+              <option value="poly2">Polynomial, order 2</option>
+              <option value="poly3">Polynomial, order 3</option>
+            </optgroup>
           </select>
           <span id="fringe-pill-group">
             <span class="fringe-sub-label">Subtract:</span>
@@ -180,6 +194,9 @@ export function buildResultsHtml() {
           <button class="fringe-pill" id="fringe-btn-invert" disabled title="Flip the displayed sign after orienting the interferogram from a known wedge/contact direction">\u2195 Invert</button>
         </div>
 
+        <p id="fringe-form-note" hidden style="font-size:12px;margin:6px 12px"></p>
+        <p id="fringe-result-operation" role="status" hidden style="font-size:12px;margin:6px 12px"></p>
+        <p id="fringe-result-engine" role="status" hidden style="font-size:12px;margin:6px 12px"></p>
         <div id="fringe-orientation-banner" class="fringe-orientation-banner" hidden>
           <span id="fringe-polarity-status" role="status"></span>
           <button type="button" id="fringe-orientation-open" disabled>Check surface direction…</button>
@@ -187,7 +204,7 @@ export function buildResultsHtml() {
         <div class="fringe-tab-bar" id="fringe-tab-bar">
           <button class="fringe-tab active" data-tab="surface">Surface Map</button>
           <button class="fringe-tab" data-tab="3d">3D View</button>
-          <button class="fringe-tab" data-tab="zernike">Zernike</button>
+          <button class="fringe-tab" data-tab="zernike" title="Advanced diagnostic breakdown; fitting terms does not remove them">Zernike (advanced)</button>
           <button class="fringe-tab" data-tab="profiles">Profiles</button>
           <button class="fringe-tab" data-tab="diagnostics">Diagnostics</button>
           <button class="fringe-tab" data-tab="session" title="Previous captures: surface previews, export, average, and compare">Session</button>
@@ -341,7 +358,7 @@ export function buildResultsHtml() {
         </div>
 
         <div class="fringe-tab-panel" id="fringe-panel-session" hidden>
-          <p style="padding:8px;margin:0">Previous analyses stay here when you open a new image. Select a capture to preview its surface or export it. This temporary server memory holds up to 100 captures within its memory limits; older captures are removed as needed. History expires after 30 minutes without new stored activity or a server restart. Export captures you want to keep. Your project's latest result, imported image, settings, masks and measurements autosave in your browser.</p>
+          <p style="padding:8px;margin:0">Previous analyses stay here when you open a new image. Select a capture to preview its surface or export it. Server history holds up to 100 captures within memory limits and expires after 30 minutes without new stored activity or a restart. Browser-analysis history stays in this tab: up to 8 captures / 48 MiB across projects, cleared on reload. Older captures are removed as needed. Export captures you want to keep. Your project's latest result, imported image, settings, masks and measurements autosave in your browser.</p>
           <div style="display:flex;flex:1;min-height:0;gap:8px;padding:8px">
             <div style="flex:1;display:flex;flex-direction:column;min-width:280px">
               <div style="display:flex;align-items:center;gap:8px;padding:4px 0;border-bottom:1px solid var(--border);margin-bottom:6px;flex-wrap:wrap">
@@ -437,10 +454,12 @@ function applyStatsDisplay({ pv_nm, rms_nm, useTrusted }) {
   // Toggle a "(trusted)" suffix on the PV/RMS labels.
   const pvLabel = pvNmEl?.parentElement?.querySelector(".fringe-stat-label");
   const rmsLabel = rmsNmEl?.parentElement?.querySelector(".fringe-stat-label");
-  for (const lab of [pvLabel, rmsLabel]) {
+  const form = describeFormRemoval(fr.lastResult || {});
+  for (const [lab, suffix] of [[pvLabel, 'PV'], [rmsLabel, 'RMS']]) {
     if (!lab) continue;
-    if (!lab.dataset.baseLabel) lab.dataset.baseLabel = lab.textContent;
-    lab.textContent = useTrusted ? `${lab.dataset.baseLabel} (trusted)` : lab.dataset.baseLabel;
+    const baseLabel = `${form.metric} ${suffix}`;
+    lab.textContent = useTrusted ? `${baseLabel} (trusted)` : baseLabel;
+    lab.title = form.detail;
   }
 }
 
@@ -551,11 +570,14 @@ export function refreshTrustedOverlay() {
 
 export function captureFringeOptions() { return {formModel, pillState: {...pillState}}; }
 export function restoreFringeResult(data, options) {
+  for (const control of document.querySelectorAll('.fringe-pill, #fringe-form-model, #fringe-zernike-table-container input')) control.disabled=false;
+  if ($('fringe-result-operation')) $('fringe-result-operation').hidden=true;
+  if ($('fringe-form-note')) $('fringe-form-note').hidden=true;
   dispose3dView();
   refreshOrientationStatus(data);
   refreshReferenceMarks(data);
   refreshQuality(data);
-  formModel = options?.formModel || data?.form_model || "zernike";
+  formModel = data?.form_model || options?.formModel || (data ? "zernike" : "plane");
   Object.assign(pillState, {tilt: true, power: false, astig: false, coma: false, spherical: false}, options?.pillState);
   if (data) {
     renderResults(data);
@@ -591,6 +613,13 @@ export function restoreFringeResult(data, options) {
 // ── Rendering ───────────────────────────────────────────────────────────
 
 function refreshOrientationStatus(data) {
+  const engine=$('fringe-result-engine');
+  if (engine) {
+    engine.hidden=!data;
+    engine.textContent=isBrowserResult(data)
+      ? 'Analyzed in this browser · experimental · image not uploaded · history kept in tab memory (up to 8 captures / 48 MiB); save your project to keep this result.'
+      : 'Analyzed on the server';
+  }
   const banner=$('fringe-orientation-banner');
   if (banner) {
     banner.hidden=!data;
@@ -600,6 +629,10 @@ function refreshOrientationStatus(data) {
 }
 function renderResults(data) {
   dispose3dView();
+  formModel = data.form_model || 'zernike';
+  if ($('fringe-form-model')) $('fringe-form-model').value = formModel;
+  if ($('fringe-pill-group')) $('fringe-pill-group').hidden = formModel !== 'zernike';
+  if (data.form_model === "zernike" && Array.isArray(data.subtracted_terms)) _syncPillStateFromSubtracted(data.subtracted_terms);
   refreshReferenceMarks(data);
   refreshOrientationStatus(data);
   // Summary bar
@@ -622,11 +655,15 @@ function renderResults(data) {
   const fringeEl = $("fringe-pv-fringes");
   if (fringeEl) fringeEl.textContent = Number.isFinite(data.pv_fringes) ? data.pv_fringes.toFixed(3) : "--";
 
-  // Standard pass/fail coloring
+  const form = describeFormRemoval(data);
+  for (const [id, suffix] of [['fringe-pv-label', 'PV'], ['fringe-rms-label', 'RMS']]) {
+    if ($(id)) { $(id).textContent = `${form.metric} ${suffix}`; $(id).title = form.detail; }
+  }
+  // Only compare tilt-only results to a flatness limit.
   const stdSel = $("fringe-standard");
   const pvEl = $("fringe-pv-nm");
   const pvWavesEl = $("fringe-pv-waves");
-  if (stdSel && pvEl && stdSel.value) {
+  if (stdSel && pvEl && stdSel.value && form.tiltOnly) {
     const opt = stdSel.selectedOptions[0];
     const limit = parseFloat(opt.dataset.pvNm);
     if (Number.isFinite(limit) && Number.isFinite(data.pv_nm)) {
@@ -643,24 +680,9 @@ function renderResults(data) {
   // Wavelength and subtracted terms in summary bar
   updateCalibrationIndicator();
   const subEl = $("fringe-summary-sub");
-  if (subEl) {
-    if (formModel === "plane") {
-      subEl.textContent = "Plane removed";
-    } else if (formModel === "poly2") {
-      subEl.textContent = "Poly2 removed";
-    } else if (formModel === "poly3") {
-      subEl.textContent = "Poly3 removed";
-    } else {
-      const sub = getSubtractTerms();
-      const names = [];
-      if (sub.includes(2)) names.push("Tilt");
-      if (sub.includes(4)) names.push("Curvature");
-      if (sub.includes(5)) names.push("Twist");
-      if (sub.includes(7)) names.push("Coma");
-      if (sub.includes(11)) names.push("Sph");
-      subEl.textContent = names.length ? names.join(", ") + " subtracted" : "None subtracted";
-    }
-  }
+  if (subEl) { subEl.textContent = form.label; subEl.title = form.detail; }
+  const formNote = $('fringe-form-note');
+  if (formNote) { formNote.hidden = false; formNote.textContent = form.detail; }
 
   // Enable invert button once we have results
   const invertBtn = $("fringe-btn-invert");
@@ -861,7 +883,8 @@ function _renderZernikeTable(result) {
     const coeff = coeffs[i];
     const surfNm = _coeffNm(coeff);
     const trms = _termRmsNm(i);
-    const isSub = subtracted.has(j);
+    const canSubtract = (result.form_model || "zernike") === "zernike";
+    const isSub = canSubtract && subtracted.has(j);
     const cls = isSub ? "fringe-z-subtracted" : "";
     const subBadge = isSub ? " <span style='font-size:10px;opacity:0.8'>(sub)</span>" : "";
     return `<tr class="${cls}">
@@ -872,7 +895,7 @@ function _renderZernikeTable(result) {
       <td style="padding:2px 8px;text-align:right" title="Per-term RMS on the current aperture.">${trms.toFixed(1)}</td>
       <td style="padding:2px 8px;text-align:center">
         <input type="checkbox" class="fringe-z-toggle" data-noll="${j}" ${isSub ? "checked" : ""}
-               title="Subtract / un-subtract this term" />
+               ${canSubtract ? 'title="Subtract / restore this term; higher terms remove real flatness errors"' : 'disabled title="Select advanced Zernike form removal to change individual terms"'} />
       </td>
     </tr>`;
   };
@@ -919,7 +942,7 @@ function _renderZernikeTable(result) {
     </tbody>`;
   }
 
-  return `<table style="width:100%;font-size:12px;border-collapse:collapse">
+  return `<p>Diagnostic coefficients describe the recovered surface. They are not all subtracted. Select advanced Zernike form removal to change individual terms; Plane removes only height offset and tilt.</p><table style="width:100%;font-size:12px;border-collapse:collapse">
     <thead>
       <tr style="border-bottom:1px solid var(--border)">
         <th style="text-align:left;padding:4px 8px">Noll</th>
@@ -1283,10 +1306,11 @@ function wireCarrierOverride() {
 
     document.body.style.cursor = "wait";
     try {
-      const resp = await apiFetch("/fringe/reanalyze-carrier", {
+      const resp = await fringeFetch("/fringe/reanalyze-carrier", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          form_model: getFormModel(),
           carrier_y: carrierY,
           carrier_x: carrierX,
           wavelength_nm: getWavelength(),
@@ -1303,7 +1327,7 @@ function wireCarrierOverride() {
           aperture_recipe: _getAperturePayloadOrNull(),
         }),
       });
-      if (!resp.ok) { console.warn("Carrier override failed"); return; }
+      if (!resp.ok) { window.alert((await resp.json()).detail || "Carrier override failed"); return; }
       const data = await resp.json();
       if (fr.lastResult !== sourceResult) return;
       fr.lastResult = data;
@@ -1642,7 +1666,7 @@ export function mergeReanalyzeResult(data, { clearTrust = false } = {}) {
     "subtracted_terms", "form_model", "plane_fit",
     "height_grid", "display_height_grid_nm", "raw_height_grid_nm",
     "mask_grid", "trusted_mask_grid", "trusted_area_pct",
-    "grid_rows", "grid_cols",
+    "grid_rows", "grid_cols", "execution_engine", "browser_runtime",
   ]) {
     if (data[key] !== undefined) fr.lastResult[key] = data[key];
   }
@@ -1705,12 +1729,12 @@ async function doReanalyze() {
       body.raw_grid_cols = fr.lastResult.grid_cols;
       body.mask = fr.lastResult.mask_grid;
     }
-    const r = await apiFetch("/fringe/reanalyze", {
+    const r = await fringeFetch("/fringe/reanalyze", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
-    if (!r.ok) return;
+    if (!r.ok) { window.alert((await r.json()).detail || "Re-analysis failed"); return; }
     const data = await r.json();
     if (fr.lastResult !== sourceResult) return;
     mergeReanalyzeResult(data);
@@ -1758,12 +1782,12 @@ export async function applySignFlipToLastResult() {
       body.raw_grid_cols = fr.lastResult.grid_cols;
       body.mask = fr.lastResult.mask_grid;
     }
-    const r = await apiFetch("/fringe/reanalyze", {
+    const r = await fringeFetch("/fringe/reanalyze", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
-    if (!r.ok) return false;
+    if (!r.ok) { window.alert((await r.json()).detail || "Inversion failed"); return false; }
     const data = await r.json();
     if (fr.lastResult !== sourceResult) return false;
     fr.lastResult.coefficients = inverted;
@@ -1806,8 +1830,10 @@ function exportFringeCsv() {
 
   // Add summary
   csv += `\nSummary\n`;
-  csv += `Gap PV (nm),${fr.lastResult.pv_nm?.toFixed(1)}\n`;
-  csv += `Gap RMS (nm),${fr.lastResult.rms_nm?.toFixed(1)}\n`;
+  const form = describeFormRemoval(fr.lastResult);
+  csv += `Evaluation,"${form.label}"\nRemoval,"${form.detail}"\n`;
+  csv += `${form.metric} PV (nm),${fr.lastResult.pv_nm?.toFixed(1)}\n`;
+  csv += `${form.metric} RMS (nm),${fr.lastResult.rms_nm?.toFixed(1)}\n`;
   csv += `PV (waves),${fr.lastResult.pv_waves?.toFixed(4)}\n`;
   csv += `RMS (waves),${fr.lastResult.rms_waves?.toFixed(4)}\n`;
   csv += `PV (fringes),${fr.lastResult.pv_fringes?.toFixed(4)}\n`;
@@ -1816,6 +1842,8 @@ function exportFringeCsv() {
   csv += "Algorithmically established absolute sign,no\n";
   for (const note of orientationDescription(fr.lastResult)) csv += `Physical orientation,"${note.replace(/"/g, '\"\"')}"\n`;
   csv += "Reference-flat error included,yes\n";
+  csv += `Analysis engine,${isBrowserResult() ? 'Browser (experimental)' : 'Server'}\n`;
+  if (fr.lastResult.browser_resolution) csv += `Browser analysis dimensions,${fr.lastResult.browser_resolution.analyzed.join(' x ')}\n`;
 
   const blob = new Blob([csv], { type: "text/csv" });
   const url = URL.createObjectURL(blob);
@@ -2039,10 +2067,12 @@ function _escapeHtml(s) {
 }
 
 async function fetchSessionCaptures() {
+  const epoch=state._epoch, sourceResult=fr.lastResult;
   try {
-    const r = await apiFetch("/fringe/session/captures");
+    const r = await fringeFetch("/fringe/session/captures");
     if (!r.ok) return;
     const data = await r.json();
+    if (state._epoch!==epoch || fr.lastResult!==sourceResult) return;
     fr.sessionCaptures = Array.isArray(data.captures) ? data.captures : [];
     renderSessionPanel();
     // M4.5: keep the trend chart fresh whenever the captures list changes,
@@ -2057,7 +2087,7 @@ async function fetchSessionCaptures() {
 async function clearSession() {
   if (!window.confirm("Clear all captures from this session? This cannot be undone.")) return;
   try {
-    const r = await apiFetch("/fringe/session/clear", { method: "POST" });
+    const r = await fringeFetch("/fringe/session/clear", { method: "POST" });
     if (!r.ok) {
       console.warn("Clear session failed");
       return;
@@ -2254,7 +2284,7 @@ function renderSessionPanel() {
       const id = btn.dataset.captureId;
       if (!id) return;
       try {
-        const resp = await apiFetch(`/fringe/session/capture/${encodeURIComponent(id)}`);
+        const resp = await fringeFetch(`/fringe/session/capture/${encodeURIComponent(id)}`);
         if (!resp.ok) {
           let detail = `HTTP ${resp.status}`;
           try { detail = (await resp.json()).detail || detail; } catch (_) {}
@@ -2382,7 +2412,7 @@ function _renderCaptureDetail(cap) {
     button.disabled = true;
     preview.textContent = 'Loading surface map…';
     try {
-      const response = await apiFetch(`/fringe/session/capture/${encodeURIComponent(cap.id)}`);
+      const response = await fringeFetch(`/fringe/session/capture/${encodeURIComponent(cap.id)}`);
       if (!response.ok) throw new Error(response.status === 404
         ? 'This capture has expired or was removed to free temporary storage. Refresh the session list.'
         : `Could not load this capture (${response.status}). Try again.`);
@@ -2621,7 +2651,7 @@ async function _doSubtract(measurementId, referenceId, panel, close) {
   if (activeWl != null) payload.wavelength_nm = activeWl;
 
   try {
-    const resp = await apiFetch("/fringe/subtract", {
+    const resp = await fringeFetch("/fringe/subtract", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
@@ -2903,7 +2933,7 @@ async function _doAverage(sourceIds, method, threshold, wl0, panel, close, polar
   }
 
   try {
-    const resp = await apiFetch("/fringe/average", {
+    const resp = await fringeFetch("/fringe/average", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
@@ -3165,7 +3195,7 @@ export function wireResultsEvents() {
       const id = btn.dataset.pill;
       const pill = SUBTRACT_PILLS.find(p => p.id === id);
       if (!pill || pill.locked) return;
-      pillState[id] = !pillState[id];
+      setPillSubtracted(id, !pillState[id]);
       btn.classList.toggle("active", pillState[id]);
       if (_reanalyzeDebounce) clearTimeout(_reanalyzeDebounce);
       _reanalyzeDebounce = setTimeout(() => {
@@ -3262,7 +3292,7 @@ export function wireResultsEvents() {
           window.alert("Import failed: file is not valid JSON.");
           return;
         }
-        const resp = await apiFetch("/fringe/session/import", {
+        const resp = await fringeFetch("/fringe/session/import", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ result: payload }),

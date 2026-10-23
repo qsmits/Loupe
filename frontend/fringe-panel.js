@@ -8,6 +8,7 @@ import { recoverOrientationObservations } from './fringe-orientation.js';
 import { state } from './state.js';
 import { getSubtractTerms, getFormModel, mergeReanalyzeResult, applySignFlipToLastResult, restoreFringeResult, captureFringeOptions } from './fringe-results.js';
 import { apiFetch } from './api.js';
+import { fringeFetch, isBrowserResult } from './fringe-compute.js';
 import { analyzeWithProgress, cancelAnalysis, hideProgress } from './fringe-progress.js';
 import { initFringeSetup, openFringeSetup, closeFringeSetup, showFringeAnalysisProgress, showFringeAnalysisError, refreshRegionEditor } from './fringe-setup.js';
 import { openFringeLensCal } from './fringe-lens-cal.js';
@@ -319,7 +320,7 @@ function _onAnalysisResult(data) {
   document.dispatchEvent(new CustomEvent("fringe:analyzed", { detail: data }));
 
   const avgBtn = $("fringe-btn-avg-add");
-  if (avgBtn) avgBtn.disabled = false;
+  if (avgBtn) { avgBtn.disabled = isBrowserResult(data); avgBtn.title = isBrowserResult(data) ? "Analyze separate images, then average their captures in Session." : "Capture another camera frame for averaging"; }
   const invBtn = $("fringe-btn-invert");
   if (invBtn) invBtn.disabled = false;
   const pdfBtn = $("fringe-btn-export-pdf");
@@ -414,8 +415,9 @@ async function analyzeFromCamera() {
 }
 
 /** Only the dialog's Analyze action starts a new analysis. */
-function _runAnalysis(formModel = getFormModel()) {
+function _runAnalysis(formModel = getFormModel(), engine = fr.analysisEngine) {
   if (fr.analysisBusy || !fr.droppedImageB64) return;
+  fr.analysisEngine = engine === "browser" ? "browser" : "server";
   const version = sourceVersion, epoch = state._epoch;
   const recovery=orientationRecovery;
   orientationRecovery=null;
@@ -432,6 +434,7 @@ function _runAnalysis(formModel = getFormModel()) {
     correct_2pi_jumps: getCorrect2piJumps(),
     calibration: getCalibrationPayload(),
     aperture_recipe: getAperturePayload(),
+    execution_engine: fr.analysisEngine,
     image_b64: fr.droppedImageB64,
   };
   clearCurrentResult();
@@ -572,7 +575,7 @@ async function recomputeAverage() {
   // A one-item "average" is exactly that capture. Load its full cached
   // result instead of leaving a stale multi-capture average on screen.
   if (accepted.length === 1) {
-    const resp = await apiFetch(
+    const resp = await fringeFetch(
       `/fringe/session/capture/${encodeURIComponent(accepted[0].id)}`
     );
     if (!resp.ok) {
@@ -617,7 +620,7 @@ async function recomputeAverage() {
     // recompute needed, 404ing on itself.
     record: false,
   };
-  const resp = await apiFetch("/fringe/average", {
+  const resp = await fringeFetch("/fringe/average", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -647,6 +650,7 @@ async function recomputeAverage() {
 }
 
 async function addToAverage() {
+  if (isBrowserResult()) { showToast("Analyze separate images, then average their captures in Session."); return; }
   const version = sourceVersion, epoch = state._epoch;
   document.body.style.cursor = "wait";
   const loadingOverlay = $("fringe-loading-overlay");
@@ -655,7 +659,7 @@ async function addToAverage() {
   if (loadingText) loadingText.textContent = "Capturing for average...";
 
   try {
-    const resp = await apiFetch("/fringe/analyze", {
+    const resp = await fringeFetch("/fringe/analyze", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({

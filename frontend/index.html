@@ -1038,7 +1038,7 @@
             <div class="help-section-label">Principle</div>
             <p class="help-p">When a flat optical reference (an optical flat) is placed on a lapped surface and illuminated with monochromatic light, interference fringes form. Each fringe is a contour of constant air gap, spaced at half the wavelength of light (~295 nm for sodium). Loupe converts the recovered phase into an air-gap-departure map. A single intensity image does not reveal absolute high/low sign by itself; orient it from a known wedge or contact direction and use <strong>Invert</strong> if needed. Once oriented, the specimen contribution has the opposite sign.</p>
             <div class="help-section-label">Digital analysis</div>
-            <p class="help-p">Loupe analyzes a single interferogram using spatial-carrier Fourier phase extraction. It detects the carrier peak in the 2D FFT, demodulates the sideband, unwraps the recovered phase, and converts it to air-gap departure. The map can then be shown raw or with low-order form removed using Zernike, plane, or low-order polynomial models. Any figure error in the optical flat remains included unless it is measured and subtracted as a reference.</p>
+            <p class="help-p">Loupe analyzes a single interferogram using spatial-carrier Fourier phase extraction. It detects the carrier peak in the 2D FFT, demodulates the sideband, unwraps the recovered phase, and converts it to air-gap departure. The default Flatness · Plane model removes height offset and tilt while preserving curvature and other flatness errors. Advanced Zernike and polynomial removal can instead show residual shape. Any figure error in the optical flat remains included unless it is measured and subtracted as a reference.</p>
             <div class="help-section-label">What this mode is best at</div>
             <p class="help-p">Fringe mode is strongest on smooth, continuous surfaces: optical flats, lapped faces, gentle wear patterns, curvature, and low-order form. Small region-to-region comparisons also work well when the step is comfortably below the single-wavelength ambiguity limit.</p>
             <div class="help-section-label">Important limit</div>
@@ -1219,18 +1219,19 @@
             <h2 class="help-page-title">Form Removal</h2>
             <p class="help-page-sub">Control which low-order shape is removed from the measured surface.</p>
             <div class="help-section-label">Why subtract?</div>
-            <p class="help-p">Low-order form often reflects setup rather than the part feature you care about. Removing tilt, curvature, or other broad trends can make local structure easier to read. For metrology work, always be explicit about what has been removed before you interpret the PV/RMS numbers.</p>
+            <p class="help-p">For flatness, remove only height offset and overall tilt. Bow, curvature, saddle shape and local defects are departures from flatness and must remain in the measurement. The default <strong>Flatness · Plane (tilt only)</strong> fits a least-squares plane over the analysis area and subtracts it. PV and RMS then describe the departure from that plane; they are not a minimum-zone flatness calculation. Minimum-zone flatness finds the smallest separation between two parallel planes enclosing the measured surface.</p>
             <div class="help-section-label">Form models</div>
             <table>
               <thead><tr><th>Model</th><th>Best use</th></tr></thead>
               <tbody>
-                <tr><td><strong>Zernike</strong></td><td>Circular or nearly circular apertures where you want per-term control over optical-style low-order modes.</td></tr>
-                <tr><td><strong>Plane</strong></td><td>Keep curvature, remove only tilt.</td></tr>
-                <tr><td><strong>Poly2</strong></td><td>Non-circular apertures with gentle quadratic form.</td></tr>
-                <tr><td><strong>Poly3</strong></td><td>Non-circular apertures with somewhat richer low-order shape.</td></tr>
+                <tr><td><strong>Plane — default</strong></td><td>Flatness relative to a best-fit plane. Removes height offset and tilt; retains curvature and other errors. Suitable for round and non-round parts.</td></tr>
+                <tr><td><strong>Zernike — advanced</strong></td><td>Diagnose surface shape using a circular polynomial basis. Fitting the coefficients does not remove them. Subtract only Z1–Z3 (offset and tilt) to retain flatness errors; removing higher terms changes the result to a residual.</td></tr>
+                <tr><td><strong>Poly2</strong></td><td>Advanced: removes quadratic shape, including curvature. Reports residual shape, not total flatness.</td></tr>
+                <tr><td><strong>Poly3</strong></td><td>Advanced: removes quadratic and cubic shape. Reports residual shape, not total flatness.</td></tr>
               </tbody>
             </table>
-            <div class="help-section-label">Zernike term controls</div>
+            <div class="help-tip"><strong>Residual after form removal:</strong> Curvature, Twist and higher-term subtraction can make a non-flat part appear flat. These results use Residual PV/RMS labels and do not receive a flatness-limit comparison. Keep them for diagnosing features, not evaluating total flatness. Previously saved analyses retain their original model.</div>
+            <div class="help-section-label">Zernike term controls (advanced)</div>
             <table>
               <thead><tr><th>Checkbox</th><th>Terms</th><th>What it removes</th></tr></thead>
               <tbody>
@@ -1241,7 +1242,7 @@
                 <tr><td><strong>Spherical</strong></td><td>Z11</td><td>Center-to-edge variation (bowl shape)</td></tr>
               </tbody>
             </table>
-            <div class="help-tip">Changing pills or form models triggers instant re-analysis using the cached raw grid when available, so the display is recomputed from the recovered surface rather than only from the low-order coefficient chart.</div>
+            <div class="help-tip">Changing pills or form models triggers re-analysis using the cached raw grid when available, so the display is recomputed from the recovered surface rather than only from the low-order coefficient chart.</div>
           </div>
 
           <!-- Fringe: Results & Tabs -->
@@ -1252,6 +1253,8 @@
             <p class="help-p">Shows air-gap PV and RMS in waves and nanometers, plus PV in same-order fringe intervals (one fringe = λ/2 gap departure). Absolute sign requires a known wedge/contact direction; after orientation, the specimen contribution is opposite. Optical-flat figure error is included. The bar also shows the active workflow mode, calibration, recipe badge, and form-removal description.</p>
             <div class="help-section-label">Surface Map tab</div>
             <p class="help-p">False-color map of the displayed air-gap departure. Use the overlay buttons to switch between the gap map, confidence composite, and modulation image. The “use trusted pixels only” checkbox restricts measurements to pixels that are both well-modulated and unwrap-reliable.</p>
+            <div class="help-section-label">Browser analysis (experimental)</div>
+            <p class="help-p">In Analysis settings, select <strong>This browser</strong> under <strong>Analyze using</strong>. The same numerical engine runs on your device in a background worker; the image is not uploaded for analysis. First use downloads scientific libraries, so an internet connection is required. Images are limited to 1024 pixels on the longest side, with resizing reported in the result. Cancellation stops the worker. Form changes, inversion, carrier selection, Session averages and subtraction also run locally. Session history is temporary and bounded to eight captures or 48 MiB across open projects; save a project to keep its current result. Capture JSON import and live-camera running averages are not supported in browser mode. Camera acquisition and lens calibration still use the existing workflows. Errors do not fall back to server analysis automatically. Choose Server explicitly to use the established engine or its larger image limit.</p>
             <div class="help-section-label">3D View tab</div>
             <p class="help-p">Interactive 3D surface visualization. After you confirm the physical surface direction, higher parts rise in 3D and lower parts fall; colors retain their meaning from the 2D map. Confirmation updates an already-open 3D view immediately. Until checked, the view shows recovered gap departure and warns that bumps and hollows may be reversed. Overall slope and selected form remain removed. Drag to rotate, scroll to zoom, right-drag to pan. The Z exaggeration slider amplifies the height for visibility.</p>
             <div class="help-section-label">Zernike tab</div>
@@ -1259,7 +1262,7 @@
             <div class="help-section-label">Profiles tab</div>
             <p class="help-p">Cross-sections through the center of the air-gap map: one horizontal, one vertical. Useful for identifying whether departures are primarily in one direction.</p>
             <div class="help-section-label">Session tab</div>
-            <p class="help-p">Previous analyses remain here after you open a new image. Every recorded analysis, average, subtraction, and import appears with origin tags, source links, export buttons, and details. Select a capture and click <strong>View surface map</strong> to preview it. History is held in temporary server memory: up to 100 captures within memory limits, with older captures removed as needed. It expires after 30 minutes without new stored activity or a server restart. Project autosave preserves the latest result, not the whole capture history; export captures separately to keep them.</p>
+            <p class="help-p">Previous analyses remain here after you open a new image. Every recorded analysis, average, subtraction, and import appears with origin tags, source links, export buttons, and details. Select a capture and click <strong>View surface map</strong> to preview it. Server history is temporary: up to 100 captures within memory limits, expiring after 30 minutes without new stored activity or a restart. Browser-analysis history stays in this tab: up to 8 captures / 48 MiB across projects, cleared on reload. Older captures are removed as needed. Project autosave preserves the latest result, not the whole capture history; export captures separately to keep them.</p>
             <div class="help-section-label">Trend tab</div>
             <p class="help-p">Plots PV and RMS across the current session. Use it to spot drift, compare calibrations, and visualize the effect of repeated polishing or lapping passes.</p>
           </div>

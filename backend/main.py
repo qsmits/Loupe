@@ -26,6 +26,7 @@ from .session_store import SessionFrameStore
 from .stream import CameraReader
 from .api import make_router, router as ui_router
 from .run_store import RunStore
+from .browser_runtime import router as browser_runtime_router
 
 FRONTEND_DIR = pathlib.Path(__file__).parent.parent / "frontend"
 
@@ -251,6 +252,12 @@ def create_app(camera: BaseCamera | None = None, no_camera: bool = False) -> Fas
                     "connect-src 'self' blob: https://esm.sh; "
                     "frame-ancestors 'none'"
                 )
+                if request.url.path == "/fringe-browser-worker.js":
+                    response.headers["Content-Security-Policy"] = (
+                        "default-src 'none'; "
+                        "script-src 'self' 'wasm-unsafe-eval' https://cdn.jsdelivr.net/pyodide/v0.29.3/full/; "
+                        "connect-src 'self' https://cdn.jsdelivr.net/pyodide/v0.29.3/full/"
+                    )
                 response.headers["Permissions-Policy"] = "camera=self"
                 response.headers["X-Content-Type-Options"] = "nosniff"
                 response.headers["X-Frame-Options"] = "DENY"
@@ -261,6 +268,7 @@ def create_app(camera: BaseCamera | None = None, no_camera: bool = False) -> Fas
     run_store = RunStore(db_path=os.path.join(os.path.dirname(__file__), "..", "data", "runs.db"))
     app.include_router(make_router(reader, frame_store, startup_warning=startup_warning, run_store=run_store))
     app.include_router(ui_router)
+    app.include_router(browser_runtime_router)
 
     if FRONTEND_DIR.exists():
         app.mount("/", StaticFiles(directory=str(FRONTEND_DIR), html=True), name="frontend")

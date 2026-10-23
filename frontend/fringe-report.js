@@ -1,3 +1,4 @@
+import { describeFormRemoval } from './fringe-form.js';
 // Printable comparison uses the immutable analysis images, independent of UI zoom.
 import { polarityDescription } from './fringe-orientation.js';
 import { referenceMarks } from './fringe-reference.js';
@@ -28,6 +29,7 @@ function addImage(doc, png, box, marks = []) {
 }
 
 export function createFringeReport(data, {jsPDF, sourceName = '', standard = null, details = []} = {}) {
+  const form = describeFormRemoval(data);
   const doc = new jsPDF({orientation:'landscape', unit:'mm', format:'a4'});
   const margin = 10, pageW = 297, pageH = 210;
   const num = v => Number.isFinite(v) ? v.toFixed(2) : 'unavailable';
@@ -37,7 +39,7 @@ export function createFringeReport(data, {jsPDF, sourceName = '', standard = nul
   doc.text(source, margin, 25);
   doc.text(`Exported: ${new Date().toLocaleString()}    Wavelength: ${data.wavelength_nm} nm`, margin, 36);
   doc.setFontSize(12);
-  doc.text(`Gap PV: ${num(data.pv_nm)} nm     Gap RMS: ${num(data.rms_nm)} nm     PV: ${num(data.pv_fringes)} fringes`, margin, 45);
+  doc.text(`${form.metric} PV: ${num(data.pv_nm)} nm     ${form.metric} RMS: ${num(data.rms_nm)} nm     PV: ${num(data.pv_fringes)} fringes`, margin, 45);
   doc.setFontSize(9);
   const marks = referenceMarks(data);
   if (data.reference_image_b64) {
@@ -59,8 +61,14 @@ export function createFringeReport(data, {jsPDF, sourceName = '', standard = nul
   doc.setFontSize(16); doc.text('Analysis details', margin, 18);
   let y = 28;
   doc.setFontSize(9);
-  const metadata = [...details];
-  if (standard) metadata.push(`Selected limit: ${standard.name} (${standard.limit} nm PV). Numerical comparison: ${data.pv_nm <= standard.limit ? 'within' : 'above'} limit; no uncertainty-based conformity assessment.`);
+  const metadata = [form.label, form.detail, ...details];
+  if (data.execution_engine === 'browser') {
+    metadata.push('Analysis engine: browser (experimental), using the shared Python engine in WebAssembly.');
+    if (data.browser_resolution) metadata.push(`Browser analysis dimensions (rows × columns): ${data.browser_resolution.analyzed.join(' × ')}; maximum side ${data.browser_resolution.max_dimension} pixels.`);
+    if (data.browser_runtime) metadata.push(`Runtime: ${data.browser_runtime.name} ${data.browser_runtime.version}`);
+  }
+  if (standard && !form.tiltOnly) metadata.push("Flatness limit comparison withheld: the result is not a tilt-only flatness evaluation.");
+  if (standard && form.tiltOnly) metadata.push(`Selected limit: ${standard.name} (${standard.limit} nm PV). Numerical comparison: ${data.pv_nm <= standard.limit ? 'within' : 'above'} limit; no uncertainty-based conformity assessment.`);
   if (data.warnings?.length) metadata.push(...data.warnings.map(w => `Warning: ${w}`));
   for (const line of metadata) {
     const lines = doc.splitTextToSize(line, 277);

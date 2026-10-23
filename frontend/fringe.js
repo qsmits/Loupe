@@ -53,6 +53,7 @@ export const fr = {
   sourceName: null,
   analyzedAt: null,
   analysisBusy: false,
+  analysisEngine: "server",
   droppedImageB64: null,   // base64 string when analyzing a dropped file
   droppedObjectUrl: null,  // blob URL for preview display
   sessionCaptures: [],     // M1.7 — list of capture summaries from /fringe/session/captures
@@ -72,7 +73,7 @@ function workspaceControls() {
 }
 
 const WORKSPACE_DEFAULTS = {
-  lastResult: null, lastMask: null, maskPolygons: [], measurements: [],
+  lastResult: null, lastMask: null, maskPolygons: [], measurements: [], analysisEngine: "server",
   useTrustedOnly: false, lensK1: 0, droppedImageB64: null, sourceName: null, analyzedAt: null, carrierOverride: null,
   mode: "surface", measureMode: null, lastAreaRect: null, stepRegions: [], avgRejectThreshold: 3,
 };

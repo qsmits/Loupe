@@ -61,11 +61,16 @@ export function initFringeSetup(onAnalyze, onCancel) {
           Select / edit: drag a region to move it, or a corner handle to resize. Circle handles keep it round.</p>
       </fieldset>
       <fieldset id="fringe-setup-settings"><legend>Analysis settings</legend>
+        <div class="detect-section">
+          <label for="fringe-analysis-engine">Analyze using</label>
+          <select id="fringe-analysis-engine"><option value="server">Server (established)</option><option value="browser">This browser (experimental)</option></select>
+          <p id="fringe-engine-note">Browser mode keeps the image on this device and downloads scientific libraries on first use. Images are limited to 1024 pixels on the longest side. Use the server for larger analyses. Camera capture still needs the camera connection.</p>
+        </div>
         <div id="fringe-settings-host"></div>
         <div class="detect-section">
-          <label for="fringe-setup-form">Remove overall form</label>
-          <select id="fringe-setup-form"><option value="zernike">Zernike (round surfaces)</option><option value="plane">Plane (tilt only)</option><option value="poly2">Polynomial, order 2</option><option value="poly3">Polynomial, order 3</option></select>
-          <p>Start with the default. You can adjust form removal and individual terms in the results.</p>
+          <label for="fringe-setup-form">Form removal</label>
+          <select id="fringe-setup-form"><option value="plane">Flatness · Plane (tilt only)</option><optgroup label="Advanced form removal"><option value="zernike">Zernike · selected terms</option><option value="poly2">Polynomial, order 2</option><option value="poly3">Polynomial, order 3</option></optgroup></select>
+          <p>For flatness, remove only height offset and tilt. Plane retains bow, curvature and other surface errors. Advanced removal can hide those errors; its PV/RMS describe the residual shape.</p>
         </div>
       </fieldset>
     </div>
@@ -97,12 +102,13 @@ export function initFringeSetup(onAnalyze, onCancel) {
     $('fringe-setup-start').disabled = true;
     dialog.close(); dialog.hidden = true;
     try {
-      await maybeShowUploadNotice('/fringe/analyze-stream');
+      const engine = $('fringe-analysis-engine').value;
+      if (engine !== 'browser') await maybeShowUploadNotice('/fringe/analyze-stream');
       if (version !== imageVersion) return;
       dialog.hidden = false; dialog.showModal();
       busy = false;
       $('fringe-setup-start').disabled = false;
-      onAnalyze($('fringe-setup-form').value);
+      onAnalyze($('fringe-setup-form').value, engine);
     } catch (error) {
       if (version !== imageVersion) return;
       dialog.hidden = false; dialog.showModal();
@@ -392,6 +398,7 @@ export function openFringeSetup(src, name) {
   dialog.hidden = false;
   if (!dialog.open) dialog.showModal();
   refreshRegionEditor();
+  $('fringe-analysis-engine').value = fr.analysisEngine || 'server';
   const next = new Image();
   next.onload = () => {
     if (version !== imageVersion) return;

@@ -403,7 +403,7 @@ class AnalyzeBody(BaseModel):
     image_b64: Optional[str] = Field(default=None)
     roi: Optional[RoiRect] = Field(default=None)
     mask_polygons: Optional[list[MaskPolygon]] = Field(default=None)
-    form_model: str = Field(default="zernike", pattern="^(zernike|plane|poly2|poly3)$")
+    form_model: str = Field(default="plane", pattern="^(zernike|plane|poly2|poly3)$")
     lens_k1: float = Field(default=0.0, ge=-2.0, le=2.0)
     correct_2pi_jumps: bool = Field(default=True)
     calibration: Optional[CalibrationSnapshot] = Field(default=None)
