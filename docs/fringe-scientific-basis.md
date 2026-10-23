@@ -234,8 +234,26 @@ The focused validation run passed 108 backend and 11 frontend checks.
 These checks do not certify camera-driver or optical-path orientation for a
 physical setup. An orientation mark on the rim or fixture, outside the
 measuring surface, remains useful for registering a round part to its photo.
-A future source/map comparison view should preserve the actual crop transform
-and use shared landmarks or a linked cursor; centering the cropped surface on
-the full source image is insufficient for off-center apertures. A contact
-datum and a gap-opening direction should be separate from these spatial
-orientation controls.
+The paired source/map view preserves the actual crop transform and uses shared
+landmarks with linked navigation. Physical observations can be recorded separately:
+gap-opening direction, an optional contact landmark, checked display polarity,
+and setup notes. They do not establish an absolute gap or modify height zero.
+Inverting the display reverses the recorded red/blue meaning, while a fresh
+analysis starts without physical observations. Reports preserve both aligned
+images, their labels, and these observations.
+
+### Large-fit memory use
+
+Large Zernike fits reduce blocks of at most 16,384 pixel rows by QR before a
+small least-squares solve. Every valid pixel participates; no sampling or image
+resolution reduction is introduced. The final rank cutoff uses the original
+pixel count, and orthogonal reduction avoids the loss of conditioning from
+forming normal equations. Regression checks compare against the dense solve
+on full, circular, clipped, annular and rank-deficient apertures.
+
+An isolated 1024 × 1024, 36-term fit on the development Mac used 118 MiB peak
+process RSS versus 725 MiB for the dense path. Runtime was 2.15 s versus 1.43 s,
+and the maximum coefficient difference was 3.0 × 10⁻¹⁴. These figures include
+the fit process and imports, not the entire analysis pipeline; FFT, image
+rendering and concurrent analyses still require additional memory. Benchmark
+input was `0.3*sin(x/80) + 0.1*cos(y/70)` with no aperture mask.

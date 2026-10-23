@@ -281,6 +281,36 @@ def _make_polar_coords(shape: tuple[int, int], mask: np.ndarray | None = None
     return rho, theta
 
 
+_DENSE_FIT_MAX_ELEMENTS = 1_048_576
+_FIT_BLOCK_ROWS = 16_384
+
+
+def _fit_zernike_blocks(rho: np.ndarray, theta: np.ndarray,
+                        data: np.ndarray, n_terms: int) -> np.ndarray:
+    """Reduce all pixel rows by QR, without retaining the full basis matrix.
+
+    Orthogonal reduction preserves least squares without squaring the
+    condition number (as normal equations would). The final rank cutoff uses
+    the original matrix dimensions, matching the dense NumPy solve.
+    """
+    reduced_basis = reduced_data = None
+    for start in range(0, data.size, _FIT_BLOCK_ROWS):
+        stop = start + _FIT_BLOCK_ROWS
+        basis = zernike_basis(n_terms, rho[start:stop], theta[start:stop])
+        q, r = np.linalg.qr(basis, mode='reduced')
+        projected = q.T @ data[start:stop]
+        del q, basis
+        if reduced_basis is None:
+            reduced_basis, reduced_data = r, projected
+        else:
+            q, reduced_basis = np.linalg.qr(
+                np.vstack((reduced_basis, r)), mode='reduced')
+            reduced_data = q.T @ np.concatenate((reduced_data, projected))
+            del q
+    cutoff = np.finfo(np.float64).eps * max(data.size, n_terms)
+    return np.linalg.lstsq(reduced_basis, reduced_data, rcond=cutoff)[0]
+
+
 def fit_zernike(surface: np.ndarray, n_terms: int = 36,
                 mask: np.ndarray | None = None
                 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -299,13 +329,18 @@ def fit_zernike(surface: np.ndarray, n_terms: int = 36,
     theta : 2D azimuthal angles (for reuse in subtract).
     """
     rho, theta = _make_polar_coords(surface.shape, mask)
-    Z = zernike_basis(n_terms, rho, theta, mask)
     if mask is not None:
-        data = surface.ravel()[mask.ravel().astype(bool)]
+        valid = mask.ravel().astype(bool)
+        data = surface.ravel()[valid]
     else:
         data = surface.ravel()
-    # Least-squares solve
-    coeffs, _, _, _ = np.linalg.lstsq(Z, data, rcond=None)
+    if data.size * n_terms <= _DENSE_FIT_MAX_ELEMENTS:
+        Z = zernike_basis(n_terms, rho, theta, mask)
+        coeffs = np.linalg.lstsq(Z, data, rcond=None)[0]
+    else:
+        rho_valid = rho.ravel()[valid] if mask is not None else rho.ravel()
+        theta_valid = theta.ravel()[valid] if mask is not None else theta.ravel()
+        coeffs = _fit_zernike_blocks(rho_valid, theta_valid, data, n_terms)
     return coeffs, rho, theta
 
 
@@ -2231,6 +2266,7 @@ def extract_phase_dft(image: np.ndarray, mask: np.ndarray | None = None,
                       dc_cutoff_cycles: float | None = 1.5,
                       anisotropic_lpf: bool = True,
                       return_plain: bool = False,
+                      filter_metadata: dict | None = None,
                       ) -> np.ndarray | tuple[np.ndarray, np.ndarray]:
     """Extract wrapped phase via spatial-domain complex demodulation.
 
@@ -2502,6 +2538,12 @@ def extract_phase_dft(image: np.ndarray, mask: np.ndarray | None = None,
         # alternative parameterizations of one low-pass, not two filters.
         sig_across_img, sig_along_img = _demodulation_sigmas(fringe_period, sigma_frac, False)
         theta = 0.0
+
+    if filter_metadata is not None:
+        filter_metadata.update(sigma_across_px=float(sig_across_img),
+                               sigma_along_px=float(sig_along_img),
+                               fringe_period_px=float(fringe_period),
+                               requested_fraction=float(sigma_frac))
 
     # Zero-extend far enough that the circular convolution cannot wrap real
     # data back into the frame (>= 3σ each side puts the opposite edge 6σ
@@ -3855,11 +3897,13 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 589.3,
     # Step 2: DFT phase extraction
     # wrapped_plain skips the carrier-leak subtraction; it feeds only the
     # fold-over gate below (see extract_phase_dft's return_plain).
+    filter_metadata = {}
     wrapped, wrapped_plain = extract_phase_dft(
         img, mask, carrier_override=carrier_override,
         lpf_sigma_frac=lpf_sigma_frac,
         dc_margin_override=dc_margin_override,
-        dc_cutoff_cycles=dc_cutoff_cycles, return_plain=True)
+        dc_cutoff_cycles=dc_cutoff_cycles, return_plain=True,
+        filter_metadata=filter_metadata)
     _progress("phase", 0.25, "Extracting phase...")
 
     # Step 2b: Carrier analysis (needed for fringe_period_px before unwrap)
@@ -3952,10 +3996,9 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 589.3,
     _edge_band_px = None
     _p_carrier = carrier_info.get("fringe_period_px")
     if _p_carrier and math.isfinite(_p_carrier) and _p_carrier > 1:
-        _frac = (DEFAULT_LPF_SIGMA_FRAC if lpf_sigma_frac is None
-                 else float(lpf_sigma_frac))
         _edge_band_px = max(0.75 * _p_carrier,
-                            3.0 * max(_demodulation_sigmas(_p_carrier, _frac)))
+                            3.0 * max(filter_metadata["sigma_across_px"],
+                                      filter_metadata["sigma_along_px"]))
     unwrapped, unwrap_risk, quality_map = unwrap_phase_2d(
         wrapped, mask, quality=modulation,
         fringe_period_px=carrier_info.get("fringe_period_px"),
@@ -4217,6 +4260,8 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 589.3,
         trusted_grid = (trusted_resized > 0)
     else:
         trusted_grid = trusted_work
+    diagnostic_grid = cv2.resize(diagnostic_mask.astype(np.uint8), (grid_w, grid_h),
+                                  interpolation=cv2.INTER_NEAREST)
     # Trusted is always a subset of grid_mask at the grid resolution too.
     trusted_grid = trusted_grid & grid_mask
 
@@ -4323,6 +4368,15 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 589.3,
     return {
         "surface_map": surface_map_b64,
         "reference_image_b64": reference_image_b64,
+        "analysis_filter": {**filter_metadata, "boundary_band_px": _edge_band_px},
+        "coverage": {
+            "aperture_pixels": int(diagnostic_mask.sum()),
+            "measured_pixels": n_valid,
+            "boundary_excluded_pixels": n_edge_risk,
+            "frame_pixels": n_total,
+            "requested_pixels": int(np.count_nonzero(custom_mask)) if custom_mask is not None else None,
+        },
+        "diagnostic_mask_grid": [int(v) for v in diagnostic_grid.ravel()],
         "zernike_chart": zernike_chart_b64,
         "profile_x": profile_x,
         "profile_y": profile_y,

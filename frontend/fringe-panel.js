@@ -9,7 +9,7 @@ import { getSubtractTerms, getFormModel, mergeReanalyzeResult, applySignFlipToLa
 import { apiFetch } from './api.js';
 import { analyzeWithProgress, cancelAnalysis, hideProgress } from './fringe-progress.js';
 import { initFringeSetup, openFringeSetup, closeFringeSetup, showFringeAnalysisProgress, showFringeAnalysisError, refreshRegionEditor } from './fringe-setup.js';
-import { switchMode } from './modes.js';
+import { openFringeLensCal } from './fringe-lens-cal.js';
 import { imageWidth, imageHeight } from './viewport.js';
 import { lensK1ToDiagNormalized } from './math.js';
 import { showToast } from './shell.js';
@@ -853,7 +853,7 @@ export function wirePanelEvents() {
   $("fringe-btn-lens-save")?.addEventListener("click", () => {
     const nameInput = $("fringe-lens-save-name");
     const name = nameInput?.value.trim();
-    if (!name || !fr.lensK1) return;
+    if (!name || !Number.isFinite(fr.lensK1)) return;
     saveFringeLensProfile(name, fr.lensK1, fr.lensK1Space || "diag_normalized_v1");
     renderFringeLensDropdown();
     $("fringe-lens-profile").value = name;
@@ -909,26 +909,29 @@ export function wirePanelEvents() {
     });
   }
 
-  // Lens calibration — cross-mode workflow
+  // Lens calibration stays in the fringe project with its own target image.
   $("fringe-btn-lens-cal")?.addEventListener("click", () => {
-    window.crossMode = {
-      source: 'fringe-lens-cal',
-      callback: (k1) => {
+    const epoch = state._epoch;
+    openFringeLensCal({
+      isCurrent: () => state._epoch === epoch,
+      captureImage: state._hosted || state._noCamera ? null : async () => {
+        const frozen = await apiFetch('/freeze', {method:'POST'});
+        if (!frozen.ok) throw new Error('Could not capture camera frame');
+        const response = await apiFetch('/frame');
+        if (!response.ok) throw new Error('Camera returned no frame');
+        const blob = await response.blob();
+        return new File([blob], 'Camera calibration image', {type:blob.type || 'image/jpeg'});
+      },
+      onConfirm: (k1) => {
         _setAppliedLensK1(k1);
         // Show save prompt
         const saveRow = $("fringe-lens-save-row");
         if (saveRow) { saveRow.hidden = false; saveRow.style.display = 'flex'; }
-        // Clear dropdown (no saved profile yet)
-        const sel = $("fringe-lens-profile");
-        if (sel) sel.value = "";
-        // Re-analyze if results exist (skip in hosted mode)
+        renderFringeLensDropdown(k1);
+        // Keep the interferogram and let the user start a corrected analysis.
         if (fr.droppedImageB64) showAnalysisSetup();
       },
-    };
-
-    switchMode("microscope");
-    const sel = $("mode-switcher");
-    if (sel) sel.value = "microscope";
+    });
   });
 
   // Wavelength dropdown (now in top bar) — writes through to active calibration

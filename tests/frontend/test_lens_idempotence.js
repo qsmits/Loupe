@@ -68,3 +68,17 @@ test('rejected correction leaves image, stored blob and measurements unchanged',
   assert.equal(state.lensK1,0);
   assert.equal(state.annotations.length,1);
 });
+
+test('fringe lens dropdown restores unsaved and saved coefficients accurately', async () => {
+  const {registerElement}=await import('./dom-stub.js');
+  const {renderFringeLensDropdown,saveFringeLensProfile}=await import('../../frontend/fringe-lens-profiles.js');
+  const select=document.createElement('select');
+  registerElement('fringe-lens-profile',select);
+  assert.equal(renderFringeLensDropdown(.12),true);
+  assert.equal(select.value,'__current_lens_calibration__');
+  saveFringeLensProfile('Test lens',.12);
+  assert.equal(renderFringeLensDropdown(.12),false);
+  assert.equal(select.value,'Test lens');
+  renderFringeLensDropdown(0);
+  assert.equal(select.value,'');
+});

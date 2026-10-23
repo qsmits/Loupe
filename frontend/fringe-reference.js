@@ -1,6 +1,7 @@
 // Visual landmarks belong to one result and its immutable, analysis-aligned image.
 // They are independent of measurements, aperture masks and height/sign references.
 import { fr, $ } from './fringe.js';
+import { GAP_DIRECTIONS, physicalOrientation, orientationSvg, polarityDescription } from './fringe-orientation.js';
 
 export function referenceMarks(result) {
   if (!result?.reference_image_b64 || !Array.isArray(result.reference_marks)) return [];
@@ -39,13 +40,13 @@ export function referenceSvg(marks, width, height, selected = null) {
   }).join('');
 }
 
-let dialog = null, owner = null, selected = null, undo = [];
+let dialog = null, owner = null, selected = null, undo = [], exportReport = null;
 
-function draw(svg, image, marks, selection) {
+function draw(svg, image, marks, selection, result = fr.lastResult) {
   if (!svg || !image) return;
   const w = image.clientWidth, h = image.clientHeight;
   svg.setAttribute('viewBox', `0 0 ${w || 1} ${h || 1}`);
-  svg.innerHTML = referenceSvg(marks, w, h, selection);
+  svg.innerHTML = referenceSvg(marks, w, h, selection) + orientationSvg(result, w, h);
 }
 
 export function refreshReferenceMarks(result = fr.lastResult) {
@@ -57,7 +58,7 @@ export function refreshReferenceMarks(result = fr.lastResult) {
     btn.title = result?.reference_image_b64 ? 'Place matching landmarks on the interferogram and surface map'
       : 'Analyze an image to create an aligned interferogram preview';
   }
-  draw($('fringe-reference-svg'), $('fringe-surface-img'), referenceMarks(result));
+  draw($('fringe-reference-svg'), $('fringe-surface-img'), referenceMarks(result), null, result);
 }
 
 function redraw() {
@@ -73,13 +74,36 @@ function redraw() {
   $('fringe-reference-clear').disabled = !marks.length;
   $('fringe-reference-undo').disabled = !undo.length;
   $('fringe-reference-count').textContent = `${marks.length}/26 marks`;
+  const contact=$('fringe-orientation-contact');
+  const record=physicalOrientation(owner);
+  if (owner.physical_orientation) owner.physical_orientation.contact_label=record.contact_label;
+  contact.innerHTML='<option value="">Not recorded</option>'+marks.map(p=>`<option value="${p.label}">${p.label}</option>`).join('');
+  contact.value=record.contact_label || '';
+  const status=$('fringe-orientation-status');
+  if (status) status.textContent=polarityDescription(owner);
+  document.dispatchEvent(new CustomEvent('fringe:orientation-changed'));
+
 }
 
 function remember() {
-  undo.push(referenceMarks(owner));
+  undo.push({marks:referenceMarks(owner), orientation:structuredClone(owner.physical_orientation)});
   if (undo.length > 50) undo.shift();
 }
 
+function restoreEdit() {
+  const saved=undo.pop();
+  if (!saved || !owner) return;
+  owner.reference_marks=saved.marks;
+  if (saved.orientation) owner.physical_orientation=saved.orientation;
+  else delete owner.physical_orientation;
+  syncOrientationInputs();
+}
+function syncOrientationInputs() {
+  const record=physicalOrientation(owner);
+  $('fringe-orientation-direction').value=record.gap_direction;
+  $('fringe-orientation-polarity').value=record.polarity;
+  $('fringe-orientation-notes').value=record.notes;
+}
 function fitImages() {
   const zoom = Number($('fringe-reference-zoom').value);
   for (const frame of dialog.querySelectorAll('.fringe-reference-frame')) {
@@ -98,7 +122,7 @@ function buildDialog() {
   dialog.setAttribute('aria-labelledby', 'fringe-reference-title');
   dialog.innerHTML = `<header><div><h2 id="fringe-reference-title">Reference marks</h2>
     <p>Click either image to add a matching label. Drag a mark to adjust it.</p></div>
-    <button type="button" id="fringe-reference-done">Done</button></header>
+    <div><button type="button" id="fringe-reference-export">Export report</button> <button type="button" id="fringe-reference-done">Done</button></div></header>
     <div class="fringe-reference-tools">
       <span id="fringe-reference-labels" aria-label="Select a mark"></span>
       <button type="button" id="fringe-reference-delete">Delete selected</button>
@@ -113,8 +137,21 @@ function buildDialog() {
         <img id="fringe-reference-${side}" draggable="false" alt="${side === 'source' ? 'Interferogram aligned with the analysis' : 'Analyzed surface'}" />
         <svg id="fringe-reference-${side}-svg" aria-hidden="true"></svg>
       </div></div></section>`).join('')}</div>
-    <p class="fringe-reference-note">Both views use the same crop and lens correction. Marks stay on the surface map and are saved with the current result in your project. They are visual landmarks, not contact points or height-zero references. A new analysis starts with no marks.</p>`;
+    <details class="fringe-orientation-settings">
+      <summary>Physical orientation &amp; contact record</summary>
+      <p>Record observations from the physical setup. Image directions refer to the views above. Loupe does not infer polarity or absolute gap from these entries.</p>
+      <div class="fringe-orientation-fields">
+        <label>Gap opens toward <select id="fringe-orientation-direction">${Object.entries(GAP_DIRECTIONS).map(([v,t])=>`<option value="${v}">${t}</option>`).join('')}</select></label>
+        <label>Known contact landmark <select id="fringe-orientation-contact"></select></label>
+        <label>Physically checked display polarity <select id="fringe-orientation-polarity"><option value="unverified">Not checked</option><option value="red-larger-gap">Red = larger air-gap departure</option><option value="red-smaller-gap">Red = smaller air-gap departure</option></select></label>
+      </div>
+      <label>How you checked it / setup notes <textarea id="fringe-orientation-notes" maxlength="1000" rows="2" placeholder="For example: known wedge direction, reference feature, fixture orientation…"></textarea></label>
+      <p id="fringe-orientation-status" role="status"></p>
+      <p>Contact is recorded for interpretation; it does not set height zero. Inverting the displayed map also reverses the recorded red/blue meaning. A fresh analysis requires a new record.</p>
+    </details>
+    <p class="fringe-reference-note">Both views use the same crop and lens correction. Marks stay on the surface map and are saved with the current result in your project. A mark only identifies contact if you explicitly record it above; it never sets height zero. A new analysis starts with no marks.</p>`;
   document.body.appendChild(dialog);
+  $('fringe-reference-export').onclick = () => exportReport?.();
   $('fringe-reference-done').onclick = () => dialog.close();
   dialog.addEventListener('close', () => { owner = null; selected = null; undo = []; });
   $('fringe-reference-labels').onclick = e => {
@@ -128,12 +165,28 @@ function buildDialog() {
     remember(); owner.reference_marks = []; selected = null; redraw();
   };
   $('fringe-reference-undo').onclick = () => {
-    if (undo.length) owner.reference_marks = undo.pop();
+    if (undo.length) restoreEdit();
     selected = null; redraw();
   };
   $('fringe-reference-zoom').oninput = e => {
     fitImages();
   };
+  for (const id of ['direction','contact','polarity','notes']) {
+    $(`fringe-orientation-${id}`).addEventListener(id==='notes'?'input':'change', () => {
+      if (!owner || owner!==fr.lastResult) return;
+      remember();
+      owner.physical_orientation={gap_direction:$('fringe-orientation-direction').value,
+        contact_label:$('fringe-orientation-contact').value || null,
+        polarity:$('fringe-orientation-polarity').value, notes:$('fringe-orientation-notes').value,
+        recorded_at:new Date().toISOString()};
+      redraw();
+    });
+  }
+  dialog.querySelector('.fringe-orientation-settings').addEventListener('toggle', e => {
+    dialog.classList.toggle('orientation-open',e.target.open);
+    dialog.scrollTop=0;
+    fitImages();
+  });
   const panes = [...dialog.querySelectorAll('.fringe-reference-scroll')];
   panes.forEach((pane, i) => pane.addEventListener('scroll', () => {
     const other = panes[1 - i];
@@ -169,18 +222,20 @@ function buildDialog() {
     });
     frame.addEventListener('pointerup', () => { dragging = null; });
     frame.addEventListener('pointercancel', () => {
-      if (dragging !== null && owner && undo.length) owner.reference_marks = undo.pop();
+      if (dragging !== null && owner && undo.length) restoreEdit();
       dragging = null; redraw();
     });
   }
   new ResizeObserver(() => { if (dialog.open) fitImages(); }).observe(dialog);
 }
 
-export function wireReferenceMarks() {
+export function wireReferenceMarks(onExport) {
+  exportReport = onExport;
   $('fringe-reference-open')?.addEventListener('click', () => {
     if (!fr.lastResult?.reference_image_b64) return;
     if (!dialog) buildDialog();
     owner = fr.lastResult; selected = null; undo = [];
+    syncOrientationInputs();
     $('fringe-reference-source').src = `data:image/png;base64,${owner.reference_image_b64}`;
     $('fringe-reference-surface').src = `data:image/png;base64,${owner.surface_map}`;
     $('fringe-reference-zoom').value = '1';

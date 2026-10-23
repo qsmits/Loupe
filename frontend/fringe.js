@@ -13,6 +13,7 @@ import { hideProgress } from './fringe-progress.js';
 import { apiFetch } from './api.js';
 import { mimeFromBase64 } from './fringe-upload.js';
 import { state } from './state.js';
+import { renderFringeLensDropdown } from './fringe-lens-profiles.js';
 import { wireMeasureEvents } from './fringe-measure.js';
 import { buildPanelHtml, wirePanelEvents, startPolling, stopPolling, clearDroppedImage, cancelFringeWork, updateAnalysisSource } from './fringe-panel.js';
 import { buildResultsHtml, wireResultsEvents, restoreFringeResult, captureFringeOptions } from './fringe-results.js';
@@ -194,6 +195,9 @@ export function initFringe() {
       cancelFringeWork();
       clearDroppedImage();
       restoreInstrument(fr, WORKSPACE_DEFAULTS, {...snapshot, controls: {...initial.controls, ...snapshot?.controls}}, workspaceControls());
+      const unsavedLens = renderFringeLensDropdown(fr.lensK1);
+      const lensSaveRow = $('fringe-lens-save-row');
+      if (lensSaveRow) { lensSaveRow.hidden = !unsavedLens; lensSaveRow.style.display = unsavedLens ? 'flex' : ''; }
       hideProgress();
       fr.analysisBusy = false;
       fr.heightGrid = fr.maskGrid = fr.trustedMaskGrid = null;

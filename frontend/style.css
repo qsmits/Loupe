@@ -3312,7 +3312,7 @@ body.no-camera .camera-section { display: none; }
   justify-content: center;
   align-items: center;
   flex: 1;
-  min-height: 0;
+  min-height: 200px;
 }
 .fringe-surface-container #fringe-surface-wrapper { flex-shrink: 0; }
 .fringe-surface-container img {
@@ -4126,3 +4126,38 @@ body.no-camera .camera-section { display: none; }
   .fringe-reference-pair { grid-template-columns: minmax(0, 1fr); }
   .fringe-reference-scroll { height: 35vh; }
 }
+.fringe-quality { flex-shrink: 0; padding: 8px 12px; background: var(--surface-2); border-bottom: 1px solid var(--border); font-size: 12px; }
+.fringe-quality summary { cursor: pointer; font-weight: 600; }
+.fringe-quality p { max-width: 1000px; line-height: 1.6; margin: 8px 0; }
+.fringe-orientation-settings { margin-top: 16px; border-top: 1px solid var(--border); padding-top: 12px; font-size: 12px; }
+.fringe-orientation-settings summary { cursor: pointer; font-weight: 600; }
+.fringe-orientation-settings p { margin: 8px 0; }
+.fringe-orientation-fields { display: flex; flex-wrap: wrap; gap: 12px; margin: 12px 0; }
+.fringe-orientation-fields label { flex: 1; min-width: 180px; }
+.fringe-orientation-settings select, .fringe-orientation-settings textarea { display: block; width: 100%; margin-top: 5px; padding: 7px; color: var(--text); background: var(--surface-2); border: 1px solid var(--border); border-radius: 4px; box-sizing: border-box; }
+.fringe-polarity-status { font-size: 11px; color: var(--text-secondary); }
+.fringe-reference-dialog.orientation-open .fringe-reference-scroll { height: 28vh; }
+#fringe-reference-svg { z-index: 11; }
+
+/* Calibration target and measurements remain inside the fringe workspace. */
+.fringe-lens-dialog { width: min(1100px, 94vw); max-height: 94vh; margin: auto; box-sizing: border-box; padding: 20px; color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 10px; }
+.fringe-lens-dialog::backdrop { background: #0009; }
+.fringe-lens-dialog header, .fringe-lens-dialog footer, .fringe-lens-tools { display: flex; align-items: center; gap: 12px; justify-content: space-between; }
+.fringe-lens-dialog h2 { margin: 0; font-size: 20px; }
+.fringe-lens-dialog p, .fringe-lens-dialog footer { font-size: 12px; line-height: 1.5; }
+.fringe-lens-tools { flex-wrap: wrap; justify-content: flex-start; }
+.fringe-lens-tools label { display: flex; align-items: center; gap: 8px; }
+.fringe-lens-dialog button { padding: 6px 10px; }
+.fringe-lens-dialog button:disabled { opacity: .45; cursor: default; }
+.fringe-lens-body { display: grid; grid-template-columns: minmax(0, 1fr) 240px; gap: 16px; }
+#fringe-lens-viewport { height: 42vh; min-height: 220px; overflow: auto; background: #08090a; border: 1px solid var(--border); padding: 12px; box-sizing: border-box; }
+#fringe-lens-frame { position: relative; margin: auto; cursor: crosshair; }
+#fringe-lens-frame img { display: block; width: 100%; height: 100%; user-select: none; }
+#fringe-lens-frame svg { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.fringe-lens-body aside { max-height: 42vh; overflow: auto; font-size: 12px; }
+#fringe-lens-samples { list-style: none; padding: 0; }
+#fringe-lens-samples li { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 6px 0; }
+#fringe-lens-filename { overflow-wrap: anywhere; }
+#fringe-lens-profile { min-width: 0; }
+#fringe-lens-apply { background: var(--accent); color: white; flex-shrink: 0; }
+@media (max-width: 700px) { .fringe-lens-body { grid-template-columns: 1fr; } .fringe-lens-body aside { max-height: 150px; } }

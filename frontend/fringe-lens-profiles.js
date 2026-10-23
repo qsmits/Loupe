@@ -41,7 +41,7 @@ export function deleteFringeLensProfile(name) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(profiles));
 }
 
-export function renderFringeLensDropdown() {
+export function renderFringeLensDropdown(activeK1) {
   const sel = document.getElementById("fringe-lens-profile");
   if (!sel) return;
   const profiles = loadFringeLensProfiles();
@@ -68,4 +68,19 @@ export function renderFringeLensDropdown() {
   if (currentVal && profiles.some(p => p.name === currentVal)) {
     sel.value = currentVal;
   }
+  if (Number.isFinite(activeK1)) {
+    const matches = p => p.coefficient_space === 'diag_normalized_v1' && Math.abs(p.k1-activeK1) < 1e-12;
+    const profile = profiles.find(p => p.name === currentVal && matches(p)) || profiles.find(matches);
+    if (profile) sel.value = profile.name;
+    else if (activeK1 !== 0) {
+      const current = document.createElement('option');
+      current.value = '__current_lens_calibration__';
+      current.textContent = `Unsaved calibration (k₁=${activeK1.toFixed(3)})`;
+      current.disabled = true;
+      sel.appendChild(current);
+      sel.value = current.value;
+      return true;
+    } else sel.value = '';
+  }
+  return false;
 }

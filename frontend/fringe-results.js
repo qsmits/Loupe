@@ -18,6 +18,9 @@ import {
   exportCalibrationsJson,
   importCalibrationsJson,
 } from './fringe-calibration.js';
+import { flipRecordedPolarity, orientationDescription, polarityDescription } from './fringe-orientation.js';
+import { refreshQuality, qualityDescription } from './fringe-quality.js';
+import { createFringeReport } from './fringe-report.js';
 import { renderTrend } from './fringe-trend.js';
 import { refreshReferenceMarks, wireReferenceMarks } from './fringe-reference.js';
 
@@ -209,7 +212,13 @@ export function buildResultsHtml() {
               <button class="fringe-overlay-btn active" data-overlay="surface">Surface</button>
               <button class="fringe-overlay-btn" data-overlay="confidence">Confidence</button>
               <button class="fringe-overlay-btn" data-overlay="modulation">Modulation</button>
+              <button class="fringe-overlay-btn" id="fringe-coverage-button" data-overlay="coverage" disabled>Measurement area</button>
             </div>
+            <details id="fringe-quality" class="fringe-quality" hidden>
+              <summary>Coverage &amp; smoothing</summary>
+              <p id="fringe-quality-text"></p>
+              <p>Measurement area view: <strong style="color:#2dd4bf">teal = included</strong> · <strong style="color:#f59e0b">amber = excluded boundary</strong> · <strong style="color:#9d6ee5">purple = omitted by trusted-only</strong>. Other areas are dimmed. The overlay follows the measurement grid; the full-aperture coverage counts use the original analysis pixels.</p>
+            </details>
             <div class="fringe-measure-toolbar" id="fringe-measure-toolbar">
               <button class="fringe-measure-btn active" data-mode="" title="Pan / zoom (no measurement)">\u2194 Pan</button>
               <button class="fringe-measure-btn" data-mode="cursor" title="Hover to see height at cursor">\u22b9 Cursor</button>
@@ -227,6 +236,7 @@ export function buildResultsHtml() {
               </label>
               <button class="fringe-overlay-btn" id="fringe-fit-view" title="Show the complete surface map">Fit view</button>
               <button class="fringe-overlay-btn" id="fringe-reference-open" disabled>Reference marks…</button>
+              <span id="fringe-polarity-status" class="fringe-polarity-status"></span>
               <span class="fringe-measure-readout" id="fringe-measure-readout"></span>
             </div>
             <div class="fringe-surface-container" id="fringe-surface-viewport" style="overflow:hidden;cursor:grab">
@@ -441,6 +451,7 @@ export function refreshTrustedOnlyDisplay() {
     if (stats) applyStatsDisplay({ pv_nm: stats.pv_nm, rms_nm: stats.rms_nm, useTrusted: true });
     else applyStatsDisplay({ pv_nm: NaN, rms_nm: NaN, useTrusted: true });
   }
+  refreshQuality();
   // Keep the surface-map untrusted overlay in sync.
   refreshTrustedOverlay();
 }
@@ -536,6 +547,7 @@ export function refreshTrustedOverlay() {
 export function captureFringeOptions() { return {formModel, pillState: {...pillState}}; }
 export function restoreFringeResult(data, options) {
   refreshReferenceMarks(data);
+  refreshQuality(data);
   formModel = options?.formModel || data?.form_model || "zernike";
   Object.assign(pillState, {tilt: true, power: false, astig: false, coma: false, spherical: false}, options?.pillState);
   if (data) {
@@ -573,6 +585,7 @@ export function restoreFringeResult(data, options) {
 
 function renderResults(data) {
   refreshReferenceMarks(data);
+  if ($('fringe-polarity-status')) $('fringe-polarity-status').textContent=polarityDescription(data);
   // Summary bar
   const summaryBar = $("fringe-summary-bar");
   if (summaryBar) summaryBar.hidden = false;
@@ -727,6 +740,9 @@ function renderResults(data) {
     if (empty) empty.hidden = true;
     resetSurfaceZoom();
     const surfImg = $("fringe-surface-img");
+    surfImg.dataset.overlay = 'surface';
+    delete surfImg.dataset.coverageSrc;
+    document.querySelectorAll('.fringe-overlay-btn[data-overlay]').forEach(b => b.classList.toggle('active', b.dataset.overlay === 'surface'));
     surfImg.onload = () => {
       drawPeakValleyMarkers();
       // Recompute the untrusted-pixel overlay every time the surface PNG
@@ -1725,6 +1741,7 @@ export async function applySignFlipToLastResult() {
     if (fr.lastResult !== sourceResult) return false;
     fr.lastResult.coefficients = inverted;
     mergeReanalyzeResult(data);
+    flipRecordedPolarity(fr.lastResult);
     return true;
   } catch (e) {
     console.warn("Invert error:", e);
@@ -1769,7 +1786,8 @@ function exportFringeCsv() {
   csv += `PV (fringes),${fr.lastResult.pv_fringes?.toFixed(4)}\n`;
   csv += `RMS (fringes),${fr.lastResult.rms_fringes?.toFixed(4)}\n`;
   csv += `Wavelength (nm),${wl}\n`;
-  csv += "Absolute sign known,no\n";
+  csv += "Algorithmically established absolute sign,no\n";
+  for (const note of orientationDescription(fr.lastResult)) csv += `Physical orientation,"${note.replace(/"/g, '\"\"')}"\n`;
   csv += "Reference-flat error included,yes\n";
 
   const blob = new Blob([csv], { type: "text/csv" });
@@ -1783,132 +1801,18 @@ function exportFringeCsv() {
 
 function exportFringePdf() {
   if (!fr.lastResult) return;
-  const { jsPDF } = window.jspdf;
+  const jsPDF = window.jspdf?.jsPDF;
   if (!jsPDF) { alert("PDF library not loaded"); return; }
-
-  const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
-  const pageW = 297;
-  const pageH = 210;
-  const margin = 10;
-  const data = fr.lastResult;
-
-  // Header
-  doc.setFontSize(16);
-  doc.text("Fringe Analysis Report", margin, margin + 7);
-  doc.setFontSize(9);
-  doc.setTextColor(100);
-  const ts = new Date().toLocaleString();
-  doc.text(`Exported: ${ts}   Wavelength: ${data.wavelength_nm} nm`, margin, margin + 13);
-
-  // Standard
-  const stdSel = $("fringe-standard");
-  if (stdSel && stdSel.value) {
-    const stdOpt = stdSel.selectedOptions[0];
-    doc.text(`Reference: ${stdOpt.textContent}  (PV limit: ${stdOpt.dataset.pvNm} nm)`, margin, margin + 18);
+  try {
+    const option = $("fringe-standard")?.selectedOptions?.[0];
+    const standard = option?.dataset.pvNm ? {name:option.textContent, limit:Number(option.dataset.pvNm)} : null;
+    const sourceName = fr.lastResult.reference_image_b64 ? fr.sourceName || '' : '';
+    const doc = createFringeReport(fr.lastResult, {jsPDF, sourceName, standard, details:[...qualityDescription(fr.lastResult), ...orientationDescription(fr.lastResult)]});
+    doc.save(`fringe_report_${new Date().toISOString().slice(0,19).replace(/:/g,"-")}.pdf`);
+  } catch (error) {
+    console.error('Could not export fringe report:', error);
+    alert('Could not create the report. Try reanalyzing the image.');
   }
-  doc.setTextColor(0);
-
-  let y = margin + 24;
-
-  // Stats box
-  doc.setFontSize(11);
-  const pvStr = `Gap PV: ${data.pv_nm?.toFixed(1)} nm (${data.pv_waves?.toFixed(3)} \u03bb)`;
-  const rmsStr = `Gap RMS: ${data.rms_nm?.toFixed(1)} nm (${data.rms_waves?.toFixed(3)} \u03bb)`;
-  const fringeStr = `Gap PV: ${data.pv_fringes?.toFixed(3)} fringes`;
-  doc.text(`${pvStr}     ${rmsStr}     ${fringeStr}`, margin, y);
-
-  // Standard pass/fail
-  if (stdSel && stdSel.value) {
-    const limit = parseFloat(stdSel.selectedOptions[0].dataset.pvNm);
-    const pass = data.pv_nm <= limit;
-    doc.setTextColor(pass ? 0 : 200, pass ? 150 : 0, 0);
-    doc.text(pass ? "  PASS" : "  FAIL", margin + 180, y);
-    doc.setTextColor(0);
-  }
-  y += 5;
-  doc.setFontSize(8);
-  doc.text("Air-gap departure; absolute sign needs wedge/contact orientation. Reference-flat error included.", margin, y);
-  y += 6;
-
-  // Surface map image
-  if (data.surface_map) {
-    try {
-      const imgData = "data:image/png;base64," + data.surface_map;
-      // Fit in left half of page
-      const imgW = 130;
-      const imgH = 100;
-      doc.addImage(imgData, "PNG", margin, y, imgW, imgH);
-
-      y += imgH + 5;
-    } catch (e) {
-      console.warn("PDF image error:", e);
-    }
-  }
-
-  // Zernike chart
-  if (data.zernike_chart && y + 60 < pageH - margin) {
-    try {
-      const chartData = "data:image/png;base64," + data.zernike_chart;
-      const chartW = pageW - margin * 2;
-      const chartH = 55;
-      doc.addImage(chartData, "PNG", margin, y, chartW, chartH);
-      y += chartH + 5;
-    } catch (e) {
-      console.warn("PDF chart error:", e);
-    }
-  }
-
-  // If we need a second page for the Zernike table
-  if (y + 10 > pageH - margin) {
-    doc.addPage();
-    y = margin + 7;
-  }
-
-  // Zernike coefficient table
-  doc.setFontSize(10);
-  doc.text("Zernike Coefficients", margin, y);
-  y += 5;
-  doc.setFontSize(7);
-
-  const coeffs = data.coefficients || [];
-  const names = data.coefficient_names || {};
-  const sub = data.subtracted_terms || [];
-  const wl = data.wavelength_nm || 632.8;
-
-  // Table header
-  doc.setFont(undefined, "bold");
-  doc.text("#", margin, y);
-  doc.text("Term", margin + 8, y);
-  doc.text("Coeff (rad)", margin + 50, y);
-  doc.text("Gap (nm)", margin + 80, y);
-  doc.text("Status", margin + 110, y);
-  doc.setFont(undefined, "normal");
-  y += 4;
-
-  // Only show terms with |coeff| > 0.001 to keep it concise
-  for (let i = 0; i < Math.min(coeffs.length, 36); i++) {
-    if (Math.abs(coeffs[i]) < 0.001) continue;
-    if (y + 4 > pageH - margin) {
-      doc.addPage();
-      y = margin + 7;
-    }
-    const j = i + 1;
-    const name = names[String(j)] || `Z${j}`;
-    const nm = (coeffs[i] * wl / (4 * Math.PI)).toFixed(1);
-    const status = sub.includes(j) ? "(subtracted)" : "";
-    if (sub.includes(j)) doc.setTextColor(150);
-    doc.text(String(j), margin, y);
-    doc.text(name, margin + 8, y);
-    doc.text(coeffs[i].toFixed(4), margin + 50, y);
-    doc.text(nm, margin + 80, y);
-    doc.text(status, margin + 110, y);
-    doc.setTextColor(0);
-    y += 3.5;
-  }
-
-  // Save
-  const filename = `fringe_report_${new Date().toISOString().slice(0,19).replace(/:/g,"-")}.pdf`;
-  doc.save(filename);
 }
 
 // ── Calibration indicator + prompt flow ─────────────────────────────────
@@ -3166,7 +3070,10 @@ function _renderTrendTab() {
 // ── Event wiring ────────────────────────────────────────────────────────
 
 export function wireResultsEvents() {
-  wireReferenceMarks();
+  wireReferenceMarks(exportFringePdf);
+  document.addEventListener('fringe:orientation-changed', () => {
+    if ($('fringe-polarity-status')) $('fringe-polarity-status').textContent=polarityDescription(fr.lastResult);
+  });
   // Tab switching
   document.querySelectorAll(".fringe-tab").forEach(tab => {
     tab.addEventListener("click", () => {
@@ -3252,12 +3159,13 @@ export function wireResultsEvents() {
   });
 
   // Overlay toggle buttons
-  document.querySelectorAll(".fringe-overlay-btn").forEach(btn => {
+  document.querySelectorAll(".fringe-overlay-btn[data-overlay]").forEach(btn => {
     btn.addEventListener("click", () => {
-      document.querySelectorAll(".fringe-overlay-btn").forEach(b => b.classList.remove("active"));
+      document.querySelectorAll(".fringe-overlay-btn[data-overlay]").forEach(b => b.classList.remove("active"));
       btn.classList.add("active");
       const surfImg = $("fringe-surface-img");
       if (!surfImg) return;
+      surfImg.dataset.overlay = btn.dataset.overlay;
       const srcKey = btn.dataset.overlay + "Src";
       if (surfImg.dataset[srcKey]) surfImg.src = surfImg.dataset[srcKey];
     });
