@@ -19,6 +19,7 @@ import {
   importCalibrationsJson,
 } from './fringe-calibration.js';
 import { renderTrend } from './fringe-trend.js';
+import { refreshReferenceMarks, wireReferenceMarks } from './fringe-reference.js';
 
 // ── Subtraction pill state ──────────────────────────────────────────────
 
@@ -225,12 +226,14 @@ export function buildResultsHtml() {
                 use trusted pixels only
               </label>
               <button class="fringe-overlay-btn" id="fringe-fit-view" title="Show the complete surface map">Fit view</button>
+              <button class="fringe-overlay-btn" id="fringe-reference-open" disabled>Reference marks…</button>
               <span class="fringe-measure-readout" id="fringe-measure-readout"></span>
             </div>
             <div class="fringe-surface-container" id="fringe-surface-viewport" style="overflow:hidden;cursor:grab">
               <div id="fringe-surface-wrapper" style="position:relative;display:inline-block;transform-origin:0 0">
                 <img id="fringe-surface-img" draggable="false" style="display:block" />
                 <svg id="fringe-measure-svg" style="position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;overflow:visible"></svg>
+                <svg id="fringe-reference-svg" aria-hidden="true" style="position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;overflow:visible"></svg>
               </div>
             </div>
             <canvas id="fringe-line-profile-chart" width="800" height="150" hidden></canvas>
@@ -532,6 +535,7 @@ export function refreshTrustedOverlay() {
 
 export function captureFringeOptions() { return {formModel, pillState: {...pillState}}; }
 export function restoreFringeResult(data, options) {
+  refreshReferenceMarks(data);
   formModel = options?.formModel || data?.form_model || "zernike";
   Object.assign(pillState, {tilt: true, power: false, astig: false, coma: false, spherical: false}, options?.pillState);
   if (data) {
@@ -568,6 +572,7 @@ export function restoreFringeResult(data, options) {
 // ── Rendering ───────────────────────────────────────────────────────────
 
 function renderResults(data) {
+  refreshReferenceMarks(data);
   // Summary bar
   const summaryBar = $("fringe-summary-bar");
   if (summaryBar) summaryBar.hidden = false;
@@ -3161,6 +3166,7 @@ function _renderTrendTab() {
 // ── Event wiring ────────────────────────────────────────────────────────
 
 export function wireResultsEvents() {
+  wireReferenceMarks();
   // Tab switching
   document.querySelectorAll(".fringe-tab").forEach(tab => {
     tab.addEventListener("click", () => {

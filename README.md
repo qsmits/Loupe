@@ -71,8 +71,11 @@ Drop an interferogram anywhere in the image/result view or camera preview to loa
 - **Explicit setup**: drop or open an interferogram, or capture a camera frame, then review the image, wavelength, area, and analysis settings before clicking **Analyze image**.
 - **Simple analysis regions**: fit circles through three edge points, or draw rectangles and ellipses, to include the surface and exclude holes, dust, glare, or background. Select regions to move, resize, change purpose, or delete them; edits support undo and keyboard nudging. Automatic area detection is the default; saved aperture recipes remain available.
 - **Surface navigation**: cursor-anchored zoom and bounded panning keep the map in view; **Fit view** restores the complete centered image.
+- **Reference marks**: label corresponding locations on the interferogram and surface map in a paired view, with dragging, linked zoom/scroll, deletion and undo. The source preview uses the exact analysis crop and lens correction. Marks remain on the main map and in the project's current result; they do not set contact, height zero or polarity.
 - **Visible progress**: the analysis dialog shows server-reported stages, a progress bar, and a timestamped activity log. Errors stay visible for adjustment and retry.
 - **Clear source and reset**: the sidebar identifies the current image and completion time. Loading another image clears the previous result. **Reset analysis** clears the current source, regions, results, and measurements while preserving analysis settings and session capture history.
+
+Scientific background and references: [DFTFringe](https://github.com/githubdoe/DFTFringe) was the main recorded application/source-code reference; [Noll (1976)](https://doi.org/10.1364/JOSA.66.000207) supplies the Zernike convention named in the implementation. The subsequent scientific audit and validation draw on [Takeda, Ina & Kobayashi (1982)](https://doi.org/10.1364/JOSA.72.000156) for Fourier fringe analysis, [Herráez et al. (2002)](https://doi.org/10.1364/AO.41.007437) and the [scikit-image documentation](https://scikit-image.org/docs/stable/api/skimage.restoration.html#skimage.restoration.unwrap_phase) for the independent reliability-sorted unwrapper, [Zhao et al. (2011)](https://doi.org/10.1364/AO.50.006214) for quality-guided unwrapping and its limits, [Goldstein, Zebker & Werner (1988)](https://doi.org/10.1029/RS023i004p00713) to distinguish branch-cut methods from Loupe's custom heap flood, and [Doiron & Beers' NIST Gage Block Handbook, chapter 6](https://www.nist.gov/sites/default/files/documents/calibrations/mono180.pdf) for interferometric length measurement and fringe-order ambiguity. [Reeve's NBS/NIST optical-flat calibration procedure](https://www.nist.gov/system/files/documents/calibrations/75-975.pdf) and [Edmund Optics' optical-flat guide](https://www.edmundoptics.com/knowledge-center/application-notes/optics/optical-flats/) inform the contact/wedge and height-sign interpretation. [SciPy's Jacobi polynomial evaluator](https://docs.scipy.org/doc/scipy/reference/generated/scipy.special.eval_jacobi.html) provides an independent numerical check of the Zernike basis. These references and synthetic tests do not establish instrument accuracy; the [scientific-basis and validation record](docs/fringe-scientific-basis.md) documents provenance, measured software behavior, and remaining physical validation.
 
 ### SPC & Analytics
 - SQLite run storage (parts → runs → results)
@@ -195,6 +198,15 @@ Runtime settings in `config.json`:
 ```bash
 .venv/bin/pytest tests/                 # backend tests
 node --test tests/frontend/test_*.js    # frontend tests (Node.js required)
+```
+
+The fringe scientific checks compare independently generated phases and images,
+scikit-image unwrapping, and Jacobi-reference Zernike modes. To include their
+numerical error and amplitude-transfer measurements in a machine-readable report:
+
+```bash
+.venv/bin/pytest -q tests/test_fringe_scientific_validation.py \
+  --junitxml=/tmp/loupe-fringe-validation.xml -o junit_family=legacy
 ```
 
 `tests/test_metrology_accuracy.py` and `tests/frontend/test_metrology_accuracy.js`

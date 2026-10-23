@@ -102,3 +102,140 @@ instrument calibration.
 
 Adding citations makes the method traceable. Establishing quantitative
 accuracy requires those comparisons and a documented uncertainty budget.
+
+## First numerical validation pass — 2026-10-23
+
+`tests/test_fringe_scientific_validation.py` adds 102 deterministic checks.
+The forward model is written directly as intensity = illumination + amplitude
+× cos(carrier + 4π × height / wavelength); it does not use Loupe's phase,
+height, or Zernike generation helpers. Only PNG rendering is stubbed out in
+pipeline tests. Returned, rounded height grids are assessed on the returned
+quantitative mask. Reference sign comes from the known imposed carrier and
+the selected sideband. Only piston and a plane are removed for comparison;
+no fitted gain, curvature, local registration, or local fringe-order
+alignment is allowed to improve the height-error measurements.
+
+The unwrapping reference is scikit-image's independent reliability-sorted
+implementation, with a fixed random seed. Each disconnected component gets
+its own constant piston alignment because its relative order is unobservable.
+Noise-free and noisy phases cover disks, thin rings, thin strips, holes,
+and disconnected regions, with correction both on and off. Noise is stronger
+in low-quality regions. This bounded-noise comparison does not characterize
+all residue-rich or under-sampled scenes.
+
+Zernike checks use an explicit 36-entry Noll table and the Jacobi identity
+`R_n^m(r) = r^m P_((n-m)/2)^(0,m)(2r²−1)`, evaluated by
+[SciPy's separate Jacobi implementation](https://docs.scipy.org/doc/scipy/reference/generated/scipy.special.eval_jacobi.html),
+rather than Loupe's factorial expansion. Disk orthonormality uses radial
+Gauss–Legendre quadrature and angular integration. Fit, selective subtraction,
+and per-term RMS checks also cover clipped, rectangular, and annular pupils.
+They explicitly demonstrate why modal RMS values cannot simply be added
+in quadrature on a clipped aperture.
+
+### Findings and changes
+
+1. **Mask zeros could create wrong fringe orders.** The median cleanup
+   treated pixels outside the aperture as zero-height observations. An
+   otherwise exact smooth ramp acquired whole-order errors, especially on
+   thin rings and strips. Cleanup now requires a fully valid 9×9 footprint.
+2. **Resolved peaks could be flattened.** Smooth 6 rad peaks with 1.5–2 px
+   Gaussian widths had adjacent differences below π, yet the median cleanup
+   shifted nine peak pixels by −2π. Candidate correction regions now require
+   an actual adjacent phase discontinuity above π, measured between valid
+   pixels. Small wrong-order plateaus still get corrected with their rims.
+   The initial independent test set exposed 12 failures before these fixes;
+   the existing island-repair tests remain part of regression coverage.
+3. **Boundary exclusion underestimated filter support for fine fringes.**
+   The Gaussian filter has minimum image-space sigmas of 5 px across and
+   2 px along fringes. Boundary exclusion previously used only the requested
+   fraction of the fringe period. Shared width calculation now includes
+   those floors, making the conservative three-sigma band at least 15 px
+   for these analyses. More pixels around edges and holes can be excluded;
+   PV/RMS describe that smaller aperture. A fine-carrier test and independent
+   binary erosion check pin the behavior.
+4. **Fine-detail attenuation remains measurable.** At a 12 px carrier period,
+   the 5 px filter floor dominates several slider settings. The tests measure
+   feature gain explicitly; they do not compensate the output to make it
+   match truth. No new deconvolution or universal gain correction was added.
+
+### Measured results
+
+Results below are from Python 3.13.12, NumPy 2.4.3, SciPy 1.17.1,
+scikit-image 0.26.0, and OpenCV 4.13.0. They are fixture-specific regression
+results, not a nanometer accuracy specification for the instrument.
+The focused suite passed all 102 checks; the full backend suite passed
+1,350 tests, with one skip and one expected failure.
+
+| Check | Observed result |
+| --- | --- |
+| 36 Noll/Jacobi modes and disk orthonormality | Agreement within the test's 2×10⁻¹³ absolute tolerance |
+| Four pupil shapes: fitted coefficients, selected-term subtraction, modal RMS | All pass; coefficient/subtraction tolerance 2×10⁻¹¹ |
+| 20 masked-phase comparisons, including correction on/off and bounded noise | Zero wrong fringe orders; RMS phase error against noiseless truth 0–0.1292 rad; agreement with the independent unwrap within 10⁻¹⁰ rad after component piston alignment |
+| 24 full-frame image cases: four carrier angle/count pairs, three filter settings, two noise levels, sloping illumination | RMS height error 0.0625–0.2991 nm; PV error 0.0131–0.4321 nm; returned aperture 47.3–71.2% |
+| Three offset apertures: disk, clipped disk, disk with hole | RMS height error 0.0033–0.0035 nm on returned pixels; retained aperture 20.4–48.6%, independently checked against the expected support band |
+| Nine sinusoidal-detail cases: 1, 3, or 6 feature cycles versus 16 carrier cycles, three filter settings | Gain about 0.987, 0.88–0.89, and 0.61–0.62 respectively; worst RMS height error 2.7630 nm for a 10 nm-amplitude feature |
+| Single-wavelength discontinuity | 80 nm and 80 nm + λ/2 steps produce the same intensity image; disabling cleanup does not recover the missing fringe order |
+
+Reproduce the numerical report with:
+
+```bash
+.venv/bin/pytest -q tests/test_fringe_scientific_validation.py \
+  --junitxml=/tmp/loupe-fringe-validation.xml -o junit_family=legacy
+```
+
+The JUnit test properties contain height-error, retained-aperture, phase-error,
+fringe-order-error, and feature-gain measurements. Existing larger-image
+carrier-leak and unwrap-island regressions complement this small deterministic
+suite. Wider noise/contrast, gamma/JPEG, carrier-bandwidth, and sampling sweeps
+remain useful extensions; these tests do not establish safe operation for
+every combination of those factors.
+
+### Physical validation still needed
+
+No independently characterized physical capture set or reference certificate
+was available for this pass. A practical next experiment is a certified flat
+and a known step comfortably below λ/4, photographed repeatedly with recorded
+wavelength, exposure, pixel scale, incidence, reference-flat specification,
+and analysis settings. Retain the original images and exported results;
+repeat after repositioning and rotating the specimen/reference, and compare
+height bias and repeatability with the reference uncertainty. Larger steps
+require additional order information or wavelengths. That experiment and an
+uncertainty budget are still required before claiming measurement accuracy.
+
+## Contact reference and spatial orientation — 2026-10-23
+
+A verified contact is a useful physical reference for zero air gap, but it
+must be distinguished from an arbitrary display zero. A contact location
+does not supply the flat's tilt plane. Loupe demodulates the carrier and
+normally subtracts piston/tilt; merely setting a point on that residual map
+to zero cannot reconstruct the physical gap. PV and mean-centered RMS are
+unchanged by a constant zero adjustment. Contact information plus the known
+direction in which the gap opens can help establish phase polarity; this
+should be recorded explicitly rather than inferred from red/blue colors.
+[Reeve's NBS/NIST optical-flat comparison procedure, section 5.3](https://www.nist.gov/system/files/documents/calibrations/75-975.pdf)
+specifically checks wedge direction because a sign reversal changes the
+computed profile. [Edmund Optics' optical-flat guide](https://www.edmundoptics.com/knowledge-center/application-notes/optics/optical-flats/)
+describes the contact/air-wedge geometry.
+
+Spatial mirroring is a separate question. `tests/test_fringe_orientation.py`
+uses a non-square, 8-bit synthetic interferogram with three distinct off-axis
+height features. It checks original, horizontally mirrored, vertically
+mirrored, and 90-degree-rotated inputs against their correspondingly
+transformed ground truth. Carrier polarity is specified independently;
+no spatial registration or best-fit sign is allowed to hide a reversal.
+The normal processing path preserves landmark positions in these cases.
+The tests also decode the actual rendered PNG and check colored landmarks
+and an asymmetric mask hole. The renderer now explicitly specifies
+`origin='upper'`: the default already behaved this way, but a changed global
+Matplotlib default could previously reverse it. A frontend regression checks
+height sampling and peak/valley marker coordinates on an asymmetric grid.
+The focused validation run passed 108 backend and 11 frontend checks.
+
+These checks do not certify camera-driver or optical-path orientation for a
+physical setup. An orientation mark on the rim or fixture, outside the
+measuring surface, remains useful for registering a round part to its photo.
+A future source/map comparison view should preserve the actual crop transform
+and use shared landmarks or a linked cursor; centering the cropped surface on
+the full source image is insufficient for off-center apertures. A contact
+datum and a gap-opening direction should be separate from these spatial
+orientation controls.

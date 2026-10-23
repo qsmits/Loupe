@@ -97,6 +97,24 @@ ZERNIKE_NAMES: dict[int, str] = {
 # Optical-flat air-film analysis defaults. A narrower demodulation filter
 # preserves specimen detail while still rejecting the conjugate sideband.
 DEFAULT_LPF_SIGMA_FRAC = 0.18
+_MIN_LPF_ACROSS_PX = 5.0
+_MIN_LPF_ALONG_PX = 2.0
+
+
+def _demodulation_sigmas(period_px: float, fraction: float, anisotropic: bool = True
+                         ) -> tuple[float, float]:
+    """Actual image-space Gaussian widths (across, along), including floors.
+
+    Boundary exclusion must use these same widths: a fine carrier or a low
+    slider setting does not shrink the filter below its pixel-space floor.
+    """
+    if anisotropic:
+        return (max(period_px * fraction * 1.4142, _MIN_LPF_ACROSS_PX),
+                max(period_px * fraction * 0.7071, _MIN_LPF_ALONG_PX))
+    sigma = max(period_px * fraction, _MIN_LPF_ACROSS_PX)
+    return sigma, sigma
+
+
 # The user's region (ROI or polygon) bounds the analysis; inside it the
 # automatic aperture removes non-fringe pixels unless that would keep less
 # than this fraction of the region.
@@ -241,8 +259,8 @@ def _make_polar_coords(shape: tuple[int, int], mask: np.ndarray | None = None
     """Create normalized polar coordinates over the aperture.
 
     The aperture center is the image center. The normalization radius is
-    the largest radius that fits within the masked region (if mask is given)
-    or within the image rectangle (if no mask).
+    the distance to the furthest valid pixel (or furthest image pixel when
+    no mask is supplied). A clipped pupil is not re-centered or inscribed.
     """
     h, w = shape
     yy, xx = np.mgrid[0:h, 0:w]
@@ -2346,7 +2364,7 @@ def extract_phase_dft(image: np.ndarray, mask: np.ndarray | None = None,
         lpf_frac = (DEFAULT_LPF_SIGMA_FRAC if lpf_sigma_frac is None
                     else float(lpf_sigma_frac))
         ext = min(256, max(8, int(math.ceil(
-            3.0 * max(lpf_period * lpf_frac * 1.4142, 5.0)))))
+            3.0 * max(_demodulation_sigmas(lpf_period, lpf_frac))))))
         ext = max(ext, int(math.ceil(3.0 * bg_sigma)))
         locally_extended = _carrier_extend_local(img, fy, fx, ext, ext)
         # `_carrier_extend*` clamp the pad to the frame, so read the pad that
@@ -2446,7 +2464,6 @@ def extract_phase_dft(image: np.ndarray, mask: np.ndarray | None = None,
     # overrides this scalar.
     fringe_period = 1.0 / max(fringe_freq, 1e-10)
     sigma_frac = DEFAULT_LPF_SIGMA_FRAC if lpf_sigma_frac is None else float(lpf_sigma_frac)
-    lp_sigma = max(fringe_period * sigma_frac, 5.0)
 
     if anisotropic_lpf and fringe_freq > 1e-10:
         # M2.6: anisotropic Gaussian aligned with the fringe direction.
@@ -2473,8 +2490,7 @@ def extract_phase_dft(image: np.ndarray, mask: np.ndarray | None = None,
         # existing physical-units regression. 2:1 still suppresses the
         # cross-fringe harmonic lobe noticeably while preserving wide
         # surface features.
-        sig_along_img = max(fringe_period * sigma_frac * 0.7071, 2.0)
-        sig_across_img = max(fringe_period * sigma_frac * 1.4142, 5.0)
+        sig_across_img, sig_along_img = _demodulation_sigmas(fringe_period, sigma_frac)
 
         # Carrier direction in cycles/pixel. `_find_carrier` uses atan2(fy, fx)
         # throughout the rest of the pipeline — match it here so rotation-sign
@@ -2484,7 +2500,7 @@ def extract_phase_dft(image: np.ndarray, mask: np.ndarray | None = None,
         # Degenerate or explicitly isotropic: one σ, no preferred direction.
         # Same code path as above so the two cannot drift apart — they are
         # alternative parameterizations of one low-pass, not two filters.
-        sig_along_img = sig_across_img = lp_sigma
+        sig_across_img, sig_along_img = _demodulation_sigmas(fringe_period, sigma_frac, False)
         theta = 0.0
 
     # Zero-extend far enough that the circular convolution cannot wrap real
@@ -3054,11 +3070,13 @@ def unwrap_phase_2d(wrapped: np.ndarray, mask: np.ndarray | None = None,
     edge_band_px : optional width in pixels of the edge-contamination band
               (distance from a mask boundary). When ``None`` the band is
               0.75 fringe periods (kernel ``1.5 * P``); the pipeline passes
-              ``max(0.75 * P, 3 * sigma_lpf)`` so the band follows the actual
-              low-pass width when ``lpf_sigma_frac`` is changed.
+              ``max(0.75 * P, 3 * sigma_lpf)`` including the pixel-space
+              sigma floors, so the band follows the actual low-pass width.
     correct_2pi_jumps : when True (default), apply a 9x9 median-filter
               based correction that snaps pixels deviating by ~2π from
-              their local median back onto the surface, preceded by
+              their local median back onto the surface, only in fully
+              supported neighborhoods with a local branch discontinuity.
+              A resolved smooth peak alone cannot trigger a snap. This is preceded by
               ``_merge_unwrap_islands`` which re-orders whole regions the
               flood left a fringe order off (too large for the 9x9
               window; these pixels are reported as risk 3). This fixes
@@ -3177,8 +3195,32 @@ def unwrap_phase_2d(wrapped: np.ndarray, mask: np.ndarray | None = None,
             risk_mask[island_shifted] = _RISK_REORDERED
         med = median_filter(unwrapped, size=9)
         jump_diff = unwrapped - med
-        jump_pixels = np.abs(jump_diff) > np.pi
-        unwrapped -= 2.0 * np.pi * np.round(jump_diff / (2.0 * np.pi))
+        # A smooth, resolved peak can differ from its 9x9 median by > pi
+        # without any wrong fringe order. Require an actual local branch
+        # discontinuity, comparing only adjacent valid measurements.
+        valid = np.ones(phase.shape, dtype=bool) if mask is None else mask.astype(bool)
+        branch = np.zeros(phase.shape, dtype=bool)
+        for axis in (0, 1):
+            a = (slice(None, -1), slice(None)) if axis == 0 else (slice(None), slice(None, -1))
+            b = (slice(1, None), slice(None)) if axis == 0 else (slice(None), slice(1, None))
+            discontinuity = valid[a] & valid[b] & (np.abs(unwrapped[b] - unwrapped[a]) > np.pi)
+            branch[a] |= discontinuity
+            branch[b] |= discontinuity
+        # Zero-filled masked pixels are not height observations. Do not snap
+        # where the median footprint crosses a mask boundary (including a
+        # hole or separate component). The DFT edge band normally excludes
+        # these pixels from quantitative output already.
+        supported = cv2.erode(valid.astype(np.uint8), np.ones((9, 9), np.uint8),
+                              borderType=cv2.BORDER_REFLECT).astype(bool)
+        candidates = (np.abs(jump_diff) > np.pi) & supported
+        # Keep the interior of a small wrong-order patch with its boundary:
+        # a 3x3 plateau has branch evidence only along its rim. Conversely,
+        # a resolved smooth peak has no branch evidence anywhere in its
+        # candidate component and must remain untouched.
+        _, candidate_labels = cv2.connectedComponents(candidates.astype(np.uint8), connectivity=4)
+        supported_labels = np.unique(candidate_labels[candidates & branch])
+        jump_pixels = candidates & np.isin(candidate_labels, supported_labels)
+        unwrapped[jump_pixels] -= 2.0 * np.pi * np.round(jump_diff[jump_pixels] / (2.0 * np.pi))
         # Precedence 2 (edge band, below) > 1 (snapped here) > 3 (re-ordered
         # by the island merge) > 0: a re-ordered pixel becomes 1 only if the
         # median snap actually moves it again (the thin wall ring).
@@ -3388,7 +3430,7 @@ def render_surface_map(surface: np.ndarray, mask: np.ndarray | None = None
     # into NaN cells, leaking surface color outside the user-drawn polygon
     # (Task 0 regression). Nearest-neighbor preserves the mask boundary.
     ax.imshow(s, cmap='RdBu_r', vmin=-vmax, vmax=vmax,
-              interpolation='nearest', aspect='equal')
+              interpolation='nearest', aspect='equal', origin='upper')
 
     # Contour lines
     if smax > smin:
@@ -3904,15 +3946,16 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 589.3,
         )
 
     # Step 3: Phase unwrapping. The edge-contamination band must cover the
-    # support of the low-pass actually used: ~3 sigma_lpf, where
-    # sigma_lpf = lpf_sigma_frac * P * sqrt(2) (0.18 -> 0.76 P, the old 0.75 P).
+    # support of the low-pass actually used: ~3 sigma_across, including its
+    # 5 px floor. Without the floor a fine carrier incorrectly admitted
+    # boundary-contaminated pixels as quantitative measurements.
     _edge_band_px = None
     _p_carrier = carrier_info.get("fringe_period_px")
     if _p_carrier and math.isfinite(_p_carrier) and _p_carrier > 1:
         _frac = (DEFAULT_LPF_SIGMA_FRAC if lpf_sigma_frac is None
                  else float(lpf_sigma_frac))
         _edge_band_px = max(0.75 * _p_carrier,
-                            3.0 * _frac * _p_carrier * math.sqrt(2.0))
+                            3.0 * max(_demodulation_sigmas(_p_carrier, _frac)))
     unwrapped, unwrap_risk, quality_map = unwrap_phase_2d(
         wrapped, mask, quality=modulation,
         fringe_period_px=carrier_info.get("fringe_period_px"),
@@ -3933,6 +3976,8 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 589.3,
     work_modulation = modulation
     work_risk = unwrap_risk
     work_quality = quality_map
+    r0, c0 = 0, 0
+    r1, c1 = img.shape[:2]
     if mask is not None and mask.any():
         rows_any = np.any(mask, axis=1)
         cols_any = np.any(mask, axis=0)
@@ -4092,6 +4137,16 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 589.3,
     _progress("render", 0.85, "Rendering results...")
     # Step 9: Renderings
     surface_map_b64 = render_surface_map(height_nm, work_mask)
+    # Keep a small, immutable source preview in exactly the surface coordinate
+    # frame. The input has already undergone lens correction and any ROI crop;
+    # showing the current camera/upload instead would misregister landmarks.
+    reference_image = np.clip(img[r0:r1, c0:c1], 0, 255).astype(np.uint8)
+    if max(reference_image.shape) > 1024:
+        scale = 1024 / max(reference_image.shape)
+        reference_image = cv2.resize(reference_image, None, fx=scale, fy=scale,
+                                     interpolation=cv2.INTER_AREA)
+    _, reference_png = cv2.imencode(".png", reference_image)
+    reference_image_b64 = base64.b64encode(reference_png).decode("ascii")
     profile_x = render_profile(height_nm, work_mask, axis="x")
     profile_y = render_profile(height_nm, work_mask, axis="y")
 
@@ -4267,6 +4322,7 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 589.3,
 
     return {
         "surface_map": surface_map_b64,
+        "reference_image_b64": reference_image_b64,
         "zernike_chart": zernike_chart_b64,
         "profile_x": profile_x,
         "profile_y": profile_y,

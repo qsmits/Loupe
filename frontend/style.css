@@ -4096,3 +4096,33 @@ body.no-camera .camera-section { display: none; }
 .palette-tt { font-weight: 600; font-size: 12.5px; color: var(--text); }
 .palette-td { font-size: 11px; color: var(--text-secondary); }
 .palette-empty { padding: 18px 14px; color: var(--muted); font-size: 12px; }
+
+/* Paired, analysis-aligned landmarks; separate from measurement overlays. */
+.fringe-reference-dialog {
+  margin: auto;
+  width: min(1400px, calc(100vw - 32px)); max-width: none;
+  max-height: calc(100dvh - 32px); padding: 20px; box-sizing: border-box;
+  background: var(--surface); color: var(--text); border: 1px solid var(--border);
+  border-radius: 12px; overflow: auto;
+}
+.fringe-reference-dialog::backdrop { background: #000a; }
+.fringe-reference-dialog header { display: flex; justify-content: space-between; align-items: start; gap: 16px; }
+.fringe-reference-dialog h2 { font-size: 20px; margin: 0 0 8px; }
+.fringe-reference-dialog p { font-size: 13px; line-height: 1.5; color: var(--text-secondary); margin: 0; }
+.fringe-reference-dialog button { color: var(--text); background: var(--surface-2); border: 1px solid var(--border); border-radius: 5px; padding: 7px 10px; cursor: pointer; }
+.fringe-reference-dialog button:disabled { opacity: .4; cursor: default; }
+.fringe-reference-dialog button[aria-pressed="true"] { border-color: #ffe15a; color: #ffe15a; }
+.fringe-reference-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 16px 0; font-size: 12px; }
+.fringe-reference-tools label { display: flex; align-items: center; gap: 8px; }
+#fringe-reference-labels { display: flex; gap: 4px; flex-wrap: wrap; }
+.fringe-reference-pair { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
+.fringe-reference-pair h3 { font-size: 13px; margin: 0 0 8px; }
+.fringe-reference-scroll { overflow: auto; height: 55vh; scrollbar-gutter: stable both-edges; background: #08090b; border: 1px solid var(--border); }
+.fringe-reference-frame { position: relative; width: 100%; margin: 0 auto; cursor: crosshair; touch-action: none; user-select: none; }
+.fringe-reference-frame img { display: block; width: 100%; height: auto; max-width: none; }
+.fringe-reference-frame svg { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
+.fringe-reference-dialog .fringe-reference-note { margin-top: 16px; }
+@media (max-width: 700px) {
+  .fringe-reference-pair { grid-template-columns: minmax(0, 1fr); }
+  .fringe-reference-scroll { height: 35vh; }
+}
