@@ -3011,8 +3011,10 @@ body.no-camera .camera-section { display: none; }
 
 /* ── Fringe Analysis workspace ───────────────────────────── */
 
+#mode-fringe { min-width: 0; }
 .fringe-workspace {
   display: flex;
+  min-width: 0;
   flex: 1;
   min-height: 0;
   gap: 0;
@@ -3028,6 +3030,68 @@ body.no-camera .camera-section { display: none; }
   padding: 10px;
   gap: 10px;
   overflow-y: auto;
+}
+.fringe-preview-col > * { flex: 0 0 auto; }
+.fringe-source-card { display: grid; gap: 6px; font-size: 13px; overflow-wrap: anywhere; }
+.fringe-source-card span { color: var(--text-secondary); font-size: 12px; line-height: 1.5; }
+.fringe-source-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.fringe-source-actions .detect-btn { min-height: 36px; font-size: 12px; padding: 8px; }
+.fringe-primary { background: var(--accent) !important; color: white !important; }
+.fringe-source-actions button:disabled { opacity: .45; cursor: default; }
+.fringe-setup-dialog {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-start;
+  inset: 0;
+  margin: auto;
+  padding: 0;
+  width: min(1000px, calc(100vw - 32px));
+  max-width: none;
+  max-height: calc(100dvh - 32px);
+  height: fit-content;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 20px 70px #0008;
+  overflow: hidden;
+}
+.fringe-setup-dialog:not([open]), .fringe-setup-dialog [hidden] { display: none !important; }
+.fringe-setup-dialog::backdrop { background: #0009; }
+.fringe-setup-header { display: flex; flex-shrink: 0; justify-content: space-between; gap: 16px; padding: 20px 24px; border-bottom: 1px solid var(--border); }
+.fringe-setup-header h2 { font-size: 20px; margin: 0 0 6px; }
+.fringe-setup-header p { margin: 0; color: var(--text-secondary); font-size: 13px; overflow-wrap: anywhere; }
+.fringe-setup-header button { align-self: flex-start; }
+.fringe-setup-body { order: 2; display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(240px, 1fr); gap: 24px; padding: 20px 24px; overflow: auto; }
+.fringe-setup-dialog fieldset { border: 0; margin: 0; padding: 0; min-width: 0; }
+.fringe-setup-dialog legend { font-size: 14px; font-weight: 600; padding: 0; margin-bottom: 8px; }
+.fringe-setup-dialog p { font-size: 12px; line-height: 1.6; color: var(--text-secondary); }
+.fringe-setup-dialog button { font-size: 12px; padding: 8px 12px; border-radius: 6px; background: var(--surface-2); color: var(--text); flex: none; }
+.fringe-setup-dialog button:disabled { opacity: .45; }
+.fringe-setup-dialog select, .fringe-setup-dialog input[type="number"] { color: var(--text); background: var(--surface-2); border: 1px solid var(--border); border-radius: 4px; padding: 6px; }
+.fringe-setup-dialog .detect-section { padding: 12px 0; }
+.fringe-setup-dialog .detect-section:first-child { padding-top: 0; }
+.fringe-setup-dialog .detect-section-label { font-size: 12px; }
+.fringe-setup-dialog .detect-section > select, #fringe-setup-form { display: block; width: 100%; margin-top: 6px; }
+.fringe-region-tools { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; margin: 12px 0; }
+.fringe-region-tools label { display: grid; gap: 4px; font-size: 12px; }
+.fringe-region-preview { background: #101114; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+#fringe-region-canvas { display: block; width: 100%; height: auto; touch-action: none; cursor: crosshair; }
+.fringe-region-coordinates summary { font-size: 12px; cursor: pointer; }
+.fringe-region-coordinates input { width: 65px; }
+#fringe-region-status { color: var(--text); }
+.fringe-setup-footer { order: 3; flex-shrink: 0; padding: 16px 24px; display: flex; align-items: center; gap: 10px; border-top: 1px solid var(--border); }
+#fringe-setup-note { font-size: 12px; color: var(--text-secondary); margin-right: auto; max-width: 60%; }
+#fringe-setup-progress { order: 1; flex-shrink: 0; padding: 24px; max-height: 40vh; overflow: auto; }
+#fringe-setup-progress .fringe-progress-bar { height: 10px; border-radius: 6px; }
+#fringe-setup-progress .fringe-progress-label { font-size: 14px; opacity: 1; margin-top: 12px; }
+.fringe-progress-log { margin: 20px 0 0; padding: 12px 12px 12px 32px; max-height: 220px; overflow: auto; background: var(--surface-2); border-radius: 6px; font-size: 13px; line-height: 1.8; }
+@media (max-width: 650px) {
+  .fringe-setup-body { grid-template-columns: minmax(0, 1fr); gap: 20px; }
+  .fringe-setup-header, .fringe-setup-body, .fringe-setup-footer { padding: 16px; }
+  .fringe-setup-footer { flex-wrap: wrap; }
+  #fringe-setup-note { width: 100%; max-width: none; }
 }
 .fringe-preview-container {
   position: relative;
@@ -3159,6 +3223,7 @@ body.no-camera .camera-section { display: none; }
 /* Summary bar */
 .fringe-summary-bar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 24px;
   padding: 10px 16px;
@@ -3249,9 +3314,11 @@ body.no-camera .camera-section { display: none; }
   flex: 1;
   min-height: 0;
 }
+.fringe-surface-container #fringe-surface-wrapper { flex-shrink: 0; }
 .fringe-surface-container img {
-  max-width: 100%;
-  max-height: 100%;
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
   border: 1px solid #444;
   background: #111;
   user-select: none;
@@ -3294,6 +3361,7 @@ body.no-camera .camera-section { display: none; }
 /* Fringe measurement toolbar */
 .fringe-measure-toolbar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 4px;
   padding: 4px 8px;

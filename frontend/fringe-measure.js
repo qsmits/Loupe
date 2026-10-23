@@ -1,6 +1,7 @@
 // fringe-measure.js — Surface map measurement tools for fringe mode.
 import { fr, $ } from './fringe.js';
 import { fitParallelStep } from './fringe-math.js';
+import { clampSurfacePan, zoomSurfaceAt } from './fringe-viewport.js';
 
 // ── Utility functions ──────────────────────────────────────────────────
 
@@ -691,31 +692,41 @@ export function wireMeasureEvents() {
   const viewport = $("fringe-surface-viewport");
   if (viewport) {
     let smZoom = 1, smPanX = 0, smPanY = 0, smDragging = false, smDragX = 0, smDragY = 0;
+    const wrapper = $("fringe-surface-wrapper");
+    const image = $("fringe-surface-img");
+    const viewSize = () => ({width: viewport.clientWidth, height: viewport.clientHeight,
+      imageWidth: wrapper.offsetWidth, imageHeight: wrapper.offsetHeight});
     const applySm = () => {
-      const wrapper = $("fringe-surface-wrapper");
-      if (wrapper) wrapper.style.transform = `translate(${smPanX}px,${smPanY}px) scale(${smZoom})`;
+      if (!wrapper) return;
+      const pan = clampSurfacePan(viewSize(), smZoom, smPanX, smPanY);
+      smPanX = pan.x; smPanY = pan.y;
+      wrapper.style.transform = `translate(${smPanX}px,${smPanY}px) scale(${smZoom})`;
     };
-    // Expose reset so new results can clear zoom/pan state
     fr.resetSurfaceZoom = () => {
-      smZoom = 1; smPanX = 0; smPanY = 0;
+      smZoom = 1; smPanX = 0; smPanY = 0; smDragging = false;
       applySm();
     };
+    const fitImage = () => {
+      if (!image?.naturalWidth || !viewport.clientWidth || !viewport.clientHeight) return;
+      const scale = Math.min(viewport.clientWidth / image.naturalWidth,
+        viewport.clientHeight / image.naturalHeight);
+      wrapper.style.width = `${image.naturalWidth * scale}px`;
+      wrapper.style.height = `${image.naturalHeight * scale}px`;
+      applySm();
+    };
+    image?.addEventListener('load', fitImage);
+    if (typeof ResizeObserver !== 'undefined') new ResizeObserver(fitImage).observe(viewport);
+    fitImage();
+    $('fringe-fit-view')?.addEventListener('click', () => { fitImage(); fr.resetSurfaceZoom(); });
     viewport.addEventListener("wheel", (e) => {
       e.preventDefault();
-      const prev = smZoom;
-      smZoom = Math.max(0.2, Math.min(10, smZoom + (e.deltaY < 0 ? 0.3 : -0.3)));
-      if (smZoom <= 1) { smPanX = 0; smPanY = 0; }
-      else {
-        // Zoom toward cursor: keep the point under the mouse fixed
-        const rect = viewport.getBoundingClientRect();
-        const mx = e.clientX - rect.left;
-        const my = e.clientY - rect.top;
-        const ratio = smZoom / prev;
-        smPanX = mx - ratio * (mx - smPanX);
-        smPanY = my - ratio * (my - smPanY);
-      }
+      if (!e.deltaY || !image?.naturalWidth) return;
+      const rect = viewport.getBoundingClientRect();
+      const next = zoomSurfaceAt(viewSize(), {zoom: smZoom, x: smPanX, y: smPanY},
+        {x: e.clientX - rect.left, y: e.clientY - rect.top}, e.deltaY < 0 ? 1.15 : 1 / 1.15);
+      smZoom = next.zoom; smPanX = next.x; smPanY = next.y;
       applySm();
-    });
+    }, {passive: false});
     viewport.addEventListener("mousedown", (e) => {
       e.preventDefault(); // prevent native image drag
       if (fr.measureMode === "step") {
@@ -737,7 +748,7 @@ export function wireMeasureEvents() {
         return;
       }
       if (fr.measureMode) return; // other measurement modes handle their own clicks
-      if (smZoom <= 1) return;
+      if (e.button !== 0 || smZoom <= 1) return;
       smDragging = true; smDragX = e.clientX - smPanX; smDragY = e.clientY - smPanY;
       viewport.style.cursor = "grabbing";
     });

@@ -29,10 +29,10 @@
   <!-- Top bar (menus only) -->
   <div id="top-bar">
     <div class="menu-group fringe-only" hidden>
-      <button class="menu-btn" id="btn-menu-fringe-settings">Settings ▾</button>
+      <button class="menu-btn" id="btn-menu-fringe-settings">Analysis settings…</button>
       <div class="dropdown fringe-settings-panel" id="dropdown-fringe-settings" hidden>
         <div class="detect-section">
-          <div class="detect-section-label">Wavelength</div>
+          <label class="detect-section-label" for="fringe-wavelength">Light wavelength</label>
           <select id="fringe-wavelength" style="width:100%;margin-top:4px;padding:4px"></select>
           <div id="fringe-custom-wl-label" hidden style="margin-top:4px">
             <label style="font-size:11px">Custom (nm)
@@ -41,13 +41,13 @@
           </div>
         </div>
         <div class="detect-section">
-          <div class="detect-section-label">Mask Threshold</div>
+          <label class="detect-section-label" for="fringe-mask-thresh">Reject weak fringes</label>
           <div class="detect-row">
             <input type="range" id="fringe-mask-thresh" min="0" max="100" step="1" value="30" style="flex:1" />
             <span id="fringe-mask-thresh-val" class="detect-val" style="min-width:28px">30%</span>
           </div>
           <div style="font-size:10px;opacity:0.55;margin-top:2px;line-height:1.3">
-            Fraction of the aperture's median fringe modulation below which pixels are excluded. Increase to trim weak-fringe zones.
+            Exclude pixels below this fraction of the median fringe contrast. Increase to trim weak or poorly lit areas.
           </div>
         </div>
         <div class="detect-section">
@@ -98,7 +98,7 @@
           </label>
         </div>
         <div class="detect-section">
-          <div class="detect-section-label">Aperture Recipe (M1.4)</div>
+          <div class="detect-section-label">Saved analysis area</div>
           <select id="fringe-recipe-select" style="width:100%;margin-top:4px;padding:4px;font-size:11px">
             <option value="">None (auto-mask)</option>
           </select>
@@ -780,8 +780,10 @@
           <div class="help-nav-section" data-help-modes="microscope">Features</div>
           <button class="help-nav-item top-level" data-page="detection" data-help-modes="microscope">Auto-Detection</button>
           <button class="help-nav-item top-level" data-page="dxf" data-help-modes="microscope">DXF Overlay</button>
+          <button class="help-nav-item top-level" data-page="edge-sampling" data-help-modes="microscope">Edge Sampling</button>
           <button class="help-nav-item top-level" data-page="overlays-templates" data-help-modes="microscope">Overlays &amp; Templates</button>
           <button class="help-nav-item top-level" data-page="inspection" data-help-modes="microscope">Guided Inspection</button>
+          <button class="help-nav-item top-level" data-page="spc" data-help-modes="microscope">SPC &amp; Saved Runs</button>
 
           <div class="help-nav-section" data-help-modes="microscope">Capture</div>
           <button class="help-nav-item top-level" data-page="capture-compare" data-help-modes="microscope">4-up Compare</button>
@@ -810,6 +812,7 @@
 
           <div class="help-nav-section" data-help-modes="fringe">Analysis</div>
           <button class="help-nav-item top-level" data-page="fringe-capture" data-help-modes="fringe">Capture &amp; Analyze</button>
+          <button class="help-nav-item top-level" data-page="fringe-area" data-help-modes="fringe">Area to Measure</button>
           <button class="help-nav-item top-level" data-page="fringe-workflow-modes" data-help-modes="fringe">Workflow Modes</button>
           <button class="help-nav-item top-level" data-page="fringe-averaging" data-help-modes="fringe">Averaging &amp; Subtraction</button>
           <button class="help-nav-item top-level" data-page="fringe-zernike" data-help-modes="fringe">Form Removal</button>
@@ -1122,10 +1125,10 @@
             </div>
             <div class="help-section-label">Wavelength</div>
             <p class="help-p">Select the wavelength that matches your actual light source. The active calibration record owns this value, and the wavelength dropdown acts as a quick editor for that record. The wavelength determines the physical height conversion: height = phase &times; &lambda; / (4&pi;).</p>
-            <div class="help-section-label">Mask threshold</div>
-            <p class="help-p">The mask threshold slider controls how aggressively low-modulation pixels are excluded. Increase it when the background, rim, or weakly lit regions are contaminating the result. Decrease it when valid fringe areas are being cut away. The diagnostics tab shows the modulation and trusted-area consequences of this choice.</p>
+            <div class="help-section-label">Reject weak fringes</div>
+            <p class="help-p">In <strong>Analysis settings…</strong>, the <strong>Reject weak fringes</strong> slider controls how aggressively low-modulation pixels are excluded. Increase it when the background, rim, or weakly lit regions are contaminating the result. Decrease it when valid fringe areas are being cut away. The diagnostics tab shows the modulation and trusted-area consequences of this choice.</p>
             <div class="help-section-label">Advanced tuning</div>
-            <p class="help-p">The Settings menu includes advanced DFT controls. <strong>LPF &sigma;</strong> changes how strongly the demodulated phase is smoothed. <strong>DC margin</strong> widens or narrows the rejection zone around the FFT center. <strong>Correct 2&pi; jumps</strong> enables a post-unwrap cleanup that is useful for ordinary smooth surfaces but should usually be disabled for step measurements.</p>
+            <p class="help-p">Open <strong>Analysis settings… → Advanced tuning</strong> for the DFT controls. <strong>LPF &sigma;</strong> changes how strongly the demodulated phase is smoothed. <strong>DC margin</strong> widens or narrows the rejection zone around the FFT center. <strong>Correct 2&pi; jumps</strong> enables a post-unwrap cleanup that is useful for ordinary smooth surfaces but should usually be disabled for step measurements.</p>
             <div class="help-section-label">Focus quality</div>
             <p class="help-p">The focus bar is a practical setup score, not a pure fringe-only metric. It rewards fringe contrast when fringes are present and edge sharpness for ordinary setup images. Use it to dial in focus and lighting before capturing.</p>
             <div class="help-tip">Aim for a small number of clean fringes across the part, even illumination, and no clipped highlights. Dust, trapped bubbles, and stress spots are much easier to see in the live preview than after analysis.</div>
@@ -1140,27 +1143,42 @@
             <div class="help-section-label">Managing calibrations</div>
             <p class="help-p">Use the <strong>change…</strong> link in the summary bar to switch, create, rename, or delete calibrations. Use <strong>Export…</strong> and <strong>Import…</strong> to move calibration sets between machines or browsers.</p>
             <div class="help-section-label">Aperture recipes</div>
-            <p class="help-p">A recipe is a saved analysis geometry. It can be built from mask polygons drawn with <strong>Edit Mask</strong>, or imported from JSON. Recipes are useful when you measure the same part family repeatedly and want the same aperture and exclusion zones every time.</p>
+            <p class="help-p">A recipe saves the area to measure for repeated work. Draw your regions in <strong>Analysis settings…</strong>, then choose <strong>Saved analysis area → Save regions as recipe…</strong> and give them a name. Use the dropdown to reuse a recipe, <strong>Manage</strong> to organize it, or <strong>Export</strong> / <strong>Import</strong> to transfer its JSON file.</p>
             <div class="help-section-label">Recipe behavior</div>
-            <p class="help-p">If no hand-drawn mask is active, the selected recipe supplies the analysis polygons automatically. Recipe coordinates are normalized, so they rescale with the current image size. Loupe warns in the console when the current preview resolution differs from the resolution the recipe was saved against.</p>
+            <p class="help-p">A selected recipe supplies the regions until you draw your own. Drawing on a recipe makes a working copy; it does not overwrite the saved recipe. Recipe coordinates scale with the image, so check the preview whenever framing, part position, or resolution changes. Loading another image clears hand-drawn regions but keeps the selected recipe. <strong>Use automatic area</strong> or <strong>Reset analysis</strong> deselects it without deleting saved recipes.</p>
           </div>
 
           <!-- Fringe: Capture & Analyze -->
           <div class="help-page" id="help-page-fringe-capture" hidden>
             <h2 class="help-page-title">Capture &amp; Analyze</h2>
-            <p class="help-page-sub">How to acquire and analyze an interferogram.</p>
-            <div class="help-section-label">From camera</div>
-            <p class="help-p">Click <strong>Freeze &amp; Analyze</strong> to grab the current frame and run the full analysis pipeline. The result is stored as a session capture with provenance, calibration snapshot, and the grids needed for later subtraction, export, and re-analysis.</p>
-            <div class="help-section-label">From file</div>
-            <p class="help-p">Drag and drop an image file anywhere in the large image/result view, onto the camera preview, or onto the drop zone in the left column. The view highlights while you drag a file over it. On the hosted instance, click <strong>Freeze &amp; Analyze</strong> after loading the image; this analyzes the imported file. Re-analysis paths such as carrier override and subtraction continue to use the dropped image until you switch back to camera capture.</p>
-            <div class="help-section-label">Pipeline</div>
-            <div class="help-step"><span class="help-step-num">1</span><span>Choose the best grayscale channel and build the analysis mask from polygons, recipe geometry, or auto-masking.</span></div>
-            <div class="help-step"><span class="help-step-num">2</span><span>Detect the FFT carrier, estimate alternates and confidence, and extract wrapped phase.</span></div>
-            <div class="help-step"><span class="help-step-num">3</span><span>Unwrap the phase using modulation and local phase-consistency quality signals.</span></div>
-            <div class="help-step"><span class="help-step-num">4</span><span>Convert phase to height, fit low-order form, and build raw and display height grids.</span></div>
-            <div class="help-step"><span class="help-step-num">5</span><span>Render the surface map, profiles, diagnostics, and confidence overlays.</span></div>
-            <div class="help-section-label">Polygon mask</div>
-            <p class="help-p">Click <strong>Edit Mask</strong> to define include and exclude polygons. Draw the part boundary, then add exclusion islands for dust, chips, trapped bubbles, or fixture hardware. Hand-drawn polygons take precedence over the selected recipe until you clear them.</p>
+            <p class="help-page-sub">Choose an interferogram, review the setup, then start analysis.</p>
+            <div class="help-step"><span class="help-step-num">1</span><span>Click <strong>Open image…</strong> or drop an image onto the large viewer, preview, drop zone, or setup dialog. On a local installation, <strong>Capture camera</strong> takes a still from the live camera.</span></div>
+            <div class="help-step"><span class="help-step-num">2</span><span>In <strong>Set up fringe analysis</strong>, check the wavelength, area to measure, weak-fringe rejection, and form removal. Leave the area automatic for a first pass, or draw regions as described in <em>Area to Measure</em>.</span></div>
+            <div class="help-step"><span class="help-step-num">3</span><span>Click <strong>Analyze image</strong>. A progress bar and timed activity log show the processing stages. When analysis completes, the dialog closes and the results open for inspection.</span></div>
+            <div class="help-section-label">Progress, cancellation, and retry</div>
+            <p class="help-p">The log follows area selection, carrier detection, phase unwrapping, height conversion, and rendering. Stages take different amounts of time. <strong>Cancel analysis</strong> stops waiting for the result. If analysis fails, the dialog keeps the error and log visible so you can adjust the settings and try again. <strong>Analysis settings…</strong> reopens setup for the current image.</p>
+            <div class="help-section-label">A new image is a new analysis</div>
+            <p class="help-p">Loading another image clears the old result and opens setup. Check the source name and <strong>Image loaded — not analyzed yet</strong> status; loading alone does not run analysis. After processing, the status shows completion and its time. Camera capture and file import use the same setup workflow.</p>
+            <div class="help-section-label">Reset analysis</div>
+            <p class="help-p"><strong>Reset analysis</strong> clears the current image, result, regions, selected recipe, measurements, and running average. Your settings, calibration, saved recipes, and session history remain available. Choose an image to begin again.</p>
+            <div class="help-tip">Closing setup before starting keeps the loaded image and your settings available. Open <strong>Analysis settings…</strong> when you are ready to continue.</div>
+          </div>
+
+          <div class="help-page" id="help-page-fringe-area" hidden>
+            <h2 class="help-page-title">Area to Measure</h2>
+            <p class="help-page-sub">The analysis mask selects which pixels belong to the surface. It does not edit the image.</p>
+            <div class="help-section-label">Start with the automatic area</div>
+            <p class="help-p">With no regions or selected recipe, Loupe detects the surface and rejects weak fringes. Use <strong>Use automatic area</strong> in setup to return to this behavior.</p>
+            <div class="help-section-label">Include the surface, exclude distractions</div>
+            <div class="help-step"><span class="help-step-num">1</span><span>Choose <strong>Circle · 3 points</strong> and <strong>Include surface</strong>, then click three points spread around the circular edge. Loupe fits a circle through them. For other shapes, use <strong>Ellipse · drag corners</strong> or <strong>Rectangle</strong> and drag opposite corners. Included regions are blue.</span></div>
+            <div class="help-step"><span class="help-step-num">2</span><span>Choose a drawing tool again, set <strong>Exclude defect / hole</strong>, and mark holes, dust, glare, or fixtures that should not contribute. Excluded regions are red.</span></div>
+            <div class="help-step"><span class="help-step-num">3</span><span>Check the preview before clicking <strong>Analyze image</strong>. <strong>Undo edit</strong> reverses creation, movement, resizing, deletion, or purpose changes. <strong>Region coordinates</strong> offers percentage-based position and size fields instead of dragging; a new circle fits inside those bounds.</span></div>
+            <p class="help-p">Multiple blue regions are combined; red regions remove pixels from that area. If you draw only red exclusions, the starting area is the whole image except those exclusions. Include the surface explicitly when you also need to remove the surrounding background.</p>
+            <div class="help-section-label">Edit an existing region</div>
+            <p class="help-p">After creation, the new region is selected. In <strong>Select / edit</strong>, click a region or choose it in <strong>Selected region</strong>. Drag inside it to move it, or drag a white corner handle to resize it. Three-point circles stay round. Use arrow keys on the preview for one-pixel nudges (Shift for ten pixels), or edit <strong>Region coordinates</strong> and click <strong>Apply coordinates</strong>. Change <strong>Purpose</strong> to switch the selected region between include and exclude; <strong>Delete region</strong> removes it.</p>
+            <div class="help-section-label">Area versus fringe quality</div>
+            <p class="help-p">Regions say <em>where</em> to analyze. <strong>Reject weak fringes</strong> controls which pixels have enough fringe contrast to use. An included region does not make glare or missing fringes measurable. Inspect modulation and trusted area in <strong>Diagnostics</strong> after analysis.</p>
+            <div class="help-tip">Use these simple regions directly in setup; microscopy drawing tools are not needed. To reuse an area on later images, save it under <strong>Saved analysis area</strong> and check its position on each image.</div>
           </div>
 
           <!-- Fringe: Workflow Modes -->
@@ -1238,7 +1256,7 @@
             <div class="help-section-label">Profiles tab</div>
             <p class="help-p">Cross-sections through the center of the air-gap map: one horizontal, one vertical. Useful for identifying whether departures are primarily in one direction.</p>
             <div class="help-section-label">Session tab</div>
-            <p class="help-p">In-session capture browser. Every new analysis, average, subtraction, and import appears here with origin tags, source links, export buttons, and a details panel. This server history is temporary and can be cleared by expiry or a server restart. Project autosave preserves the latest result, not the whole capture history; export captures separately to keep them.</p>
+            <p class="help-p">Previous analyses remain here after you open a new image. Every recorded analysis, average, subtraction, and import appears with origin tags, source links, export buttons, and details. Select a capture and click <strong>View surface map</strong> to preview it. History is held in temporary server memory: up to 100 captures within memory limits, with older captures removed as needed. It expires after 30 minutes without new stored activity or a server restart. Project autosave preserves the latest result, not the whole capture history; export captures separately to keep them.</p>
             <div class="help-section-label">Trend tab</div>
             <p class="help-p">Plots PV and RMS across the current session. Use it to spot drift, compare calibrations, and visualize the effect of repeated polishing or lapping passes.</p>
           </div>
@@ -1247,6 +1265,7 @@
           <div class="help-page" id="help-page-fringe-measurements" hidden>
             <h2 class="help-page-title">Measurement Tools</h2>
             <p class="help-page-sub">Tools in the Surface Map toolbar operate on the displayed height grid.</p>
+            <p class="help-p">Scroll over the map to zoom toward the cursor. In <strong>Pan</strong>, drag to move around the enlarged map. Zooming out stops at the complete image; <strong>Fit view</strong> resets zoom and recenters it.</p>
             <table>
               <thead><tr><th>Tool</th><th>What it does</th></tr></thead>
               <tbody>
@@ -1273,7 +1292,7 @@
             <div class="help-tip">Clean both the optical flat and the part surface. Dust particles create localized bright spots that confuse the phase extraction.</div>
             <div class="help-tip">Adjust the camera exposure so that fringes are clearly visible without clipping (no fully white or fully black regions).</div>
             <div class="help-section-label">Troubleshooting</div>
-            <div class="help-tip"><strong>No fringes detected:</strong> Check that the mask threshold is not too high. Try lowering it to 5-10%.</div>
+            <div class="help-tip"><strong>No fringes detected:</strong> Open <strong>Analysis settings…</strong> and check the selected area and <strong>Reject weak fringes</strong>. Try a lower threshold if valid fringes are being excluded.</div>
             <div class="help-tip"><strong>Noisy surface map:</strong> The fringe density may be too high for the camera resolution, or the aperture may include weakly lit regions. Reduce fringe density, tighten the mask, or use trusted pixels only for measurements.</div>
             <div class="help-tip"><strong>Unexpected sign by eye:</strong> Fringes are contours of air gap, not direct “high/low” labels. The surface map uses a sign convention after converting gap phase to height. Use rotation tests and known artifacts to sanity-check the interpretation.</div>
             <div class="help-tip"><strong>Step reading seems wrong:</strong> Disable <strong>Correct 2&pi; jumps</strong> and use the Step tool only on plateaus away from the edge. If the step is larger than &lambda;/4, the single-image result is physically ambiguous.</div>
@@ -1289,7 +1308,7 @@
             <div class="help-section-label">FFT magnitude image</div>
             <p class="help-p">Shows the FFT magnitude on a log scale. A clean interferogram has two strong sidebands separated from the DC center. Click the desired sideband to override the carrier. Use <strong>Reset to Auto</strong> to go back to automatic selection.</p>
             <div class="help-section-label">Modulation map</div>
-            <p class="help-p">False-color visualization of fringe contrast across the aperture. Green indicates high modulation (reliable phase extraction), red indicates low modulation (noisy or absent fringes). Masked pixels appear dark gray. Use this to verify that the mask threshold is appropriate and to understand where surface map noise originates.</p>
+            <p class="help-p">False-color visualization of fringe contrast across the aperture. Green indicates high modulation (reliable phase extraction), red indicates low modulation (noisy or absent fringes). Masked pixels appear dark gray. Use this to verify that <strong>Reject weak fringes</strong> is set appropriately and to understand where surface map noise originates.</p>
             <div class="help-section-label">Unwrap risk and trusted area</div>
             <p class="help-p">The unwrap risk map highlights corrected and edge-risk regions. The trusted-area percentage in the confidence row reports how much of the analysis mask is both well-modulated and unwrap-reliable.</p>
             <div class="help-section-label">How to use the numbers</div>
@@ -1684,9 +1703,31 @@
             <div class="help-step"><span class="help-step-num">3</span><span>Use the rotation nudge buttons and Flip H/V if needed to orient the drawing.</span></div>
             <div class="help-section-label">Alignment</div>
             <p class="help-p"><strong>Manual:</strong> use <em>Move DXF</em> to drag the overlay into position, or use <em>Set Origin</em> to pin an anchor point.</p>
-            <p class="help-p"><strong>Auto-align (edge-based):</strong> run line detection first, then click <em>Auto-align</em>. The algorithm matches detected edges to DXF geometry without requiring circles. See <em>DXF Auto-alignment</em> in How It Works for details.</p>
+            <p class="help-p"><strong>Auto-align:</strong> calibrate the image, then click <em>Auto-align</em>. Loupe tries circle matching when suitable circles are available, then falls back to edge-based alignment. Detection runs as needed; you do not need to run line detection first. Alignment changes position and rotation at the calibrated scale. See <em>DXF Auto-alignment</em> in How It Works for details.</p>
             <div class="help-section-label">Supported entities</div>
             <p class="help-p">LINE, CIRCLE, ARC, LWPOLYLINE (decomposed into line and arc segments). Layer names are preserved and shown in hover tooltips.</p>
+          </div>
+
+          <div class="help-page" id="help-page-edge-sampling" hidden>
+            <h2 class="help-page-title">Edge Sampling</h2>
+            <p class="help-page-sub">Choose how guided inspection finds the real edge near each DXF feature.</p>
+            <p class="help-p">Open <strong>Overlay → DXF → Edge sampling</strong>. Start with <strong>Raw calipers</strong>, the default for new overlays. It samples brightness across the nominal edge, locates sub-pixel transitions, and fits the measured points with greater weight on stronger edges.</p>
+            <table>
+              <thead><tr><th>Control</th><th>What to adjust</th></tr></thead>
+              <tbody>
+                <tr><td><strong>Method</strong></td><td><strong>Raw calipers</strong> measures brightness profiles directly. <strong>Canny contours</strong> uses extracted contours and preserves the older inspection workflow. Canny thresholds affect contours, not raw-caliper measurement.</td></tr>
+                <tr><td><strong>Search ± px</strong></td><td>Distance to search on either side of the nominal edge. Narrow it to exclude nearby edges; widen it if the real edge is outside the range. Check alignment first.</td></tr>
+                <tr><td><strong>Width px</strong></td><td>Caliper averaging width along the edge. A wider strip reduces noise but can mix detail near corners or small features.</td></tr>
+                <tr><td><strong>Blur σ px</strong></td><td>Smoothing across each caliper's brightness profile. Increase gently for noise; too much can merge neighboring transitions.</td></tr>
+                <tr><td><strong>Brightness</strong></td><td><strong>Either</strong>, <strong>Dark → light</strong>, or <strong>Light → dark</strong>, measured going outward. Choose the transition that corresponds to the physical boundary.</td></tr>
+                <tr><td><strong>Edge choice</strong></td><td><strong>Require one edge</strong> rejects competing candidates. <strong>First going outward</strong> chooses the first edge encountered from the inner end of the search range; <strong>Strongest</strong> chooses the strongest transition; <strong>Closest to nominal</strong> chooses the nearest to the drawing.</td></tr>
+              </tbody>
+            </table>
+            <div class="help-section-label">What “outward” means</div>
+            <p class="help-p">For a circle, outward is away from its centre. For a closed outline, it is away from the interior. For a standalone line, it is away from the drawing centre. It does not depend on which way the CAD line was drawn. Punch/Die controls how deviations are interpreted, not the brightness transition.</p>
+            <div class="help-section-label">When several edges compete</div>
+            <p class="help-p">A chamfer, reflection, or neighboring boundary can produce several candidates. Start by narrowing the range or choosing the known brightness direction. Use another edge-choice rule only when it describes the boundary you intend to measure, then inspect the overlay. An unmatched or ambiguous result needs review; changing the rule alone does not establish that the chosen edge is correct.</p>
+            <div class="help-tip">Edge-sampling settings are saved with the overlay in projects and templates. Older setups without these options keep Canny contours until you change the method.</div>
           </div>
 
           <!-- OVERLAYS & TEMPLATES -->
@@ -1699,7 +1740,8 @@
             <div class="help-step"><span class="help-step-num">2</span><span>Adjust its color and opacity with the swatch and slider that appear below the dropdown.</span></div>
             <p class="help-p"><strong>Export as Reticle…</strong> saves your current annotations as a custom reticle JSON file; <strong>Import Reticle…</strong> loads one back in.</p>
             <div class="help-section-label">Save/Load Template</div>
-            <p class="help-p">A template captures a complete inspection setup — the loaded DXF geometry, calibration, tolerance thresholds, per-feature overrides, and detection settings — so you can reapply the same inspection to a new part image. <strong>Save as Template</strong> is enabled once a DXF overlay and a calibration both exist; <strong>Load Template</strong> validates the file before applying it.</p>
+            <p class="help-p">A template captures a complete inspection setup — the loaded DXF geometry, calibration, tolerance thresholds, per-feature overrides, detection settings, and edge-sampling options — so you can reapply the same inspection to a new part image. <strong>Save as Template</strong> is enabled once a DXF overlay and a calibration both exist; <strong>Load Template</strong> validates the file before applying it.</p>
+            <div class="help-tip">New overlays default to <strong>Raw calipers</strong>. Older templates and projects without edge-sampling options retain <strong>Canny contours</strong>. Check <strong>Overlay → DXF → Edge sampling</strong> after loading an older setup if you want to use calipers.</div>
           </div>
 
           <!-- GUIDED INSPECTION -->
@@ -1708,17 +1750,32 @@
             <p class="help-page-sub">Automatically measure deviations of real part edges from a loaded DXF nominal.</p>
             <div class="help-section-label">Automated inspection</div>
             <div class="help-step"><span class="help-step-num">1</span><span>Load and align a DXF overlay (see DXF Overlay).</span></div>
-            <div class="help-step"><span class="help-step-num">2</span><span>Run edge detection (lines and/or circles).</span></div>
-            <div class="help-step"><span class="help-step-num">3</span><span>Click <strong>Run Inspection</strong>. Each DXF feature is processed individually in a ±15 px corridor.</span></div>
+            <div class="help-step"><span class="help-step-num">2</span><span>Open <strong>Overlay → DXF → Edge sampling</strong> and choose the method and search range. See <em>Edge Sampling</em> for brightness and competing-edge controls.</span></div>
+            <div class="help-step"><span class="help-step-num">3</span><span>Click <strong>Run inspection</strong>. Each DXF feature is measured in the selected search corridor (default ±15 px). You do not need to run Auto-Detection first.</span></div>
             <p class="help-p">Results show perpendicular deviation from nominal in mm, colour-coded green / amber / red by tolerance. Punch and Die features are distinguished because they deviate in opposite directions.</p>
             <div class="help-section-label">Manual point-pick fallback</div>
             <p class="help-p">If a feature fails to auto-detect (reflection, burr, incomplete edge), click it in the DXF overlay to enter point-pick mode. Place points along the real edge, then double-click or press <kbd>Enter</kbd> to fit and compute deviation.</p>
             <div class="help-tip">Right-click any inspection result on the canvas to toggle Punch/Die, re-measure manually, or delete the result.</div>
             <div class="help-section-label">Tolerances</div>
             <p class="help-p">Global warn/fail thresholds are set in Settings. Per-feature overrides can be set by clicking a deviation label on the canvas. Diameter/radius dimensions with a tolerance in the DXF (e.g. Ø25 +0.05/−0.02) are read automatically and applied to the matching circle or arc, tagged <strong>DWG</strong> in the results table; set <strong>Default tol ±</strong> in the DXF panel to give every feature without its own drawing tolerance a plain ± band instead of the global thresholds (tagged <strong>DEF</strong>). Priority: a per-feature override always wins, then a drawing tolerance, then the default tolerance, then the global thresholds.</p>
-            <div class="help-section-label">SPC tracking</div>
-            <p class="help-p">After running an inspection, click <strong>Save Run</strong> (next to Run Inspection) and name the part. This saves the current inspection results as one dated "run" against that part. The SPC dashboard in the sidebar then plots each feature's deviation across saved runs, with your warn/fail tolerance bands, and shows a Cpk summary (mean, standard deviation, and range) once at least two runs exist.</p>
-            <div class="help-tip">Cpk requires a tolerance and measurable variation. Zero or negligible observed variation is shown as <strong>Cpk unavailable (zero observed variation)</strong>; it is not a capability rating. SPC run storage and charts are available only in local installations.</div>
+            <div class="help-section-label">Read the confidence as well as the tolerance</div>
+            <p class="help-p">A green <strong>PASS</strong> means a matched feature is within its tolerance. Amber <strong>PASS?</strong>, <strong>WARN?</strong>, or <strong>FAIL?</strong> indicates competing edges: the numeric result needs review. A dash or <strong>UNMATCHED</strong> means there is no accepted measurement. A group marked <strong>INCOMPLETE</strong> has missing measurements; it is not an all-pass result.</p>
+            <p class="help-p">Hover a result for the reason and available fit RMS and point counts. Check alignment, narrow the search range, or select the appropriate brightness transition before measuring again. For short arcs, a wider visible arc may be needed to constrain the fit.</p>
+            <div class="help-tip">Uncertainty stays visible in the canvas, grouped results, and PDF report. <strong>Save Run</strong> preserves it for later review; see <em>SPC &amp; Saved Runs</em> for which measurements contribute to statistics.</div>
+          </div>
+
+          <div class="help-page" id="help-page-spc" hidden>
+            <h2 class="help-page-title">SPC &amp; Saved Runs</h2>
+            <p class="help-page-sub">Track repeated inspections of the same part on a local installation.</p>
+            <div class="help-step"><span class="help-step-num">1</span><span>Run and review an inspection, then click <strong>Save Run</strong> beside <strong>Run inspection</strong>. Enter the part name to store a dated set of feature results. Reuse the same name for later runs of that part.</span></div>
+            <div class="help-step"><span class="help-step-num">2</span><span>In the sidebar's <strong>SPC</strong> dashboard, choose the part and feature to view deviations across runs with warn/fail guides.</span></div>
+            <div class="help-step"><span class="help-step-num">3</span><span>Review the accepted sample count, excluded measurements, and capability summary. Resolve uncertain edges in the inspection before relying on the trend.</span></div>
+            <div class="help-section-label">Uncertain measurements stay in the record</div>
+            <p class="help-p">Saved runs retain unmatched and ambiguous results. A run needing review is marked <strong>REVIEW</strong>, unless a definite failure makes the run <strong>FAIL</strong>. Ambiguous numeric points appear amber in the chart; unmatched results have no plotted measurement.</p>
+            <p class="help-p">Ambiguous and unmatched measurements are excluded from SPC statistics. The summary shows how many were excluded. Its sample count refers to usable measurements for the selected feature, so saving two runs does not guarantee two usable samples.</p>
+            <div class="help-section-label">Capability and variation</div>
+            <p class="help-p">The summary needs at least two usable measurements to show mean, standard deviation, range, and capability. Cpk also needs an applicable tolerance and measurable variation. With zero or negligible observed variation, it shows <strong>Cpk unavailable (zero observed variation)</strong>.</p>
+            <div class="help-tip">Use consistent calibration, alignment, edge sampling, and feature definitions when comparing runs. Templates help reproduce the setup. Saved run storage and SPC charts are available only in local installations.</div>
           </div>
 
           <!-- CAPTURE: 4-UP COMPARE -->
@@ -1866,7 +1923,7 @@
                 <tr><td><strong>Gaussian</strong></td><td>The browser method interpolates a peak in the log gradient. The server method interpolates an intensity second-derivative zero crossing.</td><td>Compare with Parabola on your images</td></tr>
               </tbody>
             </table>
-            <p class="help-p">Snapping is suppressed when no sufficiently strong, valid gradient peak is found.</p>
+            <p class="help-p">Choose the sub-pixel method in <strong>Settings → Measurement</strong>. Browser methods refine locally; server methods use the captured frame. <strong>None</strong> disables sub-pixel refinement. Snapping is suppressed when no sufficiently strong, valid gradient peak lies within the snap radius; a stronger distant edge does not take priority over the nearest valid ridge.</p>
             <div class="help-tip">The snapping radius shrinks as you zoom in, so at high zoom you snap to the finest local edge rather than a distant one.</div>
           </div>
 
@@ -1888,14 +1945,17 @@
           <!-- ALGO: ALIGNMENT -->
           <div class="help-page" id="help-page-algo-alignment" hidden>
             <h2 class="help-page-title">DXF Auto-alignment</h2>
-            <p class="help-page-sub">Aligns the DXF overlay to the image without requiring circle features in the drawing.</p>
-            <div class="help-section-label">Algorithm</div>
+            <p class="help-page-sub">Finds position and rotation while keeping the calibrated scale fixed.</p>
+            <div class="help-section-label">Circle matching</div>
+            <p class="help-p">When the drawing contains circles, Loupe uses existing detected circles or runs circle detection. With enough matches, it estimates and refines the drawing pose from circle centres. If this cannot produce a match, it tries edge-based alignment.</p>
+            <div class="help-section-label">Edge-based alignment</div>
             <ol class="help-ol">
-              <li><strong>Coarse translation:</strong> detected line segments are matched to DXF line entities by nearest-neighbour in angle and position space. The centroid offset of matched pairs gives an initial translation.</li>
-              <li><strong>Angular refinement:</strong> small rotation offsets are swept around the initial estimate. Each is scored by a normalised cross-correlation metric between detected and DXF edge positions.</li>
-              <li><strong>Rotation bias penalty:</strong> a small penalty on large rotations prevents over-rotating on symmetric parts where many rotation angles could produce similar scores.</li>
+              <li><strong>Coarse search:</strong> render the DXF as an edge template and correlate it with the image edge map across positions and a limited rotation range.</li>
+              <li><strong>Fractional refinement:</strong> refine the best translation and rotation using the correlation peak between sampled positions.</li>
+              <li><strong>Raw-edge refinement:</strong> sample brightness profiles near the nominal edges and refine the pose against the measured edges. If the geometry does not constrain a stable pose, retain the coarse result.</li>
             </ol>
-            <div class="help-tip">For best results, run line detection before auto-aligning. The algorithm works best when most of the major DXF edges are visible and detected in the image.</div>
+            <p class="help-p">The edge fit uses the drawing as a whole unless the imported geometry explicitly supplies alignment datums. A single straight edge or circle cannot independently constrain every component of position and rotation.</p>
+            <div class="help-tip">Calibrate first and make the major part edges clearly visible. Check the overlay after alignment, especially on symmetric parts. Auto-align handles detection itself; running line detection beforehand is unnecessary.</div>
           </div>
 
           <!-- ALGO: FITTING -->
@@ -1919,8 +1979,8 @@
               <tbody>
                 <tr><td><strong>Annotated PNG</strong></td><td>Image with all measurements and labels rendered on top</td><td>Overlay → Export annotated image</td></tr>
                 <tr><td><strong>CSV</strong></td><td>All measurements with values, coordinates, and calibration, plus per-measurement tolerance columns (Nominal/Upper/Lower/Deviation/Result) where set. One row per measurement, numbered to match the sidebar and canvas labels.</td><td>Overlay → Export CSV</td></tr>
-                <tr><td><strong>Inspection CSV</strong></td><td>Guided inspection results: feature handle, deviation, pass/fail, Punch/Die</td><td>Overlay → Export Inspection CSV (requires inspection)</td></tr>
-                <tr><td><strong>Inspection PDF</strong></td><td>Formatted report with numbered features, deviation table, pass/fail summary</td><td>Overlay → Export Inspection PDF (requires inspection)</td></tr>
+                <tr><td><strong>Inspection CSV</strong></td><td>Feature IDs, measured deviations, applied tolerance bands, result (including UNMATCHED), and a separate ambiguous flag. Review that flag alongside PASS/WARN/FAIL.</td><td>Overlay → Export Inspection CSV (requires inspection)</td></tr>
+                <tr><td><strong>Inspection PDF</strong></td><td>Numbered features, deviation table, tolerance summary, and visible ambiguity or incomplete-result indicators</td><td>Overlay → Export Inspection PDF (requires inspection)</td></tr>
                 <tr><td><strong>DXF (reverse engineering)</strong></td><td>All measurement annotations converted to DXF entities in mm-space. Distances → lines, circles → circles, splines → SPLINE entities.</td><td>Overlay → Export DXF</td></tr>
                 <tr><td><strong>Session JSON</strong></td><td>Legacy annotations, calibration, DXF, and inspection results. Does not contain the image.</td><td>File ▾ → Save session, or press <kbd>S</kbd></td></tr>
                 <tr><td><strong>Project (.loupe)</strong></td><td>Saved workspace: microscopy image, measurements, calibration, and view state, or latest instrument result and saved settings, masks, and measurements. Includes retained original lens/imported fringe images when available. Excludes server capture history, running averages, live jobs, and undo history.</td><td>File ▾ → Export project</td></tr>

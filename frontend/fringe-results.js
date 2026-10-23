@@ -5,6 +5,7 @@
 
 import { fr, $ } from './fringe.js';
 import { apiFetch } from './api.js';
+import { state } from './state.js';
 import { getWavelength, getMaskThreshold, getLpfSigmaFrac, getDcMarginOverride, getCorrect2piJumps, getCalibrationPayload, getAperturePayload, resetAverage } from './fringe-panel.js';
 import { getActiveRecipe, recipeToMaskPolygons } from './fringe-geometry.js';
 import { drawPeakValleyMarkers, resetSurfaceZoom, refreshLastMeasurement } from './fringe-measure.js';
@@ -180,7 +181,7 @@ export function buildResultsHtml() {
           <button class="fringe-tab" data-tab="zernike">Zernike</button>
           <button class="fringe-tab" data-tab="profiles">Profiles</button>
           <button class="fringe-tab" data-tab="diagnostics">Diagnostics</button>
-          <button class="fringe-tab" data-tab="session">Session</button>
+          <button class="fringe-tab" data-tab="session" title="Previous captures: surface previews, export, average, and compare">Session</button>
           <button class="fringe-tab" data-tab="trend" title="Per-capture PV/RMS trend over the session">Trend</button>
         </div>
 
@@ -188,7 +189,7 @@ export function buildResultsHtml() {
           <div class="fringe-empty-state" id="fringe-empty">
             <div style="max-width:420px;text-align:left;line-height:1.6">
               <div style="font-size:14px;font-weight:600;margin-bottom:8px;text-align:center">Drop an interferogram anywhere in this view</div>
-              <div style="font-size:12px;text-align:center;opacity:0.7">Or use Freeze &amp; Analyze to capture a camera frame.</div>
+              <div style="font-size:12px;text-align:center;opacity:0.7">Or choose Open image or Capture camera. Review settings before starting.</div>
               <div style="font-size:12px;opacity:0.7;margin-top:12px">
                 <div style="font-weight:600;margin-bottom:4px">Tips for best results:</div>
                 <ul style="margin:0;padding-left:18px">
@@ -223,6 +224,7 @@ export function buildResultsHtml() {
                 <input type="checkbox" id="fringe-use-trusted-only" />
                 use trusted pixels only
               </label>
+              <button class="fringe-overlay-btn" id="fringe-fit-view" title="Show the complete surface map">Fit view</button>
               <span class="fringe-measure-readout" id="fringe-measure-readout"></span>
             </div>
             <div class="fringe-surface-container" id="fringe-surface-viewport" style="overflow:hidden;cursor:grab">
@@ -321,7 +323,7 @@ export function buildResultsHtml() {
         </div>
 
         <div class="fringe-tab-panel" id="fringe-panel-session" hidden>
-          <p style="padding:8px;margin:0">Server capture history is temporary. Export captures you want to keep. The latest displayed result, imported image, settings, masks and measurements autosave in this project.</p>
+          <p style="padding:8px;margin:0">Previous analyses stay here when you open a new image. Select a capture to preview its surface or export it. This temporary server memory holds up to 100 captures within its memory limits; older captures are removed as needed. History expires after 30 minutes without new stored activity or a server restart. Export captures you want to keep. Your project's latest result, imported image, settings, masks and measurements autosave in your browser.</p>
           <div style="display:flex;flex:1;min-height:0;gap:8px;padding:8px">
             <div style="flex:1;display:flex;flex-direction:column;min-width:280px">
               <div style="display:flex;align-items:center;gap:8px;padding:4px 0;border-bottom:1px solid var(--border);margin-bottom:6px;flex-wrap:wrap">
@@ -501,8 +503,9 @@ export function refreshTrustedOverlay() {
   canvas.style.display = "block";
   canvas.width = dispW;
   canvas.height = dispH;
-  canvas.style.width = dispW + "px";
-  canvas.style.height = dispH + "px";
+  // Follow fit-to-view resizing as well as the shared zoom/pan transform.
+  canvas.style.width = "100%";
+  canvas.style.height = "100%";
 
   // Build the dim mask at native grid resolution, then scale up.
   const off = document.createElement("canvas");
@@ -538,10 +541,22 @@ export function restoreFringeResult(data, options) {
     }
   } else {
     for (const id of ["fringe-summary-bar", "fringe-confidence-row", "fringe-carrier-diagnostics",
-      "fringe-carrier-row", "fringe-subtract-warnings", "fringe-surface-content"]) {
+      "fringe-carrier-row", "fringe-subtract-warnings", "fringe-surface-content",
+      "fringe-sub-chip", "fringe-loading-overlay", "fringe-line-profile-chart",
+      "fringe-3d-content", "fringe-zernike-content", "fringe-profiles-content", "fringe-diag-content"]) {
       if ($(id)) $(id).hidden = true;
     }
-    if ($("fringe-empty")) $("fringe-empty").hidden = false;
+    for (const id of ["fringe-empty", "fringe-3d-empty", "fringe-zernike-empty", "fringe-profiles-empty", "fringe-diag-empty"]) {
+      if ($(id)) $(id).hidden = false;
+    }
+    for (const id of ["fringe-measure-svg", "fringe-measure-readout", "fringe-zernike-table-container"]) {
+      if ($(id)) $(id).textContent = "";
+    }
+    if ($("fringe-btn-carrier-reset")) $("fringe-btn-carrier-reset").hidden = true;
+    if ($("fringe-form-model")) $("fringe-form-model").value = formModel;
+    if ($("fringe-pill-group")) $("fringe-pill-group").hidden = formModel !== "zernike";
+    document.querySelectorAll('.fringe-measure-btn').forEach(btn => btn.classList.toggle('active', !btn.dataset.mode));
+    document.querySelectorAll('.fringe-pill[data-pill]').forEach(btn => btn.classList.toggle('active', !!pillState[btn.dataset.pill]));
     for (const id of ["fringe-btn-invert", "fringe-btn-export-pdf", "fringe-btn-export-csv"]) {
       if ($(id)) $(id).disabled = true;
     }
@@ -1216,6 +1231,7 @@ function wireCarrierOverride() {
 
   canvas.addEventListener("click", async (e) => {
     if (!fr.lastResult) return;
+    const sourceResult = fr.lastResult;
 
     const rect = canvas.getBoundingClientRect();
     const clickX = (e.clientX - rect.left) / rect.width;
@@ -1251,6 +1267,7 @@ function wireCarrierOverride() {
       });
       if (!resp.ok) { console.warn("Carrier override failed"); return; }
       const data = await resp.json();
+      if (fr.lastResult !== sourceResult) return;
       fr.lastResult = data;
       // Fresh carrier reanalysis is unrelated to any pending running-average
       // orientation toggle (Task 9) — don't let a stale flag auto-invert it.
@@ -1259,8 +1276,7 @@ function wireCarrierOverride() {
       updateCarrierDisplay(data);
       $("fringe-btn-carrier-reset").hidden = false;
       fr.carrierOverride = { y: carrierY, x: carrierX };
-      // M1.7: reanalyze-carrier doesn't append a capture, but refreshing keeps
-      // the sidebar consistent if another tab/window made changes.
+      // Carrier overrides create a derived capture; refresh the history.
       fetchSessionCaptures();
     } finally {
       document.body.style.cursor = "";
@@ -1354,6 +1370,7 @@ function drawProfile(canvas, profile, title) {
 
 async function render3dView() {
   if (!fr.lastResult) return;
+  const sourceResult = fr.lastResult;
   const empty = $("fringe-3d-empty");
   const content = $("fringe-3d-content");
   const host = $("fringe-3d-host");
@@ -1372,6 +1389,7 @@ async function render3dView() {
   }
   const THREE = fr.THREE;
   const OrbitControls = fr.OrbitControls;
+  if (fr.lastResult !== sourceResult) return;
 
   const controlsEl = $("fringe-3d-controls");
   host.innerHTML = "";
@@ -1617,6 +1635,7 @@ export function mergeReanalyzeResult(data, { clearTrust = false } = {}) {
 
 async function doReanalyze() {
   if (!fr.lastResult) return;
+  const sourceResult = fr.lastResult;
   try {
     const body = {
       coefficients: fr.lastResult.coefficients,
@@ -1645,6 +1664,7 @@ async function doReanalyze() {
     });
     if (!r.ok) return;
     const data = await r.json();
+    if (fr.lastResult !== sourceResult) return;
     mergeReanalyzeResult(data);
     renderResults(fr.lastResult);
   } catch (e) {
@@ -1671,6 +1691,7 @@ async function doReanalyze() {
  */
 export async function applySignFlipToLastResult() {
   if (!fr.lastResult || !fr.lastResult.coefficients) return false;
+  const sourceResult = fr.lastResult;
   const inverted = fr.lastResult.coefficients.map(c => -c);
   try {
     const body = {
@@ -1696,6 +1717,7 @@ export async function applySignFlipToLastResult() {
     });
     if (!r.ok) return false;
     const data = await r.json();
+    if (fr.lastResult !== sourceResult) return false;
     fr.lastResult.coefficients = inverted;
     mergeReanalyzeResult(data);
     return true;
@@ -2120,6 +2142,8 @@ function renderSessionPanel() {
   const list = $("fringe-session-list");
   const count = $("fringe-session-count");
   const caps = fr.sessionCaptures || [];
+  const tab = document.querySelector('.fringe-tab[data-tab="session"]');
+  if (tab) tab.textContent = caps.length ? `Session (${caps.length})` : 'Session';
   if (count) count.textContent = `${caps.length} capture${caps.length === 1 ? "" : "s"} in this session`;
 
   // M3.3: toolbar state — "Select for average…" becomes "Average N selected"
@@ -2408,14 +2432,38 @@ function _renderCaptureDetail(cap) {
 
   panel.innerHTML = `
     <div style="font-size:12px;font-weight:600;margin-bottom:6px">Capture details</div>
+    <button class="fringe-pill" id="fringe-capture-preview" style="margin-bottom:8px;padding:4px 10px">View surface map</button>
+    <div id="fringe-capture-preview-content" aria-live="polite" style="margin-bottom:8px"></div>
     <table style="font-size:11px;border-collapse:collapse;width:100%">
       <tbody>${rows}</tbody>
     </table>
-    <div style="margin-top:12px;padding:8px;border-radius:4px;background:rgba(255,159,10,0.12);font-size:11px;line-height:1.4;opacity:0.9">
-      Full surface map not persisted. Re-running analysis on the original image will re-create it.
-      (Averaging, subtraction, and export will use the summary + session data directly when those land.)
-    </div>
   `;
+  const button = $("fringe-capture-preview");
+  const preview = $("fringe-capture-preview-content");
+  if (button && preview) button.addEventListener('click', async () => {
+    const epoch = state._epoch;
+    const stillSelected = () => preview.isConnected && state._epoch === epoch && fr.selectedCaptureId === cap.id;
+    button.disabled = true;
+    preview.textContent = 'Loading surface map…';
+    try {
+      const response = await apiFetch(`/fringe/session/capture/${encodeURIComponent(cap.id)}`);
+      if (!response.ok) throw new Error(response.status === 404
+        ? 'This capture has expired or was removed to free temporary storage. Refresh the session list.'
+        : `Could not load this capture (${response.status}). Try again.`);
+      const data = await response.json();
+      if (!stillSelected()) return;
+      if (!data.surface_map) throw new Error('This capture does not contain a surface preview.');
+      const img = document.createElement('img');
+      img.src = 'data:image/png;base64,' + data.surface_map;
+      img.alt = `Surface map from capture ${cap.captured_at || cap.id}`;
+      img.style.cssText = 'display:block;max-width:100%;max-height:min(260px,26vh);width:auto;height:auto;margin:auto';
+      preview.replaceChildren(img);
+    } catch (error) {
+      if (stillSelected()) preview.textContent = error.message;
+    } finally {
+      if (stillSelected()) button.disabled = false;
+    }
+  });
 }
 
 // ── Compare / Subtract dialog (M3.6) ───────────────────────────────────

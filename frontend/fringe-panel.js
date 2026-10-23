@@ -5,10 +5,10 @@
 
 import { fr, $ } from './fringe.js';
 import { state } from './state.js';
-import { getSubtractTerms, getFormModel, mergeReanalyzeResult, applySignFlipToLastResult } from './fringe-results.js';
+import { getSubtractTerms, getFormModel, mergeReanalyzeResult, applySignFlipToLastResult, restoreFringeResult, captureFringeOptions } from './fringe-results.js';
 import { apiFetch } from './api.js';
-import { analyzeWithProgress, createProgressBar } from './fringe-progress.js';
-import { initCrossMode } from './cross-mode.js';
+import { analyzeWithProgress, cancelAnalysis, hideProgress } from './fringe-progress.js';
+import { initFringeSetup, openFringeSetup, closeFringeSetup, showFringeAnalysisProgress, showFringeAnalysisError, refreshRegionEditor } from './fringe-setup.js';
 import { switchMode } from './modes.js';
 import { imageWidth, imageHeight } from './viewport.js';
 import { lensK1ToDiagNormalized } from './math.js';
@@ -166,9 +166,17 @@ export function buildPanelHtml() {
           <span id="fringe-focus-score" style="font-size:11px;min-width:30px;text-align:right">--</span>
         </div>
 
-        <button class="detect-btn" id="fringe-btn-analyze" style="padding:4px 10px;font-size:11px">
-          Freeze &amp; Analyze
-        </button>
+        <div class="fringe-source-card">
+          <strong id="fringe-source-name">No image selected</strong>
+          <span id="fringe-analysis-status" role="status">Choose an image to get started.</span>
+        </div>
+        <div class="fringe-source-actions">
+          <button class="detect-btn fringe-primary" id="fringe-btn-open">Open image…</button>
+          <button class="detect-btn" id="fringe-btn-camera">Capture camera</button>
+          <button class="detect-btn" id="fringe-btn-analyze" disabled>Analysis settings…</button>
+          <button class="detect-btn" id="fringe-btn-reset" disabled>Reset analysis</button>
+        </div>
+        <input type="file" id="fringe-image-file" accept="image/*" hidden />
 
         <div id="fringe-avg-controls" style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border)">
           <div style="display:flex;gap:4px;align-items:center">
@@ -189,16 +197,6 @@ export function buildPanelHtml() {
         </div>
 
         <div style="display:flex;gap:4px;align-items:center;margin-top:8px;padding-top:8px;border-top:1px solid var(--border)">
-          <button class="detect-btn" id="fringe-btn-edit-mask" style="padding:4px 10px;font-size:11px;flex:1">
-            Edit Mask
-          </button>
-          <button class="detect-btn" id="fringe-btn-mask-clear" style="padding:4px 10px;font-size:11px;opacity:0.6" disabled>
-            Clear Mask
-          </button>
-        </div>
-        <div id="fringe-mask-status" style="font-size:10px;opacity:0.5;text-align:center" hidden></div>
-
-        <div style="display:flex;gap:4px;align-items:center;margin-top:8px;padding-top:8px;border-top:1px solid var(--border)">
           <label style="font-size:11px;opacity:0.7;white-space:nowrap">Lens:</label>
           <select id="fringe-lens-profile" style="flex:1;font-size:11px;padding:2px 4px"></select>
           <button class="detect-btn" id="fringe-btn-lens-cal" style="padding:4px 10px;font-size:11px">Calibrate</button>
@@ -208,9 +206,7 @@ export function buildPanelHtml() {
           <button class="detect-btn" id="fringe-btn-lens-save" style="padding:4px 8px;font-size:11px">Save</button>
         </div>
 
-        <div class="fringe-drop-zone" id="fringe-drop-zone" style="margin-top:8px">
-          <span style="opacity:0.7;font-size:12px">Drop an interferogram here or anywhere in the image view</span>
-        </div>
+        <button class="fringe-drop-zone" id="fringe-drop-zone">Drop an interferogram here, or click to choose an image</button>
   `;
 }
 
@@ -331,16 +327,93 @@ function _onAnalysisResult(data) {
   if (csvBtn) csvBtn.disabled = false;
 }
 
-function analyzeFromCamera() {
-  clearDroppedImage();
-  _runAnalysis();
+// Invalidates file decoding/camera captures as well as streamed analyses.
+let sourceVersion = 0;
+
+export function cancelFringeWork() {
+  sourceVersion++;
+  cancelAnalysis();
+  closeFringeSetup();
+  if (fr.analysisBusy) {
+    fr.analysisBusy = false;
+    updateAnalysisSource('Analysis cancelled — ready to try again.');
+  }
 }
 
-/** Shared analysis dispatch — uses dropped image if available, else camera. */
-function _runAnalysis() {
-  const btn = $("fringe-btn-analyze");
-  if (btn) btn.disabled = true;
+export function updateAnalysisSource(message) {
+  const name = fr.sourceName || (fr.droppedImageB64 ? 'Imported interferogram' : 'No image selected');
+  if ($('fringe-source-name')) $('fringe-source-name').textContent = name;
+  if ($('fringe-analysis-status')) $('fringe-analysis-status').textContent = message ||
+    (fr.lastResult ? 'Analysis complete' + (fr.analyzedAt ? ' · ' + new Date(fr.analyzedAt).toLocaleTimeString() : '')
+      : fr.droppedImageB64 ? 'Image loaded — not analyzed yet.' : 'Choose an image to get started.');
+  if ($('fringe-btn-analyze')) $('fringe-btn-analyze').disabled = !fr.droppedImageB64 || fr.analysisBusy;
+  if ($('fringe-btn-reset')) $('fringe-btn-reset').disabled = !fr.droppedImageB64 && !fr.lastResult && !fr.analysisBusy;
+  if ($('fringe-btn-camera')) $('fringe-btn-camera').hidden = !!state._hosted;
+  const focus = document.querySelector('.fringe-focus-bar-container');
+  if (focus) focus.hidden = !!fr.droppedImageB64 || !!state._hosted;
+}
 
+function clearCurrentResult() {
+  const options = captureFringeOptions();
+  fr.lastResult = fr.lastMask = null;
+  fr.heightGrid = fr.maskGrid = fr.trustedMaskGrid = null;
+  fr.gridRows = fr.gridCols = 0;
+  fr.measurePoints = []; fr.stepRegions = []; fr.measurements = [];
+  fr.measureMode = null; fr.lastAreaRect = null; fr.stepDragIdx = -1; fr.stepDragOffset = null;
+  fr.carrierOverride = null; fr.analyzedAt = null;
+  fr.selectedCaptureId = null;
+  resetAverage();
+  restoreFringeResult(null, options);
+  if ($('fringe-btn-avg-add')) $('fringe-btn-avg-add').disabled = true;
+  document.querySelector('.fringe-tab[data-tab="surface"]')?.click();
+}
+
+export function resetFringeAnalysis() {
+  cancelFringeWork();
+  hideProgress();
+  clearCurrentResult();
+  clearDroppedImage();
+  fr.maskPolygons = [];
+  setActiveRecipeId(null);
+  refreshRecipeUi();
+  drawMaskOverlay();
+  updateAnalysisSource('Reset — choose an image for a new analysis.');
+}
+
+export function showAnalysisSetup() {
+  if (fr.analysisBusy) return;
+  if (!fr.droppedImageB64) { $('fringe-image-file')?.click(); return; }
+  openFringeSetup(fr.droppedObjectUrl || `data:${mimeFromBase64(fr.droppedImageB64)};base64,${fr.droppedImageB64}`,
+    fr.sourceName || 'Imported interferogram');
+}
+
+async function analyzeFromCamera() {
+  if (state._hosted) return;
+  cancelFringeWork();
+  const version = sourceVersion, epoch = state._epoch;
+  const btn = $('fringe-btn-camera');
+  btn.disabled = true;
+  updateAnalysisSource('Capturing camera image…');
+  try {
+    const frozen = await apiFetch('/freeze', {method: 'POST'});
+    if (!frozen.ok) throw new Error('Could not capture camera frame');
+    if (version !== sourceVersion || epoch !== state._epoch) return;
+    const response = await apiFetch('/frame');
+    if (!response.ok) throw new Error('Camera returned no frame');
+    const blob = await response.blob();
+    if (version !== sourceVersion || epoch !== state._epoch) return;
+    await analyzeFromFile(new File([blob], 'Camera capture', {type: blob.type || 'image/jpeg'}));
+  } catch (error) {
+    if (version !== sourceVersion || epoch !== state._epoch) return;
+    updateAnalysisSource(error.message);
+    showToast(error.message);
+  } finally { btn.disabled = false; }
+}
+
+/** Only the dialog's Analyze action starts a new analysis. */
+function _runAnalysis(formModel = getFormModel()) {
+  if (fr.analysisBusy || !fr.droppedImageB64) return;
+  const version = sourceVersion, epoch = state._epoch;
   _checkRecipeResolution();
   const payload = {
     wavelength_nm: getWavelength(),
@@ -349,66 +422,69 @@ function _runAnalysis() {
     dc_margin_override: getDcMarginOverride(),
     subtract_terms: getSubtractTerms(),
     mask_polygons: _buildMaskPayload(),
-    form_model: getFormModel(),
+    form_model: formModel,
     lens_k1: fr.lensK1,
     correct_2pi_jumps: getCorrect2piJumps(),
     calibration: getCalibrationPayload(),
     aperture_recipe: getAperturePayload(),
+    image_b64: fr.droppedImageB64,
   };
-  if (fr.droppedImageB64) payload.image_b64 = fr.droppedImageB64;
-
-  analyzeWithProgress(
-    payload,
-    (data) => {
-      _onAnalysisResult(data);
-      if (btn) btn.disabled = false;
-    },
-    (errMsg) => {
-      console.warn("Fringe analysis failed:", errMsg);
-      if (btn) btn.disabled = false;
-    },
-    () => _runAnalysis(),  // retry
-  );
+  clearCurrentResult();
+  restoreFringeResult(null, {...captureFringeOptions(), formModel});
+  fr.analysisBusy = true;
+  updateAnalysisSource('Analyzing…');
+  showFringeAnalysisProgress();
+  analyzeWithProgress(payload, data => {
+    if (version !== sourceVersion || epoch !== state._epoch) return;
+    fr.analysisBusy = false;
+    fr.analyzedAt = new Date().toISOString();
+    _onAnalysisResult(data);
+    closeFringeSetup();
+    updateAnalysisSource();
+  }, errMsg => {
+    if (version !== sourceVersion || epoch !== state._epoch) return;
+    fr.analysisBusy = false;
+    updateAnalysisSource('Analysis failed — adjust settings and try again.');
+    showFringeAnalysisError();
+    console.warn('Fringe analysis failed:', errMsg);
+  });
 }
 
-async function analyzeFromFile(file) {
-  const btn = $("fringe-btn-analyze");
-  if (btn) btn.disabled = true;
-
+export async function analyzeFromFile(file) {
+  cancelFringeWork();
+  const version = sourceVersion, epoch = state._epoch;
+  updateAnalysisSource('Preparing image…');
   try {
     const prepared = await prepareInterferogramUpload(file);
+    if (version !== sourceVersion || epoch !== state._epoch) return;
     const b64 = bytesToBase64(prepared.bytes);
-
-    // Store dropped image so re-analysis (mask, settings) uses it
+    clearCurrentResult();
+    clearDroppedImage();
+    fr.maskPolygons = [];
+    fr.sourceName = file.name || 'Imported interferogram';
     fr.droppedImageB64 = b64;
-    if (fr.droppedObjectUrl) URL.revokeObjectURL(fr.droppedObjectUrl);
     fr.droppedObjectUrl = URL.createObjectURL(prepared.blob);
-
-    // Update preview to show the dropped image
-    const preview = $("fringe-preview");
-    if (preview) preview.src = fr.droppedObjectUrl;
-
-    if (prepared.scaled) {
-      showToast(`Downscaled ${prepared.originalWidth}\u00d7${prepared.originalHeight} \u2192 ${prepared.width}\u00d7${prepared.height} for analysis (server limit ${FRINGE_UPLOAD_MAX_DIM} px).`);
-    }
-
-    if (!state._hosted) _runAnalysis();
-    if (btn) btn.disabled = false;
-  } catch (e) {
-    console.warn("Fringe file read error:", e);
-    if (btn) btn.disabled = false;
+    const preview = $('fringe-preview');
+    if (preview) { preview.style.transform = ''; preview.src = fr.droppedObjectUrl; }
+    drawMaskOverlay();
+    updateAnalysisSource();
+    showAnalysisSetup();
+    if (prepared.scaled) showToast(`Downscaled ${prepared.originalWidth}×${prepared.originalHeight} → ${prepared.width}×${prepared.height} for analysis (limit ${FRINGE_UPLOAD_MAX_DIM} px).`);
+  } catch (error) {
+    if (version !== sourceVersion || epoch !== state._epoch) return;
+    updateAnalysisSource('Could not load image: ' + error.message);
+    showToast('Could not load image: ' + error.message);
   }
 }
 
-/** Clear the dropped image state and revert preview to live camera. */
+/** Clear the selected source; settings and saved calibration remain available. */
 export function clearDroppedImage() {
   fr.droppedImageB64 = null;
-  if (fr.droppedObjectUrl) {
-    URL.revokeObjectURL(fr.droppedObjectUrl);
-    fr.droppedObjectUrl = null;
-  }
-  const preview = $("fringe-preview");
-  if (preview) preview.src = state._hosted ? "" : "/stream";
+  fr.sourceName = null;
+  if (fr.droppedObjectUrl) URL.revokeObjectURL(fr.droppedObjectUrl);
+  fr.droppedObjectUrl = null;
+  const preview = $('fringe-preview');
+  if (preview) { preview.style.transform = ''; preview.src = state._hosted ? '' : '/stream'; }
 }
 
 // ── Averaging helpers ──────────────────────────────────────────────────
@@ -475,6 +551,8 @@ async function _extractErrorDetail(resp) {
 }
 
 async function recomputeAverage() {
+  const version = sourceVersion, epoch = state._epoch;
+  const current = () => version === sourceVersion && epoch === state._epoch;
   const accepted = fr.avgCaptures.filter(c => c.accepted);
   $("fringe-avg-count").textContent = `${accepted.length}/${fr.avgCaptures.length}`;
 
@@ -491,7 +569,9 @@ async function recomputeAverage() {
       _reportAvgError(`Couldn't load the running average (${detail}). Showing the last successful result.`);
       return;
     }
-    fr.lastResult = await resp.json();
+    const data = await resp.json();
+    if (!current()) return;
+    fr.lastResult = data;
     // Task 9: reapply an active invert — the fetched capture is server
     // truth and was never inverted.
     if (fr.avgInverted) {
@@ -500,7 +580,7 @@ async function recomputeAverage() {
         _reportAvgError("Averaging updated, but the sign flip couldn't be reapplied — check orientation before trusting sign-sensitive readings.");
       }
     }
-    document.dispatchEvent(new CustomEvent("fringe:analyzed", { detail: fr.lastResult }));
+    if (current() && fr.lastResult) document.dispatchEvent(new CustomEvent("fringe:analyzed", { detail: fr.lastResult }));
     return;
   }
 
@@ -537,6 +617,7 @@ async function recomputeAverage() {
     return;
   }
   const avgData = await resp.json();
+  if (!current()) return;
   fr.lastResult = { ...avgData };
   // Task 12: this is the wholesale-replace path -- fr.lastResult was just
   // set fresh from avgData above, a genuinely different derived result
@@ -551,10 +632,11 @@ async function recomputeAverage() {
       _reportAvgError("Averaging updated, but the sign flip couldn't be reapplied — check orientation before trusting sign-sensitive readings.");
     }
   }
-  document.dispatchEvent(new CustomEvent("fringe:analyzed", { detail: fr.lastResult }));
+  if (current() && fr.lastResult) document.dispatchEvent(new CustomEvent("fringe:analyzed", { detail: fr.lastResult }));
 }
 
 async function addToAverage() {
+  const version = sourceVersion, epoch = state._epoch;
   document.body.style.cursor = "wait";
   const loadingOverlay = $("fringe-loading-overlay");
   const loadingText = $("fringe-loading-text");
@@ -584,6 +666,7 @@ async function addToAverage() {
       return;
     }
     const data = await resp.json();
+    if (version !== sourceVersion || epoch !== state._epoch) return;
 
     if (fr.avgCaptures.length === 0) {
       fr.avgSurfaceHeight = data.surface_height;
@@ -654,7 +737,7 @@ function _updateFocusUI(score) {
 }
 
 async function pollFocusQuality() {
-  if (state._hosted) { stopPolling(); return; }
+  if (state._hosted || fr.droppedImageB64) return;
   try {
     const r = await apiFetch("/fringe/focus-quality");
     if (!r.ok) return;
@@ -695,7 +778,7 @@ function _openExpandedPreview() {
   overlay.id = "fringe-expanded-preview";
   overlay.className = "fringe-expanded-preview";
   overlay.innerHTML = `
-    <img src="${state._hosted ? '' : '/stream'}" draggable="false" style="width:100%;height:100%;object-fit:contain;display:block" />
+    <img src="${fr.droppedObjectUrl || (fr.droppedImageB64 ? `data:${mimeFromBase64(fr.droppedImageB64)};base64,${fr.droppedImageB64}` : state._hosted ? '' : '/stream')}" draggable="false" style="width:100%;height:100%;object-fit:contain;display:block" />
     <div class="fringe-expanded-focus">
       <span style="font-size:13px;opacity:0.7">Focus</span>
       <span id="fringe-focus-big-score" style="font-size:48px;font-weight:700;line-height:1">--</span>
@@ -733,8 +816,8 @@ function _closeExpandedPreview() {
 // ── Panel event wiring ─────────────────────────────────────────────────
 
 export function wirePanelEvents() {
-  // Create progress bar after analyze button
-  createProgressBar();
+  initFringeSetup(_runAnalysis, cancelFringeWork);
+  updateAnalysisSource();
 
   // Initialize lens profile dropdown
   renderFringeLensDropdown();
@@ -763,7 +846,7 @@ export function wirePanelEvents() {
       }
       _setAppliedLensK1(k1);
     }
-    if (fr.lastResult && !state._hosted) _runAnalysis();
+    if (fr.droppedImageB64) showAnalysisSetup();
   });
 
   // Save lens profile
@@ -777,11 +860,18 @@ export function wirePanelEvents() {
     $("fringe-lens-save-row").hidden = true;
   });
 
-  // Analyze button
-  $("fringe-btn-analyze")?.addEventListener("click", () => {
-    if (fr.droppedImageB64) _runAnalysis();
-    else analyzeFromCamera();
+  $('fringe-btn-analyze')?.addEventListener('click', showAnalysisSetup);
+  $('fringe-btn-camera')?.addEventListener('click', analyzeFromCamera);
+  $('fringe-btn-reset')?.addEventListener('click', resetFringeAnalysis);
+  const chooseFile = () => $('fringe-image-file')?.click();
+  $('fringe-btn-open')?.addEventListener('click', chooseFile);
+  $('fringe-drop-zone')?.addEventListener('click', chooseFile);
+  $('fringe-image-file')?.addEventListener('change', e => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (file) analyzeFromFile(file);
   });
+  document.addEventListener('fringe:setup', showAnalysisSetup);
 
   // Averaging buttons
   $("fringe-btn-avg-add")?.addEventListener("click", addToAverage);
@@ -794,7 +884,9 @@ export function wirePanelEvents() {
     $("fringe-drop-zone"),
     $("fringe-preview-container"),
     document.querySelector(".fringe-results-col"),
+    $("fringe-setup-dialog"),
   ], analyzeFromFile, () => showToast("Drop an image file to load an interferogram."));
+  $("fringe-preview")?.addEventListener("load", drawMaskOverlay);
 
   // Preview click to expand
   $("fringe-preview-container")?.addEventListener("click", (e) => {
@@ -817,61 +909,6 @@ export function wirePanelEvents() {
     });
   }
 
-  // Edit Mask — cross-mode workflow
-  $("fringe-btn-edit-mask")?.addEventListener("click", async () => {
-    const btn = $("fringe-btn-edit-mask");
-    if (btn) { btn.disabled = true; btn.textContent = "Capturing..."; }
-
-    try {
-      let blob;
-      if (fr.droppedImageB64) {
-        // Convert stored base64 to blob (avoids CSP blob: fetch issues)
-        const bin = atob(fr.droppedImageB64);
-        const u8 = new Uint8Array(bin.length);
-        for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
-        blob = new Blob([u8], { type: mimeFromBase64(fr.droppedImageB64) });
-      } else {
-        // Freeze the current camera frame so the mask edit uses a still image
-        await apiFetch("/freeze", { method: "POST" });
-        const frameUrl = fr.lensK1 ? `/frame?lens_k1=${fr.lensK1}` : "/frame";
-        const resp = await apiFetch(frameUrl);
-        if (!resp.ok) throw new Error("Frame fetch failed");
-        blob = await resp.blob();
-      }
-
-      // Set up cross-mode state
-      initCrossMode({
-        imageBlob: blob,
-        existingMask: fr.maskPolygons.length > 0
-          ? JSON.parse(JSON.stringify(fr.maskPolygons))
-          : [],
-        callback: (polygons) => {
-          fr.maskPolygons = polygons;
-          drawMaskOverlay();
-          // Update clear button state
-          const clearBtn = $("fringe-btn-mask-clear");
-          if (clearBtn) {
-            clearBtn.disabled = polygons.length === 0;
-            clearBtn.style.opacity = polygons.length === 0 ? "0.6" : "1";
-          }
-          // Auto-analyze with new mask (skip in hosted mode to avoid CPU spikes)
-          if (polygons.length > 0 && !state._hosted) {
-            _runAnalysis();
-          }
-        },
-      });
-
-      // Switch to microscope mode
-      switchMode("microscope");
-      const sel = $("mode-switcher");
-      if (sel) sel.value = "microscope";
-    } catch (e) {
-      console.warn("[fringe] Edit Mask failed:", e);
-    } finally {
-      if (btn) { btn.disabled = false; btn.textContent = "Edit Mask"; }
-    }
-  });
-
   // Lens calibration — cross-mode workflow
   $("fringe-btn-lens-cal")?.addEventListener("click", () => {
     window.crossMode = {
@@ -885,21 +922,13 @@ export function wirePanelEvents() {
         const sel = $("fringe-lens-profile");
         if (sel) sel.value = "";
         // Re-analyze if results exist (skip in hosted mode)
-        if (fr.lastResult && !state._hosted) _runAnalysis();
+        if (fr.droppedImageB64) showAnalysisSetup();
       },
     };
 
     switchMode("microscope");
     const sel = $("mode-switcher");
     if (sel) sel.value = "microscope";
-  });
-
-  // Clear mask
-  $("fringe-btn-mask-clear")?.addEventListener("click", () => {
-    fr.maskPolygons = [];
-    drawMaskOverlay();
-    const clearBtn = $("fringe-btn-mask-clear");
-    if (clearBtn) { clearBtn.disabled = true; clearBtn.style.opacity = "0.6"; }
   });
 
   // Wavelength dropdown (now in top bar) — writes through to active calibration
@@ -1000,7 +1029,7 @@ function _injectAffordances() {
   // Item 3 — Recipe save: rename + subtitle clarifying polygon-only support.
   const btnSave = document.getElementById("fringe-recipe-save");
   if (btnSave) {
-    btnSave.innerHTML = "Save polygon as recipe&hellip;";
+    btnSave.innerHTML = "Save regions as recipe&hellip;";
     btnSave.title =
       "Snapshot the currently drawn mask polygons as a reusable aperture recipe.";
   }
@@ -1018,8 +1047,7 @@ function _injectAffordances() {
       sub.style.cssText =
         "font-size:10px;opacity:0.55;margin-top:3px;line-height:1.3;font-style:italic";
       sub.textContent =
-        "Circle and ring apertures: import via the Manage \u2192 Import button " +
-        "using a hand-edited JSON. UI for drawing them is not yet built.";
+        "For a ring, include an outer circle and exclude an inner circle using three edge points for each.";
       buttonRow.insertAdjacentElement("afterend", sub);
     }
   }
@@ -1057,6 +1085,7 @@ export function refreshRecipeUi() {
       nameEl.textContent = "";
     }
   }
+  refreshRegionEditor();
 }
 
 function _wireRecipeControls() {
@@ -1071,6 +1100,7 @@ function _wireRecipeControls() {
 
   if (sel) {
     sel.addEventListener("change", () => {
+      fr.maskPolygons = [];
       setActiveRecipeId(sel.value || null);
       refreshRecipeUi();
     });
@@ -1132,8 +1162,8 @@ function _wireRecipeControls() {
 function _saveCurrentAsRecipe() {
   if (!Array.isArray(fr.maskPolygons) || fr.maskPolygons.length === 0) {
     window.alert(
-      "No mask polygons drawn.  Use \"Edit Mask\" first to draw one, then save it as a recipe.\n\n" +
-      "(Only polygon recipes can be saved from the UI; circle/ring recipes can be imported from JSON.)"
+      "No mask polygons drawn.  Use the analysis setup first to draw one, then save it as a recipe.\n\n" +
+      "Circles, ellipses, and rectangles are saved together as reusable regions."
     );
     return;
   }

@@ -93,6 +93,7 @@ class _FringeCache:
         # Bounded indirectly: full results are evicted alongside their
         # corresponding summary when the captures list is FIFO-trimmed.
         self._full_results: dict[str, dict[str, dict]] = {}
+        self._pending_evictions: dict[str, int] = {}
         self._lock = threading.Lock()
         self._max_sessions = max_sessions
         self._ttl = ttl_seconds
@@ -113,9 +114,12 @@ class _FringeCache:
             self._evict_expired()
             self._ensure_session(session_id)
             store, captures, _ = self._data[session_id]
-            self._check_budget(session_id, {**store, key: value}, captures, self._full_results.get(session_id, {}))
-            store[key] = value
-            self._data[session_id] = (store, captures, time.monotonic())
+            candidate = {**store, key: value}
+            kept, full, evicted = self._fit_history(
+                session_id, candidate, captures, self._full_results.get(session_id, {}))
+            self._data[session_id] = (candidate, kept, time.monotonic())
+            self._full_results[session_id] = full
+            self._pending_evictions[session_id] = self._pending_evictions.get(session_id, 0) + evicted
 
     def append_capture(self, session_id: str, summary: dict) -> None:
         """Append a capture summary to the session's FIFO list.
@@ -164,6 +168,63 @@ class _FringeCache:
             full[result_id] = result
             self._data[session_id] = (store, captures, time.monotonic())
 
+    def _fit_history(self, session_id, store, captures, full, *, keep_id=None):
+        """Plan FIFO eviction without changing live state if the candidate cannot fit."""
+        captures, full = list(captures), dict(full)
+        evicted = 0
+        while True:
+            try:
+                self._check_budget(session_id, store, captures, full)
+                return captures, full, evicted
+            except HTTPException:
+                oldest = next((c for c in captures if c.get("id") != keep_id), None)
+                if oldest is None:
+                    raise
+                captures.remove(oldest)
+                full.pop(oldest.get("id"), None)
+                evicted += 1
+
+    def store_capture(self, session_id: str, summary: dict, result: dict, *, latest=False) -> None:
+        """Commit a summary and its full result together, within both FIFO limits.
+
+        Only this session's oldest captures may be retired. A single result
+        that cannot fit leaves the existing history intact. No unreadable
+        summary is published while its full result is still being admitted.
+        """
+        with self._lock:
+            self._evict_expired()
+            self._ensure_session(session_id)
+            store, captures, _ = self._data[session_id]
+            result_id = summary["id"]
+            if latest:
+                store = {**store, "last_capture_id": result_id}
+            captures = [c for c in captures if c.get("id") != result_id] + [summary]
+            full = {**self._full_results.get(session_id, {}), result_id: dict(result)}
+            evicted = self._pending_evictions.get(session_id, 0)
+            cap = _CAPTURES_PER_SESSION
+            while cap >= 0 and len(captures) > cap:
+                full.pop(captures.pop(0).get("id"), None)
+                evicted += 1
+            warning = ("Older session captures were removed to stay within temporary storage limits. "
+                       "The current analysis is complete. Export captures you need to keep.")
+            while True:
+                cached = dict(result)
+                if evicted:
+                    cached["warnings"] = [*result.get("warnings", []), warning]
+                if result_id in full:
+                    full[result_id] = cached
+                kept, candidate_full, removed = self._fit_history(
+                    session_id, store, captures, full, keep_id=result_id)
+                captures, full = kept, candidate_full
+                evicted += removed
+                if not removed:
+                    break  # includes the final warning's memory in the budget check
+            self._data[session_id] = (store, captures, time.monotonic())
+            self._full_results[session_id] = full
+            self._pending_evictions.pop(session_id, None)
+            if evicted:
+                result["warnings"] = cached["warnings"]
+
     def get_full_result(self, session_id: str,
                         result_id: str) -> dict | None:
         """Return the full result dict for ``result_id`` (or None)."""
@@ -190,6 +251,7 @@ class _FringeCache:
         with self._lock:
             self._evict_expired()
             self._full_results.pop(session_id, None)
+            self._pending_evictions.pop(session_id, None)
             entry = self._data.get(session_id)
             if entry is None:
                 return
@@ -210,6 +272,8 @@ class _FringeCache:
             if len(self._data) >= self._max_sessions:
                 raise RuntimeError("Too many active fringe sessions")
             self._data[session_id] = ({}, [], time.monotonic())
+            self._full_results.pop(session_id, None)
+            self._pending_evictions.pop(session_id, None)
 
     def _evict_expired(self):
         now = time.monotonic()
@@ -217,16 +281,17 @@ class _FringeCache:
         for k in expired:
             del self._data[k]
             self._full_results.pop(k, None)
+            self._pending_evictions.pop(k, None)
 
 
 _fringe_cache = _FringeCache()
 
 
-def _record_capture(session_id: str, result: dict) -> None:
+def _record_capture(session_id: str, result: dict, *, latest=False) -> None:
     """Append a lightweight summary of a wrapped analyze result to the session.
 
-    Called after :func:`wrap_wavefront_result` on new captures only — never
-    for re-analyses of an existing image (e.g. ``/fringe/reanalyze-carrier``).
+    Called on captures and recorded derived results, including carrier
+    overrides. Summary and full result are admitted atomically.
     """
     summary = {
         "id": result.get("id"),
@@ -253,7 +318,7 @@ def _record_capture(session_id: str, result: dict) -> None:
         "surface_width": result.get("surface_width"),
         "calibration_snapshot": result.get("calibration_snapshot"),
     }
-    _fringe_cache.append_capture(session_id, summary)
+    _fringe_cache.store_capture(session_id, summary, result, latest=latest)
 
 
 def _best_gray(image: np.ndarray) -> np.ndarray:
@@ -616,11 +681,7 @@ def make_fringe_router(camera: BaseCamera) -> APIRouter:
             "dc_margin_override": body.dc_margin_override,
             "dc_cutoff_cycles": body.dc_cutoff_cycles,
         }
-        _record_capture(session_id, result)
-        _fringe_cache.put_full_result(session_id, result["id"], result)
-        # Track the most recent capture so /fringe/reanalyze-carrier can
-        # link a manual carrier override back to its source capture (Fix 2).
-        _fringe_cache.put(session_id, "last_capture_id", result["id"])
+        _record_capture(session_id, result, latest=True)
         return result
 
     @router.post("/fringe/analyze-stream")
@@ -717,12 +778,7 @@ def make_fringe_router(camera: BaseCamera) -> APIRouter:
                     "dc_margin_override": body.dc_margin_override,
                     "dc_cutoff_cycles": body.dc_cutoff_cycles,
                 }
-                _record_capture(sid, result)
-                _fringe_cache.put_full_result(sid, result["id"], result)
-                # Track the most recent capture so /fringe/reanalyze-carrier
-                # can link a manual carrier override back to its source
-                # capture (Fix 2).
-                _fringe_cache.put(sid, "last_capture_id", result["id"])
+                _record_capture(sid, result, latest=True)
                 await queue.put({"stage": "done", "progress": 1.0, "result": result})
             except Exception as exc:
                 await queue.put({"stage": "error", "message": str(exc)})
@@ -870,7 +926,6 @@ def make_fringe_router(camera: BaseCamera) -> APIRouter:
         # was applied to a cached capture; captured_at distinguishes it from
         # the prior analyze.
         _record_capture(session_id, result)
-        _fringe_cache.put_full_result(session_id, result["id"], result)
         return result
 
     @router.post("/fringe/subtract")
@@ -921,7 +976,6 @@ def make_fringe_router(camera: BaseCamera) -> APIRouter:
             existing = result.get("warnings") or []
             result["warnings"] = list(existing) + origin_warnings
         _record_capture(session_id, result)
-        _fringe_cache.put_full_result(session_id, result["id"], result)
         return result
 
     @router.post("/fringe/average")
@@ -967,7 +1021,6 @@ def make_fringe_router(camera: BaseCamera) -> APIRouter:
             ]
         if body.record:
             _record_capture(session_id, result)
-            _fringe_cache.put_full_result(session_id, result["id"], result)
         return result
 
     @router.get("/fringe/session/captures")
@@ -1052,7 +1105,6 @@ def make_fringe_router(camera: BaseCamera) -> APIRouter:
         # Origin is preserved from the export (subtracted/average/capture).
 
         _record_capture(session_id, new)
-        _fringe_cache.put_full_result(session_id, new["id"], new)
         return new
 
     @router.post("/fringe/session/clear")

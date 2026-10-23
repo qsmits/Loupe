@@ -3,34 +3,42 @@
 // Streams POST /fringe/analyze-stream, updates a progress bar with stage
 // labels, handles 30s inactivity timeout and error/retry states.
 
-import { $ } from './fringe.js';
 import { apiFetch } from './api.js';
 import { state } from './state.js';
+
+const $ = id => document.getElementById(id);
+let activeController = null;
+
+export function cancelAnalysis() {
+  activeController?.abort();
+  activeController = null;
+}
 
 function getTimeoutMs() { return state._hosted ? 120_000 : 30_000; }
 
 /**
- * Create the progress bar DOM and insert it after the analyze button.
+ * Create the progress bar and activity log inside the dialog's progress host.
  * Call once during init. Returns the container element.
  */
-export function createProgressBar() {
-  const btn = $("fringe-btn-analyze");
-  if (!btn) return null;
+export function createProgressBar(host) {
+  if (!host) return null;
 
   const container = document.createElement("div");
   container.className = "fringe-progress";
   container.hidden = true;
   container.innerHTML = `
-    <div class="fringe-progress-bar">
+    <div class="fringe-progress-bar" role="progressbar" aria-label="Analysis progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="fringe-progress-bar">
       <div class="fringe-progress-fill" id="fringe-progress-fill"></div>
     </div>
     <div class="fringe-progress-label">
-      <span id="fringe-progress-msg"></span>
+      <span id="fringe-progress-msg" role="status"></span>
+      <span id="fringe-progress-percent">0%</span>
       <button class="fringe-progress-retry" id="fringe-progress-retry" hidden>Retry</button>
     </div>
+    <ol id="fringe-progress-log" class="fringe-progress-log" role="log" aria-label="Analysis activity"></ol>
   `;
 
-  btn.insertAdjacentElement("afterend", container);
+  host.appendChild(container);
   return container;
 }
 
@@ -43,22 +51,49 @@ export function createProgressBar() {
  * @param {function} [onRetry] - if provided, wired to the Retry button
  */
 export async function analyzeWithProgress(body, onResult, onError, onRetry) {
+  cancelAnalysis();
+  const controller = new AbortController();
+  activeController = controller;
   const epoch = state._epoch;
+  const current = () => state._epoch === epoch && activeController === controller && !controller.signal.aborted;
   const container = document.querySelector(".fringe-progress");
   const fill = $("fringe-progress-fill");
   const msg = $("fringe-progress-msg");
   const retryBtn = $("fringe-progress-retry");
 
   if (!container || !fill || !msg) {
+    activeController = null;
     onError("Progress bar not initialized");
     return;
   }
 
+  const log = $("fringe-progress-log");
+  if (log) log.textContent = "";
+  const started = Date.now();
+  let lastMessage = "";
+  function activity(message) {
+    if (!message || message === lastMessage) return;
+    lastMessage = message;
+    msg.textContent = message;
+    if (log) {
+      const item = document.createElement("li");
+      item.textContent = `${((Date.now() - started) / 1000).toFixed(1)}s · ${message}`;
+      log.appendChild(item);
+      log.scrollTop = log.scrollHeight;
+    }
+  }
+  function progress(value) {
+    const percent = Math.round(Math.max(0, Math.min(1, value)) * 100);
+    fill.style.width = percent + "%";
+    $("fringe-progress-bar")?.setAttribute("aria-valuenow", String(percent));
+    if ($("fringe-progress-percent")) $("fringe-progress-percent").textContent = percent + "%";
+  }
+
   // Reset state
   container.hidden = false;
-  fill.style.width = "0%";
+  progress(0);
   fill.className = "fringe-progress-fill";
-  msg.textContent = "Starting...";
+  activity("Sending image and starting analysis…");
   if (retryBtn) {
     retryBtn.hidden = true;
     if (onRetry) {
@@ -69,16 +104,15 @@ export async function analyzeWithProgress(body, onResult, onError, onRetry) {
     }
   }
 
-  const controller = new AbortController();
   let timeoutId = null;
 
   function resetTimeout() {
     if (timeoutId) clearTimeout(timeoutId);
     timeoutId = setTimeout(() => {
+      if (!current()) return;
       controller.abort();
-      if (state._epoch !== epoch) return;
       fill.className = "fringe-progress-fill timeout";
-      msg.textContent = `Analysis timed out (no response for ${getTimeoutMs() / 1000}s).`;
+      activity(`Analysis timed out (no response for ${getTimeoutMs() / 1000}s).`);
       if (retryBtn && onRetry) retryBtn.hidden = false;
       onError("Timeout");
     }, getTimeoutMs());
@@ -94,7 +128,7 @@ export async function analyzeWithProgress(body, onResult, onError, onRetry) {
       signal: controller.signal,
     });
 
-    if (state._epoch !== epoch) { controller.abort(); return; }
+    if (!current()) { controller.abort(); return; }
     if (!response.ok) {
       let detail = "";
       try {
@@ -113,7 +147,7 @@ export async function analyzeWithProgress(body, onResult, onError, onRetry) {
 
     while (true) {
       const { done, value } = await reader.read();
-      if (state._epoch !== epoch) { await reader.cancel(); return; }
+      if (!current()) { await reader.cancel(); return; }
       if (done) break;
 
       resetTimeout();
@@ -133,18 +167,17 @@ export async function analyzeWithProgress(body, onResult, onError, onRetry) {
         }
 
         if (event.stage === "done") {
-          fill.style.width = "100%";
+          progress(1);
           fill.className = "fringe-progress-fill done";
-          msg.textContent = "Complete";
+          activity("Complete — opening results.");
           if (timeoutId) clearTimeout(timeoutId);
-          setTimeout(() => { if (state._epoch === epoch) container.hidden = true; }, 1500);
           onResult(event.result);
           return;
         }
 
         if (event.stage === "error") {
           fill.className = "fringe-progress-fill error";
-          msg.textContent = event.message || "Analysis failed";
+          activity(event.message || "Analysis failed");
           if (retryBtn && onRetry) retryBtn.hidden = false;
           if (timeoutId) clearTimeout(timeoutId);
           onError(event.message);
@@ -153,10 +186,10 @@ export async function analyzeWithProgress(body, onResult, onError, onRetry) {
 
         // Progress update
         if (typeof event.progress === "number") {
-          fill.style.width = (event.progress * 100) + "%";
+          progress(event.progress);
         }
         if (event.message) {
-          msg.textContent = event.message;
+          activity(event.message);
         }
       }
     }
@@ -164,19 +197,20 @@ export async function analyzeWithProgress(body, onResult, onError, onRetry) {
     // Stream ended without done/error event
     if (timeoutId) clearTimeout(timeoutId);
     fill.className = "fringe-progress-fill error";
-    msg.textContent = "Stream ended unexpectedly";
+    activity("Stream ended unexpectedly");
     if (retryBtn && onRetry) retryBtn.hidden = false;
     onError("Stream ended unexpectedly");
 
   } catch (e) {
     if (timeoutId) clearTimeout(timeoutId);
-    if (state._epoch !== epoch || e.name === "AbortError") return; // timeout already handled
+    if (!current() || e.name === "AbortError") return; // timeout already handled
     fill.className = "fringe-progress-fill error";
-    msg.textContent = String(e.message || "").startsWith("HTTP ") ? e.message : "Connection lost";
+    activity(String(e.message || "").startsWith("HTTP ") ? e.message : "Connection lost");
     if (retryBtn && onRetry) retryBtn.hidden = false;
     onError(e.message);
   } finally {
     if (timeoutId) clearTimeout(timeoutId);
+    if (activeController === controller) activeController = null;
   }
 }
 
@@ -184,6 +218,7 @@ export async function analyzeWithProgress(body, onResult, onError, onRetry) {
  * Hide and reset the progress bar.
  */
 export function hideProgress() {
+  cancelAnalysis();
   const container = document.querySelector(".fringe-progress");
   if (container) container.hidden = true;
 }

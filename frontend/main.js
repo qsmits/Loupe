@@ -223,7 +223,8 @@ document.getElementById("btn-menu-camera").addEventListener("click", e => {
 });
 document.getElementById("btn-menu-fringe-settings")?.addEventListener("click", e => {
   e.stopPropagation();
-  toggleDropdown("btn-menu-fringe-settings", "dropdown-fringe-settings");
+  closeAllDropdowns();
+  document.dispatchEvent(new CustomEvent("fringe:setup"));
 });
 document.getElementById("btn-menu-fringe-export")?.addEventListener("click", e => {
   e.stopPropagation();

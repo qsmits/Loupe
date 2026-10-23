@@ -14,7 +14,7 @@ import { apiFetch } from './api.js';
 import { mimeFromBase64 } from './fringe-upload.js';
 import { state } from './state.js';
 import { wireMeasureEvents } from './fringe-measure.js';
-import { buildPanelHtml, wirePanelEvents, startPolling, stopPolling, clearDroppedImage } from './fringe-panel.js';
+import { buildPanelHtml, wirePanelEvents, startPolling, stopPolling, clearDroppedImage, cancelFringeWork, updateAnalysisSource } from './fringe-panel.js';
 import { buildResultsHtml, wireResultsEvents, restoreFringeResult, captureFringeOptions } from './fringe-results.js';
 
 export const fr = {
@@ -49,6 +49,9 @@ export const fr = {
   avgInverted: false,
   carrierOverride: null,   // {y, x} or null
   lensK1: 0,
+  sourceName: null,
+  analyzedAt: null,
+  analysisBusy: false,
   droppedImageB64: null,   // base64 string when analyzing a dropped file
   droppedObjectUrl: null,  // blob URL for preview display
   sessionCaptures: [],     // M1.7 — list of capture summaries from /fringe/session/captures
@@ -63,13 +66,13 @@ export const fr = {
 function workspaceControls() {
   return {querySelectorAll: selector => [
     ...($("mode-fringe")?.querySelectorAll(selector) ?? []),
-    ...($("dropdown-fringe-settings")?.querySelectorAll(selector) ?? []),
+    ...($("fringe-setup-settings")?.querySelectorAll(selector) ?? []),
   ]};
 }
 
 const WORKSPACE_DEFAULTS = {
   lastResult: null, lastMask: null, maskPolygons: [], measurements: [],
-  useTrustedOnly: false, lensK1: 0, droppedImageB64: null, carrierOverride: null,
+  useTrustedOnly: false, lensK1: 0, droppedImageB64: null, sourceName: null, analyzedAt: null, carrierOverride: null,
   mode: "surface", measureMode: null, lastAreaRect: null, stepRegions: [], avgRejectThreshold: 3,
 };
 
@@ -188,10 +191,11 @@ export function initFringe() {
     serialize: () => ({...captureInstrument(fr, WORKSPACE_DEFAULTS, workspaceControls()), options: captureFringeOptions()}),
     restore: async snapshot => {
       await presetsReady;
+      cancelFringeWork();
       clearDroppedImage();
       restoreInstrument(fr, WORKSPACE_DEFAULTS, {...snapshot, controls: {...initial.controls, ...snapshot?.controls}}, workspaceControls());
       hideProgress();
-      if ($("fringe-btn-analyze")) $("fringe-btn-analyze").disabled = false;
+      fr.analysisBusy = false;
       fr.heightGrid = fr.maskGrid = fr.trustedMaskGrid = null;
       fr.gridRows = fr.gridCols = 0;
       fr.avgCaptures = []; fr.avgInverted = false;
@@ -201,6 +205,7 @@ export function initFringe() {
         if (preview) preview.src = `data:${mimeFromBase64(fr.droppedImageB64)};base64,` + fr.droppedImageB64;
       }
       restoreFringeResult(fr.lastResult, snapshot?.options);
+      updateAnalysisSource();
     },
   });
 

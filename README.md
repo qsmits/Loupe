@@ -67,6 +67,13 @@ Drop an interferogram anywhere in the image/result view or camera preview to loa
 - **Image stitching wizard**: manual tile capture with X/Y µm coordinate tracking, sub-pixel placement, anti-ghost blending
 - **Super-resolution wizard**: multi-frame sub-pixel shift, pyramid reconstruction
 
+### Fringe Analysis
+- **Explicit setup**: drop or open an interferogram, or capture a camera frame, then review the image, wavelength, area, and analysis settings before clicking **Analyze image**.
+- **Simple analysis regions**: fit circles through three edge points, or draw rectangles and ellipses, to include the surface and exclude holes, dust, glare, or background. Select regions to move, resize, change purpose, or delete them; edits support undo and keyboard nudging. Automatic area detection is the default; saved aperture recipes remain available.
+- **Surface navigation**: cursor-anchored zoom and bounded panning keep the map in view; **Fit view** restores the complete centered image.
+- **Visible progress**: the analysis dialog shows server-reported stages, a progress bar, and a timestamped activity log. Errors stay visible for adjustment and retry.
+- **Clear source and reset**: the sidebar identifies the current image and completion time. Loading another image clears the previous result. **Reset analysis** clears the current source, regions, results, and measurements while preserving analysis settings and session capture history.
+
 ### SPC & Analytics
 - SQLite run storage (parts → runs → results)
 - Cpk with feature-type-aware one-sided/two-sided calculation and capability rating; zero observed variation is reported as unavailable, not as a numeric capability score
@@ -343,9 +350,12 @@ frontend/
   zstack.js                  Z-stack workflow UI
   zstack-3d.js               3D textured heightmap viewer (WebGL)
   deflectometry.js           Deflectometry workspace UI
-  cross-mode.js              Cross-mode mask editing (fringe delegates mask drawing to microscope mode)
+  cross-mode.js              Shared cross-mode editing infrastructure
   fringe.js                  Fringe analysis workspace coordinator: shared state, init lifecycle
   fringe-panel.js            Fringe left panel: capture workflow, mask drawing, averaging
+  fringe-setup.js            Analysis setup dialog, region editor, progress workflow
+  fringe-region.js           Three-point circle fitting and editable mask geometry
+  fringe-viewport.js         Cursor-anchored surface zoom and pan limits
   fringe-measure.js          Fringe surface-map measurement tools
   fringe-results.js          Fringe results column, Zernike pills, 3D view, CSV/PDF export
   fringe-progress.js         SSE streaming client + progress bar for fringe analysis
