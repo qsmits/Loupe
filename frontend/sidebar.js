@@ -12,6 +12,7 @@ import { loadReticleList, getReticleCategories, loadReticle, unloadReticle, setR
 import { annotationNumbers, OVERLAY_SKIP_TYPES } from './numbering.js';
 import { renderMeasurePanel } from './measure-panel.js';
 import { formatToleranceCell } from './tolerance-format.js';
+import { inspectionOptions, inspectionControls, newOverlayInspectionOptions, resultBadge, inspectionSummary } from './inspect-request.js';
 
 const _mctx = () => ({
   calibration: state.calibration,
@@ -830,6 +831,17 @@ export function updateDxfControlsVisibility() {
   const ann = state.annotations.find(a => a.type === "dxf-overlay");
   const group = document.getElementById("dxf-controls-group");
   if (group) group.hidden = !ann;
+  {
+    // No overlay: show the defaults a newly created overlay will be stamped with.
+    const opts = inspectionOptions(ann ? ann.inspectionOptions : newOverlayInspectionOptions());
+    for (const [id, path] of Object.entries(inspectionControls)) {
+      const input = document.getElementById(id);
+      if (input) {
+        input.value = path.length === 2 ? opts[path[0]][path[1]] : opts[path[0]];
+        input.disabled = path[0] === 'caliper' && opts.edgeMethod !== 'caliper';
+      }
+    }
+  }
   if (ann) {
     const display = document.getElementById("dxf-angle-display");
     if (display) display.textContent = `${(ann.angle ?? 0).toFixed(1)}°`;
@@ -886,18 +898,7 @@ export function renderInspectionTable() {
     groups.get(key).push(r);
   }
 
-  // Summary
-  const total = state.inspectionResults.length;
-  const failed = state.inspectionResults.filter(r => r.pass_fail === "fail").length;
-  const warned = state.inspectionResults.filter(r => r.pass_fail === "warn").length;
-  const matched = state.inspectionResults.filter(r => r.matched).length;
-  if (countEl) {
-    countEl.textContent = failed > 0
-      ? `${matched}/${total} matched — ${failed} FAIL`
-      : warned > 0
-        ? `${matched}/${total} matched — ${warned} WARN`
-        : `${matched}/${total} matched — all PASS`;
-  }
+  if (countEl) countEl.textContent = inspectionSummary(state.inspectionResults).text;
 
   tbody.innerHTML = "";
   let featureNum = 0;
@@ -910,20 +911,10 @@ export function renderInspectionTable() {
     const defaultName = (layer && layer !== "0") ? layer : groupKey;
     const groupName = state.featureNames[groupKey] || defaultName;
 
-    // Worst-case result
-    const worstResult = results.some(r => r.pass_fail === "fail") ? "fail"
-      : results.some(r => r.pass_fail === "warn") ? "warn"
-      : results.some(r => r.matched) ? "pass" : "unmatched";
-
+    const groupBadge = inspectionSummary(results).badge;
     const segCount = results.length;
-
-    // Group header row
     const headerTr = document.createElement("tr");
     headerTr.className = "insp-group-header";
-    const badgeClass = worstResult === "fail" ? "badge-fail"
-      : worstResult === "warn" ? "badge-warn"
-      : worstResult === "pass" ? "badge-pass" : "badge-unmatched";
-
     const mode = state.featureModes[groupKey] || "die";
     const modeLabel = mode === "punch" ? "P" : "D";
     const modeClass = mode === "punch" ? "mode-punch" : "mode-die";
@@ -947,8 +938,9 @@ export function renderInspectionTable() {
     nameTd.append(inspChevron, inspMode, inspGroupLabel, inspGroupCount);
     const badgeTd = document.createElement("td");
     const inspBadge = document.createElement("span");
-    inspBadge.className = `insp-badge ${badgeClass}`;
-    inspBadge.textContent = worstResult === "unmatched" ? "—" : worstResult.toUpperCase();
+    inspBadge.className = `insp-badge ${groupBadge.cls}`;
+    inspBadge.textContent = groupBadge.text;
+    inspBadge.title = groupBadge.title;
     badgeTd.appendChild(inspBadge);
     headerTr.append(nameTd, badgeTd);
 
@@ -1072,13 +1064,8 @@ export function renderInspectionTable() {
         toothTr.className = "insp-tooth-row";
         toothTr.style.cursor = "pointer";
 
-        const worstPF = worst ? worst.r.pass_fail : null;
-        let tBadgeClass, tBadgeText;
-        if (!worst) { tBadgeClass = "badge-unmatched"; tBadgeText = "—"; }
-        else if (worstPF === "fail") { tBadgeClass = "badge-fail"; tBadgeText = "FAIL"; }
-        else if (worstPF === "warn") { tBadgeClass = "badge-warn"; tBadgeText = "WARN"; }
-        else { tBadgeClass = "badge-pass"; tBadgeText = "PASS"; }
-
+        const toothBadge = inspectionSummary(bucket.map(m => m.r)).badge;
+        const tBadgeClass = toothBadge.cls, tBadgeText = toothBadge.text;
         const nameTd2 = document.createElement("td");
         nameTd2.className = "insp-handle";
         const chev = document.createElement("span");
@@ -1108,6 +1095,7 @@ export function renderInspectionTable() {
         const tBadge = document.createElement("span");
         tBadge.className = `insp-badge ${tBadgeClass}`;
         tBadge.textContent = tBadgeText;
+        tBadge.title = toothBadge.title;
         statusTd.appendChild(tBadge);
         const cntSpan = document.createElement("span");
         cntSpan.className = "insp-group-count";
@@ -1151,10 +1139,8 @@ export function renderInspectionTable() {
           if (r.matched && r.deviation_mm != null) deviationText = r.deviation_mm.toFixed(4) + " mm";
 
           let badgeClass2, badgeText;
-          if (!r.matched) { badgeClass2 = "badge-unmatched"; badgeText = "—"; }
-          else if (r.pass_fail === "pass") { badgeClass2 = "badge-pass"; badgeText = "PASS"; }
-          else if (r.pass_fail === "warn") { badgeClass2 = "badge-warn"; badgeText = "WARN"; }
-          else { badgeClass2 = "badge-fail"; badgeText = "FAIL"; }
+          const badge1 = resultBadge(r);
+          badgeClass2 = badge1.cls; badgeText = badge1.text;
 
           const handleTd = document.createElement("td");
           handleTd.className = "insp-handle";
@@ -1173,6 +1159,7 @@ export function renderInspectionTable() {
           const b2 = document.createElement("span");
           b2.className = `insp-badge ${badgeClass2}`;
           b2.textContent = badgeText;
+          if (badge1.title) b2.title = badge1.title;
           statusTd2.appendChild(b2);
           tr.append(handleTd, typeTd2, devTd2, tolTd2, statusTd2);
 
@@ -1214,7 +1201,14 @@ export function renderInspectionTable() {
           }
       }
 
-      let deviationTitle = "";
+      let deviationTitle = r.reason ? `${r.reason}\n` : "";
+      if (r.fit_quality && Number.isFinite(r.fit_quality.rms_px)) {
+          deviationTitle += `Fit RMS: ${r.fit_quality.rms_px.toFixed(3)} px\n` +
+              `Fit points: ${r.fit_quality.inlier_count}/${r.fit_quality.point_count}\n`;
+      }
+      if (r.sampling_quality) {
+          deviationTitle += `Calipers: ${r.sampling_quality.usable_calipers}/${r.sampling_quality.caliper_count}; ambiguous: ${r.sampling_quality.ambiguous_calipers}\n`;
+      }
       if (r.spec && r.size_dev_mm != null) {
           const nomD = r.spec.kind === "radius" ? 2 * r.spec.nominal : r.spec.nominal;
           deviationTitle += `Size deviation (diameter basis): ${r.size_dev_mm >= 0 ? "+" : ""}${r.size_dev_mm.toFixed(4)} mm vs nominal \u2300${nomD.toFixed(3)} mm\n`;
@@ -1235,16 +1229,8 @@ export function renderInspectionTable() {
               `Datum Y: ${datumDy >= 0 ? "+" : ""}${datumDy.toFixed(4)} mm`;
       }
 
-      let badgeClass2, badgeText;
-      if (!r.matched) {
-        badgeClass2 = "badge-unmatched"; badgeText = "—";
-      } else if (r.pass_fail === "pass") {
-        badgeClass2 = "badge-pass"; badgeText = "PASS";
-      } else if (r.pass_fail === "warn") {
-        badgeClass2 = "badge-warn"; badgeText = "WARN";
-      } else {
-        badgeClass2 = "badge-fail"; badgeText = "FAIL";
-      }
+      const badge = resultBadge(r);
+      const badgeClass2 = badge.cls, badgeText = badge.text;
 
       const sourceText = r.source === "manual" ? "M" : "";
 
@@ -1279,6 +1265,7 @@ export function renderInspectionTable() {
       const badge2 = document.createElement("span");
       badge2.className = `insp-badge ${badgeClass2}`;
       badge2.textContent = badgeText;
+      if (badge.title) badge2.title = badge.title;
       statusTd.appendChild(badge2);
       if (sourceText) {
         const srcSpan = document.createElement("span");

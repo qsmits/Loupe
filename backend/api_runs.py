@@ -108,6 +108,7 @@ def make_runs_router(run_store: RunStore) -> APIRouter:
             "handle", "feature_type", "feature_name",
             "deviation_mm", "perp_dev_mm", "center_dev_mm",
             "tolerance_warn", "tolerance_fail", "pass_fail",
+            "matched", "ambiguous", "reason",
         ])
 
         for run in runs:
@@ -127,6 +128,9 @@ def make_runs_router(run_store: RunStore) -> APIRouter:
                     res.get("tolerance_warn", ""),
                     res.get("tolerance_fail", ""),
                     res.get("pass_fail", ""),
+                    res.get("matched", ""),
+                    res.get("ambiguous", ""),
+                    res.get("reason", ""),
                 ])
 
         return Response(

@@ -11,6 +11,13 @@ import cv2
 
 _METHODS: dict[str, callable] = {}
 
+# Minimum 5x5-Sobel gradient magnitude for a click snap. OpenCV's 5x5 Sobel
+# answers a sharp unit step with 48 (the old 3x3 kernel: 4), so this is the
+# old 3x3 floor of 20 rescaled: a 5-grey-level step. Mirrors
+# frontend/subpixel-js.js SNAP_MIN_MAGNITUDE, with the same comparison
+# (``magnitude <= SNAP_MIN_MAGNITUDE`` rejects).
+SNAP_MIN_MAGNITUDE = 240
+
 
 def _register(name: str):
     """Decorator to register a refinement algorithm."""
@@ -29,10 +36,21 @@ def available_methods() -> list[str]:
 # Public API
 # ---------------------------------------------------------------------------
 
+def precompute_gradient(gray: np.ndarray):
+    """Full-frame 5x5 Sobel (gx, gy, magnitude) to share across refine calls.
+
+    A detector that refines many contours of one frame computes this once
+    and passes it as ``gradient=`` to every refine_subpixel call; results
+    are bit-identical to letting each call compute its own.
+    """
+    return _gradient_data(gray)
+
+
 def refine_subpixel(
     edge_xy: np.ndarray,
     gray: np.ndarray,
     method: str = "parabola",
+    gradient=None,
 ) -> np.ndarray:
     """Refine edge pixel coordinates to sub-pixel accuracy.
 
@@ -41,6 +59,8 @@ def refine_subpixel(
     edge_xy : (N, 2) array of integer edge coordinates (x, y).
     gray : uint8 grayscale image (raw, NOT preprocessed).
     method : algorithm name from the registry.
+    gradient : optional ``precompute_gradient(gray)`` result for this same
+        image; computed here when omitted.
 
     Returns
     -------
@@ -56,7 +76,7 @@ def refine_subpixel(
     if method not in _METHODS:
         raise ValueError(f"Unknown method '{method}'. Available: {available_methods()}")
 
-    return _METHODS[method](edge_xy, gray)
+    return _METHODS[method](edge_xy, gray, gradient)
 
 
 def refine_single_point(
@@ -65,54 +85,44 @@ def refine_single_point(
     search_radius: int = 10,
     method: str = "parabola",
 ) -> tuple[float, float, float]:
-    """Find the strongest gradient pixel near *point* and refine it.
+    """Find the nearest qualified gradient ridge to *point* and refine it.
 
     Returns (x, y, magnitude).
     """
+    if method not in _METHODS:
+        raise ValueError(f"Unknown method '{method}'. Available: {available_methods()}")
     h, w = gray.shape[:2]
     px, py = int(round(point[0])), int(round(point[1]))
-
-    # Compute Sobel on full frame
-    gx = cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize=5)
-    gy = cv2.Sobel(gray, cv2.CV_64F, 0, 1, ksize=5)
-    mag = np.sqrt(gx * gx + gy * gy)
-
-    # Search window
-    x0 = max(px - search_radius, 0)
-    x1 = min(px + search_radius + 1, w)
-    y0 = max(py - search_radius, 0)
-    y1 = min(py + search_radius + 1, h)
-
-    roi = mag[y0:y1, x0:x1]
-    if roi.size == 0:
+    x0, x1 = max(px - search_radius, 1), min(px + search_radius + 1, w - 1)
+    y0, y1 = max(py - search_radius, 1), min(py + search_radius + 1, h - 1)
+    if x0 >= x1 or y0 >= y1:
         return (float(point[0]), float(point[1]), 0.0)
 
-    # Score each pixel by edge strength weighted against distance from click.
-    # score = magnitude / (distance + 1) — strong nearby edges beat weak nearby
-    # ones and strong distant ones. The +1 prevents division by zero at the
-    # click position itself.
-    roi_max = float(roi.max())
-    if roi_max < 1.0:
+    # Pad for the 5x5 derivative and interpolation. Compute gradients once on
+    # this small region, rather than twice on the full camera frame per click.
+    left, top = max(x0 - 5, 0), max(y0 - 5, 0)
+    crop = gray[top:min(y1 + 5, h), left:min(x1 + 5, w)]
+    gx, gy, mag = _gradient_data(crop)
+    ys, xs = np.mgrid[y0 - top:y1 - top, x0 - left:x1 - left]
+    candidates = np.column_stack([xs.ravel(), ys.ravel()]).astype(np.float64)
+    refined, valid = _parabola_from_gradient(candidates, gx, gy, mag)
+    strengths = mag[ys.ravel(), xs.ravel()]
+    # Same gate as the browser: above the absolute floor AND at least 0.15 x
+    # the strongest gradient in the window.
+    valid &= (strengths > SNAP_MIN_MAGNITUDE) & (strengths >= float(strengths.max()) * 0.15)
+    if not np.any(valid):
         return (float(point[0]), float(point[1]), 0.0)
 
-    # Only consider pixels with meaningful gradient (above 15% of max)
-    ys, xs = np.where(roi >= roi_max * 0.15)
-    if len(xs) == 0:
-        return (float(point[0]), float(point[1]), 0.0)
-    abs_xs = x0 + xs
-    abs_ys = y0 + ys
-    mags = mag[abs_ys, abs_xs]
-    dists = np.sqrt((abs_xs - point[0]) ** 2 + (abs_ys - point[1]) ** 2)
-    scores = mags / (dists + 1.0)
-    best_idx = np.argmax(scores)
-    best_x = int(abs_xs[best_idx])
-    best_y = int(abs_ys[best_idx])
-    best_mag = float(mag[best_y, best_x])
-
-    # Refine that single point
-    edge = np.array([[best_x, best_y]], dtype=np.float64)
-    refined = refine_subpixel(edge, gray, method=method)
-    return (float(refined[0, 0]), float(refined[0, 1]), best_mag)
+    refined = refined[valid] + [left, top]
+    strengths = strengths[valid]
+    # Compare distance to actual ridges, never distance to their flanks.
+    best = int(np.argmin(np.sum((refined - point) ** 2, axis=1)))
+    selected = refined[best] - [left, top]
+    if method == "none":
+        selected = candidates[valid][best]
+    elif method != "parabola":
+        selected = refine_subpixel(selected[None, :], crop, method=method)[0]
+    return (float(selected[0] + left), float(selected[1] + top), float(strengths[best]))
 
 
 # ---------------------------------------------------------------------------
@@ -155,75 +165,70 @@ def _bilinear_sample(img: np.ndarray, x: np.ndarray, y: np.ndarray) -> np.ndarra
 # ---------------------------------------------------------------------------
 
 @_register("none")
-def _refine_none(edge_xy: np.ndarray, gray: np.ndarray) -> np.ndarray:
+def _refine_none(edge_xy: np.ndarray, gray: np.ndarray, gradient=None) -> np.ndarray:
     """Passthrough — returns a copy of the input."""
     return edge_xy.copy()
 
 
-@_register("parabola")
-def _refine_parabola(edge_xy: np.ndarray, gray: np.ndarray) -> np.ndarray:
-    """Parabola-fit sub-pixel refinement along gradient direction."""
-    # Sobel ksize=5 for smoother gradients
+def _gradient_data(gray):
     gx = cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize=5)
     gy = cv2.Sobel(gray, cv2.CV_64F, 0, 1, ksize=5)
-    mag = np.sqrt(gx * gx + gy * gy)
-    theta = np.arctan2(gy, gx)  # (h, w)
+    return gx, gy, np.hypot(gx, gy)
 
-    xs = edge_xy[:, 0]
-    ys = edge_xy[:, 1]
 
-    # Integer coords for theta lookup (clamp to image)
+def _parabola_from_gradient(edge_xy, gx, gy, mag):
+    """Refine only true local maxima; invalid peaks retain their input point."""
+    xs, ys = edge_xy[:, 0], edge_xy[:, 1]
+    h, w = mag.shape
+    xi = np.clip(np.rint(xs).astype(np.intp), 0, w - 1)
+    yi = np.clip(np.rint(ys).astype(np.intp), 0, h - 1)
+    strength = np.hypot(gx[yi, xi], gy[yi, xi])
+    nx = gx[yi, xi] / np.maximum(strength, 1e-12)
+    ny = gy[yi, xi] / np.maximum(strength, 1e-12)
+    sm = _bilinear_sample(mag, xs - nx, ys - ny)
+    s0 = _bilinear_sample(mag, xs, ys)
+    sp = _bilinear_sample(mag, xs + nx, ys + ny)
+    curvature = sm + sp - 2 * s0
+    offset = (sm - sp) / (2 * np.where(np.abs(curvature) > 1e-12, curvature, 1.0))
+    valid = ((strength > 1) & (s0 >= sm) & (s0 >= sp) &
+             (curvature < -1e-12) & (np.abs(offset) <= 0.6) &
+             (xs >= 1) & (xs < w - 1) & (ys >= 1) & (ys < h - 1))
+    offset = np.where(valid, offset, 0.0)
+    return np.column_stack([xs + offset * nx, ys + offset * ny]), valid
+
+
+@_register("parabola")
+def _refine_parabola(edge_xy: np.ndarray, gray: np.ndarray, gradient=None) -> np.ndarray:
+    """Locate a nearby gradient ridge, then fit its concave three-point peak."""
+    gx, gy, mag = gradient if gradient is not None else _gradient_data(gray)
+    refined, valid = _parabola_from_gradient(edge_xy, gx, gy, mag)
+    # Preprocessing may displace a Canny candidate from the raw-image ridge.
+    # Walk at most two pixels along its normal, preferring the nearest peak.
     h, w = gray.shape[:2]
-    xi = np.clip(np.round(xs).astype(np.intp), 0, w - 1)
-    yi = np.clip(np.round(ys).astype(np.intp), 0, h - 1)
-
-    th = theta[yi, xi]  # gradient direction per point
-    cos_th = np.cos(th)
-    sin_th = np.sin(th)
-
-    # Sample 5 points along gradient at offsets -2, -1, 0, +1, +2
-    offsets = np.array([-2.0, -1.0, 0.0, 1.0, 2.0])
-    # samples shape: (5, N)
-    samples = np.empty((5, len(xs)), dtype=np.float64)
-    for i, off in enumerate(offsets):
-        sx = xs + off * cos_th
-        sy = ys + off * sin_th
-        samples[i] = _bilinear_sample(mag, sx, sy)
-
-    # Fit parabola to central 3 points (indices 1, 2, 3 → offsets -1, 0, +1)
-    s_neg = samples[1]  # offset -1
-    s_ctr = samples[2]  # offset  0
-    s_pos = samples[3]  # offset +1
-
-    a = (s_pos + s_neg - 2.0 * s_ctr) / 2.0
-    b = (s_pos - s_neg) / 2.0
-
-    # Peak offset
-    safe = np.abs(a) > 1e-12
-    a_safe = np.where(safe, a, 1.0)  # avoid division by zero
-    t_peak = np.where(safe, -b / (2.0 * a_safe), 0.0)
-
-    # Clamp to ±1.0
-    t_peak = np.clip(t_peak, -1.0, 1.0)
-
-    refined = np.column_stack([
-        xs + t_peak * cos_th,
-        ys + t_peak * sin_th,
-    ])
-    return refined.astype(np.float64)
+    xi = np.clip(np.rint(edge_xy[:, 0]).astype(np.intp), 0, w - 1)
+    yi = np.clip(np.rint(edge_xy[:, 1]).astype(np.intp), 0, h - 1)
+    strength = mag[yi, xi]
+    normals = np.column_stack([gx[yi, xi], gy[yi, xi]]) / np.maximum(strength[:, None], 1e-12)
+    for shift in (-1, 1, -2, 2):
+        pending = np.flatnonzero(~valid)
+        if not len(pending):
+            break
+        candidate = edge_xy[pending] + shift * normals[pending]
+        locations, found = _parabola_from_gradient(candidate, gx, gy, mag)
+        refined[pending[found]] = locations[found]
+        valid[pending[found]] = True
+    return refined
 
 
 @_register("gaussian")
-def _refine_gaussian(edge_xy: np.ndarray, gray: np.ndarray) -> np.ndarray:
+def _refine_gaussian(edge_xy: np.ndarray, gray: np.ndarray, gradient=None) -> np.ndarray:
     """Gaussian (second-derivative zero-crossing) sub-pixel refinement.
 
     Samples 7 intensity values along the gradient direction and locates the
     zero-crossing of the second derivative (inflection point of the intensity
     profile), which corresponds to the true edge position.
     """
-    gx = cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize=5)
-    gy = cv2.Sobel(gray, cv2.CV_64F, 0, 1, ksize=5)
-    theta = np.arctan2(gy, gx)  # (h, w)
+    gx, gy, _ = gradient if gradient is not None else _gradient_data(gray)
 
     xs = edge_xy[:, 0]
     ys = edge_xy[:, 1]
@@ -232,18 +237,24 @@ def _refine_gaussian(edge_xy: np.ndarray, gray: np.ndarray) -> np.ndarray:
     xi = np.clip(np.round(xs).astype(np.intp), 0, w - 1)
     yi = np.clip(np.round(ys).astype(np.intp), 0, h - 1)
 
-    th = theta[yi, xi]
+    th = np.arctan2(gy[yi, xi], gx[yi, xi])
     cos_th = np.cos(th)
     sin_th = np.sin(th)
 
     # Sample 7 intensity points at offsets -3,-2,-1,0,+1,+2,+3
     offsets = np.array([-3.0, -2.0, -1.0, 0.0, 1.0, 2.0, 3.0])
     n = len(xs)
-    samples = np.empty((7, n), dtype=np.float64)
-    for i, off in enumerate(offsets):
-        sx = xs + off * cos_th
-        sy = ys + off * sin_th
-        samples[i] = _bilinear_sample(gray, sx, sy)
+    sample_x = xs[None, :] + offsets[:, None] * cos_th[None, :]
+    sample_y = ys[None, :] + offsets[:, None] * sin_th[None, :]
+    # Convert only the region the samples touch (bit-identical to sampling
+    # the whole frame: the crop keeps every bilinear neighbour, and its edge
+    # coincides with the image edge wherever clamping applies).
+    left = int(np.clip(np.floor(sample_x.min()), 0, w - 1)) if n else 0
+    top = int(np.clip(np.floor(sample_y.min()), 0, h - 1)) if n else 0
+    right = int(np.clip(np.floor(sample_x.max()) + 2, left + 1, w)) if n else 1
+    bottom = int(np.clip(np.floor(sample_y.max()) + 2, top + 1, h)) if n else 1
+    region = gray[top:bottom, left:right].astype(np.float64)
+    samples = _bilinear_sample(region, sample_x - left, sample_y - top)
 
     # Second derivative via finite differences: d2[i] = s[i+2] - 2*s[i+1] + s[i]
     # for i in 0..4, giving values at offsets -2,-1,0,+1,+2

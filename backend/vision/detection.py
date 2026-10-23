@@ -1,6 +1,8 @@
 import cv2
 import numpy as np
 
+from .geometry import fit_circle_robust
+
 # ── Circle detection constants ────────────────────────────────────────────────
 _CIRCULARITY_THRESHOLD  = 0.65   # min 4π·area/perimeter² for closed contours
 _RADIUS_STD_MAX         = 0.06   # max std(point distances from centre) / radius
@@ -52,6 +54,18 @@ def _circle_canny_thresholds(sensitivity: int) -> tuple[tuple[int, int], tuple[i
     tight = (int(round(low)), int(min(255, round(3.0 * low))))
     loose = (int(round(0.4 * low)), int(round(1.6 * low)))
     return tight, loose
+
+
+def _subpixel_inputs(frame: np.ndarray):
+    """Raw gray frame plus its gradient, computed ONCE per detection call.
+
+    Every contour/segment refinement of one call shares this gradient
+    (refine_subpixel(..., gradient=...)); recomputing the full-frame 5x5
+    Sobel per contour made detection scale with contour count x frame size.
+    """
+    from .subpixel import precompute_gradient
+    raw_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    return raw_gray, precompute_gradient(raw_gray)
 
 
 def preprocess(frame: np.ndarray, smoothing: int = 1, surface_mode: str = "edm") -> np.ndarray:
@@ -146,7 +160,7 @@ def detect_circles(
     min_radius: int = 8,
     max_radius: int = 500,
     sensitivity: int = 30,
-    subpixel: str = "none",
+    subpixel: str = "parabola",
     surface_mode: str = "edm",
 ) -> list[dict]:
     """
@@ -156,7 +170,7 @@ def detect_circles(
     Two Canny passes (tight + loose) improve recall in poorly lit images; their
     thresholds are driven by `sensitivity` (1–100, higher = fainter edges accepted;
     30 reproduces the historical fixed thresholds). See `_circle_canny_thresholds`.
-    Returns list of {"x": int, "y": int, "radius": int}.
+    Returns list of {"x": float, "y": float, "radius": float}.
     The legacy Hough parameters (dp, min_dist, param1, param2) are accepted for API
     compatibility but are not used.
     """
@@ -164,9 +178,9 @@ def detect_circles(
     k_small = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (_CLOSE_KERNEL_SMALL,) * 2)
     k_large = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (_CLOSE_KERNEL_LARGE,) * 2)
 
-    raw_gray = None
+    raw_gray = gradient = None
     if subpixel != "none":
-        raw_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        raw_gray, gradient = _subpixel_inputs(frame)
         from .subpixel import refine_subpixel
 
     closed: list[tuple] = []
@@ -180,37 +194,31 @@ def detect_circles(
         perimeter = cv2.arcLength(cnt, closed=True)
         if perimeter < 1:
             return
-        (cx, cy), enc_r = cv2.minEnclosingCircle(cnt)
+        _, enc_r = cv2.minEnclosingCircle(cnt)
 
         circularity = 4 * np.pi * area / (perimeter ** 2)
-        if circularity >= _CIRCULARITY_THRESHOLD:
-            r = int(round(enc_r))
-            if not (min_radius <= r <= max_radius):
-                return
-            dists = np.hypot(pts[:, 0] - cx, pts[:, 1] - cy)
-            if np.std(dists) / (r + 1e-6) > _RADIUS_STD_MAX:
-                return
-            closed.append((int(cx), int(cy), r, round(circularity, 3)))
-            return
-
-        if not (min_radius <= enc_r <= max_radius):
+        if enc_r > max_radius + 2:
             return
         if subpixel != "none":
-            pts_f64 = refine_subpixel(pts.astype(np.float64), raw_gray, method=subpixel)
-            pts = pts_f64.astype(np.float32)
+            pts = refine_subpixel(pts.astype(np.float64), raw_gray, method=subpixel,
+                                  gradient=gradient)
         try:
-            fcx, fcy, fr = fit_circle_algebraic(pts)
+            fit = fit_circle_robust(pts)
+            fcx, fcy, fr = fit.parameters
         except (np.linalg.LinAlgError, ValueError):
             return
-        if not (min_radius <= fr <= max_radius):
+        if not (min_radius <= fr <= max_radius) or fit.inlier_mask.sum() < 0.6 * len(pts):
             return
-        residuals = np.abs(np.hypot(pts[:, 0] - fcx, pts[:, 1] - fcy) - fr)
-        if np.mean(residuals) / (fr + 1e-6) > _ARC_MAX_RESIDUAL:
+        if circularity >= _CIRCULARITY_THRESHOLD:
+            if fit.rms_px / (fr + 1e-6) > _RADIUS_STD_MAX:
+                return
+            closed.append((fcx, fcy, fr, round(circularity, 3)))
             return
-        coverage = arc_angular_coverage(pts, fcx, fcy)
-        if coverage < _ARC_MIN_COVERAGE:
+        if fit.rms_px / (fr + 1e-6) > _ARC_MAX_RESIDUAL:
             return
-        arcs.append((int(fcx), int(fcy), int(round(fr)), round(coverage, 1)))
+        if fit.coverage_deg < _ARC_MIN_COVERAGE:
+            return
+        arcs.append((fcx, fcy, fr, round(fit.coverage_deg, 1)))
 
     def _run_on_edges(base_edges: np.ndarray) -> None:
         edges_s = cv2.morphologyEx(base_edges, cv2.MORPH_CLOSE, k_small)
@@ -385,7 +393,7 @@ def detect_lines_contour(
     close_kernel: int = _CONTOUR_CLOSE_KERNEL,
     min_edge_density: float = _CONTOUR_MIN_EDGE_DENSITY,
     smoothing: int = 1,
-    subpixel: str = "none",
+    subpixel: str = "parabola",
     surface_mode: str = "edm",
 ) -> list[dict]:
     """
@@ -403,10 +411,11 @@ def detect_lines_contour(
         edges_closed = edges
     contours, _ = cv2.findContours(edges_closed, cv2.RETR_LIST, cv2.CHAIN_APPROX_NONE)
     h, w = edges.shape
+    density_edges = cv2.dilate(edges, np.ones((3, 3), np.uint8))
 
-    raw_gray = None
+    raw_gray = gradient = None
     if subpixel != "none":
-        raw_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        raw_gray, gradient = _subpixel_inputs(frame)
         from .subpixel import refine_subpixel
 
     candidates = []
@@ -434,20 +443,18 @@ def detect_lines_contour(
                 else:
                     seg_pts = np.concatenate([cnt_pts[idx_a:], cnt_pts[:idx_b + 1]]).astype(np.float64)
                 if len(seg_pts) >= 2:
-                    seg_pts = refine_subpixel(seg_pts, raw_gray, method=subpixel)
+                    seg_pts = refine_subpixel(seg_pts, raw_gray, method=subpixel,
+                                              gradient=gradient)
                     # Fit line to refined points to get endpoints
                     if len(seg_pts) >= 2:
                         # Project onto principal direction to find extremes
                         vx, vy, x0, y0 = cv2.fitLine(
                             seg_pts.astype(np.float32).reshape(-1, 1, 2),
-                            cv2.DIST_L2, 0, 0.01, 0.01).flatten()
+                            cv2.DIST_HUBER, 0, 0.01, 0.01).flatten()
                         t = (seg_pts[:, 0] - x0) * vx + (seg_pts[:, 1] - y0) * vy
-                        t_min_idx, t_max_idx = int(np.argmin(t)), int(np.argmax(t))
-                        # Keep sub-pixel precision: do NOT round refined endpoints
-                        # back to integer pixels (the density walk below int-casts
-                        # its own sample coords, so this stays safe).
-                        x1, y1 = float(seg_pts[t_min_idx][0]), float(seg_pts[t_min_idx][1])
-                        x2, y2 = float(seg_pts[t_max_idx][0]), float(seg_pts[t_max_idx][1])
+                        t_min, t_max = float(t.min()), float(t.max())
+                        x1, y1 = float(x0 + t_min * vx), float(y0 + t_min * vy)
+                        x2, y2 = float(x0 + t_max * vx), float(y0 + t_max * vy)
                     else:
                         x1, y1 = int(pts[i][0]), int(pts[i][1])
                         x2, y2 = int(pts[i+1][0]), int(pts[i+1][1])
@@ -468,7 +475,7 @@ def detect_lines_contour(
             valid = (sx >= 0) & (sx < w) & (sy >= 0) & (sy < h)
             if valid.sum() == 0:
                 continue
-            density = (edges[sy[valid], sx[valid]] > 0).sum() / valid.sum()
+            density = (density_edges[sy[valid], sx[valid]] > 0).sum() / valid.sum()
             if density < min_edge_density:
                 continue
             angle = float(np.degrees(np.arctan2(y2-y1, x2-x1)) % 180)
@@ -494,10 +501,7 @@ def detect_lines_contour(
         if not suppressed:
             kept.append((length, x1, y1, x2, y2, angle))
 
-    # round() leaves the integer (non-subpixel) endpoints as ints and trims the
-    # refined sub-pixel floats to 2 decimals.
-    return [{"x1":round(x1,2),"y1":round(y1,2),"x2":round(x2,2),"y2":round(y2,2),
-             "length":round(length,1)}
+    return [{"x1": x1, "y1": y1, "x2": x2, "y2": y2, "length": length}
             for length, x1, y1, x2, y2, _ in kept]
 
 
@@ -513,7 +517,7 @@ def detect_partial_arcs(
     max_aspect: float = _ARC_PARTIAL_MAX_ASPECT,
     line_ratio: float = _ARC_PARTIAL_LINE_RATIO,
     smoothing: int = 1,
-    subpixel: str = "none",
+    subpixel: str = "parabola",
     surface_mode: str = "edm",
 ) -> list[dict]:
     """
@@ -528,9 +532,9 @@ def detect_partial_arcs(
     edges = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, k)
     contours, _ = cv2.findContours(edges, cv2.RETR_LIST, cv2.CHAIN_APPROX_NONE)
 
-    raw_gray = None
+    raw_gray = gradient = None
     if subpixel != "none":
-        raw_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        raw_gray, gradient = _subpixel_inputs(frame)
         from .subpixel import refine_subpixel
 
     candidates = []  # (coverage, cx, cy, r, start_deg, end_deg)
@@ -539,10 +543,11 @@ def detect_partial_arcs(
         if len(pts) < min_points:
             continue
         if subpixel != "none":
-            pts_f64 = refine_subpixel(pts.astype(np.float64), raw_gray, method=subpixel)
-            pts = pts_f64.astype(np.float32)
+            pts = refine_subpixel(pts.astype(np.float64), raw_gray, method=subpixel,
+                                  gradient=gradient)
         try:
-            fcx, fcy, fr = fit_circle_algebraic(pts)
+            fit = fit_circle_robust(pts)
+            fcx, fcy, fr = fit.parameters
         except (np.linalg.LinAlgError, ValueError):
             continue
         if not (min_radius <= fr <= max_radius):
@@ -553,7 +558,7 @@ def detect_partial_arcs(
         # Line-vs-arc: reject contours that fit a line as well as a circle
         if len(pts) >= 5:
             vx, vy, x0, y0 = cv2.fitLine(
-                pts.reshape(-1, 1, 2), cv2.DIST_L2, 0, 0.01, 0.01).flatten()
+                pts.astype(np.float32).reshape(-1, 1, 2), cv2.DIST_L2, 0, 0.01, 0.01).flatten()
             line_dists = np.abs((pts[:, 0] - x0) * vy - (pts[:, 1] - y0) * vx)
             if np.mean(line_dists) < np.mean(residuals) * line_ratio:
                 continue

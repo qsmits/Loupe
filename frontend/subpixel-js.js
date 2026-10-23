@@ -3,6 +3,11 @@
 // "parabola-js" or "gaussian-js". Works entirely in the browser using
 // the frozen image pixel data — no network round-trip, instant response.
 
+// Minimum 5x5-Sobel gradient magnitude for a snap: 5 grey levels across a step
+// (48 per grey level). Shared with events-mouse.js / tools.js and mirrored by
+// backend/vision/subpixel.py; compared with `mag <= SNAP_MIN_MAGNITUDE` rejecting.
+export const SNAP_MIN_MAGNITUDE = 240;
+
 let _pixels = null; // Uint8ClampedArray (RGBA) from getImageData
 let _iw = 0;
 let _ih = 0;
@@ -37,81 +42,80 @@ export function clearImageCache() {
  * hand a subpixel method to the server, route it through this first.
  */
 export function serverSubpixelMethod(method) {
-  if (method === "parabola-js" || method === "gaussian-js") return "none";
+  if (method === "parabola-js") return "parabola";
+  if (method === "gaussian-js") return "gaussian";
   return method || "none";
 }
 
-// Grayscale luminance at integer pixel (x, y), clamped to image bounds
+// Grayscale luminance with reflected borders, matching Sobel's default border.
 function luma(x, y) {
-  const xi = x | 0, yi = y | 0;
-  if (xi < 0 || yi < 0 || xi >= _iw || yi >= _ih) return 0;
-  const i = (yi * _iw + xi) << 2;
-  return (_pixels[i] * 77 + _pixels[i + 1] * 150 + _pixels[i + 2] * 29) >> 8;
+  const reflect = (v, size) => {
+    if (size <= 1) return 0;
+    const period = 2 * (size - 1);
+    v = ((v % period) + period) % period;
+    return v < size ? v : period - v;
+  };
+  const i = (reflect(y, _ih) * _iw + reflect(x, _iw)) * 4;
+  return (_pixels[i] * 77 + _pixels[i + 1] * 150 + _pixels[i + 2] * 29) / 256;
 }
 
-// Sobel gradient magnitude and angle at (x, y)
 function sobel(x, y) {
-  const gx =
-    -luma(x-1,y-1) + luma(x+1,y-1) +
-    -2*luma(x-1,y) + 2*luma(x+1,y) +
-    -luma(x-1,y+1) + luma(x+1,y+1);
-  const gy =
-    -luma(x-1,y-1) - 2*luma(x,y-1) - luma(x+1,y-1) +
-     luma(x-1,y+1) + 2*luma(x,y+1) + luma(x+1,y+1);
-  return { mag: Math.sqrt(gx*gx + gy*gy), angle: Math.atan2(gy, gx) };
+  const derivative = [-1, -2, 0, 2, 1], smooth = [1, 4, 6, 4, 1];
+  let gx = 0, gy = 0;
+  for (let j = 0; j < 5; j++) for (let i = 0; i < 5; i++) {
+    const value = luma(x + i - 2, y + j - 2);
+    gx += value * derivative[i] * smooth[j];
+    gy += value * smooth[i] * derivative[j];
+  }
+  return { mag: Math.hypot(gx, gy), angle: Math.atan2(gy, gx) };
 }
 
-// Parabola fit: sub-pixel offset from 3 samples at -1, 0, +1
-function parabolaOffset(gm, g0, gp) {
-  const denom = 2 * (gp - 2*g0 + gm);
-  if (Math.abs(denom) < 1e-6) return 0;
-  return Math.max(-1, Math.min(1, -(gp - gm) / denom));
+function peakOffset(gm, g0, gp, logarithmic) {
+  if (g0 < gm || g0 < gp) return null;
+  if (logarithmic && gm > 0 && gp > 0) {
+    gm = Math.log(gm); g0 = Math.log(g0); gp = Math.log(gp);
+  }
+  const curvature = gm + gp - 2 * g0;
+  if (curvature >= -1e-12) return null;
+  const offset = (gm - gp) / (2 * curvature);
+  return Math.abs(offset) <= 0.6 ? offset : null;
 }
 
-// Gaussian fit: more robust for soft/asymmetric peaks
-function gaussianOffset(gm, g0, gp) {
-  if (gm <= 0 || g0 <= 0 || gp <= 0) return parabolaOffset(gm, g0, gp);
-  const lm = Math.log(gm), l0 = Math.log(g0), lp = Math.log(gp);
-  const denom = 2 * (lp - 2*l0 + lm);
-  if (Math.abs(denom) < 1e-6) return 0;
-  return Math.max(-1, Math.min(1, -(lp - lm) / denom));
-}
-
-/**
- * Refine a cursor position to the nearest sub-pixel edge.
- *
- * @param {number} cx - cursor X in image pixels
- * @param {number} cy - cursor Y in image pixels
- * @param {number} searchRadius - search radius in image pixels
- * @param {string} method - "parabola-js" or "gaussian-js"
- * @returns {{ x, y, magnitude }} or null if no strong edge found
- */
+/** Refine the cursor to the nearest qualified gradient ridge. */
 export function refinePointJS(cx, cy, searchRadius, method) {
-  if (!_pixels) return null;
-
+  if (!_pixels || !Number.isFinite(cx) || !Number.isFinite(cy)) return null;
   const r = Math.max(2, Math.round(searchRadius));
-  let bestMag = 0, bestX = Math.round(cx), bestY = Math.round(cy), bestAngle = 0;
-
-  for (let dy = -r; dy <= r; dy++) {
-    for (let dx = -r; dx <= r; dx++) {
-      const ix = Math.round(cx) + dx;
-      const iy = Math.round(cy) + dy;
-      const { mag, angle } = sobel(ix, iy);
-      if (mag > bestMag) { bestMag = mag; bestX = ix; bestY = iy; bestAngle = angle; }
+  const gradients = new Map();
+  const gradient = (x, y) => {
+    const key = `${x},${y}`;
+    if (!gradients.has(key)) gradients.set(key, sobel(x, y));
+    return gradients.get(key);
+  };
+  // Unit-distance samples along the normal, including diagonal directions.
+  const magnitude = (x, y) => {
+    const ix = Math.floor(x), iy = Math.floor(y), wx = x - ix, wy = y - iy;
+    return gradient(ix, iy).mag * (1-wx) * (1-wy) +
+      gradient(ix+1, iy).mag * wx * (1-wy) +
+      gradient(ix, iy+1).mag * (1-wx) * wy + gradient(ix+1, iy+1).mag * wx * wy;
+  };
+  const candidates = [];
+  let maxMag = 0;
+  for (let y = Math.max(1, Math.round(cy)-r); y <= Math.min(_ih-2, Math.round(cy)+r); y++) {
+    for (let x = Math.max(1, Math.round(cx)-r); x <= Math.min(_iw-2, Math.round(cx)+r); x++) {
+      const { mag, angle } = gradient(x, y);
+      maxMag = Math.max(maxMag, mag);
+      if (mag <= SNAP_MIN_MAGNITUDE) continue;
+      const nx = Math.cos(angle), ny = Math.sin(angle);
+      const offset = peakOffset(magnitude(x-nx, y-ny), mag, magnitude(x+nx, y+ny), method === 'gaussian-js');
+      if (offset == null) continue;
+      candidates.push({ x: x + offset * nx, y: y + offset * ny, magnitude: mag });
     }
   }
-
-  if (bestMag < 20) return null; // edge too faint
-
-  // Sub-pixel refinement along the gradient direction
-  const cos = Math.cos(bestAngle);
-  const sin = Math.sin(bestAngle);
-  const gm = sobel(Math.round(bestX - cos), Math.round(bestY - sin)).mag;
-  const gp = sobel(Math.round(bestX + cos), Math.round(bestY + sin)).mag;
-
-  const offset = method === 'gaussian-js'
-    ? gaussianOffset(gm, bestMag, gp)
-    : parabolaOffset(gm, bestMag, gp);
-
-  return { x: bestX + offset * cos, y: bestY + offset * sin, magnitude: bestMag };
+  let best = null, bestDist = Infinity;
+  for (const candidate of candidates) {
+    if (candidate.magnitude < maxMag * 0.15) continue;
+    const distance = (candidate.x-cx)**2 + (candidate.y-cy)**2;
+    if (distance < bestDist) { best = candidate; bestDist = distance; }
+  }
+  return best;
 }

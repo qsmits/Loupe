@@ -187,6 +187,9 @@ def create_app(camera: BaseCamera | None = None, no_camera: bool = False) -> Fas
             yield
         finally:
             reader.close()
+            from .compute_pool import fringe_compute, vision_compute
+            vision_compute.shutdown()
+            fringe_compute.shutdown()
 
     app = FastAPI(title="Video Microscope", lifespan=lifespan)
     app.state.hosted = hosted

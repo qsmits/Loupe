@@ -388,7 +388,10 @@ export function drawDeviations(ann) {
     const my_mm = (en.y1 + en.y2) / 2;
     const nominal = dxfToCanvas(mx_mm, my_mm, ann);
 
-    const color = r.pass_fail === "fail" ? "#ff453a"
+    // Ambiguous-but-matched (competing edges in the corridor) is drawn amber
+    // regardless of its pass/fail, matching the sidebar's "PASS?" badge.
+    const color = (r.matched && r.ambiguous) ? "#ff9f0a"
+      : r.pass_fail === "fail" ? "#ff453a"
       : r.pass_fail === "warn" ? "#ff9f0a"
       : r.pass_fail === "pass" ? "#32d74b"
       : "#636366";
@@ -430,7 +433,8 @@ export function drawDeviations(ann) {
     const nominal = dxfToCanvas(en.cx, en.cy, ann);
     const r_px = (en.radius ?? 0) * (ann.scale ?? 1);
 
-    const color = r.pass_fail === "fail" ? "#ff453a"
+    const color = (r.matched && r.ambiguous) ? "#ff9f0a"
+      : r.pass_fail === "fail" ? "#ff453a"
       : r.pass_fail === "warn" ? "#ff9f0a"
       : r.pass_fail === "pass" ? "#32d74b"
       : "#636366";

@@ -172,3 +172,86 @@ def test_identical_measurements_have_no_capability_estimate(store, kind, deviati
     result = store.compute_spc(pid, 'H1')
     assert result['cpk'] is None
     assert result['cpk_unavailable_reason'] == 'zero_variance'
+
+
+@pytest.mark.parametrize('results,expected', [
+    ([_make_result(pass_fail='fail')], 'FAIL'),
+    ([_make_result(pass_fail='warn')], 'WARN'),
+    ([_make_result(pass_fail='pass', ambiguous=True)], 'REVIEW'),
+    ([_make_result(pass_fail='fail', ambiguous=True)], 'REVIEW'),
+    ([_make_result(pass_fail=None, matched=False)], 'REVIEW'),
+    ([_make_result(ambiguous=True), _make_result(pass_fail='fail')], 'FAIL'),
+    ([_make_result(pass_fail='fail'), _make_result(ambiguous=True)], 'FAIL'),
+    ([], 'REVIEW'),
+])
+def test_uncertainty_and_browser_verdicts_in_run_status(store, results, expected):
+    pid = store.create_part('Status')
+    store.save_run(pid, results)
+    assert store.get_runs(pid)[0]['overall_status'] == expected
+
+
+def test_ambiguity_survives_reopen_and_is_excluded_from_capability(store):
+    pid = store.create_part('Uncertainty')
+    for dev in [.01, .03]:
+        store.save_run(pid, [_make_result(deviation_mm=dev)])
+    rid = store.save_run(pid, [_make_result(deviation_mm=10, ambiguous=True,
+                                         reason='two competing edges', matched=True)])
+    store.save_run(pid, [_make_result(deviation_mm=20, matched=False, pass_fail=None)])
+    reopened = RunStore(store._db_path)
+    result = reopened.get_run_results(rid)[0]
+    assert result['ambiguous'] is True
+    assert result['matched'] is True
+    assert result['reason'] == 'two competing edges'
+    history = reopened.get_feature_history(pid, 'H1')
+    assert history[2]['ambiguous'] is True and history[2]['reason'] == result['reason']
+    assert history[3]['matched'] is False
+    spc = reopened.compute_spc(pid, 'H1')
+    assert spc['count'] == 2 and spc['excluded_count'] == 2
+    assert spc['mean'] == pytest.approx(.02)
+    assert spc['std'] == pytest.approx(statistics.stdev([.01, .03]))
+
+
+def test_v1_database_migration_preserves_existing_runs(tmp_path):
+    import sqlite3
+    from backend.run_store import _SCHEMA_SQL
+    path = str(tmp_path / 'legacy.db')
+    # Reconstruct the shipped v1 schema, including old result rows.
+    schema = _SCHEMA_SQL.replace(',\n    matched INTEGER NOT NULL DEFAULT 1,\n    ambiguous INTEGER NOT NULL DEFAULT 0,\n    reason TEXT', '')
+    with sqlite3.connect(path) as db:
+        db.executescript(schema)
+        db.execute('INSERT INTO schema_version VALUES (1)')
+        db.execute("INSERT INTO parts (id,name,created_at) VALUES (1,'Legacy','2026-01-01')")
+        db.execute("INSERT INTO runs (id,part_id,run_number,timestamp) VALUES (1,1,1,'2026-01-01')")
+        db.execute("INSERT INTO results (run_id,handle,pass_fail,deviation_mm) VALUES (1,'A','pass',0.01)")
+        db.execute("INSERT INTO results (run_id,handle,pass_fail) VALUES (1,'B',NULL)")
+    migrated = RunStore(path)
+    rows = migrated.get_run_results(1)
+    assert len(rows) == 2 and rows[0]['deviation_mm'] == .01
+    assert rows[0]['matched'] is True and rows[0]['ambiguous'] is False
+    assert rows[0]['reason'] is None and rows[1]['matched'] is False
+    assert RunStore(path).get_run_results(1) == rows  # migration is idempotent
+    with sqlite3.connect(path) as db:
+        assert db.execute('SELECT version FROM schema_version').fetchone()[0] == 2
+
+
+def test_run_api_and_csv_retain_ambiguity(store):
+    import csv
+    import io
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from backend.api_runs import make_runs_router
+    app = FastAPI()
+    app.include_router(make_runs_router(store))
+    with TestClient(app) as client:
+        pid = client.post('/parts', json={'name': 'API'}).json()['id']
+        result = _make_result(pass_fail='pass', matched=True, ambiguous=True, reason='two edges, choose one')
+        rid = client.post(f'/parts/{pid}/runs', json={'results': [result]}).json()['run_id']
+        saved = client.get(f'/runs/{rid}').json()['results'][0]
+        history = client.get(f'/parts/{pid}/history/H1').json()[0]
+        for r in (saved, history):
+            assert r['ambiguous'] is True and r['reason'] == result['reason']
+        rows = list(csv.DictReader(io.StringIO(client.get(f'/parts/{pid}/spc-export').text)))
+        assert rows[0]['ambiguous'] == 'True' and rows[0]['reason'] == result['reason']
+        assert rows[0]['overall_status'] == 'REVIEW'
+        stats = client.get(f'/parts/{pid}/spc/H1').json()
+        assert stats['count'] == 0 and stats['excluded_count'] == 1

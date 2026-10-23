@@ -159,3 +159,19 @@ describe('rotation convention anchors', () => {
       `expected (4,12), got (${p.x},${p.y})`);
   });
 });
+
+describe('fractional edge-alignment result through the overlay', () => {
+  it('places all points with the backend rotation sign and clears stale flips', async () => {
+    const { applyAlignmentResult } = await import('../../frontend/dxf-transform.js');
+    const angle = 2.37;
+    const anchor = backendDxfToImagePx(1, 0.5, 10, 200.37, 150.81, angle * Math.PI / 180);
+    const ann = { offsetX: 0, offsetY: 0, scale: 1, flipH: true, flipV: true };
+    applyAlignmentResult(ann, { scale: 10, angle_deg: angle, dxf_cx: 1, dxf_cy: 0.5,
+      img_cx: anchor.x, img_cy: anchor.y, flip_h: false, flip_v: false });
+    for (const p of POINTS) {
+      const actual = dxfToCanvasPure(p.x, p.y, ann);
+      const expected = backendDxfToImagePx(p.x, p.y, 10, 200.37, 150.81, angle * Math.PI / 180);
+      assert.ok(Math.hypot(actual.x - expected.x, actual.y - expected.y) < 1e-9);
+    }
+  });
+});

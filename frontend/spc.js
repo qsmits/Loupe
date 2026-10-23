@@ -9,6 +9,8 @@ import { apiFetch } from './api.js';
  * @param {{tol_warn:number, tol_fail:number}} tols — tolerance thresholds
  */
 export function drawTrendChart(canvas, history, tols = {}) {
+  // Skip missing measurements instead of plotting artificial zero deviations.
+  history = (history || []).filter(h => h.matched !== false && Number.isFinite(h.deviation_mm));
   const tolWarn = tols.tol_warn ?? 0.10;
   const tolFail = tols.tol_fail ?? 0.25;
 
@@ -110,7 +112,8 @@ export function drawTrendChart(canvas, history, tols = {}) {
     const absDev = Math.abs(dev);
     const y = yScale(dev);
 
-    if (absDev >= tolFail) ctx.fillStyle = "#ff453a";
+    if (history[i].ambiguous) ctx.fillStyle = "#ff9f0a";
+    else if (absDev >= tolFail) ctx.fillStyle = "#ff453a";
     else if (absDev >= tolWarn) ctx.fillStyle = "#ff9f0a";
     else ctx.fillStyle = "#32d74b";
 
@@ -136,11 +139,11 @@ export function drawTrendChart(canvas, history, tols = {}) {
   ctx.textBaseline = "top";
   const step = Math.max(1, Math.floor(history.length / 8));
   for (let i = 0; i < history.length; i += step) {
-    ctx.fillText(String(history[i].run_id), xScale(i), mTop + plotH + 6);
+    ctx.fillText(String(history[i].run_number ?? history[i].run_id), xScale(i), mTop + plotH + 6);
   }
   // Always show last
   if ((history.length - 1) % step !== 0) {
-    ctx.fillText(String(history[history.length - 1].run_id), xScale(history.length - 1), mTop + plotH + 6);
+    ctx.fillText(String(history[history.length - 1].run_number ?? history[history.length - 1].run_id), xScale(history.length - 1), mTop + plotH + 6);
   }
 }
 
@@ -148,8 +151,10 @@ export function drawTrendChart(canvas, history, tols = {}) {
  * Render Cpk summary stats into a container element.
  */
 export function renderCpkSummary(container, spc) {
+  const excluded = Number.isFinite(spc?.excluded_count) && spc.excluded_count > 0
+    ? ` <span>${spc.excluded_count} ambiguous/unmatched measurements excluded from SPC</span>` : '';
   if (!spc || (spc.count ?? spc.n ?? 0) < 2) {
-    container.innerHTML = '<span style="color:#888">Need 2+ runs for SPC</span>';
+    container.innerHTML = '<span style="color:#888">Need 2+ runs for SPC</span>' + excluded;
     return;
   }
 
@@ -165,7 +170,7 @@ export function renderCpkSummary(container, spc) {
     ` &nbsp; n=${spc.count ?? spc.n} &nbsp; ` +
     `\u03BC=${spc.mean.toFixed(3)} &nbsp; ` +
     `\u03C3=${spc.std.toFixed(3)} &nbsp; ` +
-    `range=${(spc.range ?? (spc.max - spc.min)).toFixed(3)}`;
+    `range=${(spc.range ?? (spc.max - spc.min)).toFixed(3)}` + excluded;
 }
 
 /**

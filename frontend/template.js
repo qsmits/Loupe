@@ -23,6 +23,7 @@
  * @param {Object}  [config.featureNames]
  * @param {Object}  config.detection          — { cannyLow, cannyHigh, smoothing, subpixel }
  * @param {Object}  config.alignment          — { method, smoothing }
+ * @param {Object}  [config.inspection]       — edge method, corridor, caliper recipe
  * @returns {Object} template
  */
 export function assembleTemplate(config) {
@@ -40,6 +41,7 @@ export function assembleTemplate(config) {
     featureNames = {},
     detection,
     alignment,
+    inspection,
   } = config;
 
   const now = new Date().toISOString();
@@ -67,6 +69,7 @@ export function assembleTemplate(config) {
     dxfDefaultTol,
     featureModes,
     featureNames,
+    ...(inspection ? { inspection: structuredClone(inspection) } : {}),
     detection: {
       cannyLow: detection.cannyLow,
       cannyHigh: detection.cannyHigh,
@@ -121,6 +124,25 @@ export function validateTemplate(tmpl) {
 
   if (!tmpl.detection || typeof tmpl.detection.cannyLow !== 'number') {
     return { valid: false, error: 'detection settings missing or detection.cannyLow is not a number' };
+  }
+
+  if (tmpl.inspection !== undefined) {
+    const opts = tmpl.inspection;
+    if (!opts || !['caliper', 'contour'].includes(opts.edgeMethod) ||
+        !Number.isFinite(opts.corridorPx) || opts.corridorPx <= 0 || opts.corridorPx > 200) {
+      return { valid: false, error: 'Invalid inspection method or search corridor' };
+    }
+    const limits = { width: [0, 21], sigma: [0.3, 5], spacing: [1, 50], min_contrast: [0.001, 255] };
+    for (const [key, [min, max]] of Object.entries(limits)) {
+      const value = opts.caliper?.[key];
+      if (!Number.isFinite(value) || value < min || value > max) {
+        return { valid: false, error: `Invalid caliper ${key}` };
+      }
+    }
+    if (!['any', 'rising', 'falling'].includes(opts.caliper.polarity) ||
+        !['unique', 'first', 'strongest', 'closest'].includes(opts.caliper.selection)) {
+      return { valid: false, error: 'Invalid caliper edge choice' };
+    }
   }
 
   return { valid: true };

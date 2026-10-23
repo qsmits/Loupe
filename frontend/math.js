@@ -210,7 +210,7 @@ export function fitCircle(p1, p2, p3) {
   return { cx: ux, cy: uy, r };
 }
 
-export function fitCircleAlgebraic(points) {
+function circleAlgebraicSeed(points) {
   if (points.length < 3) return null;
   const n = points.length;
   // Centre the input to improve numerical conditioning
@@ -231,7 +231,7 @@ export function fitCircleAlgebraic(points) {
           +m[0][2]*(m[1][0]*m[2][1]-m[1][1]*m[2][0]);
   }
   const d = det3(M);
-  if (Math.abs(d) < 1e-6) return null;
+  if (Math.abs(d) < 1e-12) return null;
   const sub = (col, bv) => M.map((row, i) => row.map((v, j) => j === col ? bv[i] : v));
   const D = det3(sub(0, b)) / d;
   const E = det3(sub(1, b)) / d;
@@ -246,6 +246,127 @@ export function fitCircleAlgebraic(points) {
   if (r > 1e6) return null;
   return { cx, cy, r };
 }
+
+function solveCircleSystem(matrix, rhs) {
+  const a = matrix.map((row, i) => [...row, rhs[i]]);
+  for (let i = 0; i < 3; i++) {
+    let pivot = i;
+    for (let j = i+1; j < 3; j++) if (Math.abs(a[j][i]) > Math.abs(a[pivot][i])) pivot = j;
+    if (Math.abs(a[pivot][i]) < 1e-12) return null;
+    [a[i], a[pivot]] = [a[pivot], a[i]];
+    const d = a[i][i];
+    for (let k = i; k < 4; k++) a[i][k] /= d;
+    for (let j = 0; j < 3; j++) if (j !== i) {
+      const factor = a[j][i];
+      for (let k = i; k < 4; k++) a[j][k] -= factor * a[i][k];
+    }
+  }
+  return a.map(row => row[3]);
+}
+
+function circleJacobianCondition(matrix) {
+  const a = matrix.map(row => [...row]);
+  // Jacobi diagonalization of this symmetric 3x3 normal matrix.
+  for (let iteration = 0; iteration < 20; iteration++) {
+    let p = 0, q = 1;
+    for (const [i, j] of [[0, 2], [1, 2]]) if (Math.abs(a[i][j]) > Math.abs(a[p][q])) { p=i; q=j; }
+    if (Math.abs(a[p][q]) < 1e-12) break;
+    const angle = 0.5 * Math.atan2(2*a[p][q], a[q][q]-a[p][p]);
+    const c = Math.cos(angle), s = Math.sin(angle);
+    const pp = a[p][p], qq = a[q][q], pq = a[p][q];
+    for (let k = 0; k < 3; k++) if (k !== p && k !== q) {
+      const kp = a[k][p], kq = a[k][q];
+      a[k][p] = a[p][k] = c*kp-s*kq;
+      a[k][q] = a[q][k] = s*kp+c*kq;
+    }
+    a[p][p] = c*c*pp-2*s*c*pq+s*s*qq;
+    a[q][q] = s*s*pp+2*s*c*pq+c*c*qq;
+    a[p][q] = a[q][p] = 0;
+  }
+  const values = [a[0][0], a[1][1], a[2][2]];
+  return Math.min(...values) > 0 ? Math.sqrt(Math.max(...values)/Math.min(...values)) : Infinity;
+}
+
+/** Robust geometric circle/arc fit. Conditional errors exclude optics and pose. */
+export function fitCircleRobust(points) {
+  if (points.length < 3 || points.some(p => !Number.isFinite(p.x) || !Number.isFinite(p.y))) return null;
+  const n = points.length;
+  const mx = points.reduce((sum,p) => sum+p.x, 0)/n, my = points.reduce((sum,p) => sum+p.y, 0)/n;
+  const scale = Math.sqrt(points.reduce((sum,p) => sum+(p.x-mx)**2+(p.y-my)**2, 0)/n);
+  if (scale < 1e-9) return null;
+  const pts = points.map(p => ({ x: (p.x-mx)/scale, y: (p.y-my)/scale }));
+  const seed = circleAlgebraicSeed(pts);
+  if (!seed) return null;
+  let params = [seed.cx, seed.cy, seed.r];
+  const residuals = p => pts.map(pt => Math.hypot(pt.x-p[0],pt.y-p[1])-p[2]);
+  const median = values => {
+    const sorted = [...values].sort((a,b) => a-b), half = Math.floor(sorted.length/2);
+    return sorted.length%2 ? sorted[half] : (sorted[half-1]+sorted[half])/2;
+  };
+  const noiseScale = values => {
+    const centre = median(values);
+    return Math.max(0.02/scale, 1.4826*median(values.map(v => Math.abs(v-centre))));
+  };
+  const system = (p, res, cutoff, mask = null) => {
+    const a = Array.from({length:3}, () => [0,0,0]), b = [0,0,0];
+    for (let k = 0; k < n; k++) {
+      if (mask && !mask[k]) continue;
+      const dx = p[0]-pts[k].x, dy = p[1]-pts[k].y, dist = Math.max(1e-12,Math.hypot(dx,dy));
+      const j = [dx/dist,dy/dist,-1], weight = Math.min(1,cutoff/Math.max(1e-12,Math.abs(res[k])));
+      for (let i = 0; i < 3; i++) {
+        b[i] -= weight*j[i]*res[k];
+        for (let q = 0; q < 3; q++) a[i][q] += weight*j[i]*j[q];
+      }
+    }
+    return {a,b};
+  };
+  const cost = (res,cutoff) => res.reduce((sum,r) => sum+(Math.abs(r)<=cutoff ? r*r/2 : cutoff*(Math.abs(r)-cutoff/2)),0);
+  let converged = false;
+  for (let outer = 0; outer < 3; outer++) {
+    const cutoff = 2.5*noiseScale(residuals(params));
+    let damping = 1e-4;
+    converged = false;
+    for (let iteration = 0; iteration < 80; iteration++) {
+      const res = residuals(params), {a,b} = system(params,res,cutoff), current = cost(res,cutoff);
+      if (Math.hypot(...b) < 1e-10) { converged = true; break; }
+      let accepted = false;
+      for (let attempt = 0; attempt < 12; attempt++) {
+        const damped = a.map((row,i) => row.map((v,j) => v+(i===j ? damping*Math.max(a[i][i],1e-9) : 0)));
+        const step = solveCircleSystem(damped,b);
+        if (!step) return null;
+        const next = params.map((v,i) => v+step[i]);
+        const nextCost = cost(residuals(next),cutoff);
+        if (next[2]>0 && Number.isFinite(nextCost) && nextCost<=current+1e-14) {
+          params = next; damping = Math.max(1e-12,damping*0.3); accepted = true;
+          converged = Math.hypot(...step)<1e-9*(1+Math.hypot(...params)) || current-nextCost<1e-14;
+          break;
+        }
+        damping *= 10;
+      }
+      if (!accepted || converged) break;
+    }
+    if (!converged) return null;
+  }
+  const res = residuals(params), sigma = noiseScale(res), mask = res.map(r => Math.abs(r)<=3*sigma);
+  const count = mask.filter(Boolean).length;
+  if (count < 3) return null;
+  const {a} = system(params,res,Infinity,mask), condition = circleJacobianCondition(a);
+  if (!Number.isFinite(condition) || condition > 1e4) return null;
+  const sumSq = res.reduce((sum,r,i) => sum+(mask[i] ? r*r : 0),0);
+  const errors = count > 3 ? [0,1,2].map(i => {
+    const rhs = [0,0,0]; rhs[i] = 1;
+    const column = solveCircleSystem(a,rhs);
+    return column ? Math.sqrt(Math.max(0,column[i]*sumSq/(count-3)))*scale : null;
+  }) : null;
+  const angles = pts.filter((_,i) => mask[i]).map(p => ((Math.atan2(p.y-params[1],p.x-params[0])*180/Math.PI)%360+360)%360).sort((a,b) => a-b);
+  const largestGap = Math.max(...angles.map((a,i) => (i+1<angles.length ? angles[i+1] : angles[0]+360)-a));
+  return { cx: mx+scale*params[0], cy: my+scale*params[1], r: scale*params[2],
+    fit_quality: { rms_px: Math.sqrt(sumSq/count)*scale, inlier_count: count, point_count: n,
+      condition, coverage_deg: 360-largestGap, parameter_std_error_px: errors } };
+}
+
+// Retain the historical public name for existing integrations.
+export function fitCircleAlgebraic(points) { return fitCircleRobust(points); }
 
 export function polygonArea(pts) {
   let s = 0;

@@ -210,211 +210,176 @@ def align_dxf_edges(
     Align a DXF to an image using edge template matching.
     Requires calibration (known px/mm) — searches position and rotation only.
     """
+    if pixels_per_mm <= 0 or angle_range < 0 or angle_step <= 0:
+        return {"success": False, "reason": "Invalid alignment scale or angle search"}
     h, w = frame.shape[:2]
-    scale = pixels_per_mm
-
     gray = preprocess(frame, smoothing=smoothing)
-    edges = cv2.Canny(gray, canny_low, canny_high)
-    kernel = np.ones((3, 3), np.uint8)
-    edges_thick = cv2.dilate(edges, kernel, iterations=1)
+    raw_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    edges = cv2.Canny(gray, canny_low, canny_high) | cv2.Canny(raw_gray, canny_low, canny_high)
+    edges = cv2.dilate(edges, np.ones((3, 3), np.uint8))
+    pad_x, pad_y = int(w * 0.3), int(h * 0.3)
+    search = cv2.copyMakeBorder(edges, pad_y, pad_y, pad_x, pad_x, cv2.BORDER_CONSTANT, value=0)
+    padding = 5
+    best = None
+    alignment_entities = [e for e in entities if e.get("alignment_datum")] or entities
 
-    # Pad the edge image so template matching works even when the part
-    # fills the entire frame (template must be smaller than search image)
-    pad_x = int(w * 0.3)
-    pad_y = int(h * 0.3)
-    edges_thick = cv2.copyMakeBorder(edges_thick, pad_y, pad_y, pad_x, pad_x,
-                                      cv2.BORDER_CONSTANT, value=0)
-    h_padded, w_padded = edges_thick.shape
+    def evaluate(angle):
+        rendered = _render_dxf_template(alignment_entities, pixels_per_mm, angle, padding)
+        if rendered is None or rendered[0] is None or not np.any(rendered[0]):
+            return None
+        template, min_x, min_y = rendered
+        th, tw = template.shape
+        if th > search.shape[0] or tw > search.shape[1]:
+            return None
+        scores = cv2.matchTemplate(search, template, cv2.TM_CCORR_NORMED)
+        # Allow partly clipped geometry, but require the template's center to
+        # lie within the actual image. Padding must not be a winning location.
+        x0, x1 = max(0, pad_x-tw//2), min(scores.shape[1], pad_x+w-tw//2)
+        y0, y1 = max(0, pad_y-th//2), min(scores.shape[0], pad_y+h-th//2)
+        if x0 >= x1 or y0 >= y1:
+            return None
+        _, score, _, loc = cv2.minMaxLoc(scores[y0:y1, x0:x1])
+        x, y = loc[0]+x0, loc[1]+y0
+        # Fractional translation from a valid concave correlation maximum.
+        dx = _peak_offset(scores[y, x-1], scores[y, x], scores[y, x+1]) if x0 < x < x1-1 else 0
+        dy = _peak_offset(scores[y-1, x], scores[y, x], scores[y+1, x]) if y0 < y < y1-1 else 0
+        tx = x + dx - pad_x - min_x*pixels_per_mm + padding
+        ty = y + dy - pad_y + th - padding + min_y*pixels_per_mm
+        return {"score": float(score), "angle": float(angle), "tx": tx, "ty": ty}
 
-    # DXF coordinate bounds
+    def consider(candidate):
+        nonlocal best
+        if candidate is not None and (best is None or candidate["score"] > best["score"]+1e-9 or
+            (abs(candidate["score"]-best["score"]) <= 1e-9 and abs(candidate["angle"]) < abs(best["angle"]))):
+            best = candidate
+
+    for angle in np.arange(-angle_range, angle_range + angle_step/2, angle_step):
+        consider(evaluate(float(np.clip(angle, -angle_range, angle_range))))
+    if best is None:
+        return {"success": False, "reason": "DXF template too large or empty at this scale"}
+    if best["score"] < 0.01:
+        return {"success": False, "reason": "No good match found"}
+    fine_step = min(0.1, angle_step)
+    coarse_angle = best["angle"]
+    for angle in np.arange(max(-angle_range, coarse_angle-angle_step),
+                           min(angle_range, coarse_angle+angle_step)+fine_step/2, fine_step):
+        consider(evaluate(float(np.clip(angle, -angle_range, angle_range))))
+    # Interpolate the angular score peak without applying a prior toward zero.
+    if -angle_range+fine_step <= best["angle"] <= angle_range-fine_step:
+        minus, plus = evaluate(best["angle"]-fine_step), evaluate(best["angle"]+fine_step)
+        if minus is not None and plus is not None:
+            shift = _peak_offset(minus["score"], best["score"], plus["score"])
+            if shift:
+                consider(evaluate(best["angle"] + shift*fine_step))
+
+    tx, ty, angle, quality = _refine_edge_pose(raw_gray, entities, pixels_per_mm,
+                                              best["tx"], best["ty"], best["angle"], angle_range)
     xs, ys = [], []
     for e in entities:
         if "x1" in e:
-            xs.extend([e["x1"], e["x2"]])
-            ys.extend([e["y1"], e["y2"]])
+            xs.extend([e["x1"], e["x2"]]); ys.extend([e["y1"], e["y2"]])
         elif "cx" in e:
-            xs.append(e["cx"])
-            ys.append(e["cy"])
+            xs.append(e["cx"]); ys.append(e["cy"])
     if not xs:
         return {"success": False, "reason": "No geometry in DXF"}
+    dxf_cx, dxf_cy = (min(xs)+max(xs))/2, (min(ys)+max(ys))/2
+    from .line_arc_matching import dxf_to_image_px
+    img_cx, img_cy = dxf_to_image_px(dxf_cx, dxf_cy, pixels_per_mm, tx, ty, math.radians(angle))
+    return {"success": True, "img_cx": img_cx, "img_cy": img_cy,
+            "dxf_cx": dxf_cx, "dxf_cy": dxf_cy, "angle_deg": angle,
+            "flip_h": False, "flip_v": False,
+            "scale": float(pixels_per_mm), "score": best["score"], "refinement": quality}
 
-    best_score = -1
-    best_raw_score = 0
-    best_angle = 0.0
-    best_loc = (0, 0)
-    best_r_min_x = 0
-    best_r_min_y = 0
-    best_tmpl_shape = (0, 0)
 
-    padding = 5  # small padding to maximize template fit in image
-    angles = np.arange(-angle_range, angle_range + angle_step * 0.5, angle_step)
+def _peak_offset(minus, center, plus):
+    curvature = minus + plus - 2*center
+    if center < minus or center < plus or curvature >= -1e-12:
+        return 0.0
+    offset = (minus-plus)/(2*curvature)
+    return float(offset) if abs(offset) <= 0.6 else 0.0
 
-    for angle_deg in angles:
-        render_result = _render_dxf_template(
-            entities, scale, angle_deg, padding
-        )
-        if render_result is None or render_result[0] is None:
-            continue
-        tmpl, r_min_x, r_min_y = render_result
-        th, tw = tmpl.shape
-        if tw >= w_padded or th >= h_padded:
-            continue
 
-        result = cv2.matchTemplate(edges_thick, tmpl, cv2.TM_CCORR_NORMED)
+def _refine_edge_pose(gray, entities, ppm, tx, ty, angle_deg, angle_range):
+    """Point-to-normal rigid registration against raw-image caliper edges.
 
-        # Mask: only consider positions where the template overlaps the original
-        # image (not the black padding). The template top-left must be within
-        # [0, pad_x] to [w + pad_x - tw, h + pad_y - th] in the padded image,
-        # which means the original-image match_x must be in [0, w - tw] and
-        # match_y in [0, h - th]. In padded coords that's [pad_x, pad_x + w - tw].
-        # Set scores outside this range to 0.
-        mask = np.zeros_like(result)
-        valid_x_start = pad_x
-        valid_x_end = min(result.shape[1], pad_x + w - tw)
-        valid_y_start = pad_y
-        valid_y_end = min(result.shape[0], pad_y + h - th)
-        if valid_x_end > valid_x_start and valid_y_end > valid_y_start:
-            mask[valid_y_start:valid_y_end, valid_x_start:valid_x_end] = 1
-            result = result * mask
-
-        _, max_val, _, max_loc = cv2.minMaxLoc(result)
-
-        # Penalize rotation slightly — textured surfaces (3D prints) can bias
-        # the score toward non-zero angles due to directional layer patterns.
-        # A 1° rotation costs ~5% of the score.
-        adjusted_score = max_val * (1.0 - 0.05 * abs(angle_deg))
-
-        if adjusted_score > best_score:
-            best_score = adjusted_score
-            best_angle = angle_deg
-            best_loc = max_loc
-            best_r_min_x = r_min_x
-            best_r_min_y = r_min_y
-            best_tmpl_shape = (th, tw)
-            best_raw_score = max_val
-
-    if best_score < 0:
-        return {"success": False, "reason": "DXF template too large for image at this scale. Try lower calibration or smaller DXF."}
-    if best_score < 0.01:
-        return {"success": False, "reason": "No good match found"}
-
-    # Fine-angle refinement: search ±0.5° around best in 0.1° steps
-    fine_angles = np.arange(best_angle - 0.5, best_angle + 0.55, 0.1)
-    for angle_deg in fine_angles:
-        render_result = _render_dxf_template(entities, scale, angle_deg, padding)
-        if render_result is None or render_result[0] is None:
-            continue
-        tmpl, r_min_x, r_min_y = render_result
-        th, tw = tmpl.shape
-        if tw >= w_padded or th >= h_padded:
-            continue
-        result = cv2.matchTemplate(edges_thick, tmpl, cv2.TM_CCORR_NORMED)
-        mask = np.zeros_like(result)
-        vxs = pad_x
-        vxe = min(result.shape[1], pad_x + w - tw)
-        vys = pad_y
-        vye = min(result.shape[0], pad_y + h - th)
-        if vxe > vxs and vye > vys:
-            mask[vys:vye, vxs:vxe] = 1
-            result = result * mask
-        _, max_val, _, max_loc = cv2.minMaxLoc(result)
-        adjusted = max_val * (1.0 - 0.05 * abs(angle_deg))
-        if adjusted > best_score:
-            best_score = adjusted
-            best_angle = angle_deg
-            best_loc = max_loc
-            best_r_min_x = r_min_x
-            best_r_min_y = r_min_y
-            best_tmpl_shape = (th, tw)
-            best_raw_score = max_val
-
-    # Convert template match to DXF overlay (offsetX, offsetY).
-    #
-    # The template renders DXF with Y flipped (Y-up → Y-down). The DXF overlay
-    # frontend also flips Y via ctx.scale(s, -s). So the template Y-flip is
-    # already accounted for by the frontend — we must NOT double-flip.
-    #
-    # Template pixel for DXF point (x, y) at angle a:
-    #   tmpl_x = (x*cos-y*sin - r_min_x) * scale + padding
-    #   tmpl_y = th - ((x*sin+y*cos - r_min_y) * scale + padding)  [Y-flip in template]
-    #
-    # Frontend dxfToCanvas for DXF point (x, y):
-    #   cx = (x*cos-y*sin) * scale
-    #   cy = -(x*sin+y*cos) * scale  [Y-flip in frontend]
-    #   result = (offsetX + cx, offsetY + cy)
-    #
-    # For the template match position to be correct, we need:
-    #   offsetX + cx = match_x + tmpl_x  =>  offsetX = match_x + r_min_x*scale + padding
-    #   offsetY + cy = match_y + tmpl_y
-    #
-    # Expanding for DXF (0,0):
-    #   offsetX = match_x + (-r_min_x * scale + padding)  [tmpl_x for (0,0)]
-    #   offsetY + 0 = match_y + (th - ((-r_min_y) * scale + padding))  [tmpl_y for (0,0)]
-    #
-    # But the frontend cy for (0,0) is 0, so offsetY = match_y + tmpl_y.
-    # However, the frontend Y-flip means: for DXF point (0, r_min_y),
-    #   cy_frontend = -r_min_y * scale
-    #   Should equal: match_y + padding  (top of template, since r_min_y is bottom in DXF)
-    # So: offsetY - r_min_y*scale = match_y + padding
-    #     offsetY = match_y + padding + r_min_y*scale
-    #
-    cos_a = math.cos(math.radians(best_angle))
-    sin_a = math.sin(math.radians(best_angle))
-
-    # Template top-left in original image coords
-    match_x = best_loc[0] - pad_x
-    match_y = best_loc[1] - pad_y
-
-    th, tw = best_tmpl_shape
-
-    # The template renders DXF Y-up → image Y-down. For each DXF point (x, y)
-    # rotated by best_angle:
-    #   tmpl_col = (x_rot - r_min_x) * scale + padding
-    #   tmpl_row = th - ((y_rot - r_min_y) * scale + padding)
-    #
-    # The frontend dxfToCanvas (no flip, no origin rotation) for (x, y):
-    #   canvas_x = offsetX + (x*cos-y*sin) * scale
-    #   canvas_y = offsetY - (x*sin+y*cos) * scale
-    #
-    # For these to match, we need for any point (x, y):
-    #   offsetX + x_rot * scale = match_x + (x_rot - r_min_x) * scale + padding
-    #   offsetX = match_x - r_min_x * scale + padding
-    #
-    #   offsetY - y_rot * scale = match_y + th - (y_rot - r_min_y) * scale - padding
-    #   offsetY = match_y + th - padding + r_min_y * scale
-
-    # Instead of computing offsetX/offsetY here (which requires matching the
-    # frontend's dxfToCanvas transform exactly), return the image-space position
-    # of the DXF center. The frontend uses dxfToCanvas to compute the correct
-    # offset from this anchor point.
-    th, tw = best_tmpl_shape
-    dxf_cx = (min(xs) + max(xs)) / 2
-    dxf_cy = (min(ys) + max(ys)) / 2
-
-    # DXF center rotated by best_angle
-    cos_a = math.cos(math.radians(best_angle))
-    sin_a = math.sin(math.radians(best_angle))
-    cx_rot = dxf_cx * cos_a - dxf_cy * sin_a
-    cy_rot = dxf_cx * sin_a + dxf_cy * cos_a
-
-    # DXF center position in template pixel coords
-    tmpl_cx = (cx_rot - best_r_min_x) * scale + padding
-    tmpl_cy = th - ((cy_rot - best_r_min_y) * scale + padding)
-
-    # DXF center position in image pixel coords
-    img_cx = match_x + tmpl_cx
-    img_cy = match_y + tmpl_cy
-
-    return {
-        "success": True,
-        "img_cx": float(img_cx),
-        "img_cy": float(img_cy),
-        "dxf_cx": float(dxf_cx),
-        "dxf_cy": float(dxf_cy),
-        "angle_deg": float(-best_angle),  # negate: template +angle = CCW in DXF Y-up, but frontend Y-flip makes it CW
-        "scale": float(scale),
-        "score": float(best_raw_score),
-    }
+    Explicit alignment_datum entities take precedence. Otherwise this is a
+    global best fit of the drawing, as in the coarse matcher. A rank-deficient
+    constraint system retains the coarse pose and explains why it cannot be
+    refined; a single line or circle does not constrain all three pose axes.
+    """
+    from .caliper import float_frame, nominal_calipers, sample_caliper_edges
+    gray = float_frame(gray)  # once, not once per iteration
+    usable = [e for e in entities if e.get("type") in ("line", "polyline_line", "arc", "polyline_arc", "circle")]
+    datums = [e for e in usable if e.get("alignment_datum")]
+    if datums:
+        usable = datums
+    coarse = tx, ty, angle_deg
+    quality = {"refined": False, "reason": "insufficient stable edge constraints", "datum_count": len(datums)}
+    def fallback(reason="insufficient stable edge constraints"):
+        return *coarse, {"refined": False, "reason": reason, "datum_count": len(datums)}
+    for _ in range(8):
+        centers, normals, widths = [], [], []
+        for e in usable:
+            try:
+                c, n, width = nominal_calipers(e, ppm, tx, ty, math.radians(angle_deg), spacing=8)
+            except (KeyError, ValueError):
+                continue
+            centers.extend(c); normals.extend(n); widths.append(width)
+        if not centers:
+            return fallback()
+        centers, normals = np.array(centers), np.array(normals)
+        # Bound sampling work on dense DXFs without favoring the first features.
+        indices = np.linspace(0, len(centers)-1, min(1000, len(centers)), dtype=int)
+        centers, normals = centers[indices], normals[indices]
+        found = sample_caliper_edges(gray, centers, normals, corridor_px=4,
+                                     width=min(5, min(widths)), sigma=1, min_contrast=20)
+        if len(found.points) < max(12, 0.5*len(centers)):
+            return fallback()
+        c, n = centers[found.indices], found.normals
+        base = np.clip(found.strengths**2 / np.median(found.strengths**2), 0.2, 5)
+        # Solve about the weighted centroid of the calipers, not the DXF
+        # origin (tx, ty): with the origin far from the part, a small
+        # rotation about it is a large translation at the part, which both
+        # couples the unknowns and trips the step gate below.
+        pivot = np.average(c, axis=0, weights=base)
+        local = c - pivot
+        radius = max(1.0, float(np.sqrt(np.mean(np.sum(local**2, axis=1)))))
+        # Small visual-CCW image rotation eps moves a point by eps*(ly, -lx);
+        # this is +eps in the DXF angle (see dxf_to_image_px).
+        matrix = np.column_stack([n, (n[:, 0]*local[:, 1]-n[:, 1]*local[:, 0])/radius])
+        if angle_range == 0:
+            matrix = matrix[:, :2]
+        offsets = np.sum((found.points-c)*n, axis=1)
+        weights = base.copy()
+        for _ in range(4):
+            weighted = matrix*np.sqrt(weights[:, None])
+            condition = float(np.linalg.cond(weighted))
+            if not np.isfinite(condition) or condition > 1e3:
+                return fallback("pose is poorly constrained; use nonparallel datum edges")
+            update, _, rank, _ = np.linalg.lstsq(weighted, offsets*np.sqrt(weights), rcond=None)
+            if rank < matrix.shape[1]:
+                return fallback("pose is poorly constrained; use nonparallel datum edges")
+            residual = offsets-matrix@update
+            sigma = max(0.02, 1.4826*float(np.median(np.abs(residual-np.median(residual)))))
+            weights = base*np.minimum(1, 2.5*sigma/np.maximum(np.abs(residual), 1e-12))
+        delta_angle = math.degrees(update[2]/radius) if angle_range else 0.0
+        # The gate applies to the centroid-frame step.
+        if np.linalg.norm(update[:2]) > 4 or abs(delta_angle) > 1:
+            return fallback("local refinement exceeds the stable search range")
+        new_angle = float(np.clip(angle_deg+delta_angle, -angle_range, angle_range))
+        eps = math.radians(new_angle - angle_deg)
+        # Back to the response's origin convention: the new image position
+        # of the DXF origin is the old one rotated by eps about the pivot,
+        # then shifted by the solved translation.
+        vx, vy = tx - pivot[0], ty - pivot[1]
+        tx = float(pivot[0] + update[0] + vx*math.cos(eps) + vy*math.sin(eps))
+        ty = float(pivot[1] + update[1] - vx*math.sin(eps) + vy*math.cos(eps))
+        angle_deg = new_angle
+        quality = {"refined": True, "reason": None, "rms_px": float(np.sqrt(np.mean(residual**2))),
+                   "point_count": len(found.points), "condition": condition, "datum_count": len(datums)}
+        if np.linalg.norm(update) < 1e-4:
+            break
+    return tx, ty, angle_deg, quality
 
 
 def _render_dxf_template(entities, scale, angle_deg=0, padding=5):
@@ -429,7 +394,12 @@ def _render_dxf_template(entities, scale, angle_deg=0, padding=5):
             coords = [(e["x1"], e["y1"]), (e["x2"], e["y2"])]
         elif "cx" in e:
             r = e.get("radius", 0)
-            coords = [(e["cx"] - r, e["cy"] - r), (e["cx"] + r, e["cy"] + r)]
+            # A circle's radius is unchanged by rotation. Rotating just two
+            # opposite bounding-box corners can shrink one dimension and
+            # clip the template's circle/arc at nonzero angles.
+            cx = e["cx"] * cos_a - e["cy"] * sin_a
+            cy = e["cx"] * sin_a + e["cy"] * cos_a
+            pts.extend([(cx-r, cy-r), (cx+r, cy+r)])
         for px, py in coords:
             pts.append((px * cos_a - py * sin_a, px * sin_a + py * cos_a))
 

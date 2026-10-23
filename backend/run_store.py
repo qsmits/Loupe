@@ -7,7 +7,7 @@ import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 _SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS schema_version (
@@ -48,7 +48,10 @@ CREATE TABLE IF NOT EXISTS results (
     tolerance_warn REAL,
     tolerance_fail REAL,
     pass_fail TEXT,
-    source TEXT
+    source TEXT,
+    matched INTEGER NOT NULL DEFAULT 1,
+    ambiguous INTEGER NOT NULL DEFAULT 0,
+    reason TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_results_run ON results(run_id);
@@ -87,6 +90,16 @@ class RunStore:
                 row = conn.execute("SELECT version FROM schema_version").fetchone()
                 if row is None:
                     conn.execute("INSERT INTO schema_version (version) VALUES (?)", (SCHEMA_VERSION,))
+                elif row["version"] < 2:
+                    # Preserve existing runs; old rows never stored ambiguity.
+                    columns = {r["name"] for r in conn.execute("PRAGMA table_info(results)")}
+                    for name, definition in (("matched", "INTEGER NOT NULL DEFAULT 1"),
+                                             ("ambiguous", "INTEGER NOT NULL DEFAULT 0"),
+                                             ("reason", "TEXT")):
+                        if name not in columns:
+                            conn.execute(f"ALTER TABLE results ADD COLUMN {name} {definition}")
+                    conn.execute("UPDATE results SET matched = 0 WHERE pass_fail IS NULL")
+                    conn.execute("UPDATE schema_version SET version = ?", (SCHEMA_VERSION,))
                 conn.commit()
             finally:
                 conn.close()
@@ -136,13 +149,17 @@ class RunStore:
                 run_number = row["mx"] + 1
 
                 # Compute overall status
-                overall_status = "PASS"
+                overall_status = "PASS" if results else "REVIEW"
                 for r in results:
-                    pf = r.get("pass_fail", "PASS")
+                    pf = str(r.get("pass_fail") or "").upper()
+                    matched = r.get("matched", pf in ("PASS", "WARN", "FAIL"))
+                    if not matched or r.get("ambiguous"):
+                        overall_status = "REVIEW"
+                        continue
                     if pf == "FAIL":
                         overall_status = "FAIL"
                         break
-                    elif pf == "WARN" and overall_status != "FAIL":
+                    elif pf == "WARN" and overall_status == "PASS":
                         overall_status = "WARN"
 
                 now = datetime.now(timezone.utc).isoformat()
@@ -158,12 +175,12 @@ class RunStore:
                         "INSERT INTO results "
                         "(run_id, handle, feature_type, parent_handle, feature_name, "
                         "perp_dev_mm, center_dev_mm, tp_dev_mm, radius_dev_mm, angle_error_deg, "
-                        "deviation_mm, tolerance_warn, tolerance_fail, pass_fail, source) "
-                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        "deviation_mm, tolerance_warn, tolerance_fail, pass_fail, source, matched, ambiguous, reason) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                         (
                             run_id,
                             r.get("handle"),
-                            r.get("feature_type"),
+                            r.get("feature_type") or r.get("type"),
                             r.get("parent_handle"),
                             r.get("feature_name"),
                             r.get("perp_dev_mm"),
@@ -176,6 +193,9 @@ class RunStore:
                             r.get("tolerance_fail"),
                             r.get("pass_fail"),
                             r.get("source"),
+                            bool(r.get("matched", str(r.get("pass_fail") or "").upper() in ("PASS", "WARN", "FAIL"))),
+                            bool(r.get("ambiguous", False)),
+                            r.get("reason"),
                         ),
                     )
 
@@ -201,7 +221,7 @@ class RunStore:
             rows = conn.execute(
                 "SELECT * FROM results WHERE run_id = ?", (run_id,)
             ).fetchall()
-            return [dict(r) for r in rows]
+            return [dict(r, matched=bool(r["matched"]), ambiguous=bool(r["ambiguous"])) for r in rows]
         finally:
             conn.close()
 
@@ -224,7 +244,7 @@ class RunStore:
             rows = conn.execute(
                 "SELECT res.deviation_mm, res.tp_dev_mm, res.feature_type, "
                 "res.perp_dev_mm, res.center_dev_mm, res.pass_fail, "
-                "res.tolerance_warn, res.tolerance_fail, "
+                "res.tolerance_warn, res.tolerance_fail, res.matched, res.ambiguous, res.reason, "
                 "r.run_number, r.timestamp "
                 "FROM results res "
                 "JOIN runs r ON res.run_id = r.id "
@@ -233,28 +253,31 @@ class RunStore:
                 "LIMIT ?",
                 (part_id, handle, limit),
             ).fetchall()
-            return [dict(r) for r in rows]
+            return [dict(r, matched=bool(r["matched"]), ambiguous=bool(r["ambiguous"])) for r in rows]
         finally:
             conn.close()
 
     def compute_spc(self, part_id: int, handle: str) -> dict:
         history = self.get_feature_history(part_id, handle, limit=100000)
+        accepted = [h for h in history if h["matched"] and not h["ambiguous"]]
+        excluded_count = len(history) - len(accepted)
+        history = accepted
         if not history:
-            return {"count": 0, "mean": None, "std": None, "min": None, "max": None, "cpk": None, "feature_type": None}
+            return {"count": 0, "mean": None, "std": None, "min": None, "max": None, "cpk": None, "feature_type": None, "excluded_count": excluded_count}
 
         feature_type = history[0].get("feature_type")
         values = [h["deviation_mm"] for h in history if h["deviation_mm"] is not None]
         count = len(values)
 
         if count == 0:
-            return {"count": 0, "mean": None, "std": None, "min": None, "max": None, "cpk": None, "feature_type": feature_type}
+            return {"count": 0, "mean": None, "std": None, "min": None, "max": None, "cpk": None, "feature_type": feature_type, "excluded_count": excluded_count}
 
         m = statistics.mean(values)
         mn = min(values)
         mx = max(values)
 
         if count < 2:
-            return {"count": count, "mean": m, "std": None, "min": mn, "max": mx, "cpk": None, "feature_type": feature_type}
+            return {"count": count, "mean": m, "std": None, "min": mn, "max": mx, "cpk": None, "feature_type": feature_type, "excluded_count": excluded_count}
 
         s = statistics.stdev(values)
 
@@ -284,6 +307,7 @@ class RunStore:
 
         return {
             "count": count,
+            "excluded_count": excluded_count,
             "mean": m,
             "std": s,
             "min": mn,

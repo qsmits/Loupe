@@ -4,10 +4,9 @@ import { state } from './state.js';
 import { canvas, showStatus, redraw, dxfToCanvas } from './render.js';
 import { renderInspectionTable } from './sidebar.js';
 import { canvasPoint, hitTestDxfEntity } from './tools.js';
-import { fitCircle, fitLine, fitCircleAlgebraic, distPointToSegment } from './math.js';
+import { fitCircle, fitLine, fitCircleRobust, distPointToSegment } from './math.js';
 import { viewport } from './viewport.js';
 import { imageWidth, imageHeight } from './viewport.js';
-import { serverSubpixelMethod } from './subpixel-js.js';
 import { captureEpoch, isStale } from './workspace.js';
 
 export function _hitTestGuidedResult(pt, dxfAnn) {
@@ -121,7 +120,7 @@ export function _updatePickFit() {
     if ((etype === "line" || etype === "polyline_line") && pts.length >= 2) {
       state.inspectionPickFit = { fits: [fitLine(pts)] };
     } else if ((etype === "arc" || etype === "polyline_arc" || etype === "circle") && pts.length >= 3) {
-      const result = fitCircleAlgebraic(pts);
+      const result = fitCircleRobust(pts);
       if (result) state.inspectionPickFit = { fits: [{ type: "circle", cx: result.cx, cy: result.cy, r: result.r }] };
     }
     return;
@@ -147,7 +146,7 @@ export function _updatePickFit() {
     if ((etype === "line" || etype === "polyline_line") && segPts.length >= 2) {
       fits.push(fitLine(segPts));
     } else if ((etype === "arc" || etype === "polyline_arc" || etype === "circle") && segPts.length >= 3) {
-      const result = fitCircleAlgebraic(segPts);
+      const result = fitCircleRobust(segPts);
       if (result) fits.push({ type: "circle", cx: result.cx, cy: result.cy, r: result.r });
     }
     // else: not enough points for this segment yet, skip
@@ -201,7 +200,6 @@ export async function _finalizePickInspection() {
           flip_h: ann.flipH ?? false, flip_v: ann.flipV ?? false,
           tolerance_warn: state.tolerances.warn,
           tolerance_fail: state.tolerances.fail,
-          subpixel: serverSubpixelMethod(state.settings.subpixelMethod),
         }),
       });
       if (!resp.ok) continue;
@@ -228,6 +226,8 @@ export async function _finalizePickInspection() {
         center_dev_mm: result.center_dev_mm ?? null,
         radius_dev_mm: result.radius_dev_mm ?? null,
         profile_mm: result.profile_mm ?? null,
+        fit_quality: result.fit_quality ?? null,
+        reason: result.reason ?? null,
       };
       const sIdx = state.inspectionResults.findIndex(r => r.handle === entity.handle);
       if (sIdx >= 0) state.inspectionResults[sIdx] = sr;

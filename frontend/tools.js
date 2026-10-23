@@ -1,5 +1,5 @@
 import { apiFetch, apiFetchFrame } from './api.js';
-import { refinePointJS } from './subpixel-js.js';
+import { refinePointJS, SNAP_MIN_MAGNITUDE } from './subpixel-js.js';
 import { state, pushUndo } from './state.js';
 import { statusLine } from './procedures.js';
 import { renderMeasurePanel } from './measure-panel.js';
@@ -7,7 +7,7 @@ import { redraw, canvas, showStatus, getLineEndpoints, lineAngleDeg, listEl } fr
 import { dxfToCanvas } from './render-dxf.js';
 import { projectConstrained } from './format.js';
 import { addAnnotation, applyCalibration, elevateAnnotation, recalibrateFromAnnotation } from './annotations.js';
-import { fitCircle, fitCircleAlgebraic, fitLine, splineArcLength, parseDistanceInput, distPointToSegment, polygonArea, catmullRomControlPoints } from './math.js';
+import { fitCircle, fitCircleRobust, fitLine, splineArcLength, parseDistanceInput, distPointToSegment, polygonArea, catmullRomControlPoints } from './math.js';
 import { renderSidebar } from './sidebar.js';
 import { viewport, screenToImage, imageWidth, imageHeight } from './viewport.js';
 import { hitTestAnnotation, hitTestDxfEntity } from './hit-test.js';
@@ -230,7 +230,7 @@ export async function handleToolClick(rawPt, e = {}) {
         });
         if (resp.ok) {
           const refined = await resp.json();
-          if (refined.magnitude > 20) pt = { x: refined.x, y: refined.y, snapped: true };
+          if (refined.magnitude > SNAP_MIN_MAGNITUDE) pt = { x: refined.x, y: refined.y, snapped: true };
         }
       } catch { /* network error — use unrefined point */ }
     }
@@ -913,7 +913,7 @@ export function finalizeRelationPick() {
   const { kind } = state.pendingRelationFit;
   if (kind === "circle") {
     if (state.pendingPoints.length < 3) return false;
-    const fit = fitCircleAlgebraic(state.pendingPoints);
+    const fit = fitCircleRobust(state.pendingPoints);
     if (!fit) { showStatus("Could not fit a circle to those points"); return false; }
     const circ = addAnnotation({ type: "circle", cx: fit.cx, cy: fit.cy, r: fit.r });
     state.pendingPoints = [];
@@ -1114,16 +1114,16 @@ export function handleDrag(pt) {
 /** Finalize arc-fit directly using the current state.arcFitMode. */
 export function promptArcFitChoice() {
   if (state.pendingPoints.length < 3) return;
-  const fit = fitCircleAlgebraic(state.pendingPoints);
-  if (!fit) { showStatus("Could not fit circle — points may be collinear"); return; }
+  const fit = fitCircleRobust(state.pendingPoints);
+  if (!fit) { showStatus("Could not fit circle — points may be collinear or cover too little of the arc"); return; }
   finalizeArcFit(state.arcFitMode === "circle");
 }
 
 /** Called by the Arc / Circle chooser buttons. */
 export function finalizeArcFit(asCircle) {
   if (state.pendingPoints.length < 3) return;
-  const fit = fitCircleAlgebraic(state.pendingPoints);
-  if (!fit) { showStatus("Could not fit circle — points may be collinear"); return; }
+  const fit = fitCircleRobust(state.pendingPoints);
+  if (!fit) { showStatus("Could not fit circle — points may be collinear or cover too little of the arc"); return; }
 
   const savedPoints = [...state.pendingPoints];
   let ann;

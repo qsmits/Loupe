@@ -9,26 +9,9 @@ import { ensureFrozen } from './detect.js';
 import { imageWidth, imageHeight } from './viewport.js';
 import { captureEpoch, isStale } from './workspace.js';
 import { showToast } from './shell.js';
-import { buildInspectGuidedBody } from './inspect-request.js';
-
-// ── Shared alignment helper ───────────────────────────────────────────────
-
-/**
- * Apply alignment result from /align-dxf-edges to a DXF overlay annotation.
- * Computes the correct offset from the anchor point.
- */
-export function applyAlignmentResult(ann, result) {
-  ann.scale = result.scale ?? ann.scale;
-  ann.angle = result.angle_deg ?? 0;
-  const cosA = Math.cos(ann.angle * Math.PI / 180);
-  const sinA = Math.sin(ann.angle * Math.PI / 180);
-  const xr = result.dxf_cx * cosA - result.dxf_cy * sinA;
-  const yr = result.dxf_cx * sinA + result.dxf_cy * cosA;
-  const cx = xr * ann.scale;
-  const cy = -yr * ann.scale;
-  ann.offsetX = result.img_cx - cx;
-  ann.offsetY = result.img_cy - cy;
-}
+import { buildInspectGuidedBody, inspectionOptions, inspectionControls, newOverlayInspectionOptions } from './inspect-request.js';
+import { applyAlignmentResult } from './dxf-transform.js';
+export { applyAlignmentResult } from './dxf-transform.js';
 
 // ── Per-feature tolerance popover ──────────────────────────────────────────
 let _ftolActiveHandle = null;
@@ -94,6 +77,19 @@ function updateExportButtons() {
 }
 
 export function initDxfHandlers() {
+  for (const [id, path] of Object.entries(inspectionControls)) {
+    document.getElementById(id)?.addEventListener('change', e => {
+      const ann = state.annotations.find(a => a.type === 'dxf-overlay');
+      if (!ann || (e.target.type === 'number' && !e.target.checkValidity())) return;
+      pushUndo();
+      const opts = inspectionOptions(ann.inspectionOptions);
+      const value = e.target.type === 'number' ? Number(e.target.value) : e.target.value;
+      if (path.length === 2) opts[path[0]][path[1]] = value;
+      else opts[path[0]] = value;
+      ann.inspectionOptions = opts;
+      updateDxfControlsVisibility();
+    });
+  }
   // Update export buttons when inspection state changes (e.g. session load)
   document.addEventListener('inspection-state-changed', () => updateExportButtons());
 
@@ -139,6 +135,7 @@ export function initDxfHandlers() {
       updateExportButtons();
       addAnnotation({
         type: "dxf-overlay",
+        inspectionOptions: newOverlayInspectionOptions(),
         entities,
         offsetX: (imageWidth || canvas.width) / 2,
         offsetY: (imageHeight || canvas.height) / 2,
@@ -464,6 +461,7 @@ export function initDxfHandlers() {
       const inspectableTypes = ["line", "polyline_line", "arc", "polyline_arc", "circle"];
       const epoch = captureEpoch();
       const defaultTolUsed = state.dxfDefaultTol;
+      const options = inspectionOptions(ann.inspectionOptions);
       const resp = await apiFetchFrame("/inspect-guided", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -475,7 +473,9 @@ export function initDxfHandlers() {
           angleDeg: ann.angle ?? 0,
           flipH: ann.flipH ?? false,
           flipV: ann.flipV ?? false,
-          corridorPx: 15,
+          corridorPx: options.corridorPx,
+          edgeMethod: options.edgeMethod,
+          caliper: options.caliper,
           smoothing: parseInt(document.getElementById("adv-smoothing")?.value || "1"),
           cannyLow: parseInt(document.getElementById("canny-low")?.value || "50"),
           cannyHigh: parseInt(document.getElementById("canny-high")?.value || "130"),
@@ -516,6 +516,10 @@ export function initDxfHandlers() {
         center_dev_mm: r.center_dev_mm ?? null,
         radius_dev_mm: r.radius_dev_mm ?? null,
         profile_mm: r.profile_mm ?? null,
+        fit_quality: r.fit_quality ?? null,
+        sampling_quality: r.sampling_quality ?? null,
+        reason: r.reason ?? null,
+        ambiguous: r.ambiguous === true,
         spec: r.spec ?? null,
         size_dev_mm: r.size_dev_mm ?? null,
         spec_source: r.spec_source ?? null,
@@ -794,6 +798,7 @@ export async function setDxfOverlayFromEntities(entities, opts) {
   updateExportButtons();
   addAnnotation({
     type: "dxf-overlay",
+    inspectionOptions: newOverlayInspectionOptions(),
     entities,
     offsetX: opts.offsetX,
     offsetY: opts.offsetY,

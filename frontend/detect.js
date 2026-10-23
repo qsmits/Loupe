@@ -4,7 +4,7 @@ import { redraw, showStatus, img, canvas, resizeCanvas } from './render.js';
 import { addAnnotation } from './annotations.js';
 import { updateFreezeUI } from './sidebar.js';
 import { setImageSize, imageWidth, imageHeight, fitToWindow, clampPan } from './viewport.js';
-import { cacheImageData } from './subpixel-js.js';
+import { cacheImageData, serverSubpixelMethod } from './subpixel-js.js';
 import { isBrowserCameraActive, captureBrowserFrame } from './browser-camera.js';
 import { captureEpoch, isStale } from './workspace.js';
 
@@ -251,7 +251,7 @@ export function initDetectHandlers() {
     const minR = parseInt(document.getElementById("circle-min-r").value);
     const maxR = parseInt(document.getElementById("circle-max-r").value);
     const subpixel = document.getElementById("detect-subpixel")?.checked
-      ? state.settings.subpixelMethod : "none";
+      ? serverSubpixelMethod(state.settings.subpixelMethod) : "none";
     const resp = await apiFetchFrame("/detect-circles", {
       method: "POST",
       headers: {"Content-Type": "application/json"},
@@ -311,7 +311,7 @@ export function initDetectHandlers() {
     const minLen = parseInt(document.getElementById("adv-min-length").value);
     const nmsDist = parseInt(document.getElementById("adv-nms-dist").value);
     const subpixel = document.getElementById("detect-subpixel")?.checked
-      ? state.settings.subpixelMethod : "none";
+      ? serverSubpixelMethod(state.settings.subpixelMethod) : "none";
     const r = await apiFetchFrame("/detect-lines-merged", { method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ threshold1: t1, threshold2: t2, min_length: minLen, nms_dist: nmsDist, smoothing, subpixel, surface_mode: state.surfaceMode }) });
@@ -337,7 +337,7 @@ export function initDetectHandlers() {
     const smoothing = parseInt(document.getElementById("adv-smoothing").value);
     const minSpan = parseInt(document.getElementById("adv-min-span").value);
     const subpixel = document.getElementById("detect-subpixel")?.checked
-      ? state.settings.subpixelMethod : "none";
+      ? serverSubpixelMethod(state.settings.subpixelMethod) : "none";
     const r = await apiFetchFrame("/detect-arcs-partial", { method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ threshold1: t1, threshold2: t2, min_span_deg: minSpan, smoothing, subpixel, surface_mode: state.surfaceMode }) });

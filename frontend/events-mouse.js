@@ -23,7 +23,7 @@ import { _hitTestGuidedResult, _findConnectedEntities, _annotationPrimaryPoint,
 import { drawLoupe, hitTestConstraintBadge } from './render-hud.js';
 import { isLensCalMode, lensCalClick, lensCalMouseMove } from './lens-cal.js';
 import { isTiltCalMode, tiltCalClick, tiltCalMouseMove } from './tilt-cal.js';
-import { refinePointJS } from './subpixel-js.js';
+import { refinePointJS, SNAP_MIN_MAGNITUDE } from './subpixel-js.js';
 import { openCommentEditor } from './comment-editor.js';
 import { hitTestAnnotation } from './hit-test.js';
 import { handleGearPickClick } from './gear.js';
@@ -80,7 +80,7 @@ function _updateSubpixelPreview(pt, altKey = false) {
       });
       if (resp.ok) {
         const r = await resp.json();
-        state._subpixelSnapTarget = (r.magnitude > 20) ? { x: r.x, y: r.y } : null;
+        state._subpixelSnapTarget = (r.magnitude > SNAP_MIN_MAGNITUDE) ? { x: r.x, y: r.y } : null;
         redraw();
       }
     } catch { /* ignore network errors */ }
@@ -720,8 +720,14 @@ export function initMouseHandlers() {
           if (r.center_dev_mm != null) lines.push(`Center dev: ${r.center_dev_mm.toFixed(4)} mm`);
           if (r.radius_dev_mm != null) lines.push(`Radius dev: ${r.radius_dev_mm.toFixed(4)} mm`);
           lines.push("");
+          if (r.reason) lines.push(r.reason);
+          if (r.fit_quality && Number.isFinite(r.fit_quality.rms_px)) {
+            lines.push(`Fit RMS: ${r.fit_quality.rms_px.toFixed(3)} px`);
+            lines.push(`Fit points: ${r.fit_quality.inlier_count}/${r.fit_quality.point_count}`);
+          }
           lines.push(...formatToleranceTooltipLines(r));
-          lines.push(`Result: ${r.pass_fail?.toUpperCase() ?? "?"}`);
+          lines.push(`Result: ${r.pass_fail?.toUpperCase() ?? "?"}${r.matched && r.ambiguous ? "?" : ""}`);
+          if (r.matched && r.ambiguous && r.reason) lines.push(`Ambiguous: ${r.reason}`);
           lines.push(`Source: ${r.source ?? "auto"}`);
           tooltip.textContent = lines.join("\n");
           tooltip.style.left = (e.clientX + 12) + "px";

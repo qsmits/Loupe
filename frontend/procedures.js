@@ -1,7 +1,7 @@
 // frontend/procedures.js — per-tool guided-procedure definitions.
 // Single source of truth for step text: the status bar (tools.js) and the
 // Measure panel (measure-panel.js) both read from here so they cannot drift.
-import { fitCircleAlgebraic, fitLine } from './math.js';
+import { fitCircleRobust, fitLine } from './math.js';
 
 function fmtLen(px, cal) {
   if (!cal || !(cal.pixelsPerMm > 0)) return `${px.toFixed(1)} px`;
@@ -12,7 +12,7 @@ function fmtLen(px, cal) {
 function circleFitLive(s) {
   const pts = s.pendingPoints || [];
   if (pts.length < 3) return null;
-  const fit = fitCircleAlgebraic(pts);
+  const fit = fitCircleRobust(pts);
   if (!fit) return null;
   const rms = Math.sqrt(pts.reduce((acc, p) => {
     const e = Math.hypot(p.x - fit.cx, p.y - fit.cy) - fit.r;

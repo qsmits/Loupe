@@ -65,3 +65,14 @@ export function dxfToCanvasPure(x, y, ann, originAngle = 0) {
 
   return { x: offsetX + cx, y: offsetY + cy };
 }
+/** Apply an edge-alignment anchor using the same transform as the overlay. */
+export function applyAlignmentResult(ann, result) {
+  ann.scale = result.scale ?? ann.scale;
+  ann.angle = result.angle_deg ?? 0;
+  ann.flipH = result.flip_h ?? false;
+  ann.flipV = result.flip_v ?? false;
+  const local = dxfToCanvasPure(result.dxf_cx, result.dxf_cy,
+    { ...ann, offsetX: 0, offsetY: 0 });
+  ann.offsetX = result.img_cx - local.x;
+  ann.offsetY = result.img_cy - local.y;
+}

@@ -1379,6 +1379,7 @@ body.no-camera .camera-section { display: none; }
 }
 .badge-pass  { color: var(--success); font-weight: 600; }
 .badge-warn  { color: var(--warning); font-weight: 600; }
+.badge-ambiguous { color: #ff9f0a; font-weight: 600; text-decoration: underline dotted; cursor: help; }
 .badge-fail  { color: var(--danger);  font-weight: 600; }
 .badge-unmatched { color: var(--muted); }
 .insp-source {

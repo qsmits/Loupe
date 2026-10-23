@@ -30,15 +30,15 @@ Drop an interferogram anywhere in the image/result view or camera preview to loa
 - Calibration profiles with per-magnification settings, export/import
 - Lens distortion correction, perspective (tilt) correction via 4-point homography
 - Undo/redo for measurement edits; perspective correction has a separate undo that also restores the image and calibration
-- Sub-pixel edge snapping (parabola + Gaussian, client-side, instant preview); manually drawn segments also snap to nearby annotation and arc endpoints, and closing a loop this way offers a one-click "Create area"
+- Sub-pixel edge snapping to the nearest gradient ridge (parabola + Gaussian; browser and server methods); manually drawn segments also snap to nearby annotation and arc endpoints, and closing a loop this way offers a one-click "Create area"
 - Numbered `[n]` canvas labels (name + deviation, pass/fail tint) that match the sidebar's numbering exactly
 
 ### Detection & Inspection
-- **Auto-detection**: Circle detection (Hough), contour-based line detection, partial arc detection — adjustable Canny thresholds, smoothing, NMS, surface presets (Wire EDM / Lathe / 3D Print)
-- **DXF-guided inspection**: Load a DXF drawing, auto-align to the part (edge-based template matching, no circles required), run corridor-based per-feature edge detection with RANSAC inlier filtering and shadow-aware edge selection
+- **Auto-detection**: Contour-based circle/line detection and partial arc detection, with sub-pixel refinement enabled by default — adjustable Canny thresholds, smoothing, NMS, surface presets (Wire EDM / Lathe / 3D Print)
+- **DXF-guided inspection**: Load a DXF drawing, auto-align to the part (edge-based template matching, no circles required), run corridor-based per-feature edge detection with geometric robust circle/arc fits and line inlier filtering; separated competing edges are flagged as ambiguous
 - **Manual point-pick**: Click any DXF feature to measure it by placing points along the actual edge; compound features and connected standalone entities auto-assign points to the nearest sub-segment
 - **GD&T**: True Position (TP = 2 × radial deviation), Punch/Die tolerance tagging with directional deviation coloring (green/amber/red)
-- **Deviation reporting**: Grouped sidebar, hover tooltips, numbered cross-references to PDF. CSV and PDF export
+- **Deviation reporting**: Grouped sidebar, hover tooltips with fit RMS and point counts, numbered cross-references to PDF. CSV and PDF export
 
 ### Annotation Management
 - **Multi-select**: Shift+click, rectangle drag-select; bulk delete/elevate
@@ -190,6 +190,51 @@ Runtime settings in `config.json`:
 node --test tests/frontend/test_*.js    # frontend tests (Node.js required)
 ```
 
+`tests/test_metrology_accuracy.py` and `tests/frontend/test_metrology_accuracy.js`
+exercise fractional analytic edges across blur, noise, phase and orientation,
+including calibration snapping, production detection/inspection, short arcs,
+outliers, and ambiguous edges. These establish software regression limits;
+optical accuracy still needs validation against independently measured references.
+`tests/test_caliper_and_pose_accuracy.py` also checks raw-profile inspection and
+fractional rigid alignment, including competing edges, transformed arc sectors,
+clipped profiles, fixed rotation, and explicit alignment datums.
+Circle fit standard errors describe independent point noise conditional on the fit,
+excluding scale, lens, alignment, and neighboring-pixel correlation.
+
+In the DXF menu, **Edge sampling** selects raw calipers (the default for new
+setups) or the Canny contour path. Calipers average raw intensities across a
+width, filter the normal profile, localize fractional derivative peaks, and
+weight geometric fits by edge contrast. Search width, caliper width, sigma,
+brightness polarity and edge choice are saved with the overlay and templates.
+Polarity means brightness change going outward: away from a circle's centre,
+away from a closed outline's interior, or away from the drawing centre for a
+standalone line. "Outward" is decided in image coordinates after the overlay
+transform, so the direction a CAD line was drawn, a closed polyline's vertex
+order, and overlay flips do not change it; a line through the drawing centre
+falls back to a fixed orientation (reported as `normal_rule: "canonical"` in the
+sampling diagnostics). Punch/Die tags alone cannot determine brightness. The
+default requires a unique edge; explicit first (the first edge met going
+outward from the inner end of the search range), strongest or closest choices
+should reflect the intended boundary. Fit and
+sampling diagnostics appear in inspection tooltips. Existing templates and
+API requests without an edge method retain the contour path and its
+measurements; where a contour corridor holds separated competing edges, the
+result stays matched with the same measurement and verdict but carries
+`ambiguous: true` and a `reason` (gear tooth segments are never flagged).
+Ambiguous results remain amber in the canvas, group badges, and PDF report;
+the inspection summary counts ambiguous and unmatched features explicitly.
+Saved SPC runs retain these flags and their reasons (existing databases migrate
+automatically). Ambiguous or unmatched results require review and are excluded
+from capability statistics, with the excluded count shown in the SPC panel.
+
+Edge alignment interpolates correlation peaks then refines translation and
+rotation against raw caliper edges at a fixed calibrated scale. Poorly
+constrained poses retain the coarse match and include a reason in the response.
+It uses a global drawing fit unless entities explicitly carry
+`alignment_datum: true`; marked entities then define both coarse and refined
+alignment, so other features cannot absorb defects into the pose. Per-entity
+`edge_polarity` and `edge_selection` can override guided caliper recipe choices.
+
 No camera hardware required.
 
 ## Project Structure
@@ -205,7 +250,8 @@ backend/
     dxf_export.py              Measurements → DXF (reverse engineering export)
     alignment.py               Circle-based and edge-based DXF auto-alignment
     calibration.py             Pixel↔mm math
-    subpixel.py                Sub-pixel edge refinement (parabola + Gaussian)
+    subpixel.py                Gradient-ridge snapping and sub-pixel refinement
+    geometry.py                Robust geometric circle/arc fit and diagnostics
     focus_stack.py             Depth-from-focus stack computation, HDR fusion
     heightmap_analysis.py      ISO 25178 areal roughness, spatial texture, PSD
     stitch.py                  Image stitching with sub-pixel placement
@@ -311,7 +357,7 @@ frontend/
   browser-camera.js          MediaDevices browser camera integration
   comment-editor.js          Canvas comment annotation editor
   reticle.js                 Reticle CRUD: load list, load/unload, save custom from annotations
-  math.js                    fitCircle, fitLine, fitCircleAlgebraic, geometry helpers
+  math.js                    fitCircle, fitLine, fitCircleRobust, geometry helpers
   format.js                  Number formatting utilities
   api.js                     apiFetch wrapper (session token, hosted-mode handling)
   gear.js                    Gear analysis UI (parked)

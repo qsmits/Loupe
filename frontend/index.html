@@ -227,7 +227,7 @@
           </div>
           <div class="detect-row">
             <label class="detect-label" title="Refine edge positions to sub-pixel accuracy before fitting">Sub-pixel</label>
-            <input type="checkbox" id="detect-subpixel" />
+            <input type="checkbox" id="detect-subpixel" checked />
           </div>
           <div class="detect-actions">
             <button id="btn-detect-lines-merged" class="detect-btn">Detect lines (merged)</button>
@@ -311,7 +311,16 @@
             <input type="number" id="dxf-default-tol" class="dxf-input" step="0.001" min="0" placeholder="—" title="Applies to features without a drawing tolerance" />
             <span class="dxf-unit">mm</span>
           </div>
-          <button class="dropdown-item" id="btn-run-inspection" disabled title="Load a DXF and detect features first">Run inspection</button>
+          <details>
+            <summary class="dropdown-item">Edge sampling ▾</summary>
+            <div class="dxf-row"><label for="inspection-method">Method</label><select id="inspection-method"><option value="caliper">Raw calipers</option><option value="contour">Canny contours</option></select></div>
+            <div class="dxf-row"><label for="inspection-corridor">Search ± px</label><input class="dxf-input" id="inspection-corridor" type="number" value="15" min="0.5" max="200" step="0.5" required></div>
+            <div class="dxf-row"><label for="caliper-width">Width px</label><input class="dxf-input" id="caliper-width" type="number" value="5" min="0" max="21" step="0.5" required></div>
+            <div class="dxf-row"><label for="caliper-sigma">Blur σ px</label><input class="dxf-input" id="caliper-sigma" type="number" value="1" min="0.3" max="5" step="0.1" required></div>
+            <div class="dxf-row"><label for="caliper-polarity">Brightness</label><select id="caliper-polarity" title="Brightness change going outward: away from a circle's centre, away from a closed outline's interior, or away from the drawing centre for a standalone line."><option value="any">Either</option><option value="rising">Dark → light</option><option value="falling">Light → dark</option></select></div>
+            <div class="dxf-row"><label for="caliper-selection">Edge choice</label><select id="caliper-selection" title="Which edge to take when the search range crosses several. First going outward: the first edge met going outward from the inner end of the search range."><option value="unique">Require one edge</option><option value="first">First going outward</option><option value="strongest">Strongest</option><option value="closest">Closest to nominal</option></select></div>
+          </details>
+          <button class="dropdown-item" id="btn-run-inspection" disabled title="Load a DXF first">Run inspection</button>
           <button class="detect-btn" id="btn-save-run" hidden title="Save this inspection run for SPC tracking">Save Run</button>
           <button class="dropdown-item" id="btn-dxf-move" disabled title="Load a DXF first">Move DXF</button>
           <div class="dropdown-divider"></div>
@@ -1655,14 +1664,14 @@
             <h2 class="help-page-title">Auto-Detection</h2>
             <p class="help-page-sub">Automatically finds circles, lines, and arcs in the frozen image.</p>
             <div class="help-section-label">Circle detection</div>
-            <p class="help-p">Uses the Hough circle transform. Adjust <strong>Min radius</strong>, <strong>Max radius</strong>, and <strong>Threshold</strong> sliders before running. Lower the threshold to find fainter circles; raise it to suppress false positives.</p>
+            <p class="help-p">Finds circular contours and fits their edge points with a robust geometric circle fit. Adjust <strong>Min radius</strong>, <strong>Max radius</strong>, and <strong>Sensitivity</strong> before running. Higher sensitivity finds fainter edges and may also find more false positives.</p>
             <div class="help-section-label">Line detection</div>
             <p class="help-p">Runs Canny edge detection followed by a Hough line transform and non-maximum suppression (NMS). Lines closer than the NMS distance and within the angle tolerance are merged, keeping the longest. The <strong>bilateral smoothing</strong> slider reduces noise on textured surfaces before edge detection.</p>
             <div class="help-section-label">Partial arc detection</div>
             <p class="help-p">Contour-based detection that discriminates arcs from straight lines using curvature analysis. Useful for EDM wire-cut parts where arcs may be incomplete due to reflections or chamfers.</p>
             <div class="help-section-label">Elevation</div>
             <p class="help-p">Detected features (shown in orange in the sidebar) are separate from measurements. Click <strong>↑</strong> (elevate) in the sidebar or press <kbd>U</kbd> to promote a detected feature to a permanent measurement that appears in CSV, PDF, and DXF exports.</p>
-            <div class="help-tip">Run detection with the <strong>Sub-pixel</strong> checkbox enabled for more accurate line/arc positions before elevation.</div>
+            <div class="help-tip">The <strong>Sub-pixel</strong> checkbox is enabled by default to refine circle, line, and arc positions before elevation.</div>
           </div>
 
           <!-- DXF -->
@@ -1819,7 +1828,7 @@
             <p class="help-page-sub">Locates edges more precisely than individual pixel positions.</p>
             <p class="help-p">When you hover over the frozen image with a measurement tool active, the cursor snaps to the nearest detected edge at sub-pixel precision. An orange crosshair marks the snap position. Hold <kbd>Alt</kbd> to bypass snapping.</p>
             <div class="help-section-label">How it works</div>
-            <p class="help-p">A small neighbourhood around the cursor is sampled. A <strong>Sobel filter</strong> computes the image gradient — the rate of change of brightness — giving a high response at edges and near-zero in flat regions. The pixel with the highest gradient magnitude in the search radius is identified as the edge.</p>
+            <p class="help-p">A small neighbourhood around the cursor is sampled. A <strong>Sobel filter</strong> computes the image gradient — the rate of change of brightness — giving a high response at edges and near-zero in flat regions. Local gradient peaks are identified, and the nearest sufficiently strong peak is selected. Flat regions and edge flanks are rejected.</p>
             <p class="help-p">Then the edge is refined to sub-pixel precision along the gradient direction using one of two methods:</p>
             <div class="help-figure">
               <svg viewBox="0 0 420 215" role="img" aria-label="Plot of gradient magnitude sampled at whole pixels across an edge, with a parabola fitted through the three samples around the maximum; the fitted vertex sits between pixel centres.">
@@ -1854,10 +1863,10 @@
               <thead><tr><th>Method</th><th>How it works</th><th>Best for</th></tr></thead>
               <tbody>
                 <tr><td><strong>Parabola</strong></td><td>Fits a parabola to the three gradient values around the peak. Sub-pixel offset = −(g₊₁ − g₋₁) / (2(g₊₁ − 2g₀ + g₋₁)). Fast and stable.</td><td>Sharp, clean edges</td></tr>
-                <tr><td><strong>Gaussian</strong></td><td>Fits a Gaussian by taking the log of the gradient values and solving a linear system. Handles asymmetric or slightly blurred peaks better.</td><td>Soft edges, textured surfaces</td></tr>
+                <tr><td><strong>Gaussian</strong></td><td>The browser method interpolates a peak in the log gradient. The server method interpolates an intensity second-derivative zero crossing.</td><td>Compare with Parabola on your images</td></tr>
               </tbody>
             </table>
-            <p class="help-p">If the peak gradient magnitude is below 20 (out of 255), snapping is suppressed — the edge is considered too faint to snap to reliably.</p>
+            <p class="help-p">Snapping is suppressed when no sufficiently strong, valid gradient peak is found.</p>
             <div class="help-tip">The snapping radius shrinks as you zoom in, so at high zoom you snap to the finest local edge rather than a distant one.</div>
           </div>
 
@@ -1870,8 +1879,8 @@
             <p class="help-p">The Canny algorithm finds edges in several steps: Gaussian smoothing → Sobel gradient computation → non-maximum suppression along gradient directions → hysteresis thresholding (strong edges kept, weak edges kept only if connected to strong ones). The result is a thin, one-pixel-wide edge map.</p>
             <div class="help-section-label">Line detection (Hough transform)</div>
             <p class="help-p">The Hough line transform votes in a parameter space of (ρ, θ) for every edge point. Peaks in vote space correspond to lines. After detection, non-maximum suppression merges nearby lines with similar angles and positions, keeping the longest representative.</p>
-            <div class="help-section-label">Circle detection (Hough transform)</div>
-            <p class="help-p">Similar voting approach in the (cx, cy, r) space. The radius range is constrained by the Min/Max radius sliders to limit search space and false positives.</p>
+            <div class="help-section-label">Circle detection (contour fitting)</div>
+            <p class="help-p">Circular contours provide candidate edge points. Sub-pixel refinement and a robust geometric fit estimate the centre and radius within the selected radius range.</p>
             <div class="help-section-label">Partial arc detection</div>
             <p class="help-p">Contours are extracted from the edge map. Each contour is tested against a fitted circle — if the residual error is low and the contour spans at least the minimum arc angle, it is classified as an arc. Nearby collinear contours are classified as lines instead.</p>
           </div>
@@ -1896,10 +1905,10 @@
             <p class="help-p">Given three points, the unique circumscribed circle is found by intersecting the perpendicular bisectors of two chords. This is an exact solution — there is no fitting involved — so it is sensitive to point placement accuracy. Use Fit Arc for more robust results from many points.</p>
             <div class="help-section-label">Center+Edge circle (Circle tool — Center+Edge mode)</div>
             <p class="help-p">Click a center point, then click any point on the circumference. The radius is the Euclidean distance between the two clicks. This is exact and requires only two points, but accuracy depends entirely on how precisely the center is known.</p>
-            <div class="help-section-label">Algebraic fit (Fit Arc, ≥3 points)</div>
-            <p class="help-p">Minimises an algebraic distance in the space of implicit circle equations. Every point (xᵢ, yᵢ) on a circle satisfies xᵢ² + yᵢ² + Dxᵢ + Eyᵢ + F = 0. The coefficients [D, E, F] are found by solving a linear least-squares system (equivalent to a constrained SVD). This is more robust than geometric fitting and does not require an initial estimate.</p>
-            <div class="help-section-label">RANSAC inlier filtering (guided inspection)</div>
-            <p class="help-p">In corridor inspection, edge points are collected and then filtered using a RANSAC-like loop: a random subset is used to fit a candidate line or circle, and only points within a residual threshold are kept as inliers. This rejects outliers from reflections, scratches, and burrs that fall within the corridor.</p>
+            <div class="help-section-label">Robust geometric fit (Fit Arc, ≥3 points)</div>
+            <p class="help-p">Fits the radial distances from the points to the circle, reducing the influence of outliers. Very short arcs may not constrain the centre and radius reliably; collect points over a wider span if the fit is declined.</p>
+            <div class="help-section-label">Inlier filtering (guided inspection)</div>
+            <p class="help-p">Circle and arc fits reduce the influence of points with large radial residuals. Line fits use a residual threshold and refit the retained points. Fit RMS and point counts appear in tooltips. Clearly separated competing edges are reported as ambiguous; narrow the corridor or adjust alignment before measuring again.</p>
           </div>
 
           <!-- EXPORTING -->

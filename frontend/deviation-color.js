@@ -28,6 +28,7 @@ const RED   = "#ff453a";
  * function's extraction and is preserved exactly.
  */
 export function deviationColor(r) {
+  if (r.ambiguous) return AMBER;
   if (r.pass_fail === "pass") return GREEN;
 
   const mode = state.featureModes[r.handle] || state.featureModes[r.parent_handle] || "die";

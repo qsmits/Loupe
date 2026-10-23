@@ -10,12 +10,46 @@ import math
 import numpy as np
 import cv2
 
-from .detection import preprocess, fit_circle_algebraic
+from .detection import preprocess
+from .geometry import fit_circle_robust, fit_line_robust
+from . import caliper as _caliper
+from .caliper import caliper_geometry, float_frame, outward_references, sample_caliper_edges
 from .line_arc_matching import dxf_to_image_px, perp_dist_point_to_line
 
 # Minimum edge points required for fitting
 _MIN_POINTS_LINE = 5
 _MIN_POINTS_ARC = 8
+
+
+def _ambiguous_offsets(offsets, min_points):
+    """Flag distinct, well-supported edges before proximity selects a winner.
+
+    This is a conservative guard for separated parallel/concentric edges,
+    not a replacement for polarity-aware calipers. Close or overlapping
+    clusters still need the later sampling work. In the contour path it
+    only FLAGS the matched result (see _flag_ambiguity); it never unmatches
+    and is not applied to gear tooth segments.
+    """
+    ordered = np.sort(offsets)
+    clusters = np.split(ordered, np.flatnonzero(np.diff(ordered) > 2.5) + 1)
+    largest = max(len(c) for c in clusters)
+    supported = [c for c in clusters if len(c) >= max(min_points, 0.3 * largest)]
+    return any(abs(np.median(a) - np.median(b)) >= 5
+               for i, a in enumerate(supported) for b in supported[i + 1:])
+
+
+_AMBIGUOUS_CONTOUR_REASON = ("ambiguous: competing edges in corridor; the nearest well-supported "
+                             "edge was measured. Narrow the corridor, adjust alignment, or use "
+                             "calipers with a polarity")
+
+
+def _flag_ambiguity(ambiguous: bool, result: dict) -> dict:
+    """Contour-path results carry ``ambiguous``; a flagged result keeps its
+    measurement and verdict (the legacy behaviour) and explains in ``reason``."""
+    result["ambiguous"] = bool(ambiguous)
+    if ambiguous:
+        result["reason"] = _AMBIGUOUS_CONTOUR_REASON
+    return result
 
 
 def _sample_points(pts: np.ndarray, max_n: int = 50) -> list:
@@ -166,7 +200,7 @@ def _apply_spec_scoring(result: dict, entity: dict, spec: dict | None, ppm: floa
 
 def _inspect_line(entity, edge_xy, ppm, tx, ty, angle_rad,
                   corridor_px, flip_h, flip_v, tol_warn, tol_fail,
-                  subpixel="none", raw_gray=None):
+                  subpixel="none", raw_gray=None, gradient=None):
     """Inspect a line/polyline_line entity against corridor-filtered edge pixels."""
     # Gear tooth segments: the silhouette is a thin boundary between tooth
     # metal and background, while polished/scratched tooth faces produce many
@@ -225,7 +259,7 @@ def _inspect_line(entity, edge_xy, ppm, tx, ty, angle_rad,
 
     if subpixel != "none" and raw_gray is not None and len(corridor_pts) >= _MIN_POINTS_LINE:
         from .subpixel import refine_subpixel
-        corridor_pts = refine_subpixel(corridor_pts, raw_gray, method=subpixel)
+        corridor_pts = refine_subpixel(corridor_pts, raw_gray, method=subpixel, gradient=gradient)
 
     if len(corridor_pts) < _MIN_POINTS_LINE:
         return _unmatched(entity, f"too few edge points ({len(corridor_pts)})")
@@ -235,7 +269,12 @@ def _inspect_line(entity, edge_xy, ppm, tx, ty, angle_rad,
     # Strategy: find edge clusters, pick the one closest to the DXF nominal.
 
     # Compute signed perpendicular distance of each point from the NOMINAL line
-    perp_signed = perp[mask]  # already computed — signed distance from nominal
+    perp_signed = (corridor_pts[:, 0] - x1_px) * nx + (corridor_pts[:, 1] - y1_px) * ny
+    # Legacy contour path: competing edges are FLAGGED on the matched result
+    # (the proximity/count selection below still measures, as it always
+    # has). Gear tooth segments are exempt: their interior texture is
+    # expected and closest-bin selection handles it.
+    ambiguous = not is_gear and _ambiguous_offsets(perp_signed, _MIN_POINTS_LINE)
 
     # Bin points by their signed perpendicular distance to find edge clusters
     # Use a histogram with 1px bins
@@ -329,7 +368,7 @@ def _inspect_line(entity, edge_xy, ppm, tx, ty, angle_rad,
     # Determine pass/fail from perpendicular deviation
     pf = _pass_fail(perp_dev_mm, tol_warn, tol_fail)
 
-    return {
+    return _flag_ambiguity(ambiguous, {
         "handle": entity.get("handle"),
         "type": entity.get("type"),
         "parent_handle": entity.get("parent_handle"),
@@ -337,6 +376,8 @@ def _inspect_line(entity, edge_xy, ppm, tx, ty, angle_rad,
         "edge_point_count": len(corridor_pts),
         "edge_points_sample": _sample_points(corridor_pts),
         "fit": _line_fit_endpoints(centroid, direction, inlier_pts),
+        "fit_quality": {"rms_px": float(np.sqrt(np.mean(signed_dists ** 2))),
+                        "inlier_count": len(inlier_pts), "point_count": len(near_pts)},
         "perp_dev_mm": round(perp_dev_mm, 4),
         "angle_error_deg": round(angle_err, 2),
         "center_dev_mm": None,
@@ -349,12 +390,12 @@ def _inspect_line(entity, edge_xy, ppm, tx, ty, angle_rad,
         "tolerance_fail": tol_fail,
         "pass_fail": pf,
         "reason": None,
-    }
+    })
 
 
 def _inspect_arc_circle(entity, edge_xy, ppm, tx, ty, angle_rad,
                         corridor_px, flip_h, flip_v, tol_warn, tol_fail,
-                        subpixel="none", raw_gray=None):
+                        subpixel="none", raw_gray=None, gradient=None):
     """Inspect an arc/polyline_arc/circle entity against corridor-filtered edge pixels."""
     # Project center to image space, scale radius
     cx_px, cy_px = dxf_to_image_px(entity["cx"], entity["cy"], ppm, tx, ty,
@@ -429,14 +470,16 @@ def _inspect_arc_circle(entity, edge_xy, ppm, tx, ty, angle_rad,
 
     if subpixel != "none" and raw_gray is not None and len(corridor_pts) >= _MIN_POINTS_ARC:
         from .subpixel import refine_subpixel
-        corridor_pts = refine_subpixel(corridor_pts, raw_gray, method=subpixel)
+        corridor_pts = refine_subpixel(corridor_pts, raw_gray, method=subpixel, gradient=gradient)
 
     if len(corridor_pts) < _MIN_POINTS_ARC:
         return _unmatched(entity, f"too few edge points ({len(corridor_pts)})")
 
     # Shadow-aware arc fitting: prefer points closest to the nominal radius
     # Compute signed radial offset from nominal (positive = outside, negative = inside)
-    radial_offsets = dists[mask] - r_px
+    radial_offsets = np.hypot(corridor_pts[:, 0] - cx_px, corridor_pts[:, 1] - cy_px) - r_px
+    # Flag (do not unmatch) competing concentric edges; see _inspect_line.
+    ambiguous = _ambiguous_offsets(radial_offsets, _MIN_POINTS_ARC)
 
     # Histogram to find the dominant edge cluster nearest to 0
     bin_edges = np.arange(-corridor_px, corridor_px + 1, 1.0)
@@ -464,25 +507,14 @@ def _inspect_arc_circle(entity, edge_xy, ppm, tx, ty, angle_rad,
     if len(near_pts) < _MIN_POINTS_ARC:
         near_pts = corridor_pts
 
-    # Fit circle to near-edge points
     try:
-        fit_cx, fit_cy, fit_r = fit_circle_algebraic(near_pts)
-    except (np.linalg.LinAlgError, ValueError):
-        return _unmatched(entity, "circle fit failed")
-
-    # Final inlier filter
-    radial_residuals = np.abs(np.hypot(near_pts[:, 0] - fit_cx, near_pts[:, 1] - fit_cy) - fit_r)
-    inlier_threshold = min(2.0, corridor_px * 0.2)
-    inlier_mask = radial_residuals < inlier_threshold
-    inlier_pts = near_pts[inlier_mask]
-
-    if len(inlier_pts) >= _MIN_POINTS_ARC:
-        # Second pass: refit on inliers only
-        try:
-            fit_cx, fit_cy, fit_r = fit_circle_algebraic(inlier_pts)
-            corridor_pts = inlier_pts  # use inliers for edge_points_sample
-        except (np.linalg.LinAlgError, ValueError):
-            pass  # keep first-pass fit
+        circle_fit = fit_circle_robust(near_pts)
+        fit_cx, fit_cy, fit_r = circle_fit.parameters
+        corridor_pts = near_pts[circle_fit.inlier_mask]
+        if len(corridor_pts) < _MIN_POINTS_ARC:
+            return _unmatched(entity, "too few circle inliers")
+    except (np.linalg.LinAlgError, ValueError) as exc:
+        return _unmatched(entity, str(exc))
 
     # Deviation: center distance + radius deviation
     center_dev_px = math.hypot(fit_cx - cx_px, fit_cy - cy_px)
@@ -519,7 +551,7 @@ def _inspect_arc_circle(entity, edge_xy, ppm, tx, ty, angle_rad,
             fit_data["start_deg"] = 0
             fit_data["end_deg"] = 360
 
-    return {
+    return _flag_ambiguity(ambiguous, {
         "handle": entity.get("handle"),
         "type": entity.get("type"),
         "parent_handle": entity.get("parent_handle"),
@@ -527,6 +559,7 @@ def _inspect_arc_circle(entity, edge_xy, ppm, tx, ty, angle_rad,
         "edge_point_count": len(corridor_pts),
         "edge_points_sample": _sample_points(corridor_pts),
         "fit": fit_data,
+        "fit_quality": circle_fit.diagnostics(),
         "perp_dev_mm": None,
         "angle_error_deg": None,
         "center_dev_mm": round(center_dev_mm, 4),
@@ -539,7 +572,53 @@ def _inspect_arc_circle(entity, edge_xy, ppm, tx, ty, angle_rad,
         "tolerance_fail": tol_fail,
         "pass_fail": pf,
         "reason": None,
-    }
+    })
+
+
+def _inspect_caliper_feature(entity, gray, ppm, tx, ty, angle_deg, corridor_px,
+                              flip_h, flip_v, tol_warn, tol_fail, options, reference=None):
+    """Fit one entity from raw-image calipers along its OUTWARD normal.
+
+    ``reference`` (from caliper.outward_references) says what "outward"
+    means for this entity: away from a circle/arc centre, away from a closed
+    outline's interior, or away from the drawing centre for a standalone
+    line. Polarity and "first" selection are read along that normal, so CAD
+    line direction, polyline vertex order and overlay flips cannot change
+    the selected edge.
+    """
+    options = dict(options)
+    spacing = options.pop("spacing", 5)
+    # A Punch/Die tag controls tolerance semantics, not brightness polarity.
+    # Polarity may be supplied explicitly per entity or for the whole recipe.
+    for key in ("polarity", "selection"):
+        if f"edge_{key}" in entity:
+            options[key] = entity[f"edge_{key}"]
+    try:
+        if not 1 <= spacing <= 50:
+            raise ValueError("invalid caliper spacing")
+        centers, normals, width_limit, normal_rule = caliper_geometry(
+            entity, ppm, tx, ty, math.radians(angle_deg), flip_h, flip_v, spacing, reference)
+        options["width"] = min(options.get("width", 5), width_limit)
+        edges = sample_caliper_edges(gray, centers, normals, corridor_px, **options)
+        minimum = _MIN_POINTS_LINE if entity.get("type") in ("line", "polyline_line") else _MIN_POINTS_ARC
+        if edges.ambiguous > 0.25 * edges.requested:
+            result = _unmatched(entity, "ambiguous caliper edges; set polarity or narrow the corridor")
+        elif len(edges.points) < max(minimum, 0.6 * edges.requested):
+            result = _unmatched(entity, "insufficient caliper coverage")
+        else:
+            result = fit_manual_points(entity, edges.points.tolist(), ppm, tx, ty, angle_deg,
+                                       flip_h, flip_v, tol_warn, tol_fail,
+                                       point_weights=edges.strengths ** 2)
+            if result.get("matched") and result["fit_quality"]["inlier_count"] < max(minimum, 0.6 * edges.requested):
+                result = _unmatched(entity, "insufficient coherent caliper inliers")
+        result["sampling_quality"] = edges.diagnostics()
+        result["sampling_quality"].update({"polarity": options.get("polarity", "any"),
+                                            "selection": options.get("selection", "unique"),
+                                            "width_px": options["width"], "sigma_px": options.get("sigma", 1),
+                                            "normal_rule": normal_rule})
+        return result
+    except (ValueError, np.linalg.LinAlgError) as exc:
+        return _unmatched(entity, str(exc))
 
 
 def inspect_features(
@@ -561,9 +640,11 @@ def inspect_features(
     default_tol: float | None = None,
     smoothing: int = 1,
     subpixel: str = "parabola",
+    edge_method: str = "contour",
+    caliper: dict | None = None,
 ) -> list[dict]:
     """
-    Main entry point: preprocess frame, run Canny once, then inspect each entity.
+    Inspect each entity using Canny corridors or raw normal-profile calipers.
 
     Parameters
     ----------
@@ -586,20 +667,33 @@ def inspect_features(
         priority, used for POSITION when a spec applies, or as the sole band
         when no spec applies.
     smoothing : preprocessing smoothing level
+    edge_method : "contour" for Canny proposals, "caliper" for raw profiles
+    caliper : width, sigma, spacing, min_contrast, polarity and selection recipe
 
     Returns
     -------
     List of result dicts, one per entity.
     """
-    gray = preprocess(frame, smoothing=smoothing)
-    raw_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) if subpixel != "none" else None
-    edges = cv2.Canny(gray, canny_low, canny_high)
+    if edge_method not in ("contour", "caliper"):
+        raise ValueError("unknown guided edge method")
+    raw_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    edges = None
+    if edge_method == "contour":
+        gray = preprocess(frame, smoothing=smoothing)
+        edges = cv2.Canny(gray, canny_low, canny_high)
+        # Preserve raw proposals when preprocessing erases a nearby boundary.
+        edges |= cv2.Canny(raw_gray, canny_low, canny_high)
 
     # Collect all edge pixel coordinates as (x, y) — note argwhere returns (row, col)
-    edge_yx = np.argwhere(edges > 0)
-    if len(edge_yx) == 0:
+    edge_yx = np.argwhere(edges > 0) if edges is not None else np.empty((0, 2))
+    if len(edge_yx) == 0 and edge_method == "contour":
         return [_unmatched(e, "no edges in frame") for e in entities]
     edge_xy = edge_yx[:, ::-1].astype(np.float64)  # flip (y,x) -> (x,y)
+    gradient = None
+    if edge_method == "contour" and subpixel != "none":
+        # One full-frame gradient shared by every entity's refinement.
+        from .subpixel import precompute_gradient
+        gradient = precompute_gradient(raw_gray)
 
     angle_rad = math.radians(angle_deg)
     results = []
@@ -607,7 +701,21 @@ def inspect_features(
     ft = feature_tolerances or {}
     fs = feature_specs or {}
 
-    for entity in entities:
+    references = gray_f = None
+    budget_reason = None
+    if edge_method == "caliper":
+        # Bound the request's sampling work before doing any of it; then
+        # convert the frame to float ONCE for every entity's calipers.
+        total = _caliper.request_caliper_samples(entities, pixels_per_mm, corridor_px, caliper or {})
+        if total > _caliper.MAX_CALIPER_SAMPLES:
+            budget_reason = (f"caliper sampling budget exceeded ({total:,} > "
+                             f"{_caliper.MAX_CALIPER_SAMPLES:,} profile samples per request); "
+                             "increase caliper spacing or reduce search/caliper width")
+        else:
+            references = outward_references(entities, pixels_per_mm, tx, ty, angle_rad, flip_h, flip_v)
+            gray_f = float_frame(raw_gray)
+
+    for index, entity in enumerate(entities):
         etype = entity.get("type", "")
         handle = entity.get("handle")
         has_override = bool(handle) and handle in ft
@@ -615,16 +723,22 @@ def inspect_features(
         tol_w = per_feat.get("warn", tolerance_warn)
         tol_f = per_feat.get("fail", tolerance_fail)
 
-        if etype in ("line", "polyline_line"):
+        if budget_reason is not None:
+            result = _unmatched(entity, budget_reason)
+        elif edge_method == "caliper":
+            result = _inspect_caliper_feature(entity, gray_f, pixels_per_mm, tx, ty,
+                                              angle_deg, corridor_px, flip_h, flip_v,
+                                              tol_w, tol_f, caliper or {}, references[index])
+        elif etype in ("line", "polyline_line"):
             result = _inspect_line(entity, edge_xy, pixels_per_mm, tx, ty,
                                    angle_rad, corridor_px, flip_h, flip_v,
                                    tol_w, tol_f,
-                                   subpixel=subpixel, raw_gray=raw_gray)
+                                   subpixel=subpixel, raw_gray=raw_gray, gradient=gradient)
         elif etype in ("arc", "polyline_arc", "circle"):
             result = _inspect_arc_circle(entity, edge_xy, pixels_per_mm, tx, ty,
                                          angle_rad, corridor_px, flip_h, flip_v,
                                          tol_w, tol_f,
-                                         subpixel=subpixel, raw_gray=raw_gray)
+                                         subpixel=subpixel, raw_gray=raw_gray, gradient=gradient)
         else:
             result = _unmatched(entity, f"unsupported entity type: {etype}")
 
@@ -654,6 +768,7 @@ def fit_manual_points(
     flip_v: bool = False,
     tolerance_warn: float = 0.1,
     tolerance_fail: float = 0.25,
+    point_weights=None,
 ) -> dict:
     """
     Fit geometry to user-provided points (manual point-pick) instead of
@@ -696,13 +811,21 @@ def fit_manual_points(
         ux, uy = dx / length, dy / length
         nx, ny = -uy, ux
 
-        # Eigenvector line fit
-        centroid = pts.mean(axis=0)
-        centered = pts - centroid
-        cov = centered.T @ centered
-        eigenvalues, eigenvectors = np.linalg.eigh(cov)
-        direction = eigenvectors[:, 1]
-        fit_normal = eigenvectors[:, 0]
+        point_count = len(pts)
+        if point_weights is not None:
+            try:
+                centroid, direction, fit_normal, inliers = fit_line_robust(pts, point_weights)
+            except (ValueError, np.linalg.LinAlgError) as exc:
+                return _unmatched(entity, str(exc))
+            pts = pts[inliers]
+            centered = pts - centroid
+        else:
+            centroid = pts.mean(axis=0)
+            centered = pts - centroid
+            cov = centered.T @ centered
+            eigenvalues, eigenvectors = np.linalg.eigh(cov)
+            direction = eigenvectors[:, 1]
+            fit_normal = eigenvectors[:, 0]
 
         # Profile of a line: bilateral zone of points vs fitted line
         signed_dists = centered @ fit_normal
@@ -728,6 +851,8 @@ def fit_manual_points(
             "edge_point_count": len(pts),
             "edge_points_sample": _sample_points(pts),
             "fit": _line_fit_endpoints(centroid, direction, pts),
+            "fit_quality": {"rms_px": float(np.sqrt(np.mean(signed_dists ** 2))),
+                            "inlier_count": len(pts), "point_count": point_count},
             "perp_dev_mm": round(perp_dev_mm, 4),
             "angle_error_deg": round(angle_err, 2),
             "center_dev_mm": None,
@@ -751,9 +876,10 @@ def fit_manual_points(
         r_px = entity["radius"] * pixels_per_mm
 
         try:
-            fit_cx, fit_cy, fit_r = fit_circle_algebraic(pts)
-        except (np.linalg.LinAlgError, ValueError):
-            return _unmatched(entity, "circle fit failed")
+            circle_fit = fit_circle_robust(pts, point_weights)
+            fit_cx, fit_cy, fit_r = circle_fit.parameters
+        except (np.linalg.LinAlgError, ValueError) as exc:
+            return _unmatched(entity, str(exc))
 
         center_dev_px = math.hypot(fit_cx - cx_px, fit_cy - cy_px)
         radius_dev_px = fit_r - r_px  # positive = larger than nominal
@@ -788,6 +914,7 @@ def fit_manual_points(
             "edge_point_count": len(pts),
             "edge_points_sample": _sample_points(pts),
             "fit": fit_data,
+            "fit_quality": circle_fit.diagnostics(),
             "perp_dev_mm": None,
             "angle_error_deg": None,
             "center_dev_mm": round(center_dev_mm, 4),

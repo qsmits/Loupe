@@ -217,3 +217,18 @@ test('round-trip: assembleTemplate output passes validateTemplate', () => {
   const result = validateTemplate(tmpl);
   assert.equal(result.valid, true, `Expected valid but got: ${result.error}`);
 });
+
+test('caliper recipe survives template save/load without sharing mutable options', () => {
+  const inspection = { edgeMethod: 'caliper', corridorPx: 12,
+    caliper: { width: 4, sigma: 1.2, spacing: 5, min_contrast: 20, polarity: 'falling', selection: 'unique' } };
+  const tmpl = assembleTemplate({ ...validConfig(), inspection });
+  assert.deepEqual(JSON.parse(JSON.stringify(tmpl)).inspection, inspection);
+  assert.equal(validateTemplate(tmpl).valid, true);
+  inspection.caliper.width = 9;
+  assert.equal(tmpl.inspection.caliper.width, 4);
+  tmpl.inspection.caliper.sigma = -1;
+  assert.equal(validateTemplate(tmpl).valid, false);
+  tmpl.inspection.caliper.sigma = 1;
+  tmpl.inspection.caliper.polarity = 'punch';
+  assert.equal(validateTemplate(tmpl).valid, false);
+});

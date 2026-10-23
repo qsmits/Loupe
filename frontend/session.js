@@ -1,3 +1,4 @@
+import { inspectionSummary, resultBadge } from './inspect-request.js';
 import { apiFetch } from './api.js';
 import { state, TRANSIENT_TYPES, DETECTION_TYPES } from './state.js';
 import { redraw, canvas, img, showStatus, renderExportCanvas } from './render.js';
@@ -161,7 +162,7 @@ export async function exportDxf() {
 export function exportInspectionCsv() {
   const partName = state.dxfFilename || "";
   const timestamp = new Date().toISOString();
-  const headers = INSPECTION_CSV_HEADERS;
+  const headers = [...INSPECTION_CSV_HEADERS, "ambiguous"];
 
   const rows = [headers];
 
@@ -169,7 +170,7 @@ export function exportInspectionCsv() {
   // formatToleranceCell so a spec/default-tol-judged feature's row carries
   // its actual band (DWG/DEF), not the stale global tolerance_warn/fail.
   state.inspectionResults.forEach(r => {
-    rows.push(buildInspectionCsvRow(r, partName, timestamp));
+    rows.push([...buildInspectionCsvRow(r, partName, timestamp), r.ambiguous === true ? "true" : "false"]);
   });
 
   // Section 2 — Arc-measure annotations
@@ -294,9 +295,7 @@ export function exportInspectionPdf() {
     // Group header row
     const groupName = state.featureNames[groupKey] || groupKey;
     const mode = state.featureModes[groupKey] || "die";
-    const worstResult = results.some(r => r.pass_fail === "fail") ? "fail"
-      : results.some(r => r.pass_fail === "warn") ? "warn"
-      : results.some(r => r.matched) ? "pass" : "—";
+    const groupBadge = inspectionSummary(results).badge;
 
     doc.setFont(undefined, "bold");
     doc.setFillColor(240, 240, 240);
@@ -305,12 +304,12 @@ export function exportInspectionPdf() {
     doc.text(`${groupName} (${results.length})`, margin + 1, yPos + rowH - 1.5);
 
     // Worst result color
-    if (worstResult === "pass") doc.setTextColor(0, 150, 0);
-    else if (worstResult === "warn") doc.setTextColor(200, 120, 0);
-    else if (worstResult === "fail") doc.setTextColor(200, 0, 0);
+    if (groupBadge.cls === "badge-pass") doc.setTextColor(0, 150, 0);
+    else if (["badge-warn", "badge-ambiguous"].includes(groupBadge.cls)) doc.setTextColor(200, 120, 0);
+    else if (groupBadge.cls === "badge-fail") doc.setTextColor(200, 0, 0);
     else doc.setTextColor(100);
     const totalW = colWidths.reduce((a, b) => a + b, 0);
-    doc.text(worstResult.toUpperCase(), margin + totalW - 25, yPos + rowH - 1.5);
+    doc.text(groupBadge.text, margin + totalW - 25, yPos + rowH - 1.5);
     doc.setTextColor(0);
 
     // Mode badge
@@ -337,7 +336,7 @@ export function exportInspectionPdf() {
       }
       const tolCell = formatToleranceCell(r);
       const toleranceText = tolCell.tag ? `${tolCell.text} ${tolCell.tag}` : tolCell.text;
-      const resultText = r.matched ? r.pass_fail.toUpperCase() : "—";
+      const resultText = resultBadge(r).text;
       const typeName = r.type.replace("polyline_", "p_");
 
       featureNum++;
@@ -356,7 +355,8 @@ export function exportInspectionPdf() {
       doc.rect(xPos, yPos, colWidths[3], rowH); xPos += colWidths[3];
 
       // Result with color
-      if (r.pass_fail === "pass") doc.setTextColor(0, 150, 0);
+      if (r.ambiguous) doc.setTextColor(200, 120, 0);
+      else if (r.pass_fail === "pass") doc.setTextColor(0, 150, 0);
       else if (r.pass_fail === "warn") doc.setTextColor(200, 120, 0);
       else if (r.pass_fail === "fail") doc.setTextColor(200, 0, 0);
       else doc.setTextColor(100);

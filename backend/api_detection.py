@@ -3,6 +3,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel, Field, model_validator
 
 from .session_store import SessionFrameStore, get_session_id_dep
+from .compute_pool import pooled
 from .vision import detection
 
 
@@ -20,7 +21,7 @@ class CircleParams(BaseModel):
     min_radius: int = Field(default=10, ge=1, le=5000)
     max_radius: int = Field(default=500, ge=1, le=5000)
     sensitivity: int = Field(default=30, ge=1, le=100)
-    subpixel: str = Field(default="none", max_length=20)
+    subpixel: str = Field(default="parabola", pattern=r"^(none|parabola|gaussian)$")
     surface_mode: str = Field(default="edm", pattern=r"^(edm|lathe|print)$")
 
 
@@ -49,7 +50,7 @@ class DetectLinesParams(BaseModel):
     nms_dist: float = Field(default=20.0, ge=1.0, le=500.0)
     nms_angle: float = Field(default=10.0, ge=0.5, le=90.0)
     smoothing: int = Field(default=1, ge=1, le=5)
-    subpixel: str = Field(default="none", max_length=20)
+    subpixel: str = Field(default="parabola", pattern=r"^(none|parabola|gaussian)$")
     surface_mode: str = Field(default="edm", pattern=r"^(edm|lathe|print)$")
 
 
@@ -61,7 +62,7 @@ class DetectArcsParams(BaseModel):
     max_radius: int = Field(default=500, ge=1, le=5000)
     residual_tol: float = Field(default=0.05, ge=0.001, le=1.0)
     smoothing: int = Field(default=1, ge=1, le=5)
-    subpixel: str = Field(default="none", max_length=20)
+    subpixel: str = Field(default="parabola", pattern=r"^(none|parabola|gaussian)$")
     surface_mode: str = Field(default="edm", pattern=r"^(edm|lathe|print)$")
 
 
@@ -122,10 +123,14 @@ class AnalyzeGearBody(BaseModel):
 
 
 def make_detection_router(frame_store: SessionFrameStore) -> APIRouter:
+    # CPU-bound handlers are plain ``def``: FastAPI runs them in its worker
+    # threadpool, so a multi-second detection on a large frame does not block
+    # the event loop (and every other session's requests) while it runs.
     router = APIRouter()
 
     @router.post("/detect-edges")
-    async def detect_edges_route(params: EdgeParams, session_id: str = Depends(get_session_id_dep)):
+    @pooled
+    def detect_edges_route(params: EdgeParams, session_id: str = Depends(get_session_id_dep)):
         frame = frame_store.get(session_id)
         if frame is None:
             raise HTTPException(status_code=400, detail="No frame stored. Call /freeze first.")
@@ -134,7 +139,8 @@ def make_detection_router(frame_store: SessionFrameStore) -> APIRouter:
         return Response(content=png_bytes, media_type="image/png")
 
     @router.post("/detect-circles")
-    async def detect_circles_route(params: CircleParams, session_id: str = Depends(get_session_id_dep)):
+    @pooled
+    def detect_circles_route(params: CircleParams, session_id: str = Depends(get_session_id_dep)):
         frame = frame_store.get(session_id)
         if frame is None:
             raise HTTPException(status_code=400, detail="No frame stored. Call /freeze first.")
@@ -147,7 +153,8 @@ def make_detection_router(frame_store: SessionFrameStore) -> APIRouter:
         return circles
 
     @router.post("/detect-lines")
-    async def detect_lines_route(params: LineParams, session_id: str = Depends(get_session_id_dep)):
+    @pooled
+    def detect_lines_route(params: LineParams, session_id: str = Depends(get_session_id_dep)):
         frame = frame_store.get(session_id)
         if frame is None:
             raise HTTPException(status_code=400, detail="No frame stored. Call /freeze first.")
@@ -159,7 +166,8 @@ def make_detection_router(frame_store: SessionFrameStore) -> APIRouter:
         return lines
 
     @router.post("/detect-lines-merged")
-    async def detect_lines_merged_route(params: DetectLinesParams, session_id: str = Depends(get_session_id_dep)):
+    @pooled
+    def detect_lines_merged_route(params: DetectLinesParams, session_id: str = Depends(get_session_id_dep)):
         frame = frame_store.get(session_id)
         if frame is None:
             raise HTTPException(status_code=400, detail="No frame stored. Call /freeze first.")
@@ -171,7 +179,8 @@ def make_detection_router(frame_store: SessionFrameStore) -> APIRouter:
             surface_mode=params.surface_mode)
 
     @router.post("/detect-arcs-partial")
-    async def detect_arcs_partial_route(params: DetectArcsParams, session_id: str = Depends(get_session_id_dep)):
+    @pooled
+    def detect_arcs_partial_route(params: DetectArcsParams, session_id: str = Depends(get_session_id_dep)):
         frame = frame_store.get(session_id)
         if frame is None:
             raise HTTPException(status_code=400, detail="No frame stored. Call /freeze first.")
@@ -183,7 +192,8 @@ def make_detection_router(frame_store: SessionFrameStore) -> APIRouter:
             surface_mode=params.surface_mode)
 
     @router.post("/preprocessed-view")
-    async def preprocessed_view_route(params: PreprocessedViewParams = PreprocessedViewParams(), session_id: str = Depends(get_session_id_dep)):
+    @pooled
+    def preprocessed_view_route(params: PreprocessedViewParams = PreprocessedViewParams(), session_id: str = Depends(get_session_id_dep)):
         frame = frame_store.get(session_id)
         if frame is None:
             raise HTTPException(status_code=400, detail="No frame stored. Call /freeze first.")
@@ -221,7 +231,8 @@ def make_detection_router(frame_store: SessionFrameStore) -> APIRouter:
         return results
 
     @router.post("/analyze-gear")
-    async def analyze_gear_route(body: AnalyzeGearBody, session_id: str = Depends(get_session_id_dep)):
+    @pooled
+    def analyze_gear_route(body: AnalyzeGearBody, session_id: str = Depends(get_session_id_dep)):
         import cv2
         from .vision.gear_analysis import analyze_gear
 

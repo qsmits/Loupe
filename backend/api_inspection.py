@@ -5,6 +5,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
 from .session_store import SessionFrameStore, get_session_id_dep, safe_error_detail
+from .compute_pool import pooled
 from .vision.alignment import extract_dxf_circles, align_circles
 
 
@@ -49,6 +50,27 @@ class FeatureSpec(BaseModel):
     lower: float = Field(le=0, allow_inf_nan=False)
 
 
+class CaliperParams(BaseModel):
+    """Raw-image caliper recipe for edge_method="caliper".
+
+    Work budget: a request costs, per caliper entity, (caliper count) x
+    (profile samples per caliper), where the count is about length/spacing
+    (2000 max per entity) and a profile has (2*ceil(2*(corridor_px +
+    4*sigma)) + 1) x (ceil(width) + 1) samples. If the request total exceeds
+    backend.vision.caliper.MAX_CALIPER_SAMPLES (200,000,000; about 8-14 s of
+    sampling at the measured 14-25M samples/s) it is declined up front:
+    every caliper entity is returned unmatched with a "caliper sampling
+    budget exceeded" reason, before any sampling is done. Increase
+    spacing or reduce corridor_px/width to stay within it.
+    """
+    width: float = Field(default=5, ge=0, le=21)
+    sigma: float = Field(default=1, ge=0.3, le=5)
+    spacing: float = Field(default=5, ge=1, le=50)
+    min_contrast: float = Field(default=20, gt=0, le=255)
+    polarity: str = Field(default="any", pattern=r"^(any|rising|falling)$")
+    selection: str = Field(default="unique", pattern=r"^(unique|first|strongest|closest)$")
+
+
 class InspectGuidedBody(BaseModel):
     entities: list[dict] = Field(max_length=10000)
     pixels_per_mm: float = Field(gt=0, le=100000)
@@ -66,7 +88,9 @@ class InspectGuidedBody(BaseModel):
     smoothing: int = Field(default=1, ge=1, le=5)
     canny_low: int = Field(default=50, ge=0, le=255)
     canny_high: int = Field(default=130, ge=0, le=255)
-    subpixel: str = Field(default="parabola", max_length=20)
+    subpixel: str = Field(default="parabola", pattern=r"^(none|parabola|gaussian)$")
+    edge_method: str = Field(default="contour", pattern=r"^(contour|caliper)$")
+    caliper: CaliperParams = Field(default_factory=CaliperParams)
 
 
 class FitFeatureBody(BaseModel):
@@ -80,14 +104,13 @@ class FitFeatureBody(BaseModel):
     flip_v: bool = False
     tolerance_warn: float = Field(default=0.10, gt=0, le=100)
     tolerance_fail: float = Field(default=0.25, gt=0, le=100)
-    subpixel: str = Field(default="parabola", max_length=20)
 
 
 class RefinePointBody(BaseModel):
     x: float = Field(ge=-1e6, le=1e6)
     y: float = Field(ge=-1e6, le=1e6)
     search_radius: int = Field(default=10, ge=1, le=50)
-    subpixel: str = Field(default="parabola", max_length=20)
+    subpixel: str = Field(default="parabola", pattern=r"^(none|parabola|gaussian)$")
 
 
 class DetectGearTeethBody(BaseModel):
@@ -267,7 +290,8 @@ def make_inspection_router(frame_store: SessionFrameStore) -> APIRouter:
     insp_router = APIRouter()
 
     @insp_router.post("/align-dxf-edges")
-    async def align_dxf_edges_route(body: AlignEdgesBody, session_id: str = Depends(get_session_id_dep)):
+    @pooled
+    def align_dxf_edges_route(body: AlignEdgesBody, session_id: str = Depends(get_session_id_dep)):
         frame = frame_store.get(session_id)
         if frame is None:
             raise HTTPException(status_code=400, detail="No frame stored. Call /freeze first.")
@@ -281,8 +305,11 @@ def make_inspection_router(frame_store: SessionFrameStore) -> APIRouter:
             raise HTTPException(status_code=400, detail=result.get("reason", "Alignment failed"))
         return result
 
+    # /align-dxf-edges and /inspect-guided are CPU-bound: plain ``def`` so
+    # FastAPI runs them in its threadpool instead of on the event loop.
     @insp_router.post("/inspect-guided")
-    async def inspect_guided_route(body: InspectGuidedBody, session_id: str = Depends(get_session_id_dep)):
+    @pooled
+    def inspect_guided_route(body: InspectGuidedBody, session_id: str = Depends(get_session_id_dep)):
         frame = frame_store.get(session_id)
         if frame is None:
             raise HTTPException(status_code=400, detail="No frame stored. Call /freeze first.")
@@ -300,6 +327,8 @@ def make_inspection_router(frame_store: SessionFrameStore) -> APIRouter:
             canny_low=body.canny_low,
             canny_high=body.canny_high,
             subpixel=body.subpixel,
+            edge_method=body.edge_method,
+            caliper=body.caliper.model_dump(),
         )
 
     @insp_router.post("/fit-feature")
@@ -338,7 +367,8 @@ def make_inspection_router(frame_store: SessionFrameStore) -> APIRouter:
         return {"x": x, "y": y, "magnitude": magnitude}
 
     @insp_router.post("/detect-gear-teeth")
-    async def detect_gear_teeth_route(body: DetectGearTeethBody, session_id: str = Depends(get_session_id_dep)):
+    @pooled
+    def detect_gear_teeth_route(body: DetectGearTeethBody, session_id: str = Depends(get_session_id_dep)):
         frame = frame_store.get(session_id)
         if frame is None:
             raise HTTPException(status_code=400, detail="No frame stored. Call /freeze first.")
@@ -355,7 +385,8 @@ def make_inspection_router(frame_store: SessionFrameStore) -> APIRouter:
         return {"n_teeth": n_teeth, "snr": snr}
 
     @insp_router.post("/auto-phase-gear")
-    async def auto_phase_gear_route(body: AutoPhaseGearBody, session_id: str = Depends(get_session_id_dep)):
+    @pooled
+    def auto_phase_gear_route(body: AutoPhaseGearBody, session_id: str = Depends(get_session_id_dep)):
         frame = frame_store.get(session_id)
         if frame is None:
             raise HTTPException(status_code=400, detail="No frame stored. Call /freeze first.")
@@ -383,7 +414,8 @@ def make_inspection_router(frame_store: SessionFrameStore) -> APIRouter:
         return available_methods()
 
     @insp_router.post("/gradient-overlay")
-    async def gradient_overlay(session_id: str = Depends(get_session_id_dep)):
+    @pooled
+    def gradient_overlay(session_id: str = Depends(get_session_id_dep)):
         import numpy as np
         import cv2
         frame = frame_store.get(session_id)

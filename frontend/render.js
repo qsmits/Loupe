@@ -1,5 +1,5 @@
 import { state, _deviationHitBoxes, _labelHitBoxes } from './state.js';
-import { fitCircleAlgebraic, fitLine, polygonArea } from './math.js';
+import { fitCircleRobust, fitLine, polygonArea } from './math.js';
 import { viewport, imageWidth, imageHeight, setImageSize, fitToWindow, canSeedImageSize } from './viewport.js';
 import { measurementLabel as _measurementLabel, getLineEndpoints, lineAngleDeg } from './format.js';
 export { getLineEndpoints, lineAngleDeg } from './format.js';
@@ -529,7 +529,7 @@ export function redraw() {
   }
   // Arc-fit preview: show current best-fit circle while collecting points
   if (state.tool === "arc-fit" && state.pendingPoints.length >= 3) {
-    const fit = fitCircleAlgebraic(state.pendingPoints);
+    const fit = fitCircleRobust(state.pendingPoints);
     if (fit) {
       ctx.save();
       ctx.beginPath();

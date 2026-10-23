@@ -8,6 +8,7 @@ import { renderSidebar, loadCameraInfo, loadUiConfig, loadTolerances,
          startCameraStatsPolling, stopCameraStatsPolling } from './sidebar.js';
 import { deleteAnnotation, addAnnotation, elevateSelected, clearDetections, clearMeasurements, clearDxfOverlay, clearAll, clearCalSource } from './annotations.js';
 import { assembleTemplate, downloadTemplate, readTemplateFile } from './template.js';
+import { inspectionOptions } from './inspect-request.js';
 import { setTool, promptArcFitChoice, finalizeArea, finalizeSpline, finalizeFitLine, finalizeRelationPick } from './tools.js';
 import { initDxfHandlers, measurementsAsDxf } from './dxf.js';
 import { doFreeze, initDetectHandlers } from './detect.js';
@@ -1429,6 +1430,7 @@ document.getElementById("btn-save-template")?.addEventListener("click", () => {
     name,
     dxfFilename: state.dxfFilename || "",
     entities: dxfAnn.entities,
+    inspection: inspectionOptions(dxfAnn.inspectionOptions),
     calibration: {
       pixelsPerMm: state.calibration.pixelsPerMm,
       displayUnit: state.calibration.displayUnit || "mm",
@@ -1557,6 +1559,7 @@ document.getElementById("template-input")?.addEventListener("change", async (e) 
     const dxfAnn = {
       type: "dxf-overlay",
       entities: tmpl.dxf.entities,
+      inspectionOptions: inspectionOptions(tmpl.inspection ?? { edgeMethod: 'contour' }),
       offsetX: canvas.width / 2,
       offsetY: canvas.height / 2,
       scale: tmpl.calibration.pixelsPerMm,
