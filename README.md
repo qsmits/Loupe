@@ -401,4 +401,10 @@ snapshots/              Saved test images
 
 ## License
 
-Proprietary. All rights reserved.
+Copyright 2026 Quintin Smits.
+
+Loupe is licensed under the [Apache License, Version 2.0](LICENSE).
+You may use, modify, and redistribute it, including commercially, subject to
+the license terms. See [NOTICE](NOTICE) for attribution and
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for bundled library licenses.
+Third-party components remain under their respective licenses.
