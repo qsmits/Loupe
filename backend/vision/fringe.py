@@ -2527,10 +2527,13 @@ def extract_phase_dft(image: np.ndarray, mask: np.ndarray | None = None,
 
 def _quality_guided_unwrap(wrapped: np.ndarray, quality: np.ndarray,
                            mask: np.ndarray | None = None) -> np.ndarray:
-    """Quality-guided 2D phase unwrapping (Goldstein/Zebker approach).
+    """Quality-guided 2D phase unwrapping by priority-queue flood fill.
 
-    Unwraps from highest-quality pixels outward using a max-heap, so errors
-    in weak-fringe regions don't propagate into the solution.
+    Unwraps from highest-quality pixels outward using a max-heap to reduce
+    propagation of errors from weak-fringe regions. This is a custom
+    quality-guided implementation, not the Goldstein residue/branch-cut
+    algorithm; see docs/fringe-scientific-basis.md for related literature
+    and the limits of spatial unwrapping.
 
     Parameters
     ----------
@@ -3031,9 +3034,11 @@ def unwrap_phase_2d(wrapped: np.ndarray, mask: np.ndarray | None = None,
     """2D spatial phase unwrapping: quality-guided flood when ``quality`` is
     given (the pipeline default), else scikit-image's ``unwrap_phase``.
 
-    When a quality map is provided, uses a quality-guided Goldstein/Zebker
-    approach that propagates from high-confidence pixels first, preventing
-    error propagation from weak-fringe regions.
+    When a quality map is provided, uses a custom priority-queue flood
+    that propagates from high-confidence pixels first to reduce error
+    propagation from weak-fringe regions. Without one, scikit-image uses
+    reliability sorting following a noncontinuous path (Herraez et al.,
+    2002). Neither method resolves arbitrary physical discontinuities.
 
     Parameters
     ----------
@@ -3041,7 +3046,7 @@ def unwrap_phase_2d(wrapped: np.ndarray, mask: np.ndarray | None = None,
     mask : optional boolean mask (True = valid).
     quality : optional 2D float64 quality map (higher = more reliable).
               When provided, uses quality-guided unwrapping instead of
-              skimage's raster-order algorithm.
+              skimage's reliability-sorting algorithm.
     fringe_period_px : optional fringe period in pixels. When provided
               together with a mask, marks pixels near mask edges (within
               0.75 fringe period, ~3 sigma of the DFT low-pass whose
