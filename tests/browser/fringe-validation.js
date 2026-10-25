@@ -3,6 +3,11 @@ const status=document.querySelector('#status'), output=document.querySelector('#
 let running=false;
 document.querySelector('#cancel').onclick=()=>cancelBrowserAnalysis();
 function compare(a,b) {
+  if (a.analysis_method!==b.analysis_method) throw new Error('Analysis methods differ');
+  if (b.hybrid_diagnostics && ['local_pixels','added_pixels','fallback_pixels','baseline_pixels'].some(k=>a.hybrid_diagnostics?.[k]!==b.hybrid_diagnostics[k])) throw new Error('Hybrid selection differs');
+  if (!(a.surface_color_limit_nm>0) || Math.abs(a.surface_color_limit_nm-b.surface_color_limit_nm)>.005) throw new Error('Surface color ranges differ');
+  if (b.analysis_filter?.boundary_rule && a.analysis_filter?.boundary_rule!==b.analysis_filter.boundary_rule) throw new Error('Boundary policies differ');
+  if (b.coverage?.physical_pixels && a.coverage?.physical_pixels!==b.coverage.physical_pixels) throw new Error('Physical outline counts differ');
   if (a.grid_rows!==b.grid_rows || a.grid_cols!==b.grid_cols) throw new Error('Grid dimensions differ');
   const diff=a.display_height_grid_nm.flatMap((v,i)=>a.mask_grid[i]&&b.mask_grid[i]?[v-b.display_height_grid_nm[i]]:[]);
   const rms=Math.sqrt(diff.reduce((s,d)=>s+d*d,0)/diff.length), max=Math.max(...diff.map(Math.abs));

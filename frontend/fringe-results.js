@@ -3,7 +3,9 @@
 //
 // Extracted from fringe.js (Task 7 of fringe UI restructure).
 
+import { analysisMethodLabel } from './fringe-method.js';
 import { describeFormRemoval } from './fringe-form.js';
+import { refreshSpatial, wireSpatial } from './fringe-spatial.js';
 import { fr, $ } from './fringe.js';
 import { apiFetch } from './api.js';
 import { fringeFetch, isBrowserResult } from './fringe-compute.js';
@@ -196,6 +198,7 @@ export function buildResultsHtml() {
 
         <p id="fringe-form-note" hidden style="font-size:12px;margin:6px 12px"></p>
         <p id="fringe-result-operation" role="status" hidden style="font-size:12px;margin:6px 12px"></p>
+        <p id="fringe-result-method" role="status" hidden style="font-size:12px;margin:6px 12px"></p>
         <p id="fringe-result-engine" role="status" hidden style="font-size:12px;margin:6px 12px"></p>
         <div id="fringe-orientation-banner" class="fringe-orientation-banner" hidden>
           <span id="fringe-polarity-status" role="status"></span>
@@ -234,7 +237,14 @@ export function buildResultsHtml() {
               <button class="fringe-overlay-btn active" data-overlay="surface">Surface</button>
               <button class="fringe-overlay-btn" data-overlay="confidence">Confidence</button>
               <button class="fringe-overlay-btn" data-overlay="modulation">Modulation</button>
+              <button class="fringe-overlay-btn" id="fringe-edge-inspection-button" disabled>Inspect excluded edges…</button>
               <button class="fringe-overlay-btn" id="fringe-coverage-button" data-overlay="coverage" disabled>Measurement area</button>
+            </div>
+            <div style="display:flex;flex-wrap:wrap;align-items:center;gap:12px;padding:6px 12px;font-size:12px">
+              <label><input id="fringe-photo-toggle" type="checkbox" disabled/> Overlay on interferogram</label>
+              <label>Color opacity <input id="fringe-photo-opacity" type="range" min="0" max="100" value="55" step="5" disabled style="width:90px;vertical-align:middle"/></label>
+              <button type="button" id="fringe-image-scale" disabled>Set image scale…</button>
+              <span id="fringe-image-scale-status">Image scale not set</span>
             </div>
             <details id="fringe-quality" class="fringe-quality" hidden>
               <summary>Coverage &amp; smoothing</summary>
@@ -244,6 +254,7 @@ export function buildResultsHtml() {
             <div class="fringe-measure-toolbar" id="fringe-measure-toolbar">
               <button class="fringe-measure-btn active" data-mode="" title="Pan / zoom (no measurement)">\u2194 Pan</button>
               <button class="fringe-measure-btn" data-mode="cursor" title="Hover to see height at cursor">\u22b9 Cursor</button>
+              <button class="fringe-measure-btn" data-mode="distance" title="Click two points to measure a lateral distance using the image scale">↔ Distance</button>
               <button class="fringe-measure-btn" data-mode="point2point" title="Click two points to measure height difference">\u2b0d \u0394h</button>
               <button class="fringe-measure-btn" data-mode="lineProfile" title="Click two points to draw a line profile">\u2572 Profile</button>
               <button class="fringe-measure-btn" data-mode="area" title="Click two corners to get area statistics">\u25ad Area</button>
@@ -263,9 +274,16 @@ export function buildResultsHtml() {
             <div class="fringe-surface-container" id="fringe-surface-viewport" style="overflow:hidden;cursor:grab">
               <div id="fringe-surface-wrapper" style="position:relative;display:inline-block;transform-origin:0 0">
                 <img id="fringe-surface-img" draggable="false" style="display:block" />
+                <canvas id="fringe-photo-colors" hidden style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none;image-rendering:pixelated"></canvas>
                 <svg id="fringe-measure-svg" style="position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;overflow:visible"></svg>
                 <svg id="fringe-reference-svg" aria-hidden="true" style="position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;overflow:visible"></svg>
               </div>
+            </div>
+            <div id="fringe-surface-legend" hidden style="padding:8px 16px;font-size:11px;flex:none">
+              <div style="max-width:400px;margin:auto">
+                <div style="height:12px;border-radius:3px;background:linear-gradient(to right,#053061,#2166ac,#4393c3,#92c5de,#d1e5f0,#f7f7f7,#fddbc7,#f4a582,#d6604d,#b2182b,#67001f)"></div>
+                <div style="display:flex;justify-content:space-between;margin-top:3px"><span id="fringe-legend-low"></span><span>0</span><span id="fringe-legend-high"></span></div>
+              </div><div id="fringe-legend-caption" style="text-align:center;margin-top:4px"></div>
             </div>
             <canvas id="fringe-line-profile-chart" width="800" height="150" hidden></canvas>
           </div>
@@ -577,6 +595,7 @@ export function restoreFringeResult(data, options) {
   refreshOrientationStatus(data);
   refreshReferenceMarks(data);
   refreshQuality(data);
+  refreshSpatial(data);
   formModel = data?.form_model || options?.formModel || (data ? "zernike" : "plane");
   Object.assign(pillState, {tilt: true, power: false, astig: false, coma: false, spherical: false}, options?.pillState);
   if (data) {
@@ -613,6 +632,8 @@ export function restoreFringeResult(data, options) {
 // ── Rendering ───────────────────────────────────────────────────────────
 
 function refreshOrientationStatus(data) {
+  const method=$('fringe-result-method');
+  if (method) { method.hidden=!data; method.textContent=data ? `Analysis method: ${analysisMethodLabel(data)}` : ''; }
   const engine=$('fringe-result-engine');
   if (engine) {
     engine.hidden=!data;
@@ -801,6 +822,8 @@ function renderResults(data) {
     const toggles = $("fringe-overlay-toggles");
     if (toggles) toggles.hidden = false;
   }
+
+  refreshSpatial(data);
 
   // Zernike chart
   const zernikeContent = $("fringe-zernike-content");
@@ -1315,6 +1338,7 @@ function wireCarrierOverride() {
           carrier_x: carrierX,
           wavelength_nm: getWavelength(),
           mask_threshold: getMaskThreshold(),
+          analysis_method: fr.lastResult?.analysis_method || fr.analysisMethod || "current",
           lpf_sigma_frac: getLpfSigmaFrac(),
           dc_margin_override: getDcMarginOverride(),
           subtract_terms: getSubtractTerms(),
@@ -1656,7 +1680,7 @@ export function wavefrontView(result) {
  */
 export function mergeReanalyzeResult(data, { clearTrust = false } = {}) {
   for (const key of [
-    "surface_map", "zernike_chart", "profile_x", "profile_y",
+    "surface_map", "surface_color_limit_nm", "zernike_chart", "profile_x", "profile_y",
     "coefficients", "coefficient_names", "zernike_norm_weights", "zernike_rms_nm",
     "pv_nm", "rms_nm", "pv_waves", "rms_waves", "pv_fringes", "rms_fringes",
     "measurement_model", "incidence_model", "height_semantics", "absolute_sign_known",
@@ -1829,7 +1853,7 @@ function exportFringeCsv() {
   }
 
   // Add summary
-  csv += `\nSummary\n`;
+  csv += `\nSummary\nAnalysis method,"${analysisMethodLabel(fr.lastResult)}"\n`;
   const form = describeFormRemoval(fr.lastResult);
   csv += `Evaluation,"${form.label}"\nRemoval,"${form.detail}"\n`;
   csv += `${form.metric} PV (nm),${fr.lastResult.pv_nm?.toFixed(1)}\n`;
@@ -2252,7 +2276,7 @@ function renderSessionPanel() {
           ${checkbox}
           <span style="font-weight:600;opacity:0.85">#${n}</span>
           <span style="display:inline-block;padding:1px 6px;border-radius:999px;font-size:10px;font-weight:600;${badgeStyle}">${_escapeHtml(origin)}</span>
-          ${calTag}
+          ${calTag}<span style="font-size:10px">${_escapeHtml(analysisMethodLabel(c))}</span>
           <span style="margin-left:auto;font-size:10px;opacity:0.65" title="${_escapeHtml(c.captured_at || "")}">${rel}</span>
         </div>
         <div style="display:flex;gap:12px;font-size:11px;opacity:0.9">
@@ -3127,6 +3151,7 @@ function _renderTrendTab() {
 // ── Event wiring ────────────────────────────────────────────────────────
 
 export function wireResultsEvents() {
+  wireSpatial();
   wireReferenceMarks(exportFringePdf);
   document.addEventListener('fringe:orientation-changed', () => {
     refreshOrientationStatus(fr.lastResult);
@@ -3226,6 +3251,7 @@ export function wireResultsEvents() {
       surfImg.dataset.overlay = btn.dataset.overlay;
       const srcKey = btn.dataset.overlay + "Src";
       if (surfImg.dataset[srcKey]) surfImg.src = surfImg.dataset[srcKey];
+      refreshSpatial();
     });
   });
 

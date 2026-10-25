@@ -3682,12 +3682,13 @@ class TestTrustStatsOnReturnedAperture:
 
         def speckled_unwrap(wrapped, mask=None, quality=None,
                              fringe_period_px=None, correct_2pi_jumps=True,
-                             edge_band_px=None):
+                             edge_band_px=None, edge_kernel=None):
             unwrapped, risk, qmap = real_unwrap(
                 wrapped, mask, quality=quality,
                 fringe_period_px=fringe_period_px,
                 correct_2pi_jumps=correct_2pi_jumps,
                 edge_band_px=edge_band_px,
+                edge_kernel=edge_kernel,
             )
             if mask is not None:
                 valid = np.asarray(mask, dtype=bool)

@@ -80,7 +80,7 @@ Drop an interferogram anywhere in the image/result view or camera preview to loa
 - **Visible progress**: the analysis dialog shows server-reported stages, a progress bar, and a timestamped activity log. Errors stay visible for adjustment and retry.
 - **Clear source and reset**: the sidebar identifies the current image and completion time. Loading another image clears the previous result. **Reset analysis** clears the current source, regions, results, and measurements while preserving analysis settings and session capture history.
 
-Scientific background and references: [DFTFringe](https://github.com/githubdoe/DFTFringe) was the main recorded application/source-code reference; [Noll (1976)](https://doi.org/10.1364/JOSA.66.000207) supplies the Zernike convention named in the implementation. The subsequent scientific audit and validation draw on [Takeda, Ina & Kobayashi (1982)](https://doi.org/10.1364/JOSA.72.000156) for Fourier fringe analysis, [Herráez et al. (2002)](https://doi.org/10.1364/AO.41.007437) and the [scikit-image documentation](https://scikit-image.org/docs/stable/api/skimage.restoration.html#skimage.restoration.unwrap_phase) for the independent reliability-sorted unwrapper, [Zhao et al. (2011)](https://doi.org/10.1364/AO.50.006214) for quality-guided unwrapping and its limits, [Goldstein, Zebker & Werner (1988)](https://doi.org/10.1029/RS023i004p00713) to distinguish branch-cut methods from Loupe's custom heap flood, and [Doiron & Beers' NIST Gage Block Handbook, chapter 6](https://www.nist.gov/sites/default/files/documents/calibrations/mono180.pdf) for interferometric length measurement and fringe-order ambiguity. [Reeve's NBS/NIST optical-flat calibration procedure](https://www.nist.gov/system/files/documents/calibrations/75-975.pdf) and [Edmund Optics' optical-flat guide](https://www.edmundoptics.com/knowledge-center/application-notes/optics/optical-flats/) inform the contact/wedge and height-sign interpretation. [SciPy's Jacobi polynomial evaluator](https://docs.scipy.org/doc/scipy/reference/generated/scipy.special.eval_jacobi.html) provides an independent numerical check of the Zernike basis. These references and synthetic tests do not establish instrument accuracy; the [scientific-basis and validation record](docs/fringe-scientific-basis.md) documents provenance, measured software behavior, and remaining physical validation.
+Scientific background and references: [DFTFringe](https://github.com/githubdoe/DFTFringe) was the main recorded application/source-code reference; [Noll (1976)](https://doi.org/10.1364/JOSA.66.000207) supplies the Zernike convention named in the implementation. The subsequent scientific audit and validation draw on [Takeda, Ina & Kobayashi (1982)](https://doi.org/10.1364/JOSA.72.000156) for Fourier fringe analysis, [Herráez et al. (2002)](https://doi.org/10.1364/AO.41.007437) and the [scikit-image documentation](https://scikit-image.org/docs/stable/api/skimage.restoration.html#skimage.restoration.unwrap_phase) for the independent reliability-sorted unwrapper, [Zhao et al. (2011)](https://doi.org/10.1364/AO.50.006214) for quality-guided unwrapping and its limits, [Goldstein, Zebker & Werner (1988)](https://doi.org/10.1029/RS023i004p00713) to distinguish branch-cut methods from Loupe's custom heap flood, and [Doiron & Beers' NIST Gage Block Handbook, chapter 6](https://www.nist.gov/sites/default/files/documents/calibrations/mono180.pdf) for interferometric length measurement and fringe-order ambiguity. [Reeve's NBS/NIST optical-flat calibration procedure](https://www.nist.gov/system/files/documents/calibrations/75-975.pdf) and [Edmund Optics' optical-flat guide](https://www.edmundoptics.com/knowledge-center/application-notes/optics/optical-flats/) inform the contact/wedge and height-sign interpretation. [SciPy's Jacobi polynomial evaluator](https://docs.scipy.org/doc/scipy/reference/generated/scipy.special.eval_jacobi.html) provides an independent numerical check of the Zernike basis. The subsequent edge-reconstruction experiments also consult [Qian (2004)](https://doi.org/10.1364/AO.43.002695) for windowed single-fringe analysis and [Gao & Qian (2012)](https://opg.optica.org/viewmedia.cfm?seq=0&uri=ao-51-3-328) for local phase estimation bias and noise; the local harmonic-regression prototype is not an implementation of their WFR algorithm. These references and synthetic tests do not establish instrument accuracy; the [scientific-basis and validation record](docs/fringe-scientific-basis.md) documents provenance, measured software behavior, and remaining physical validation.
 
 ### SPC & Analytics
 - SQLite run storage (parts → runs → results)
@@ -196,6 +196,103 @@ Subtracting terms above Z3, or using quadratic/cubic polynomial removal, reports
 **Residual after form removal**, with Residual PV/RMS and no flatness-limit
 comparison. CSV/PDF exports record the evaluation and removed form.
 
+The **Inspect excluded edges…** view preserves the original fringes across the
+full analysis frame, with separate outlines for the measured interior, uncertain
+boundary and user-selected areas rejected earlier. Its coverage toggle reveals
+the unpainted source. The view provides no edge height measurements and never
+adds excluded pixels to PV/RMS. Coverage details report the conservative boundary
+width in analysis pixels and explicitly warn that genuine edge roll-off may be
+omitted. Saved older captures need reanalysis to obtain this full-frame preview.
+
+New analyses separate the drawn physical outline from usable fringe signal.
+The outline does not override illumination, modulation, or continuity checks.
+At detected part boundaries, the separate 5-pixel preliminary erosion is removed
+and replaced by a directional elliptical guard aligned with the actual
+phase-extraction carrier. Its radii are `max(0.75 P, 5.5 σ_across, 3 σ_along)`
+across fringes and `max(0.75 P, 3 σ_across, 3 σ_along)` along them, including the
+filter's pixel-space floors. This deliberately exceeds the bare Gaussian
+footprint: a simple 3-sigma ellipse admitted additional edge bias. Full-frame
+fringes and drawn subregions wholly inside the illuminated aperture keep the
+established square guard. Trace the part's physical edge; no extra hand-drawn
+margin is needed. Weak rims and parts cut off by the frame can retain less area.
+These empirically tested guards are not calibrated uncertainty bounds.
+
+`scripts/validate-fringe-edges.py` preserves the original six-case experiment
+against the **legacy** square guard (18 runs). On a perfectly flat disk,
+full/half/near-zero guard widths produced 0.83 / 4.98 / 26.80 nm false PV.
+A narrow 40 nm rim roll-off lay entirely outside the retained area. Thus simply
+shrinking a guard does not establish reliable edge measurement.
+
+`scripts/validate-fringe-boundaries.py` compares the legacy method, a bare
+ellipse, outline-only changes, an unbounded-outline combination, and the final
+illumination-bounded combination. It uses independent analytic intensities and
+height truth, removing only piston/tilt when scoring errors. It reports coverage
+relative to the physical part, RMS/maximum height error, errors on common and
+newly admitted pixels, and any measurements outside the part or inside a
+fringe-free cap. The 36 validation scenes plus `--stress`'s 60 additional scenes
+cover fringe angles, densities, phase offsets, noise/quantization, illumination
+gradients, bows, wide/narrow edge roll-off, holes, clipped parts, and loose masks.
+Reproduce the final comparison with:
+
+```sh
+MPLCONFIGDIR=/tmp/loupe-mpl .venv/bin/python scripts/validate-fringe-boundaries.py --modes legacy bounded --output /tmp/fringe-boundaries.json
+MPLCONFIGDIR=/tmp/loupe-mpl .venv/bin/python scripts/validate-fringe-boundaries.py --modes legacy bounded --stress --output /tmp/fringe-boundaries-stress.json
+```
+
+For example, the 17.4-cycle flat disk retained 41.5% → 46.2% of its physical
+area while RMS height error fell from 0.025 → 0.017 nm. The noisy disk with a
+hole retained 32.8% → 35.4%, with RMS error 0.159 → 0.152 nm. A loose outline
+around weak fringes exposed a failure in the unbounded-outline prototype
+(0.750 → 1.862 nm RMS); retaining the illumination gate reduced this to
+0.747 nm while still increasing coverage. Across all 96 scenes, 84 retained more physical area, five were unchanged,
+and seven retained less. The largest increase in RMS error was 0.017 nm and
+in maximum absolute height error was 0.113 nm; no measured pixels fell outside
+the known part boundary. These are observed comparison results, not universal
+error limits. The final method's gains are modest: it does not recover the whole
+rim, and narrow roll-off can still be missed.
+The Python-only experimental modes are not exposed as application settings.
+Synthetic comparisons and native/browser parity do not establish instrument
+accuracy; physical validation remains necessary.
+
+
+Further [local fringe-fit experiments](experiments/fringe-local-fit/README.md)
+record 930 attempts across 126 distinct synthetic scenes. A local linear fit
+with carrier refinement more than doubles coverage on a noisy flat part with a
+hole (35.4% → 74.1%) at similar RMS error (0.152 → 0.149 nm). Across the full
+comparison it retains more area in 121/126 scenes but lowers RMS error in only
+56/126. Weak fringes, narrow roll-off, scratches and disconnected fringe orders
+prevent a default change. The research-only prototype, all numerical results,
+plots and reproduction commands are preserved in that report; normal analysis
+continues to use the conservative directional guard.
+
+
+The follow-up [hybrid study](experiments/fringe-hybrid/README.md) combines accepted
+local fits with the current estimator elsewhere. Across the same 126 scenes,
+666 recorded evaluations compare linear, stricter linear and quadratic hybrids.
+The quadratic hybrid raises mean coverage from 41.2% to 63.3% on the original
+matrix, 51.2% to 64.2% on stress cases and 48.5% to 61.6% on challenge cases, with
+lower mean RMS error in each suite. It retains all baseline pixels. Sharp edge
+roll-off still produces regressions (up to 1.71 nm additional maximum error in
+this suite), and fallback preserves pre-existing scratch errors. It is now available as **Analysis settings → Analysis method → Hybrid quadratic
+fit (experimental)**; **Current method** remains the default. The same shared
+implementation runs on the server and in the browser, with a 1024-pixel maximum
+side for the hybrid to bound memory. Browser mode automatically resizes images;
+use it for both runs to compare at the same resolution. Keep wavelength, aperture
+and form removal unchanged. Export the first report before rerunning; browser
+captures also appear in Session until the tab reloads. Results, reports, CSV and
+Session entries identify the method. The gates are not calibrated confidence
+bounds. Changing the method requires a fresh analysis; form changes/inversion
+retain the original method provenance.
+
+The surface map includes a numeric color legend and an **Overlay on interferogram**
+view with adjustable opacity. **Set image scale…** calibrates a known two-point
+length in millimetres on the aligned interferogram; **Distance** then measures
+lateral spans on the map or overlay. This image-specific calibration is stored
+with the project result, survives sign/form changes, and clears on a fresh
+analysis. It does not alter height calibration or flatness. Use a straight-on
+image with the scale reference in the part's plane; perspective limits accuracy.
+
+
 ## Experimental browser fringe analysis
 
 In the fringe setup dialog, choose **Analyze using → This browser (experimental)**.
@@ -230,6 +327,12 @@ then generate the synthetic reference results and test page into its frontend:
 MPLCONFIGDIR=/tmp/loupe-mpl .venv/bin/python scripts/prepare-fringe-browser-validation.py /tmp/loupe-browser-review/frontend
 HOSTED=1 NO_CAMERA=1 .venv/bin/python -m uvicorn backend.main:app --app-dir /tmp/loupe-browser-review --port 8004
 ```
+
+The same preparation also creates `/fringe-spatial.html` on that isolated
+preview. Its test button analyzes an asymmetric synthetic surface in the actual
+browser worker, checks the color limit against native output, and opens the
+normal workspace for overlay, calibration, distance and save/reload checks.
+
 
 Open `http://localhost:8004/fringe-validation.html` and run validation. The harness
 compares raw execution across runtimes for asymmetric and mirrored inputs,

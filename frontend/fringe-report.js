@@ -1,3 +1,4 @@
+import { analysisMethodLabel } from './fringe-method.js';
 import { describeFormRemoval } from './fringe-form.js';
 // Printable comparison uses the immutable analysis images, independent of UI zoom.
 import { polarityDescription } from './fringe-orientation.js';
@@ -61,7 +62,7 @@ export function createFringeReport(data, {jsPDF, sourceName = '', standard = nul
   doc.setFontSize(16); doc.text('Analysis details', margin, 18);
   let y = 28;
   doc.setFontSize(9);
-  const metadata = [form.label, form.detail, ...details];
+  const metadata = [`Analysis method: ${analysisMethodLabel(data)}`, form.label, form.detail, ...details];
   if (data.execution_engine === 'browser') {
     metadata.push('Analysis engine: browser (experimental), using the shared Python engine in WebAssembly.');
     if (data.browser_resolution) metadata.push(`Browser analysis dimensions (rows × columns): ${data.browser_resolution.analyzed.join(' × ')}; maximum side ${data.browser_resolution.max_dimension} pixels.`);

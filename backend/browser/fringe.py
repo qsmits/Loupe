@@ -73,6 +73,7 @@ def execute(operation, body, progress=lambda *args: None):
                 override = (float(body["carrier_y"]), float(body["carrier_x"]))
             result = analyze_interferogram(image,
                 wavelength_nm=wavelength,
+                analysis_method=body.get("analysis_method", "current"),
                 mask_threshold=_number(body, "mask_threshold", .30, 0, 1),
                 subtract_terms=body.get("subtract_terms", [1, 2, 3]),
                 n_zernike=int(_number(body, "n_zernike", 36, 1, 66)),

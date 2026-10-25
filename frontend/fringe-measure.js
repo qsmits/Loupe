@@ -1,4 +1,5 @@
 // fringe-measure.js — Surface map measurement tools for fringe mode.
+import { handleDistanceClick } from './fringe-spatial.js';
 import { fr, $ } from './fringe.js';
 import { fitParallelStep } from './fringe-math.js';
 import { clampSurfacePan, zoomSurfaceAt } from './fringe-viewport.js';
@@ -833,6 +834,7 @@ export function wireMeasureEvents() {
         clearMeasureSvg();
         setMeasureReadout("");
         if (!mode) drawPeakValleyMarkers();
+        if (mode === "distance") setMeasureReadout("Click two points · use Set image scale to calibrate mm");
       }
     });
   });
@@ -915,7 +917,9 @@ export function wireMeasureEvents() {
       const coords = surfaceMouseCoords(e);
       if (!coords) return;
 
-      if (fr.measureMode === "point2point") {
+      if (fr.measureMode === "distance") {
+        handleDistanceClick(coords);
+      } else if (fr.measureMode === "point2point") {
         handlePoint2PointClick(coords);
       } else if (fr.measureMode === "lineProfile") {
         handleLineProfileClick(coords);

@@ -1470,7 +1470,11 @@ def create_fringe_mask(image: np.ndarray, modulation: np.ndarray,
                        carrier_override: tuple[float, float] | None = None,
                        *,
                        dc_margin_override: int | None = None,
-                       dc_cutoff_cycles: float | None = 1.5) -> np.ndarray:
+                       dc_cutoff_cycles: float | None = 1.5,
+                       physical_aperture: np.ndarray | None = None,
+                       rim_px: int = 5,
+                       require_illumination: bool = True,
+                       mask_details: dict | None = None) -> np.ndarray:
     """Create a boolean mask combining brightness and modulation.
 
     For real interferograms the fringe region is the illuminated aperture.
@@ -1498,6 +1502,13 @@ def create_fringe_mask(image: np.ndarray, modulation: np.ndarray,
     dc_margin_override, dc_cutoff_cycles : forwarded to ``_find_carrier`` when
         ``carrier_override`` is ``None``. Ignored when it is provided, since
         there is nothing left to detect.
+    physical_aperture : optional drawn part outline. It bounds the signal
+        search, but does not certify usable fringes. By default illumination,
+        modulation and continuity checks can still reject its pixels.
+    rim_px : preliminary isotropic trimming. The application uses zero with
+        the directional boundary guard, avoiding two independent rim trims.
+    require_illumination : False only in controlled outline-only experiments.
+    mask_details : optional output for physical-outline provenance/counts.
 
     Returns
     -------
@@ -1549,10 +1560,24 @@ def create_fringe_mask(image: np.ndarray, modulation: np.ndarray,
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE,
                                        (close_size, close_size))
     bright_closed = cv2.morphologyEx(bright.astype(np.uint8), cv2.MORPH_CLOSE, kernel)
-    # Erode by ~5px to pull away from the rim
-    kernel_erode = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (11, 11))
-    bright_eroded = cv2.erode(bright_closed, kernel_erode)
-    aperture = bright_eroded > 0
+    # A supplied physical outline is geometry, not a contrast threshold.
+    # It must still pass the modulation and continuity checks below.
+    aperture = (bright_closed > 0 if physical_aperture is None
+                else np.asarray(physical_aperture, dtype=bool).copy())
+    if aperture.shape != img.shape:
+        raise ValueError("Physical aperture must match the analysis image")
+    if mask_details is not None:
+        mask_details.update(physical_pixels=int(aperture.sum()),
+                            outline_source="drawn" if physical_aperture is not None else "automatic")
+        if physical_aperture is not None and rim_px == 0:
+            old_bright = cv2.erode(bright_closed, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (11, 11))) > 0
+            mask_details["_outline_interior"] = not np.any(aperture & ~old_bright)
+    if physical_aperture is not None and require_illumination:
+        aperture &= bright_closed > 0
+    if rim_px:
+        kernel_erode = cv2.getStructuringElement(cv2.MORPH_ELLIPSE,
+                                                (2 * rim_px + 1, 2 * rim_px + 1))
+        aperture = cv2.erode(aperture.astype(np.uint8), kernel_erode).astype(bool)
 
     # Step 3: within the aperture, reject low-modulation pixels
     if aperture.any() and modulation[aperture].size > 0:
@@ -1574,7 +1599,8 @@ def create_fringe_mask(image: np.ndarray, modulation: np.ndarray,
                                             (seam_size, seam_size))
     mask = cv2.morphologyEx(mask.astype(np.uint8), cv2.MORPH_CLOSE,
                             seam_kernel).astype(bool)
-    return mask & ~_modulation_holes(mask, aperture, period)
+    mask &= ~_modulation_holes(mask, aperture, period)
+    return mask if physical_aperture is None else mask & aperture
 
 
 def _modulation_holes(mask: np.ndarray, aperture: np.ndarray,
@@ -2540,7 +2566,8 @@ def extract_phase_dft(image: np.ndarray, mask: np.ndarray | None = None,
         theta = 0.0
 
     if filter_metadata is not None:
-        filter_metadata.update(sigma_across_px=float(sig_across_img),
+        filter_metadata.update(carrier_angle_rad=float(theta),
+                               sigma_across_px=float(sig_across_img),
                                sigma_along_px=float(sig_along_img),
                                fringe_period_px=float(fringe_period),
                                requested_fraction=float(sigma_frac))
@@ -3083,11 +3110,42 @@ def _merge_unwrap_islands(unwrapped: np.ndarray, wrapped: np.ndarray,
     return out, shifted
 
 
+def _elliptical_boundary_kernel(across_px: float, along_px: float,
+                                angle_rad: float) -> np.ndarray:
+    """Rasterized support in image coordinates; angle is the carrier normal.
+
+    This only defines a candidate guard. Kernel geometry by itself does not
+    establish the accuracy of samples admitted near an aperture boundary.
+    """
+    if not all(math.isfinite(v) for v in (across_px, along_px, angle_rad)) or min(across_px, along_px) <= 0:
+        raise ValueError("Boundary radii must be finite and positive")
+    c, s = math.cos(angle_rad), math.sin(angle_rad)
+    rx = int(math.ceil(math.hypot(across_px * c, along_px * s)))
+    ry = int(math.ceil(math.hypot(across_px * s, along_px * c)))
+    y, x = np.mgrid[-ry:ry+1, -rx:rx+1]
+    u, v = c*x + s*y, -s*x + c*y
+    return ((u/across_px)**2 + (v/along_px)**2 <= 1 + 1e-12).astype(np.uint8)
+
+
+def _supported_interior(mask: np.ndarray, kernel: np.ndarray) -> np.ndarray:
+    """Binary erosion with missing support outside the image, including holes."""
+    if kernel.size <= 4096 or np.all(kernel):
+        return cv2.erode(mask.astype(np.uint8), kernel,
+                         borderType=cv2.BORDER_CONSTANT, borderValue=0).astype(bool)
+    # Large nonrectangular OpenCV erosions cost O(image * kernel). FFT counts
+    # the supported binary samples instead; the half-sample tolerance is far
+    # above floating-point roundoff and far below one missing sample.
+    from scipy.signal import fftconvolve
+    count = fftconvolve(mask.astype(np.float64), kernel.astype(np.float64), mode="same")
+    return count >= int(kernel.sum()) - .5
+
+
 def unwrap_phase_2d(wrapped: np.ndarray, mask: np.ndarray | None = None,
                     quality: np.ndarray | None = None,
                     fringe_period_px: float | None = None,
                     correct_2pi_jumps: bool = True,
                     edge_band_px: float | None = None,
+                    edge_kernel: np.ndarray | None = None,
                     ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """2D spatial phase unwrapping: quality-guided flood when ``quality`` is
     given (the pipeline default), else scikit-image's ``unwrap_phase``.
@@ -3114,6 +3172,9 @@ def unwrap_phase_2d(wrapped: np.ndarray, mask: np.ndarray | None = None,
               0.75 fringe periods (kernel ``1.5 * P``); the pipeline passes
               ``max(0.75 * P, 3 * sigma_lpf)`` including the pixel-space
               sigma floors, so the band follows the actual low-pass width.
+    edge_kernel : optional directional support kernel replacing the square
+              band. The image exterior and internal mask holes both count
+              as missing support. Uses the actual demodulation carrier angle.
     correct_2pi_jumps : when True (default), apply a 9x9 median-filter
               based correction that snaps pixels deviating by ~2π from
               their local median back onto the surface, only in fully
@@ -3177,13 +3238,13 @@ def unwrap_phase_2d(wrapped: np.ndarray, mask: np.ndarray | None = None,
             kernel_size = max(3, int(round(1.5 * fringe_period_px)) | 1)
         else:
             kernel_size = max(3, int(round(2.0 * edge_band_px)) | 1)
-        kernel = np.ones((kernel_size, kernel_size), dtype=np.uint8)
+        kernel = (np.ones((kernel_size, kernel_size), dtype=np.uint8)
+                  if edge_kernel is None else edge_kernel)
         # Pixels beyond the sensor are missing support, just like pixels
         # beyond an interior aperture. OpenCV's default erosion border is
         # effectively valid, which used to leave a full-frame mask untouched.
-        eroded = cv2.erode(mask.astype(np.uint8), kernel,
-                           borderType=cv2.BORDER_CONSTANT, borderValue=0)
-        edge_zone = mask.astype(bool) & ~eroded.astype(bool)
+        eroded = _supported_interior(mask, kernel)
+        edge_zone = mask.astype(bool) & ~eroded
         quality_map = np.where(edge_zone, quality_map * _EDGE_ZONE_PRIORITY,
                                quality_map)
 
@@ -3431,6 +3492,43 @@ def surface_stats(surface: np.ndarray, mask: np.ndarray | None = None
     return {"pv": pv, "rms": rms, "mean": mean}
 
 
+def _edge_inspection(image: np.ndarray, aperture: np.ndarray,
+                     risk: np.ndarray, requested: np.ndarray | None) -> dict:
+    """Full analysis-frame fringes and categorical coverage, never height samples.
+
+    Keep the numerical crop/fit untouched. In particular, a drawn region can
+    extend outside the automatically detected aperture and its cropped map.
+    """
+    h, w = image.shape
+    preview = np.clip(image, 0, 255).astype(np.uint8)
+    if max(h, w) > 1024:
+        scale = 1024 / max(h, w)
+        preview = cv2.resize(preview, (max(1, int(w*scale)), max(1, int(h*scale))),
+                             interpolation=cv2.INTER_AREA)
+    _, png = cv2.imencode(".png", preview)
+    # 0 outside selection/aperture; 1 measured; 2 uncertain boundary;
+    # 3 user-selected but rejected before the boundary exclusion.
+    regions = np.zeros((h, w), np.uint8)
+    if requested is not None:
+        regions[requested.astype(bool)] = 3
+    regions[aperture.astype(bool)] = 2
+    regions[aperture.astype(bool) & (risk != 2)] = 1
+    scale = min(1.0, 256 / max(h, w))
+    rows, cols = max(1, int(h*scale)), max(1, int(w*scale))
+    grid = cv2.resize(regions, (cols, rows), interpolation=cv2.INTER_NEAREST)
+    return {"image_b64": base64.b64encode(png).decode("ascii"),
+            "regions": grid.ravel().tolist(), "grid_rows": rows, "grid_cols": cols,
+            "source_height": h, "source_width": w,
+            "has_user_selection": requested is not None}
+
+
+def surface_color_limit(surface: np.ndarray, mask: np.ndarray | None = None) -> float:
+    """Symmetric RdBu_r range shared by the rendered map and its UI legend."""
+    values = np.asarray(surface)[mask.astype(bool)] if mask is not None else np.asarray(surface).ravel()
+    values = values[np.isfinite(values)]
+    return float(max(abs(values.min()), abs(values.max()))) if values.size and np.ptp(values) > 0 else 1.0
+
+
 def render_surface_map(surface: np.ndarray, mask: np.ndarray | None = None
                        ) -> str:
     """Render a false-color surface map with contour lines as a PNG, base64-encoded.
@@ -3457,7 +3555,7 @@ def render_surface_map(surface: np.ndarray, mask: np.ndarray | None = None
         smin = float(s.min())
         smax = float(s.max())
 
-    vmax = max(abs(smin), abs(smax)) if smax > smin else 1.0
+    vmax = surface_color_limit(surface, mask)
 
     h, w = s.shape
     dpi = 100
@@ -3813,7 +3911,9 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 589.3,
                           lpf_sigma_frac: float | None = None,
                           dc_margin_override: int | None = None,
                           dc_cutoff_cycles: float | None = 1.5,
-                          image_is_undistorted: bool = False) -> dict:
+                          image_is_undistorted: bool = False,
+                          _edge_mode: str = "bounded",
+                          analysis_method: str = "current") -> dict:
     """Full analysis pipeline: single image in, all results out.
 
     Parameters
@@ -3842,6 +3942,10 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 589.3,
     image_is_undistorted : internal API handoff. True when the full-frame
         lens correction has already been applied before cropping. Keep
         ``lens_k1`` for provenance, but do not remap the image twice.
+    _edge_mode : internal numerical-experiment control, not an API/UI option.
+        "bounded" separates outline and signal, then uses a conservative
+        directional guard at interior aperture boundaries. "legacy" retains
+        the previous 5 px preliminary trim and square guard for comparison.
 
     Returns
     -------
@@ -3854,6 +3958,13 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 589.3,
     """
     if subtract_terms is None:
         subtract_terms = [1, 2, 3]  # Piston + Tilt X + Tilt Y
+    if _edge_mode not in ("legacy", "footprint", "conservative", "outline", "combined", "bounded"):
+        raise ValueError("Unknown experimental edge mode")
+    if analysis_method not in ("current", "hybrid"):
+        raise ValueError("Unknown fringe analysis method")
+    if analysis_method == "hybrid" and _edge_mode != "bounded":
+        raise ValueError("Hybrid requires the current bounded baseline")
+    separate_outline = _edge_mode in ("outline", "combined", "bounded")
 
     def _progress(stage: str, progress: float, message: str) -> None:
         if on_progress is not None:
@@ -3863,12 +3974,15 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 589.3,
     if img.ndim == 3:
         img = img.mean(axis=-1)
 
+    if analysis_method == "hybrid" and max(img.shape) > 1024:
+        raise ValueError("Experimental hybrid supports images up to 1024 pixels per side. Choose browser analysis (which resizes automatically), or resize the image before comparing both methods.")
     if lens_k1 and not image_is_undistorted:
         img = undistort_frame(img, lens_k1)
 
     _progress("carrier", 0.0, "Detecting carrier...")
     # Step 1: Modulation & mask
     modulation = compute_fringe_modulation(img)
+    mask_details = {}
     if custom_mask is not None:
         # Intersect the user-drawn region with modulation filtering so
         # non-fringe pixels inside the polygon don't drag down coverage.
@@ -3876,20 +3990,28 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 589.3,
         auto_mask = create_fringe_mask(img, modulation, threshold_frac=mask_threshold,
                                        carrier_override=carrier_override,
                                        dc_margin_override=dc_margin_override,
-                                       dc_cutoff_cycles=dc_cutoff_cycles)
+                                       dc_cutoff_cycles=dc_cutoff_cycles,
+                                       physical_aperture=user_region if separate_outline else None,
+                                       rim_px=0 if separate_outline else 5,
+                                       require_illumination=_edge_mode == "bounded",
+                                       mask_details=mask_details)
         mask = user_region & auto_mask
         # Fall back to the raw polygon if intersection is too aggressive
         # (e.g. threshold_frac too high for this image)
-        if mask.sum() < _USER_REGION_MIN_KEEP * user_region.sum():
+        if not separate_outline and mask.sum() < _USER_REGION_MIN_KEEP * user_region.sum():
             mask = user_region
     elif use_full_mask:
         mask = np.ones(img.shape, dtype=bool)
+        mask_details.update(physical_pixels=int(mask.size), outline_source="frame")
     else:
         mask = create_fringe_mask(img, modulation, threshold_frac=mask_threshold,
                                   carrier_override=carrier_override,
                                   dc_margin_override=dc_margin_override,
-                                  dc_cutoff_cycles=dc_cutoff_cycles)
+                                  dc_cutoff_cycles=dc_cutoff_cycles,
+                                  rim_px=0 if separate_outline else 5,
+                                  mask_details=mask_details)
     mask, n_components, region_warning = _keep_largest_region(mask)
+    outline_interior = mask_details.pop("_outline_interior", False)
     if not mask.any():
         raise ValueError("No connected fringe aperture remains after masking")
     n_total = int(mask.size)
@@ -3905,6 +4027,12 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 589.3,
         dc_cutoff_cycles=dc_cutoff_cycles, return_plain=True,
         filter_metadata=filter_metadata)
     _progress("phase", 0.25, "Extracting phase...")
+
+    hybrid_metadata = None
+    if analysis_method == "hybrid":
+        from .fringe_hybrid import quadratic_candidate, combine_candidate
+        local_phase, local_reliable, hybrid_metadata = quadratic_candidate(
+            img, mask, filter_metadata, _progress)
 
     # Step 2b: Carrier analysis (needed for fringe_period_px before unwrap)
     if carrier_override is not None:
@@ -3970,7 +4098,10 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 589.3,
             img, modulation, threshold_frac=mask_threshold,
             carrier_override=carrier_override,
             dc_margin_override=dc_margin_override,
-            dc_cutoff_cycles=dc_cutoff_cycles)
+            dc_cutoff_cycles=dc_cutoff_cycles,
+            physical_aperture=custom_mask if separate_outline else None,
+            rim_px=0 if separate_outline else 5,
+            require_illumination=_edge_mode == "bounded")
         refined = punched & auto_mask
         if refined.sum() >= _USER_REGION_MIN_KEEP * punched.sum():
             punched = refined
@@ -3989,21 +4120,45 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 589.3,
             "excluded region is dropped like any other edge."
         )
 
-    # Step 3: Phase unwrapping. The edge-contamination band must cover the
-    # support of the low-pass actually used: ~3 sigma_across, including its
-    # 5 px floor. Without the floor a fine carrier incorrectly admitted
-    # boundary-contaminated pixels as quantitative measurements.
+    # Step 3: Phase unwrapping. A bare 3-sigma ellipse admits measurable edge
+    # bias. The tested guard instead keeps 5.5 sigma across fringes and the
+    # legacy maximum-width floor along them. Removing the preliminary 5 px
+    # trim recovers some curved boundary area without accepting those tails.
+    # This empirical guard is not a calibrated per-pixel uncertainty bound.
     _edge_band_px = None
+    edge_kernel = None
+    boundary_rule = "square-support-conservative"
     _p_carrier = carrier_info.get("fringe_period_px")
     if _p_carrier and math.isfinite(_p_carrier) and _p_carrier > 1:
         _edge_band_px = max(0.75 * _p_carrier,
                             3.0 * max(filter_metadata["sigma_across_px"],
                                       filter_metadata["sigma_along_px"]))
+        # A full-frame signal or a drawn subregion wholly inside the lit
+        # aperture did not incur the old preliminary trim. Preserve its
+        # established guard instead of making that clean selection smaller.
+        preserve_square = _edge_mode == "bounded" and (mask.all() or outline_interior)
+        if _edge_mode in ("footprint", "conservative", "combined", "bounded") and not preserve_square:
+            across = _edge_band_px
+            along = max(.75 * _p_carrier, 3 * filter_metadata["sigma_along_px"])
+            if _edge_mode in ("conservative", "combined", "bounded"):
+                across = max(across, 5.5 * filter_metadata["sigma_across_px"])
+                along = _edge_band_px
+            edge_kernel = _elliptical_boundary_kernel(across, along, filter_metadata["carrier_angle_rad"])
+            _edge_band_px = max(across, along)
+            boundary_rule = ("directional-conservative" if _edge_mode == "bounded"
+                             else "elliptical-support-experimental")
+            filter_metadata.update(boundary_across_px=across, boundary_along_px=along)
     unwrapped, unwrap_risk, quality_map = unwrap_phase_2d(
         wrapped, mask, quality=modulation,
         fringe_period_px=carrier_info.get("fringe_period_px"),
         correct_2pi_jumps=correct_2pi_jumps,
-        edge_band_px=_edge_band_px)
+        edge_band_px=_edge_band_px, edge_kernel=edge_kernel)
+    if analysis_method == "hybrid":
+        _progress("hybrid-merge", .48, "Experimental hybrid: retaining reliable fits and falling back elsewhere…")
+        unwrapped, unwrap_risk, quality_map, hybrid_counts = combine_candidate(
+            (unwrapped, unwrap_risk, quality_map), local_phase, local_reliable,
+            mask, modulation, filter_metadata, _edge_band_px, edge_kernel, correct_2pi_jumps)
+        hybrid_metadata.update(hybrid_counts, baseline_boundary_rule=boundary_rule)
     _progress("unwrap", 0.50, "Unwrapping phase...")
 
     # Confidence metrics (computed after unwrap, before form removal)
@@ -4308,11 +4463,13 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 589.3,
     modulation_grid_list = [round(float(v), 3) for v in mod_resized.ravel()]
 
     analysis_warnings: list[str] = [region_warning] if region_warning else []
+    if analysis_method == "hybrid":
+        analysis_warnings.append("Experimental hybrid quadratic fit: image-based checks are not a guarantee of accuracy. Compare with the current method at the same resolution and settings; sharp roll-off and scratches can still be wrong.")
     if foldover_warning:
         analysis_warnings.append(foldover_warning)
     if n_edge_risk:
         analysis_warnings.append(
-            f"Excluded {n_edge_risk} boundary-contaminated pixels; PV/RMS "
+            f"Excluded {n_edge_risk} potentially boundary-affected pixels by a conservative support rule; PV/RMS "
             "describe the remaining measurement aperture, not the whole specimen."
         )
     carrier_cycles = float(carrier_info.get("distance_px", 0.0))
@@ -4367,14 +4524,22 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 589.3,
 
     return {
         "surface_map": surface_map_b64,
+        "surface_color_limit_nm": surface_color_limit(height_nm, work_mask),
         "reference_image_b64": reference_image_b64,
-        "analysis_filter": {**filter_metadata, "boundary_band_px": _edge_band_px},
+        "analysis_method": analysis_method,
+        "hybrid_diagnostics": hybrid_metadata,
+        "analysis_filter": {**filter_metadata, "boundary_band_px": _edge_band_px,
+                            "boundary_rule": "hybrid-adaptive" if analysis_method == "hybrid" else boundary_rule, "edge_mode": _edge_mode,
+                            "preliminary_rim_px": 0 if separate_outline else 5},
+        "edge_inspection": _edge_inspection(img, mask, unwrap_risk, custom_mask),
         "coverage": {
+            **mask_details,
             "aperture_pixels": int(diagnostic_mask.sum()),
             "measured_pixels": n_valid,
             "boundary_excluded_pixels": n_edge_risk,
             "frame_pixels": n_total,
             "requested_pixels": int(np.count_nonzero(custom_mask)) if custom_mask is not None else None,
+            "selected_rejected_pixels": int(np.count_nonzero(custom_mask.astype(bool) & ~mask)) if custom_mask is not None else None,
         },
         "diagnostic_mask_grid": [int(v) for v in diagnostic_grid.ravel()],
         "zernike_chart": zernike_chart_b64,
@@ -5154,6 +5319,7 @@ def subtract_wavefronts(
 
     result: dict = {
         "surface_map": surface_map_b64,
+        "surface_color_limit_nm": surface_color_limit(full_surface, full_mask),
         "profile_x": profile_x,
         "profile_y": profile_y,
         "psf": "",
@@ -5465,6 +5631,7 @@ def average_wavefronts(
 
     result: dict = {
         "surface_map": surface_map_b64,
+        "surface_color_limit_nm": surface_color_limit(full_surface, full_mask),
         "profile_x": profile_x,
         "profile_y": profile_y,
         "psf": "",
@@ -5721,6 +5888,7 @@ def reanalyze(coefficients: list[float], subtract_terms: list[int],
 
     response = {
         "surface_map": surface_map_b64,
+        "surface_color_limit_nm": surface_color_limit(height_nm, mask),
         "zernike_chart": zernike_chart_b64,
         "coefficient_unit": "phase_rad",
         "coefficients": coeffs_out.tolist(),

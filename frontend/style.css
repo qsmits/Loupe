@@ -4173,3 +4173,12 @@ body.no-camera .camera-section { display: none; }
 .fringe-orientation-guide button { margin:4px 4px 0 0; }
 
 .fringe-contact-explanation { padding:10px 12px; border-left:3px solid #71b7ff; background:#71b7ff12; }
+
+/* Image-space size calibration, separate from vertical wavelength calibration. */
+.fringe-scale-dialog { width: min(850px, 94vw); max-height: 92vh; overflow: auto; margin: auto; box-sizing: border-box; padding: 20px; color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 10px; font-size: 14px; line-height: 1.5; }
+.fringe-scale-dialog::backdrop { background: #000a; }
+.fringe-scale-dialog h2 { font-size: 20px; margin-bottom: 8px; }
+.fringe-scale-dialog p { margin: 10px 0; }
+.fringe-scale-dialog button { color: var(--text); background: var(--surface-2); border: 1px solid var(--border); border-radius: 5px; padding: 7px 10px; cursor: pointer; }
+.fringe-scale-dialog button:disabled { opacity: .4; cursor: default; }
+.fringe-scale-dialog input { padding: 5px; color: var(--text); background: var(--surface-2); border: 1px solid var(--border); border-radius: 4px; }

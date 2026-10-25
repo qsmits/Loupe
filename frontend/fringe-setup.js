@@ -35,8 +35,8 @@ export function initFringeSetup(onAnalyze, onCancel) {
     <div id="fringe-setup-options" class="fringe-setup-body">
       <fieldset id="fringe-area-controls" class="fringe-area-controls">
         <legend>Area to measure</legend>
-        <p>Include the part surface. Exclude holes, dust, glare, and background.
-          Regions select pixels for analysis; they do not change the image.</p>
+        <p>Trace the part surface to its physical edge. Exclude holes, dust, glare, and background.
+          Your outline defines the part area; the analysis still rejects weak or unreliable fringes and applies a boundary guard. You do not need to leave an extra margin yourself.</p>
         <div class="fringe-region-tools">
           <label>Tool <select id="fringe-region-shape"><option value="circle">Circle · 3 points</option><option value="ellipse">Ellipse · drag corners</option><option value="rectangle">Rectangle</option><option value="edit">Select / edit</option></select></label>
           <label>Purpose <select id="fringe-region-purpose"><option value="include">Include surface</option><option value="exclude">Exclude defect / hole</option></select></label>
@@ -65,6 +65,11 @@ export function initFringeSetup(onAnalyze, onCancel) {
           <label for="fringe-analysis-engine">Analyze using</label>
           <select id="fringe-analysis-engine"><option value="server">Server (established)</option><option value="browser">This browser (experimental)</option></select>
           <p id="fringe-engine-note">Browser mode keeps the image on this device and downloads scientific libraries on first use. Images are limited to 1024 pixels on the longest side. Use the server for larger analyses. Camera capture still needs the camera connection.</p>
+        </div>
+        <div class="detect-section">
+          <label for="fringe-analysis-method">Analysis method</label>
+          <select id="fringe-analysis-method" aria-describedby="fringe-method-note"><option value="current">Current method (default)</option><option value="hybrid">Hybrid quadratic fit (experimental)</option></select>
+          <p id="fringe-method-note">Hybrid tries local fits where checks pass and uses the current method elsewhere. It can retain more edges, but may still misread sharp roll-off or scratches. Slower and more memory intensive; maximum image side 1024 px. Browser mode resizes automatically. For comparison, use the same engine, resolution, mask, wavelength and form removal for both runs. Export the first result before analyzing again; browser runs also appear in Session while this tab stays open.</p>
         </div>
         <div id="fringe-settings-host"></div>
         <div class="detect-section">
@@ -108,7 +113,7 @@ export function initFringeSetup(onAnalyze, onCancel) {
       dialog.hidden = false; dialog.showModal();
       busy = false;
       $('fringe-setup-start').disabled = false;
-      onAnalyze($('fringe-setup-form').value, engine);
+      onAnalyze($('fringe-setup-form').value, engine, $('fringe-analysis-method').value);
     } catch (error) {
       if (version !== imageVersion) return;
       dialog.hidden = false; dialog.showModal();
@@ -399,6 +404,7 @@ export function openFringeSetup(src, name) {
   if (!dialog.open) dialog.showModal();
   refreshRegionEditor();
   $('fringe-analysis-engine').value = fr.analysisEngine || 'server';
+  $('fringe-analysis-method').value = fr.analysisMethod || 'current';
   const next = new Image();
   next.onload = () => {
     if (version !== imageVersion) return;

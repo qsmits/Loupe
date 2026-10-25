@@ -294,6 +294,7 @@ def _record_capture(session_id: str, result: dict, *, latest=False) -> None:
     overrides. Summary and full result are admitted atomically.
     """
     summary = {
+        "analysis_method": result.get("analysis_method"),
         "id": result.get("id"),
         "origin": result.get("origin"),
         "captured_at": result.get("captured_at"),
@@ -396,6 +397,7 @@ class ApertureRecipe(BaseModel):
 
 
 class AnalyzeBody(BaseModel):
+    analysis_method: str = Field(default="current", pattern="^(current|hybrid)$")
     wavelength_nm: float = Field(default=589.3, gt=0, le=2000)
     mask_threshold: float = Field(default=0.30, ge=0.0, le=1.0)
     subtract_terms: list[int] = Field(default=[1, 2, 3])
@@ -454,6 +456,7 @@ class ReanalyzeBody(BaseModel):
 
 
 class ReanalyzeCarrierBody(BaseModel):
+    analysis_method: str = Field(default="current", pattern="^(current|hybrid)$")
     carrier_y: float
     carrier_x: float
     image_b64: Optional[str] = Field(default=None)
@@ -656,6 +659,7 @@ def make_fringe_router(camera: BaseCamera) -> APIRouter:
                 lens_k1=body.lens_k1,
                 image_is_undistorted=True,
                 correct_2pi_jumps=body.correct_2pi_jumps,
+                analysis_method=body.analysis_method,
                 lpf_sigma_frac=body.lpf_sigma_frac,
                 dc_margin_override=body.dc_margin_override,
                 dc_cutoff_cycles=body.dc_cutoff_cycles,
@@ -752,6 +756,7 @@ def make_fringe_router(camera: BaseCamera) -> APIRouter:
             lens_k1=body.lens_k1,
             image_is_undistorted=True,
             correct_2pi_jumps=body.correct_2pi_jumps,
+            analysis_method=body.analysis_method,
             lpf_sigma_frac=body.lpf_sigma_frac,
             dc_margin_override=body.dc_margin_override,
             dc_cutoff_cycles=body.dc_cutoff_cycles,
@@ -887,6 +892,7 @@ def make_fringe_router(camera: BaseCamera) -> APIRouter:
                 lens_k1=body.lens_k1,
                 image_is_undistorted=True,
                 correct_2pi_jumps=body.correct_2pi_jumps,
+                analysis_method=body.analysis_method,
                 lpf_sigma_frac=body.lpf_sigma_frac,
                 dc_margin_override=body.dc_margin_override,
                 dc_cutoff_cycles=body.dc_cutoff_cycles,

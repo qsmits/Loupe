@@ -415,9 +415,10 @@ async function analyzeFromCamera() {
 }
 
 /** Only the dialog's Analyze action starts a new analysis. */
-function _runAnalysis(formModel = getFormModel(), engine = fr.analysisEngine) {
+function _runAnalysis(formModel = getFormModel(), engine = fr.analysisEngine, method = fr.analysisMethod) {
   if (fr.analysisBusy || !fr.droppedImageB64) return;
   fr.analysisEngine = engine === "browser" ? "browser" : "server";
+  fr.analysisMethod = method === "hybrid" ? "hybrid" : "current";
   const version = sourceVersion, epoch = state._epoch;
   const recovery=orientationRecovery;
   orientationRecovery=null;
@@ -425,6 +426,7 @@ function _runAnalysis(formModel = getFormModel(), engine = fr.analysisEngine) {
   const payload = {
     wavelength_nm: getWavelength(),
     mask_threshold: getMaskThreshold(),
+    analysis_method: fr.analysisMethod,
     lpf_sigma_frac: getLpfSigmaFrac(),
     dc_margin_override: getDcMarginOverride(),
     subtract_terms: getSubtractTerms(),
@@ -665,6 +667,7 @@ async function addToAverage() {
       body: JSON.stringify({
         wavelength_nm: getWavelength(),
         mask_threshold: getMaskThreshold(),
+        analysis_method: fr.analysisMethod,
         lpf_sigma_frac: getLpfSigmaFrac(),
         dc_margin_override: getDcMarginOverride(),
         subtract_terms: getSubtractTerms(),

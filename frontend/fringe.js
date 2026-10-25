@@ -25,8 +25,8 @@ export const fr = {
   lastResult: null,
   lastMask: null,
   maskPolygons: [],        // [{vertices: [{x,y},...], include: bool}, ...]
-  measureMode: null,       // null | "cursor" | "point2point" | "lineProfile" | "area" | "step"
-  measurePoints: [],       // array of {nx, ny} normalized coords for active measurement
+  measureMode: null,       // null | "cursor" | "distance" | "point2point" | "lineProfile" | "area" | "step"
+  measurePoints: [],       // normalized points: {nx,ny} for height tools; {x,y} for lateral distance
   stepRegions: [],         // [{x0,y0,x1,y1}, ...] normalized rects for Step tool (0..2 committed)
   stepDragIdx: -1,         // index of rect currently being translated, -1 if none
   stepDragOffset: null,    // {dx, dy} drag offset in normalized coords
@@ -54,6 +54,7 @@ export const fr = {
   analyzedAt: null,
   analysisBusy: false,
   analysisEngine: "server",
+  analysisMethod: "current",
   droppedImageB64: null,   // base64 string when analyzing a dropped file
   droppedObjectUrl: null,  // blob URL for preview display
   sessionCaptures: [],     // M1.7 — list of capture summaries from /fringe/session/captures
@@ -73,7 +74,7 @@ function workspaceControls() {
 }
 
 const WORKSPACE_DEFAULTS = {
-  lastResult: null, lastMask: null, maskPolygons: [], measurements: [], analysisEngine: "server",
+  lastResult: null, lastMask: null, maskPolygons: [], measurements: [], analysisEngine: "server", analysisMethod: "current",
   useTrustedOnly: false, lensK1: 0, droppedImageB64: null, sourceName: null, analyzedAt: null, carrierOverride: null,
   mode: "surface", measureMode: null, lastAreaRect: null, stepRegions: [], avgRejectThreshold: 3,
 };

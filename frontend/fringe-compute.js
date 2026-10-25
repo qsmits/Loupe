@@ -29,7 +29,7 @@ function readCapture(id,session) {
   throw new Error('This browser capture is no longer in memory. Reopen its saved project or analyze the image again.');
 }
 function summary(r) {
-  const keys=['id','origin','source_ids','captured_at','pv_nm','rms_nm','pv_waves','rms_waves','pv_fringes',
+  const keys=['analysis_method','id','origin','source_ids','captured_at','pv_nm','rms_nm','pv_waves','rms_waves','pv_fringes',
     'source_polarities','rms_fringes','incidence_model','measurement_model','height_semantics','absolute_sign_known','specimen_surface_relative_sign',
     'reference_flat_error_included','wavelength_nm','n_valid_pixels','n_total_pixels','surface_height','surface_width','calibration_snapshot'];
   return {...Object.fromEntries(keys.map(k=>[k,r[k]])),thumbnail:r.surface_map,execution_engine:'browser'};
