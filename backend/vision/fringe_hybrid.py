@@ -131,7 +131,7 @@ def local_phase(image, mask, fx, fy, across, along, degree=1, diagnostics=None, 
 
 
 def hybrid_merge(base_phase, base_valid, local, local_valid, reliable, period,
-                 agreement=.04):
+                 agreement=.04, diagnostics=None):
     """Blend only connected, order-anchored fits; baseline survives rejection.
 
     Phases must share a carrier reference. Agreement is radians, not an
@@ -139,26 +139,38 @@ def hybrid_merge(base_phase, base_valid, local, local_valid, reliable, period,
     """
     from . import fringe as f
 
+    counts = {'fit_passed': int(reliable.sum())}
     reliable = reliable & local_valid & np.isfinite(local)
+    counts['unwrap_supported'] = int(reliable.sum())
     # Stay away from failed-fit transitions (not just the aperture boundary).
     reliable = f._supported_interior(reliable, np.ones((3,3),np.uint8))
+    counts['transition_supported'] = int(reliable.sum())
+    counts.update(insufficient_anchor_pixels=0, anchor_disagreement_pixels=0)
     components,count=label(reliable)
     accepted=np.zeros_like(base_valid)
     aligned=local.copy()
     for component in range(1,count+1):
         region=components==component
         anchor=region & base_valid
-        if anchor.sum()<25:continue
+        if anchor.sum()<25:
+            counts['insufficient_anchor_pixels'] += int(region.sum())
+            continue
         turns=np.round(np.median((base_phase[anchor]-local[anchor])/(2*np.pi)))
         aligned[region]+=turns*2*np.pi
         # A component whose order cannot be resolved consistently is rejected.
         delta=np.abs(aligned[anchor]-base_phase[anchor])
-        if np.percentile(delta,90)>agreement:continue
+        if np.percentile(delta,90)>agreement:
+            counts['anchor_disagreement_pixels'] += int(region.sum())
+            continue
         accepted |= region
+    counts['component_supported'] = int(accepted.sum())
     accepted &= ~base_valid | (np.abs(aligned-base_phase)<agreement)
+    counts['pointwise_supported'] = int(accepted.sum())
     # New pixels must stay near existing supported measurements, not bridge
     # a hole or form a distant island based only on a good-looking fit.
     accepted &= distance_transform_edt(~base_valid)<=period
+    counts['accepted_pixels'] = int(accepted.sum())
+    if diagnostics is not None: diagnostics.update(counts)
     weight=np.minimum(1.,distance_transform_edt(accepted)/max(2.,period*.25))
     valid=base_valid | accepted
     out=base_phase.copy()
@@ -189,15 +201,27 @@ def quadratic_candidate(image, mask, metadata, progress=lambda *args: None):
     progress('hybrid-check', .44, 'Experimental hybrid: checking a wider fit window…')
     check={}
     alternate,_,_=local_phase(image,mask,fx,fy,max(3.,period*.65),max(2.,period*.325),2,check)
-    reliable=(condition<1000) & (check['condition']<1000)
-    reliable &= (amplitude>15) & (check['amplitude']>15)
-    reliable &= (fit['residual']<amplitude*.04) & (check['residual']<check['amplitude']*.04)
-    reliable &= np.abs(np.angle(np.exp(1j*(phase-alternate))))<.025
+    gates = [
+        ('conditioning', (condition<1000) & (check['condition']<1000)),
+        ('contrast', (amplitude>15) & (check['amplitude']>15)),
+        ('image_residual', (fit['residual']<amplitude*.04) & (check['residual']<check['amplitude']*.04)),
+        ('window_disagreement', np.abs(np.angle(np.exp(1j*(phase-alternate))))<.025),
+    ]
+    reliable = mask.copy()
+    rejected = {}; independent = {}
+    for name, gate in gates:
+        # Exclusive first failure explains total attrition; independent failures
+        # expose additional bottlenecks hidden behind an earlier failed check.
+        rejected[name] = int((reliable & ~gate).sum())
+        independent[name] = int((mask & ~gate).sum())
+        reliable &= gate
     y,x=np.indices(image.shape)
     phase=np.angle(np.exp(1j*(phase+2*np.pi*((fx-fx0)*x+(fy-fy0)*y))))
     return phase,reliable,dict(version=1,polynomial_degree=2,
         sigma_across_px=across,sigma_along_px=along,guard_fraction=.3,
-        refined_fx_cpp=float(fx),refined_fy_cpp=float(fy))
+        refined_fx_cpp=float(fx),refined_fy_cpp=float(fy),
+        fit_checks=dict(aperture_pixels=int(mask.sum()), passed_pixels=int(reliable.sum()),
+                        first_rejection=rejected, independent_rejection=independent))
 
 
 def combine_candidate(baseline, phase, reliable, mask, modulation, metadata,
@@ -212,11 +236,13 @@ def combine_candidate(baseline, phase, reliable, mask, modulation, metadata,
         fringe_period_px=metadata['fringe_period_px'],correct_2pi_jumps=correct_2pi_jumps,
         edge_band_px=edge_band,edge_kernel=kernel)
     base_valid=mask & (base_risk!=2)
+    merge_checks={}
     phase,valid,accepted=hybrid_merge(base_phase,base_valid,local,mask & (risk!=2),
-        reliable,metadata['fringe_period_px'],agreement=.05)
+        reliable,metadata['fringe_period_px'],agreement=.05,diagnostics=merge_checks)
     combined_risk=np.where(valid,base_risk,2).astype(np.uint8)
     combined_risk[accepted]=0
     quality=np.where(accepted,quality,base_quality)
     stats=dict(local_pixels=int(accepted.sum()),added_pixels=int((accepted & ~base_valid).sum()),
-        fallback_pixels=int((base_valid & ~accepted).sum()),baseline_pixels=int(base_valid.sum()))
+        fallback_pixels=int((base_valid & ~accepted).sum()),baseline_pixels=int(base_valid.sum()),
+        merge_checks=merge_checks)
     return phase,combined_risk,quality,stats

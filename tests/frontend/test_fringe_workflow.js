@@ -170,3 +170,46 @@ test('a late file decode cannot restore an image after reset', async () => {
   assert.equal(fr.sourceName, null);
   cancelFringeWork();
 });
+
+for(const selected of ['current','hybrid'])test(`paired analysis retains ${selected} as primary and shares all input settings`,async t=>{
+  const {analyzePairWithProgress}=await import('../../frontend/fringe-progress.js');
+  const nodes=progressDom(t),requests=[];
+  t.mock.method(globalThis,'fetch',async (url,options)=>{
+    const body=JSON.parse(options.body);requests.push(body);
+    return response([event({stage:'done',result:{analysis_method:body.analysis_method,reference_image_b64:'image',grid_rows:2,grid_cols:2,mask_grid:[1,1,1,1],height_grid:[0,1,2,3]}})]);
+  });
+  let result;
+  await analyzePairWithProgress({image_b64:'source',mask_polygons:[{include:true}],form_model:'plane',analysis_method:selected},r=>result=r,assert.fail);
+  assert.equal(requests.length,2);
+  assert.deepEqual({...requests[0],analysis_method:'hybrid'},requests[1]);
+  assert.equal(requests[0].analysis_max_dimension,1024);
+  assert.equal(result.analysis_method,selected);
+  assert.equal(result.method_comparison.current.analysis_method,'current');
+  assert.equal(result.method_comparison.hybrid.analysis_method,'hybrid');
+  assert.equal(nodes.percent.textContent,'100%');
+  assert.ok(nodes.log.children.some(n=>n.textContent.includes('1/2 Current')));
+  assert.ok(nodes.log.children.some(n=>n.textContent.includes('2/2 Hybrid')));
+});
+test('paired analysis stops after a first-run failure or an invalidated source',async t=>{
+  const {analyzePairWithProgress}=await import('../../frontend/fringe-progress.js');
+  progressDom(t);let calls=0,error;
+  t.mock.method(globalThis,'fetch',async()=>{calls++;return response([event({stage:'error',message:'No carrier'})]);});
+  await analyzePairWithProgress({},assert.fail,e=>error=e);
+  assert.equal(error,'No carrier');assert.equal(calls,1);
+  await analyzePairWithProgress({},assert.fail,assert.fail,()=>false);
+  assert.equal(calls,1);
+});
+
+test('cancelling the hybrid half cannot publish a half-finished pair',async t=>{
+  const {analyzePairWithProgress}=await import('../../frontend/fringe-progress.js');
+  progressDom(t);let calls=0,release;
+  t.mock.method(globalThis,'fetch',async()=>{
+    if(++calls===1)return response([event({stage:'done',result:{analysis_method:'current'}})]);
+    return new Promise(resolve=>{release=resolve;});
+  });
+  const pending=analyzePairWithProgress({},assert.fail,assert.fail);
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(calls,2);cancelAnalysis();
+  release(response([event({stage:'done',result:{analysis_method:'hybrid'}})]));
+  await pending;
+});

@@ -1,0 +1,12 @@
+{
+  "backend/vision/fringe.py": "1fd1b88ce5d9811cca5a39aa4ffd8f8fcb07d3d577bcd714452f56d82d59ce50",
+  "backend/vision/fringe_hybrid.py": "336b2accc7f6cfa49685ca45a3365fb21adff655bba58f4eb34e3e62b454eb55",
+  "backend/vision/fringe_composite.py": "96c5292556dc1c972e4382da362b69087bf0ce3c687e2d46f5fc74950bcf9e91",
+  "backend/vision/fringe_checks.py": "8be3182d8a235e89b77ae6b6da973002ce55e9ec9c980213f1afa647dfd83acb",
+  "frontend/fringe-composite.js": "b6dfceb35f8fef689cccaac1cff97465a13ccb33ed6fec08ff8db2f16e6658e0",
+  "frontend/fringe-multicapture.js": "83db04bd016def3b91153bbec9e0c960d5f9f9a7d6c7ed4d12f5d08297311af1",
+  "frontend/fringe-combine-view.js": "d43e7d58278023f7deebc14691fecdd2f83a7b6e0bb67957b3324491e42a3ddf",
+  "frontend/fringe-composite-view.js": "60ed4b3c41d884646fc413c6664d86b8d818be130c1d9123cfcd2a5d160ab445",
+  "scripts/experiment-fringe-composite.py": "53e672dc935597795e114b04808bc92e845fd159af2dd1ec66c35845e5c13586",
+  "scripts/experiment-fringe-registration.mjs": "072e2c919d33e87e0cf2852ca7099f83b441b0cef5bb688905a7c9d2ae29c768"
+}

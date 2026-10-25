@@ -1,0 +1,9 @@
+{
+  "scripts/fringe_model_stack.py": "7a823873419a23f8fa5c07b777d4ec686cdc0dc8b00c0d35ce4b6beb77414698",
+  "scripts/experiment-fringe-model-stack.py": "8ce4a26ff367a3276e94f12636c82c82f12cfc5b052cefa4d765740bdcb94ecb",
+  "scripts/report-fringe-model-stack.py": "f0358c9155a8cd71d930c9548fede952e5c9d9e6f9a702f9ea4ee985ad73df90",
+  "scripts/experiment-fringe-next-coverage.py": "6908178950d6dd5f61e47ced163ba00354040aa7f09ccab07268dd2984cc5982",
+  "tests/test_fringe_model_stack.py": "a9cf94825769ed4f79713189b8ff135dcf2cfd53053515708e3277418d6e27db",
+  "backend/vision/fringe_composite.py": "2d42d1ff2940a83ade3bb874de6f5c338b75637b7c6c733ee13ba661a0851103",
+  "backend/vision/fringe_hybrid.py": "f64bbaa741aa584f004df411d61808f4b505350c33a3102f5b95d64a952412c3"
+}

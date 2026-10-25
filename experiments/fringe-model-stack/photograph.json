@@ -1,0 +1,304 @@
+[
+  {
+    "case": "photograph",
+    "aperture_pixels": 641823,
+    "current_pixels": 448992,
+    "earlier_layers_preserved": true,
+    "elapsed_seconds": 514.8044024999253,
+    "variants": [
+      {
+        "method": "linear",
+        "added_pixels": 6795,
+        "coverage_pct": 71.01443856016378,
+        "old_phase_change_max_rad": 0.0,
+        "supported_pixels": 206547,
+        "independent_added_pixels": 6795,
+        "independent_order_rejected_pixels": 0,
+        "overlap_pixels": 0,
+        "overlap_max_difference_rad": 0.0,
+        "disagreement_pixels": 0,
+        "disagreement_moat_pixels": 0,
+        "disconnected_candidate_pixels": 0,
+        "joint_order_passes": 1,
+        "joint_order_rejected_pixels": 0,
+        "remaining_old_order_conflict_pixels": 0,
+        "source_counts": {
+          "linear": 6795
+        }
+      },
+      {
+        "method": "small-linear",
+        "added_pixels": 11171,
+        "coverage_pct": 71.69624647293725,
+        "old_phase_change_max_rad": 0.0,
+        "supported_pixels": 277129,
+        "independent_added_pixels": 11171,
+        "independent_order_rejected_pixels": 0,
+        "overlap_pixels": 0,
+        "overlap_max_difference_rad": 0.0,
+        "disagreement_pixels": 0,
+        "disagreement_moat_pixels": 0,
+        "disconnected_candidate_pixels": 0,
+        "joint_order_passes": 1,
+        "joint_order_rejected_pixels": 0,
+        "remaining_old_order_conflict_pixels": 0,
+        "source_counts": {
+          "small-linear": 11171
+        }
+      },
+      {
+        "method": "quadratic-harmonic",
+        "added_pixels": 8036,
+        "coverage_pct": 71.20779404913816,
+        "old_phase_change_max_rad": 0.0,
+        "supported_pixels": 295638,
+        "independent_added_pixels": 8036,
+        "independent_order_rejected_pixels": 0,
+        "overlap_pixels": 0,
+        "overlap_max_difference_rad": 0.0,
+        "disagreement_pixels": 0,
+        "disagreement_moat_pixels": 0,
+        "disconnected_candidate_pixels": 0,
+        "joint_order_passes": 1,
+        "joint_order_rejected_pixels": 0,
+        "remaining_old_order_conflict_pixels": 0,
+        "source_counts": {
+          "quadratic-harmonic": 8036
+        }
+      },
+      {
+        "method": "linear-harmonic",
+        "added_pixels": 6773,
+        "coverage_pct": 71.01101082385642,
+        "old_phase_change_max_rad": 0.0,
+        "supported_pixels": 264532,
+        "independent_added_pixels": 6773,
+        "independent_order_rejected_pixels": 0,
+        "overlap_pixels": 0,
+        "overlap_max_difference_rad": 0.0,
+        "disagreement_pixels": 0,
+        "disagreement_moat_pixels": 0,
+        "disconnected_candidate_pixels": 0,
+        "joint_order_passes": 1,
+        "joint_order_rejected_pixels": 0,
+        "remaining_old_order_conflict_pixels": 0,
+        "source_counts": {
+          "linear-harmonic": 6773
+        }
+      },
+      {
+        "method": "small-linear-harmonic",
+        "added_pixels": 14669,
+        "coverage_pct": 72.2412565458078,
+        "old_phase_change_max_rad": 0.0,
+        "supported_pixels": 343552,
+        "independent_added_pixels": 14669,
+        "independent_order_rejected_pixels": 0,
+        "overlap_pixels": 0,
+        "overlap_max_difference_rad": 0.0,
+        "disagreement_pixels": 0,
+        "disagreement_moat_pixels": 0,
+        "disconnected_candidate_pixels": 0,
+        "joint_order_passes": 1,
+        "joint_order_rejected_pixels": 0,
+        "remaining_old_order_conflict_pixels": 0,
+        "source_counts": {
+          "small-linear-harmonic": 14669
+        }
+      },
+      {
+        "method": "core-linear-first",
+        "added_pixels": 16941,
+        "coverage_pct": 72.59524822264082,
+        "old_phase_change_max_rad": 0.0,
+        "overlap_pixels": 6486,
+        "overlap_max_difference_rad": 0.0705897174619925,
+        "disagreement_pixels": 320,
+        "disagreement_moat_pixels": 548,
+        "disconnected_candidate_pixels": 0,
+        "joint_order_passes": 1,
+        "joint_order_rejected_pixels": 0,
+        "remaining_old_order_conflict_pixels": 0,
+        "source_counts": {
+          "linear": 6437,
+          "small-linear": 6752,
+          "quadratic-harmonic": 3752
+        },
+        "mask_union_pixels": 17487,
+        "overlap_tolerance_rad": 0.05
+      },
+      {
+        "method": "core-harmonic-first",
+        "added_pixels": 16941,
+        "coverage_pct": 72.59524822264082,
+        "old_phase_change_max_rad": 0.0,
+        "overlap_pixels": 6486,
+        "overlap_max_difference_rad": 0.0705897174619925,
+        "disagreement_pixels": 320,
+        "disagreement_moat_pixels": 548,
+        "disconnected_candidate_pixels": 0,
+        "joint_order_passes": 1,
+        "joint_order_rejected_pixels": 0,
+        "remaining_old_order_conflict_pixels": 0,
+        "source_counts": {
+          "quadratic-harmonic": 7565,
+          "linear": 4497,
+          "small-linear": 4879
+        },
+        "mask_union_pixels": 17487,
+        "overlap_tolerance_rad": 0.05
+      },
+      {
+        "method": "expanded",
+        "added_pixels": 20276,
+        "coverage_pct": 73.11486188559775,
+        "old_phase_change_max_rad": 0.0,
+        "overlap_pixels": 13733,
+        "overlap_max_difference_rad": 0.0705897174619925,
+        "disagreement_pixels": 679,
+        "disagreement_moat_pixels": 1220,
+        "disconnected_candidate_pixels": 79,
+        "joint_order_passes": 1,
+        "joint_order_rejected_pixels": 0,
+        "remaining_old_order_conflict_pixels": 0,
+        "source_counts": {
+          "linear": 6090,
+          "small-linear": 6480,
+          "quadratic-harmonic": 3725,
+          "linear-harmonic": 430,
+          "small-linear-harmonic": 3551
+        },
+        "mask_union_pixels": 21493,
+        "overlap_tolerance_rad": 0.05
+      },
+      {
+        "method": "expanded-strict-overlap",
+        "added_pixels": 12779,
+        "coverage_pct": 71.94678283576624,
+        "old_phase_change_max_rad": 0.0,
+        "overlap_pixels": 13733,
+        "overlap_max_difference_rad": 0.0705897174619925,
+        "disagreement_pixels": 4856,
+        "disagreement_moat_pixels": 6328,
+        "disconnected_candidate_pixels": 5191,
+        "joint_order_passes": 1,
+        "joint_order_rejected_pixels": 0,
+        "remaining_old_order_conflict_pixels": 0,
+        "source_counts": {
+          "linear": 2164,
+          "small-linear": 4503,
+          "quadratic-harmonic": 2793,
+          "linear-harmonic": 753,
+          "small-linear-harmonic": 2566
+        },
+        "mask_union_pixels": 21493,
+        "overlap_tolerance_rad": 0.025
+      },
+      {
+        "method": "expanded-loose-overlap",
+        "added_pixels": 21493,
+        "coverage_pct": 73.30447802587318,
+        "old_phase_change_max_rad": 0.0,
+        "overlap_pixels": 13733,
+        "overlap_max_difference_rad": 0.0705897174619925,
+        "disagreement_pixels": 0,
+        "disagreement_moat_pixels": 0,
+        "disconnected_candidate_pixels": 0,
+        "joint_order_passes": 1,
+        "joint_order_rejected_pixels": 0,
+        "remaining_old_order_conflict_pixels": 0,
+        "source_counts": {
+          "linear": 6795,
+          "small-linear": 6930,
+          "quadratic-harmonic": 3762,
+          "linear-harmonic": 445,
+          "small-linear-harmonic": 3561
+        },
+        "mask_union_pixels": 21493,
+        "overlap_tolerance_rad": 0.1
+      },
+      {
+        "method": "expanded-unchecked-overlap",
+        "added_pixels": 21493,
+        "coverage_pct": 73.30447802587318,
+        "old_phase_change_max_rad": 0.0,
+        "overlap_pixels": 13733,
+        "overlap_max_difference_rad": 0.0705897174619925,
+        "disagreement_pixels": 0,
+        "disagreement_moat_pixels": 0,
+        "disconnected_candidate_pixels": 0,
+        "joint_order_passes": 1,
+        "joint_order_rejected_pixels": 0,
+        "remaining_old_order_conflict_pixels": 0,
+        "source_counts": {
+          "linear": 6795,
+          "small-linear": 6930,
+          "quadratic-harmonic": 3762,
+          "linear-harmonic": 445,
+          "small-linear-harmonic": 3561
+        },
+        "mask_union_pixels": 21493,
+        "overlap_tolerance_rad": null
+      },
+      {
+        "method": "tiered-expanded",
+        "added_pixels": 21476,
+        "coverage_pct": 73.30182932054475,
+        "old_phase_change_max_rad": 0.0,
+        "tiers": [
+          {
+            "models": [
+              "linear",
+              "small-linear",
+              "quadratic-harmonic"
+            ],
+            "added_pixels": 16941,
+            "overlap_pixels": 6486,
+            "overlap_max_difference_rad": 0.0705897174619925,
+            "disagreement_pixels": 320,
+            "disagreement_moat_pixels": 548,
+            "disconnected_candidate_pixels": 0,
+            "joint_order_passes": 1,
+            "joint_order_rejected_pixels": 0,
+            "remaining_old_order_conflict_pixels": 0,
+            "source_counts": {
+              "linear": 6437,
+              "small-linear": 6752,
+              "quadratic-harmonic": 3752
+            }
+          },
+          {
+            "models": [
+              "linear-harmonic",
+              "small-linear-harmonic"
+            ],
+            "added_pixels": 4535,
+            "overlap_pixels": 401,
+            "overlap_max_difference_rad": 0.019540467258252203,
+            "disagreement_pixels": 0,
+            "disagreement_moat_pixels": 0,
+            "disconnected_candidate_pixels": 14,
+            "joint_order_passes": 1,
+            "joint_order_rejected_pixels": 0,
+            "remaining_old_order_conflict_pixels": 0,
+            "source_counts": {
+              "linear-harmonic": 796,
+              "small-linear-harmonic": 3739
+            }
+          }
+        ],
+        "joint_order_rejected_pixels": 0,
+        "remaining_old_order_conflict_pixels": 0,
+        "source_counts": {
+          "linear": 6437,
+          "small-linear": 6752,
+          "quadratic-harmonic": 3752,
+          "linear-harmonic": 796,
+          "small-linear-harmonic": 3739
+        },
+        "earlier_tiers_preserved": true
+      }
+    ],
+    "followup_elapsed_seconds": 491.5177715420723
+  }
+]

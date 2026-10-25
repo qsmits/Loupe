@@ -1,0 +1,74 @@
+[
+  {
+    "method": "slow-lighting",
+    "control": "unchanged-copy",
+    "raw_residual_limit": 0.2,
+    "gained": 0,
+    "lost": 1,
+    "net": -1
+  },
+  {
+    "method": "slow-lighting",
+    "control": "unchanged-copy",
+    "raw_residual_limit": 0.3,
+    "gained": 1,
+    "lost": 2,
+    "net": -1
+  },
+  {
+    "method": "slow-lighting",
+    "control": "unchanged-copy",
+    "raw_residual_limit": null,
+    "gained": 2,
+    "lost": 9,
+    "net": -7
+  },
+  {
+    "method": "isolated-outliers",
+    "control": "unchanged-copy",
+    "raw_residual_limit": 0.2,
+    "gained": 0,
+    "lost": 0,
+    "net": 0
+  },
+  {
+    "method": "isolated-outliers",
+    "control": "unchanged-copy",
+    "raw_residual_limit": 0.3,
+    "gained": 4,
+    "lost": 0,
+    "net": 4
+  },
+  {
+    "method": "isolated-outliers",
+    "control": "unchanged-copy",
+    "raw_residual_limit": null,
+    "gained": 8,
+    "lost": 0,
+    "net": 8
+  },
+  {
+    "method": "lighting-and-smoothing",
+    "control": "mild-smoothing",
+    "raw_residual_limit": 0.2,
+    "gained": 27,
+    "lost": 0,
+    "net": 27
+  },
+  {
+    "method": "lighting-and-smoothing",
+    "control": "mild-smoothing",
+    "raw_residual_limit": 0.3,
+    "gained": 29,
+    "lost": 1,
+    "net": 28
+  },
+  {
+    "method": "lighting-and-smoothing",
+    "control": "mild-smoothing",
+    "raw_residual_limit": null,
+    "gained": 32,
+    "lost": 8,
+    "net": 24
+  }
+]

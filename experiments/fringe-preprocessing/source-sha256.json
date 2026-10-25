@@ -1,0 +1,7 @@
+{
+  "scripts/experiment-fringe-preprocessing.py": "a8613261cfcaf4df573471bd718cc6e87b38de1921914addc2927f14e6b0a3f0",
+  "scripts/report-fringe-preprocessing.py": "11cf7c8784842617b8dc49605d3e533aec25252eacb0301522d8054d24feb052",
+  "tests/test_fringe_preprocessing_experiment.py": "a20a3391f2855012241b817ea17d54acb2125bc49014ab0defbcde6286bb2479",
+  "scripts/experiment-fringe-next-coverage.py": "6908178950d6dd5f61e47ced163ba00354040aa7f09ccab07268dd2984cc5982",
+  "backend/vision/fringe_composite.py": "2d42d1ff2940a83ade3bb874de6f5c338b75637b7c6c733ee13ba661a0851103"
+}

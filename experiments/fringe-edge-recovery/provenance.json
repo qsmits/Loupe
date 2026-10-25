@@ -1,0 +1,14 @@
+{
+  "base_commit": "45bc79dbdb16a73ba0b520bff4a2363e6be327de",
+  "python": "3.13.12",
+  "numpy": "2.4.3",
+  "scipy": "1.17.1",
+  "final_source_sha256": {
+    "scripts/fringe_edge_recovery.py": "39022150e31ba015666f927e71a8004ee6ea5da563c930d4a670024249ca709b",
+    "scripts/experiment-fringe-edge-recovery.py": "d52ce64f48bdc63e04c069db6727c96d69d51dba151d57878c9ee42cccf45466",
+    "scripts/experiment-fringe-local-fit.py": "d18d362c1340209b649985c5c15e5733a14cb01f98bc24e6b1b810c64ea92129",
+    "scripts/validate-fringe-boundaries.py": "156d1bef9421649088595fc2b776ceab32d8d0be7dd0c1aba8b29b164f27cf9d",
+    "backend/vision/fringe.py": "40196f9d082d3a86175f16379f6fc075a3373046c872864bd2697806a02fa02c",
+    "backend/vision/fringe_hybrid.py": "336b2accc7f6cfa49685ca45a3365fb21adff655bba58f4eb34e3e62b454eb55"
+  }
+}

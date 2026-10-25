@@ -108,3 +108,15 @@ it('explains absent blue regions without implying rejected pixels are measured',
   assert.match(edgeSelectionLegend({edge_inspection:{regions:[0,1,2],has_user_selection:true},coverage:{selected_rejected_pixels:4}}),/too small.*preview resolution/);
   assert.match(edgeSelectionLegend({edge_inspection:{regions:[0,1,2],has_user_selection:true},coverage:{selected_rejected_pixels:0}}),/No selected rejected area/);
 });
+
+it('explains fit rejection and full fallback without implying independent confirmation',()=>{
+  const text=qualityDescription({analysis_method:'hybrid',hybrid_diagnostics:{
+    local_pixels:0,added_pixels:0,fallback_pixels:60,sigma_across_px:5,sigma_along_px:2,
+    fit_checks:{aperture_pixels:100,passed_pixels:0,first_rejection:{conditioning:2,contrast:3,image_residual:95,window_disagreement:0}},
+    merge_checks:{transition_supported:0,insufficient_anchor_pixels:0,anchor_disagreement_pixels:0}
+  }}).join(' ');
+  assert.match(text,/Current estimate everywhere/);
+  assert.match(text,/0 of 100 pixels passed/);
+  assert.match(text,/image does not fit the fringe model: 95/);
+  assert.match(text,/do not independently confirm/);
+});

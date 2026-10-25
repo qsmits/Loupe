@@ -1,0 +1,8 @@
+{
+  "scripts/experiment-fringe-next-coverage.py": "6908178950d6dd5f61e47ced163ba00354040aa7f09ccab07268dd2984cc5982",
+  "scripts/report-fringe-next-coverage.py": "5670769fbe1b6a059bf87b27362c013d292d8ee62d300bae35fc267920edba8e",
+  "backend/vision/fringe_composite.py": "2d42d1ff2940a83ade3bb874de6f5c338b75637b7c6c733ee13ba661a0851103",
+  "backend/vision/fringe_hybrid.py": "f64bbaa741aa584f004df411d61808f4b505350c33a3102f5b95d64a952412c3",
+  "scripts/experiment-fringe-texture-composite.py": "c662db0f8e2f1765929e62e1a69a4b4813664fab8311009d6d86b3bcf8f82b97",
+  "scripts/experiment-fringe-photographic-residual.py": "9700dbd3915c8d34dc4401e65800a2e3d36ed7a0184d1575cc55175cd11f4dfb"
+}

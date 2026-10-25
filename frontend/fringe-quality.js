@@ -1,6 +1,8 @@
 import {fr, $} from './fringe.js';
+import {hybridFallbackNotice} from './fringe-method-comparison.js';
 
 export function boundaryDescription(filter) {
+  if (filter?.boundary_rule === 'composite-adaptive') return 'Composite coverage follows local-fit evidence, not a fixed boundary inset.';
   if (Number.isFinite(filter?.boundary_across_px) && Number.isFinite(filter?.boundary_along_px)) {
     return `Directional boundary guard: ${filter.boundary_across_px.toFixed(1)} analysis pixels across / ${filter.boundary_along_px.toFixed(1)} along fringes, following the detected fringe direction.`;
   }
@@ -17,10 +19,22 @@ export function qualityDescription(data, trustedOnly = false) {
     if (c.requested_pixels > 0) lines.push(`${(100*c.measured_pixels/c.requested_pixels).toFixed(1)}% of the drawn include/exclude area contributes to the full-aperture result.`);
     if (c.outline_source === 'drawn') lines.push('The drawn outline defines the part area; illumination, contrast and continuity checks determine where fringes can be measured. Drawing an area does not make every pixel valid.');
   } else lines.push('Original aperture coverage is unavailable for this result.');
-  if (data?.analysis_method === 'hybrid') {
+  if (data?.analysis_method === 'composite') {
+    lines.push('Experimental composite: layered real-image fits with per-pixel source and qualitative evidence. Open Composite quality for cutoff-dependent coverage and statistics. Quality is not calibrated uncertainty; conflicts are excluded, and shared fringe-order errors can survive.');
+  } else if (data?.analysis_method === 'hybrid') {
     const h=data.hybrid_diagnostics;
     lines.push('Experimental hybrid: local quadratic fits where image-based checks pass; current-method fallback elsewhere. The accepted area has an adaptive boundary, not one fixed inset. Fit checks are not calibrated uncertainty bounds.');
     if (h) lines.push(`${h.local_pixels.toLocaleString()} pixels use local fits (including blended transitions); ${h.added_pixels.toLocaleString()} added beyond the baseline; ${h.fallback_pixels.toLocaleString()} retain the baseline estimate. Local-fit sigma: ${h.sigma_across_px.toFixed(1)} px across / ${h.sigma_along_px.toFixed(1)} px along fringes. The smoothing values below describe the fallback estimator.`);
+    const fallback=hybridFallbackNotice(h);
+    if (fallback) lines.push(fallback);
+    if (h?.fit_checks) {
+      const checks=h.fit_checks, names={conditioning:'unstable fit',contrast:'low contrast',image_residual:'image does not fit the fringe model',window_disagreement:'fit windows disagree'};
+      lines.push(`Local-fit screening: ${checks.passed_pixels.toLocaleString()} of ${checks.aperture_pixels.toLocaleString()} pixels passed (before fringe-continuity filtering). First failed check: ${Object.entries(checks.first_rejection).map(([key,n])=>`${names[key] || key}: ${n.toLocaleString()}`).join('; ')}.`);
+    }
+    if (h?.merge_checks) {
+      const c=h.merge_checks;
+      lines.push(`After unwrap/boundary and transition checks: ${c.transition_supported.toLocaleString()} candidates; ${c.insufficient_anchor_pixels.toLocaleString()} lacked enough Current anchors; ${c.anchor_disagreement_pixels.toLocaleString()} disagreed with Current on their anchor region.`);
+    }
   } else if (Number.isFinite(f?.boundary_band_px)) {
     lines.push(`${boundaryDescription(f)} ${f.preliminary_rim_px === 0 ? 'No additional fixed-width rim trim is applied.' : 'Earlier aperture trimming is additional.'} This is a precaution, not proof that every excluded pixel is invalid. Real edge roll-off may be excluded from PV/RMS.`);
   }

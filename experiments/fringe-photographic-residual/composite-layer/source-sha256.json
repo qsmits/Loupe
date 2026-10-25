@@ -1,0 +1,6 @@
+{
+  "backend/vision/fringe_composite.py": "2d42d1ff2940a83ade3bb874de6f5c338b75637b7c6c733ee13ba661a0851103",
+  "scripts/experiment-fringe-texture-composite.py": "c662db0f8e2f1765929e62e1a69a4b4813664fab8311009d6d86b3bcf8f82b97",
+  "scripts/experiment-fringe-texture-layer.py": "19fa1fa057b711a79863369b19b9157aa247147627a7416743a6551f88ae9e24",
+  "scripts/experiment-fringe-photographic-residual.py": "9700dbd3915c8d34dc4401e65800a2e3d36ed7a0184d1575cc55175cd11f4dfb"
+}

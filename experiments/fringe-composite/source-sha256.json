@@ -1,0 +1,7 @@
+{
+  "backend/vision/fringe_composite.py": "8e5db02aa78584ce95c07655c537d30b0f11ca544f995e26a04d3822565bfff5",
+  "backend/vision/fringe.py": "52611f6d6734b1f83fe1e1a57c774c575e83e9df64278080455525c2b0461869",
+  "scripts/experiment-fringe-composite.py": "53e672dc935597795e114b04808bc92e845fd159af2dd1ec66c35845e5c13586",
+  "frontend/fringe-composite.js": "f97a1fe47e752e5881c5d6ee91d7fdacdc91006e6931d0569857a732991ececb",
+  "frontend/fringe-composite-view.js": "7aa523e32bc1f87beace3fbc82d66c0722683355c3e48a124072e2ad0fe9e18a"
+}

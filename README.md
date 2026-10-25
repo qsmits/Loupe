@@ -80,7 +80,9 @@ Drop an interferogram anywhere in the image/result view or camera preview to loa
 - **Visible progress**: the analysis dialog shows server-reported stages, a progress bar, and a timestamped activity log. Errors stay visible for adjustment and retry.
 - **Clear source and reset**: the sidebar identifies the current image and completion time. Loading another image clears the previous result. **Reset analysis** clears the current source, regions, results, and measurements while preserving analysis settings and session capture history.
 
-Scientific background and references: [DFTFringe](https://github.com/githubdoe/DFTFringe) was the main recorded application/source-code reference; [Noll (1976)](https://doi.org/10.1364/JOSA.66.000207) supplies the Zernike convention named in the implementation. The subsequent scientific audit and validation draw on [Takeda, Ina & Kobayashi (1982)](https://doi.org/10.1364/JOSA.72.000156) for Fourier fringe analysis, [Herráez et al. (2002)](https://doi.org/10.1364/AO.41.007437) and the [scikit-image documentation](https://scikit-image.org/docs/stable/api/skimage.restoration.html#skimage.restoration.unwrap_phase) for the independent reliability-sorted unwrapper, [Zhao et al. (2011)](https://doi.org/10.1364/AO.50.006214) for quality-guided unwrapping and its limits, [Goldstein, Zebker & Werner (1988)](https://doi.org/10.1029/RS023i004p00713) to distinguish branch-cut methods from Loupe's custom heap flood, and [Doiron & Beers' NIST Gage Block Handbook, chapter 6](https://www.nist.gov/sites/default/files/documents/calibrations/mono180.pdf) for interferometric length measurement and fringe-order ambiguity. [Reeve's NBS/NIST optical-flat calibration procedure](https://www.nist.gov/system/files/documents/calibrations/75-975.pdf) and [Edmund Optics' optical-flat guide](https://www.edmundoptics.com/knowledge-center/application-notes/optics/optical-flats/) inform the contact/wedge and height-sign interpretation. [SciPy's Jacobi polynomial evaluator](https://docs.scipy.org/doc/scipy/reference/generated/scipy.special.eval_jacobi.html) provides an independent numerical check of the Zernike basis. The subsequent edge-reconstruction experiments also consult [Qian (2004)](https://doi.org/10.1364/AO.43.002695) for windowed single-fringe analysis and [Gao & Qian (2012)](https://opg.optica.org/viewmedia.cfm?seq=0&uri=ao-51-3-328) for local phase estimation bias and noise; the local harmonic-regression prototype is not an implementation of their WFR algorithm. These references and synthetic tests do not establish instrument accuracy; the [scientific-basis and validation record](docs/fringe-scientific-basis.md) documents provenance, measured software behavior, and remaining physical validation.
+Scientific background and references: [DFTFringe](https://github.com/githubdoe/DFTFringe) was the main recorded application/source-code reference; [Noll (1976)](https://doi.org/10.1364/JOSA.66.000207) supplies the Zernike convention named in the implementation. The subsequent scientific audit and validation draw on [Takeda, Ina & Kobayashi (1982)](https://doi.org/10.1364/JOSA.72.000156) for Fourier fringe analysis, [Herráez et al. (2002)](https://doi.org/10.1364/AO.41.007437) and the [scikit-image documentation](https://scikit-image.org/docs/stable/api/skimage.restoration.html#skimage.restoration.unwrap_phase) for the independent reliability-sorted unwrapper, [Zhao et al. (2011)](https://doi.org/10.1364/AO.50.006214) for quality-guided unwrapping and its limits, [Goldstein, Zebker & Werner (1988)](https://doi.org/10.1029/RS023i004p00713) to distinguish branch-cut methods from Loupe's custom heap flood, and [Doiron & Beers' NIST Gage Block Handbook, chapter 6](https://www.nist.gov/sites/default/files/documents/calibrations/mono180.pdf) for interferometric length measurement and fringe-order ambiguity. [Reeve's NBS/NIST optical-flat calibration procedure](https://www.nist.gov/system/files/documents/calibrations/75-975.pdf) and [Edmund Optics' optical-flat guide](https://www.edmundoptics.com/knowledge-center/application-notes/optics/optical-flats/) inform the contact/wedge and height-sign interpretation. [SciPy's Jacobi polynomial evaluator](https://docs.scipy.org/doc/scipy/reference/generated/scipy.special.eval_jacobi.html) provides an independent numerical check of the Zernike basis. The subsequent edge-reconstruction experiments also consult [Qian (2004)](https://doi.org/10.1364/AO.43.002695) for windowed single-fringe analysis and [Gao & Qian (2012)](https://opg.optica.org/viewmedia.cfm?seq=0&uri=ao-51-3-328) for local phase estimation bias and noise; the local harmonic-regression prototype is not an implementation of their WFR algorithm. [Massig & Heppner (2001)](https://doi.org/10.1364/AO.40.002081), whose abstract describes fringe extrapolation to reduce border errors, motivates the later continuation experiments; our quadratic continuation and admission checks are an independent prototype. These references and synthetic tests do not establish instrument accuracy; the [scientific-basis and validation record](docs/fringe-scientific-basis.md) documents provenance, measured software behavior, and remaining physical validation.
+
+The later [full-area reconstruction study](experiments/fringe-gradient-reconstruction/README.md) consults the abstract of [Ghiglia & Romero (1994)](https://doi.org/10.1364/JOSAA.11.000107) for weighted least-squares phase unwrapping. Its independently implemented masked graph solver fixes accepted heights and integrates image-derived gradients with a smoothness prior; it is not a reproduction of the paper's fast-transform solver. Added pixels are explicitly inferred, and neither model sensitivity nor the synthetic results establish calibrated uncertainty.
 
 ### SPC & Analytics
 - SQLite run storage (parts → runs → results)
@@ -276,13 +278,143 @@ roll-off still produces regressions (up to 1.71 nm additional maximum error in
 this suite), and fallback preserves pre-existing scratch errors. It is now available as **Analysis settings → Analysis method → Hybrid quadratic
 fit (experimental)**; **Current method** remains the default. The same shared
 implementation runs on the server and in the browser, with a 1024-pixel maximum
-side for the hybrid to bound memory. Browser mode automatically resizes images;
-use it for both runs to compare at the same resolution. Keep wavelength, aperture
+side for local fits to bound memory. Both browser and server automatically resize
+Hybrid and Composite inputs before lens correction and mask rasterization. The
+side-by-side comparison applies the same 1024-pixel cap to both methods. Server
+results record original and resized full-frame dimensions, report resizing in
+warnings/exports, and adjust image-scale calibration. Current-only server
+analysis retains its existing 2048-pixel upload/hosted cap and native local camera
+resolution. Keep wavelength, aperture
 and form removal unchanged. Export the first report before rerunning; browser
 captures also appear in Session until the tab reloads. Results, reports, CSV and
 Session entries identify the method. The gates are not calibrated confidence
 bounds. Changing the method requires a fresh analysis; form changes/inversion
 retain the original method provenance.
+
+Hybrid's coverage details now report why local fits were rejected, and the paired
+comparison explicitly identifies complete fallback to Current. The
+[photographic-residual investigation](experiments/fringe-photographic-residual/README.md)
+reproduces a real image where every fit failed the 4% residual gate. Research-only
+extensions recovered 68.0–73.9% of its aperture versus 64.8%; 32 synthetic scenes
+also exposed added-pixel errors up to 17.1 nm. These observations are not calibrated
+uncertainty bounds, and the production acceptance thresholds remain unchanged.
+
+Further [edge-recovery experiments](experiments/fringe-edge-recovery/README.md)
+combine adaptive fit windows, agreement with simpler local models, anchoring to
+existing Hybrid measurements, and predicted fringe continuation beyond the
+aperture and photograph boundaries. The record includes failed variants, raw
+per-scene errors, coverage plots and reproduction commands. The prototypes are
+research-only: no additional analysis option or default change is introduced.
+Existing Hybrid measurements remain unchanged, including any pre-existing errors;
+new coverage is accepted only on real selected image pixels. Synthetic continuation
+outside the part is never counted as measured area.
+
+The follow-up [continuation-check study](experiments/fringe-continuation-checks/README.md)
+tests withheld interior regions and local, fringe-shaped image residuals across
+210 synthetic scenes, including 36 fresh cases with fixed rules. The local
+residual check reduces the earlier curved-surface failure from 1.660 to 0.617 nm
+maximum error while retaining 91.7% coverage; the clean flat with a hole still
+retains 95.4%. Optical distortion and pre-existing local-fit errors remain.
+These are research admission checks, not calibrated uncertainty bounds or new
+application options. The report includes all variants, failures and reproduction
+commands; the original study is preserved.
+
+The [coverage-first study](experiments/fringe-coverage-budget/README.md) tests
+less restrictive local-fit recovery over 228 synthetic scenes, including 18 new
+holdouts, and measures boundary-band coverage separately from total area. A
+rolled-edge example improves from 67.4% to 98.1% area coverage with 8.82 nm maximum
+error in the added pixels. The stricter candidate adds no background or
+fringe-free defect pixels in this suite, but blur and pre-existing fringe-order
+errors remain; looser thresholds can admit background and damaged regions.
+Acceptance scores are not calibrated error bounds. Selected variants are available
+in the experimental composite below; other variants remain research-only.
+Complete results and failed variants are retained in the report.
+
+**[Composite quality (experimental)](experiments/fringe-composite/README.md)** is available in Analysis settings. It stacks
+original Hybrid observations, strict local consensus, broader local recovery,
+checked fringe continuation, and photographic recovery from one interferogram, retaining the method/capture index for every pixel.
+The dedicated viewer offers a qualitative heatmap, interferogram backdrop, and
+an inclusion cutoff that updates visible coverage and full-resolution PV/RMS
+using one fixed form removal. Conflicting pixels are striped and excluded;
+uncorroborated baseline pixels are explicitly marked limited, not automatically
+rated strongest. CSV exports carry the selected scope and per-pixel provenance
+at display resolution. The viewer is an immutable analysis-time air-gap snapshot;
+its cutoff does not change the main result or follow later sign/form edits.
+These categories are not calibrated nanometer uncertainty. Both browser and
+server use the same implementation with a 1024-pixel limit. Current remains the
+default. An alternate unwrap path now checks integer fringe order; disagreements
+exclude the affected connected island rather than guessing which path is right.
+If too little unambiguous area remains, analysis stops with an explanatory error.
+Checked continuation must pass withheld-edge prediction, local image
+residual, and original-anchor checks. The final **photographic recovery** layer
+checks raw and mildly filtered fits, different window shapes, original anchors,
+and fringe order while retaining raw-image fit heights. Both appear only at
+**Limited corroboration**. The Photographic recovery checkbox compares the last
+layer against earlier measurements with fixed heights, colors, and form removal;
+the Photographic additions overlay highlights its contribution. See the
+[photographic recovery experiments](experiments/fringe-photographic-residual/composite-layer.md)
+for measured tradeoffs and limitations.
+These checks do not eliminate shared optical or model errors. Further [coverage-recovery experiments](experiments/fringe-next-coverage/README.md)
+trace the remaining rejection causes and compare ten candidates on 40 synthetic
+scenes. Simpler local models and an extra intensity harmonic recover additional
+area; looser agreement gates admit some known fringe-free defect pixels and
+remain research-only. No thresholds changed as part of that study.
+The follow-up [image-preprocessing study](experiments/fringe-preprocessing/README.md)
+tests cleaned assessment copies while preserving original-image phases. Controls
+show negligible additional coverage from lighting correction or isolated-pixel
+cleanup on the test photograph; larger apparent gains come from changing the
+acceptance checks. These variants remain research-only.
+The [combined-model study](experiments/fringe-model-stack/README.md) stacks
+linear envelopes, smaller windows, and a second intensity harmonic. Its additive
+version freezes each recovered tier before filling further gaps, preserving
+earlier phases and model provenance. It compares coverage and added-pixel errors
+on 40 regression scenes, eight new stress scenes, and the same photograph;
+the additional models are not yet exposed in the application.
+The [full-area reconstruction study](experiments/fringe-gradient-reconstruction/README.md)
+then investigates displaying the remaining gaps using image-derived phase gradients
+and fixed accepted heights. It reaches 100% of the selected photograph aperture
+and reveals more simulated edge roll than smooth filling, but all added pixels
+are inferred. Sharp edges can remain attenuated, local errors can exceed 100 nm,
+and completion also fills defects or background mistakenly included in the mask.
+An opt-in **Prepare reconstructed surface preview** setting is now available with
+**Composite quality** and **Plane** removal. It opens in the quality viewer with
+permanent white hatching, a separate displayed-coverage count, and a toggle for
+comparison. The measured mask, PV/RMS, measurement CSV, and capture combination
+exclude inferred pixels. The preview uses the fixed analysis-time plane and
+unverified air-gap sign, works in browser and server analysis, and saves with the
+result. It does not guarantee complete coverage: conflicts and components without
+enough accepted anchors remain unfilled. See the experiment report for limits.
+
+**Combine captures…** in the quality viewer registers a pair of Composite quality
+captures from the current session. Both must use Plane removal. Mark three
+matching physical landmarks, confirm relative analysis-time height direction,
+and choose an overlap disagreement limit (20 nm initially). Similarity registration
+allows rotation, translation and scale, rejects reflections and poor landmark fits,
+and aligns only relative height offset and tilt. Spatially held-out overlap tests
+check that alignment; the limit is an admission rule, not an accuracy guarantee.
+The combined map retains the better-supported estimate instead of averaging,
+excludes conflicting overlaps, and distinguishes one-capture from two-capture
+support. Separate overlays show fit evidence, capture support and overlap
+difference; single-support locations have unknown difference. No interpolation
+crosses an unmeasured hole. This first version combines **two** captures inside
+the reference aperture, using display grids (at most 256 × 256); its PV/RMS and
+coverage are explicitly display-resolution statistics. The original full-resolution
+result is unchanged. The combined snapshot, registration and source IDs are saved
+with the current project; the temporary source history is not. See the
+[checks and registration experiment](experiments/fringe-composite/checks-and-registration.md)
+for gains, failures and reproduction instructions.
+
+Enable **Compare Current and Hybrid side by side** in Analysis settings to run a
+matched pair with one input/settings payload. The large comparison viewer links
+pan, zoom and cursor position across Current, Hybrid and Hybrid-minus-Current
+maps. Both surface maps share a color scale; extra Hybrid coverage is teal and
+has no fabricated difference value. Optional shared-area offset/tilt alignment
+retains curvature. Comparison counts and CSV values use the display grid (at most
+256 × 256), not full-resolution pixels. The pair is saved with the project as an
+analysis-time snapshot, independent of later sign or form changes. Analysis notes,
+confidence diagnostics, form controls and warnings now sit in a collapsed details
+row so the main surface image has more space; warning counts and surface-direction
+status remain visible.
 
 The surface map includes a numeric color legend and an **Overlay on interferogram**
 view with adjustable opacity. **Set image scale…** calibrates a known two-point

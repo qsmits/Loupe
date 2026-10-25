@@ -4182,3 +4182,39 @@ body.no-camera .camera-section { display: none; }
 .fringe-scale-dialog button { color: var(--text); background: var(--surface-2); border: 1px solid var(--border); border-radius: 5px; padding: 7px 10px; cursor: pointer; }
 .fringe-scale-dialog button:disabled { opacity: .4; cursor: default; }
 .fringe-scale-dialog input { padding: 5px; color: var(--text); background: var(--surface-2); border: 1px solid var(--border); border-radius: 4px; }
+
+/* Keep the image primary; technical details are available in one bounded drawer. */
+.fringe-result-details { flex:none; border-bottom:1px solid var(--border); font-size:12px; }
+.fringe-result-details > summary { padding:7px 12px; cursor:pointer; }
+#fringe-result-details-body { max-height:35vh; overflow:auto; }
+#fringe-result-details-body #fringe-polarity-status { display:block; margin:6px 12px; }
+.fringe-orientation-banner { padding:4px 12px; }
+.fringe-method-comparison { width:calc(100vw - 40px); max-width:1600px; height:calc(100vh - 40px); max-height:none; box-sizing:border-box; padding:16px; background:var(--surface,#202124); color:var(--text,#eee); border:1px solid var(--border,#555); border-radius:10px; }
+.fringe-method-comparison[open] { display:flex; flex-direction:column; gap:10px; }
+.fringe-method-comparison::backdrop { background:#000b; }
+.fringe-method-comparison header { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+.fringe-method-comparison h2,.fringe-method-comparison h3,.fringe-method-comparison p { margin:0; }
+.fringe-method-comparison h2 { font-size:18px; }
+.fringe-method-comparison h3 { font-size:13px; padding:8px; }
+.fringe-method-comparison p,.fringe-method-comparison details { font-size:12px; line-height:1.5; }
+.fringe-method-comparison details { max-height:25vh; overflow:auto; flex:none; }
+.fringe-method-comparison summary { cursor:pointer; }
+.fringe-comparison-controls { display:flex; flex-wrap:wrap; gap:8px 18px; align-items:center; font-size:12px; }
+.fringe-comparison-panes { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); flex:1; min-height:180px; gap:10px; }
+.fringe-comparison-panes section { display:flex; flex-direction:column; min-width:0; min-height:0; background:#191b20; color:#eee; border:1px solid var(--border); border-radius:6px; overflow:hidden; }
+.fringe-comparison-panes canvas { display:block; width:100%; height:100%; min-height:0; flex:1; cursor:crosshair; touch-action:none; }
+.fringe-comparison-legends { display:flex; flex-wrap:wrap; justify-content:space-between; gap:6px 16px; font-size:11px; }
+@media(max-width:800px) { .fringe-method-comparison { padding:10px; width:calc(100vw - 12px); height:calc(100vh - 12px); overflow:auto; } .fringe-comparison-panes { min-height:260px; gap:4px; } }
+@media(max-width:1100px) {
+  .fringe-comparison-panes { grid-template-columns:repeat(2,minmax(0,1fr)); grid-template-rows:repeat(2,minmax(0,1fr)); }
+  .fringe-comparison-panes section:last-child { grid-column:1 / -1; }
+}
+
+.fringe-composite-dialog { width: min(1100px, 95vw); }
+#fringe-composite-canvas { display: block; width: 100%; height: min(58vh, 650px); min-height: 260px; touch-action: none; cursor: grab; background: #191b20; }
+#fringe-composite-scale { max-width: 360px; margin: 0 auto; font-size: 11px; text-align: center; }
+.fringe-composite-gradient { height: 12px; border-radius: 3px; background: linear-gradient(to right,#053061,#4393c3,#f7f7f7,#d6604d,#67001f); }
+.fringe-combine-dialog .fringe-comparison-panes { flex:1; min-height:280px; grid-template-columns:repeat(2,minmax(0,1fr)); grid-template-rows:1fr; }
+.fringe-combine-dialog .fringe-comparison-panes section { min-width:0; display:flex; flex-direction:column; grid-column:auto; }
+.fringe-combine-dialog canvas { flex:1; width:100%; min-height:250px; touch-action:none; cursor:crosshair; }
+.fringe-combine-dialog input[type=number] { width:75px; }

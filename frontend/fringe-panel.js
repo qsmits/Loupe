@@ -1,15 +1,17 @@
+import {openComposite} from './fringe-composite-view.js';
 // fringe-panel.js — Left panel template, capture workflow, mask drawing,
 // averaging, and focus polling for fringe mode.
 //
 // Extracted from fringe.js (Task 6 of fringe UI restructure).
 
+import { openMethodComparison } from './fringe-comparison-view.js';
 import { fr, $ } from './fringe.js';
 import { recoverOrientationObservations } from './fringe-orientation.js';
 import { state } from './state.js';
 import { getSubtractTerms, getFormModel, mergeReanalyzeResult, applySignFlipToLastResult, restoreFringeResult, captureFringeOptions } from './fringe-results.js';
 import { apiFetch } from './api.js';
 import { fringeFetch, isBrowserResult } from './fringe-compute.js';
-import { analyzeWithProgress, cancelAnalysis, hideProgress } from './fringe-progress.js';
+import { analyzePairWithProgress, analyzeWithProgress, cancelAnalysis, hideProgress } from './fringe-progress.js';
 import { initFringeSetup, openFringeSetup, closeFringeSetup, showFringeAnalysisProgress, showFringeAnalysisError, refreshRegionEditor } from './fringe-setup.js';
 import { openFringeLensCal } from './fringe-lens-cal.js';
 import { imageWidth, imageHeight } from './viewport.js';
@@ -415,10 +417,11 @@ async function analyzeFromCamera() {
 }
 
 /** Only the dialog's Analyze action starts a new analysis. */
-function _runAnalysis(formModel = getFormModel(), engine = fr.analysisEngine, method = fr.analysisMethod) {
+function _runAnalysis(formModel = getFormModel(), engine = fr.analysisEngine, method = fr.analysisMethod, compareBoth = false, reconstructedPreview = false) {
   if (fr.analysisBusy || !fr.droppedImageB64) return;
   fr.analysisEngine = engine === "browser" ? "browser" : "server";
-  fr.analysisMethod = method === "hybrid" ? "hybrid" : "current";
+  fr.analysisMethod = ["hybrid", "composite"].includes(method) ? method : "current";
+  if (fr.analysisMethod === "composite") compareBoth = false;
   const version = sourceVersion, epoch = state._epoch;
   const recovery=orientationRecovery;
   orientationRecovery=null;
@@ -427,6 +430,7 @@ function _runAnalysis(formModel = getFormModel(), engine = fr.analysisEngine, me
     wavelength_nm: getWavelength(),
     mask_threshold: getMaskThreshold(),
     analysis_method: fr.analysisMethod,
+    reconstructed_preview: fr.analysisMethod === "composite" && formModel === "plane" && reconstructedPreview,
     lpf_sigma_frac: getLpfSigmaFrac(),
     dc_margin_override: getDcMarginOverride(),
     subtract_terms: getSubtractTerms(),
@@ -444,13 +448,16 @@ function _runAnalysis(formModel = getFormModel(), engine = fr.analysisEngine, me
   fr.analysisBusy = true;
   updateAnalysisSource('Analyzing…');
   showFringeAnalysisProgress();
-  analyzeWithProgress(payload, data => {
+  const analyze = compareBoth ? analyzePairWithProgress : analyzeWithProgress;
+  analyze(payload, data => {
     if (version !== sourceVersion || epoch !== state._epoch) return;
     fr.analysisBusy = false;
     fr.analyzedAt = new Date().toISOString();
     const recovered=recovery && recoverOrientationObservations(recovery, data);
     _onAnalysisResult(data);
     closeFringeSetup();
+    if (compareBoth) openMethodComparison();
+    if (data.composite) openComposite();
     if (recovery) {
       $('fringe-orientation-open')?.click();
       if (!recovered) showToast('The analysis image alignment changed. Place the contact mark again before checking direction.');
@@ -463,7 +470,7 @@ function _runAnalysis(formModel = getFormModel(), engine = fr.analysisEngine, me
     updateAnalysisSource('Analysis failed — adjust settings and try again.');
     showFringeAnalysisError();
     console.warn('Fringe analysis failed:', errMsg);
-  });
+  }, compareBoth ? () => version === sourceVersion && epoch === state._epoch && fr.analysisBusy : undefined);
 }
 
 export async function analyzeFromFile(file) {

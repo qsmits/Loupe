@@ -1,0 +1,65 @@
+{
+  "hybrid_diagnostics": {
+    "version": 1,
+    "polynomial_degree": 2,
+    "sigma_across_px": 30.083276807824706,
+    "sigma_along_px": 15.041638403912353,
+    "guard_fraction": 0.3,
+    "refined_fx_cpp": -0.005094326244781322,
+    "refined_fy_cpp": 0.015476630310903017,
+    "fit_checks": {
+      "aperture_pixels": 652065,
+      "passed_pixels": 0,
+      "first_rejection": {
+        "conditioning": 28212,
+        "contrast": 75851,
+        "image_residual": 548002,
+        "window_disagreement": 0
+      },
+      "independent_rejection": {
+        "conditioning": 28212,
+        "contrast": 76432,
+        "image_residual": 652065,
+        "window_disagreement": 185272
+      }
+    },
+    "local_pixels": 0,
+    "added_pixels": 0,
+    "fallback_pixels": 416055,
+    "baseline_pixels": 416055,
+    "merge_checks": {
+      "fit_passed": 0,
+      "unwrap_supported": 0,
+      "transition_supported": 0,
+      "insufficient_anchor_pixels": 0,
+      "anchor_disagreement_pixels": 0,
+      "component_supported": 0,
+      "pointwise_supported": 0,
+      "accepted_pixels": 0
+    },
+    "baseline_boundary_rule": "directional-conservative"
+  },
+  "coverage": {
+    "physical_pixels": 652079,
+    "outline_source": "automatic",
+    "aperture_pixels": 641823,
+    "measured_pixels": 416055,
+    "boundary_excluded_pixels": 225768,
+    "frame_pixels": 963584,
+    "requested_pixels": null,
+    "selected_rejected_pixels": null
+  },
+  "pv_nm": 115.93646992615254,
+  "rms_nm": 12.920031936822983,
+  "browser_resolution": {
+    "original": [
+      1883,
+      2048
+    ],
+    "analyzed": [
+      941,
+      1024
+    ],
+    "max_dimension": 1024
+  }
+}

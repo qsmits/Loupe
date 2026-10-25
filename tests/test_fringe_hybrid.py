@@ -108,3 +108,31 @@ def test_browser_boundary_defaults_and_forwards_explicit_method(monkeypatch):
     assert browser.execute('analyze',{'image_b64':encoded})['analysis_method']=='current'
     assert browser.execute('analyze',{'image_b64':encoded,'analysis_method':'hybrid'})['analysis_method']=='hybrid'
     assert seen==['current','hybrid']
+
+
+def test_fit_diagnostics_account_for_the_aperture():
+    from backend.vision.fringe_hybrid import quadratic_candidate
+    y,x=np.mgrid[:70,:90]
+    mask=(x-45)**2+(y-35)**2<30**2
+    image=125+60*np.cos(2*np.pi*x/10+.2)
+    _,reliable,metadata=quadratic_candidate(image,mask,dict(carrier_angle_rad=0.,fringe_period_px=10.))
+    checks=metadata['fit_checks']
+    assert checks['aperture_pixels']==int(mask.sum())
+    assert checks['passed_pixels']==int(reliable.sum())
+    assert sum(checks['first_rejection'].values())+checks['passed_pixels']==int(mask.sum())
+    assert not reliable[~mask].any()
+    for key,count in checks['first_rejection'].items():
+        assert count<=checks['independent_rejection'][key]<=mask.sum()
+
+
+def test_merge_diagnostics_distinguish_anchor_failure_from_fit_failure():
+    from backend.vision.fringe_hybrid import hybrid_merge
+    base=np.zeros((30,40));valid=np.ones_like(base,bool)
+    diagnostics={}
+    out,kept,accepted=hybrid_merge(base,valid,base+.2,valid,valid,10,diagnostics=diagnostics)
+    assert diagnostics['fit_passed']==valid.sum()
+    assert diagnostics['anchor_disagreement_pixels']==diagnostics['transition_supported']>0
+    assert diagnostics['accepted_pixels']==0
+    np.testing.assert_array_equal(out,base)
+    np.testing.assert_array_equal(kept,valid)
+    assert not accepted.any()

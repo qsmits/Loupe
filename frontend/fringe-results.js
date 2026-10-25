@@ -1,8 +1,10 @@
+import {openComposite,refreshComposite} from './fringe-composite-view.js';
 // fringe-results.js — Results column rendering, Zernike subtraction pills,
 // tab switching, carrier diagnostics, 3D view, export (CSV/PDF).
 //
 // Extracted from fringe.js (Task 7 of fringe UI restructure).
 
+import { openMethodComparison, refreshMethodComparison } from './fringe-comparison-view.js';
 import { analysisMethodLabel } from './fringe-method.js';
 import { describeFormRemoval } from './fringe-form.js';
 import { refreshSpatial, wireSpatial } from './fringe-spatial.js';
@@ -143,6 +145,7 @@ export function buildResultsHtml() {
           </div>
         </div>
 
+        <details id="fringe-result-details" class="fringe-result-details"><summary id="fringe-result-details-summary">Analysis details</summary><div id="fringe-result-details-body"></div></details>
         <div class="fringe-confidence-row" id="fringe-confidence-row" hidden>
           <span class="fringe-conf-badge" id="fringe-conf-carrier" title="Carrier detection confidence">
             <span class="fringe-conf-dot"></span> Carrier: <span class="fringe-conf-val">--</span>
@@ -201,7 +204,7 @@ export function buildResultsHtml() {
         <p id="fringe-result-method" role="status" hidden style="font-size:12px;margin:6px 12px"></p>
         <p id="fringe-result-engine" role="status" hidden style="font-size:12px;margin:6px 12px"></p>
         <div id="fringe-orientation-banner" class="fringe-orientation-banner" hidden>
-          <span id="fringe-polarity-status" role="status"></span>
+          <span id="fringe-direction-compact" role="status"></span><span id="fringe-polarity-status"></span>
           <button type="button" id="fringe-orientation-open" disabled>Check surface direction…</button>
         </div>
         <div class="fringe-tab-bar" id="fringe-tab-bar">
@@ -237,6 +240,7 @@ export function buildResultsHtml() {
               <button class="fringe-overlay-btn active" data-overlay="surface">Surface</button>
               <button class="fringe-overlay-btn" data-overlay="confidence">Confidence</button>
               <button class="fringe-overlay-btn" data-overlay="modulation">Modulation</button>
+              <button class="fringe-overlay-btn" id="fringe-method-compare-open" hidden disabled>Compare Current / Hybrid…</button>
               <button class="fringe-overlay-btn" id="fringe-edge-inspection-button" disabled>Inspect excluded edges…</button>
               <button class="fringe-overlay-btn" id="fringe-coverage-button" data-overlay="coverage" disabled>Measurement area</button>
             </div>
@@ -267,6 +271,7 @@ export function buildResultsHtml() {
                 <input type="checkbox" id="fringe-use-trusted-only" />
                 use trusted pixels only
               </label>
+              <button class="fringe-overlay-btn" id="fringe-composite-open" hidden>Composite quality…</button>
               <button class="fringe-overlay-btn" id="fringe-fit-view" title="Show the complete surface map">Fit view</button>
               <button class="fringe-overlay-btn" id="fringe-reference-open" disabled>Reference marks…</button>
               <span class="fringe-measure-readout" id="fringe-measure-readout"></span>
@@ -626,12 +631,22 @@ export function restoreFringeResult(data, options) {
     }
     for (const image of document.querySelectorAll("#mode-fringe .fringe-results-col img")) image.removeAttribute("src");
   }
+  refreshComposite(data);
   renderSessionPanel();
 }
 
 // ── Rendering ───────────────────────────────────────────────────────────
 
 function refreshOrientationStatus(data) {
+  refreshMethodComparison(data);
+  refreshComposite(data);
+  const compact=$('fringe-direction-compact');
+  if(compact) compact.textContent=physicalOrientation(data).polarity==='unverified' ? 'Surface direction: unverified' : 'Surface direction: user-checked';
+  const details=$('fringe-result-details');
+  if(details) details.hidden=!data;
+  const summary=$('fringe-result-details-summary');
+  const warnings=Array.isArray(data?.warnings)?data.warnings.length:0;
+  if(summary) summary.textContent=data ? `${analysisMethodLabel(data)} · ${data.form_model||'Zernike'} removal · Details${warnings?` · ⚠ ${warnings} warnings`: ""}` : 'Analysis details';
   const method=$('fringe-result-method');
   if (method) { method.hidden=!data; method.textContent=data ? `Analysis method: ${analysisMethodLabel(data)}` : ''; }
   const engine=$('fringe-result-engine');
@@ -1116,7 +1131,7 @@ function _renderSubtractionWarnings(data) {
     banner.style.cssText = "margin:6px 12px;padding:8px 12px;border-radius:4px;background:rgba(255,159,10,0.15);border:1px solid rgba(255,159,10,0.45);color:#ff9f0a;font-size:12px;line-height:1.45";
     const tabBar = $("fringe-tab-bar");
     if (tabBar && tabBar.parentElement) {
-      tabBar.parentElement.insertBefore(banner, tabBar);
+      ($('fringe-result-details-body') || tabBar.parentElement).appendChild(banner);
     } else {
       document.body.appendChild(banner);
     }
@@ -1334,11 +1349,13 @@ function wireCarrierOverride() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           form_model: getFormModel(),
+          analysis_max_dimension: fr.lastResult?.server_resolution?.max_dimension === 1024 ? 1024 : undefined,
           carrier_y: carrierY,
           carrier_x: carrierX,
           wavelength_nm: getWavelength(),
           mask_threshold: getMaskThreshold(),
           analysis_method: fr.lastResult?.analysis_method || fr.analysisMethod || "current",
+          reconstructed_preview: !!fr.lastResult?.composite?.reconstruction && getFormModel() === "plane",
           lpf_sigma_frac: getLpfSigmaFrac(),
           dc_margin_override: getDcMarginOverride(),
           subtract_terms: getSubtractTerms(),
@@ -1868,6 +1885,7 @@ function exportFringeCsv() {
   csv += "Reference-flat error included,yes\n";
   csv += `Analysis engine,${isBrowserResult() ? 'Browser (experimental)' : 'Server'}\n`;
   if (fr.lastResult.browser_resolution) csv += `Browser analysis dimensions,${fr.lastResult.browser_resolution.analyzed.join(' x ')}\n`;
+  if (fr.lastResult.server_resolution) csv += `Server analysis dimensions before area selection,${fr.lastResult.server_resolution.analyzed.join(' x ')}\n`;
 
   const blob = new Blob([csv], { type: "text/csv" });
   const url = URL.createObjectURL(blob);
@@ -3120,7 +3138,7 @@ function _renderGenericWarnings(data) {
     banner.style.cssText = "margin:6px 12px;padding:8px 12px;border-radius:4px;background:rgba(255,159,10,0.15);border:1px solid rgba(255,159,10,0.45);color:#ff9f0a;font-size:12px;line-height:1.45";
     const tabBar = $("fringe-tab-bar");
     if (tabBar && tabBar.parentElement) {
-      tabBar.parentElement.insertBefore(banner, tabBar);
+      ($('fringe-result-details-body') || tabBar.parentElement).appendChild(banner);
     } else {
       document.body.appendChild(banner);
     }
@@ -3152,6 +3170,12 @@ function _renderTrendTab() {
 
 export function wireResultsEvents() {
   wireSpatial();
+  $('fringe-composite-open')?.addEventListener('click',openComposite);
+  const detailBody=$('fringe-result-details-body');
+  for(const id of ['fringe-confidence-row','fringe-carrier-diagnostics','fringe-carrier-row','fringe-subtract-row','fringe-form-note','fringe-result-method','fringe-result-engine','fringe-polarity-status']){
+    const el=$(id);if(el&&detailBody)detailBody.appendChild(el);
+  }
+  $('fringe-method-compare-open')?.addEventListener('click',openMethodComparison);
   wireReferenceMarks(exportFringePdf);
   document.addEventListener('fringe:orientation-changed', () => {
     refreshOrientationStatus(fr.lastResult);

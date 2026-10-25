@@ -6,7 +6,7 @@ from fastapi import APIRouter
 from fastapi.responses import Response
 
 router = APIRouter()
-SOURCES = ('vision/fringe.py', 'vision/fringe_hybrid.py', 'vision/mask_utils.py', 'browser/fringe.py')
+SOURCES = ('vision/fringe.py', 'vision/fringe_hybrid.py', 'vision/fringe_composite.py', 'vision/fringe_reconstruction.py', 'vision/fringe_checks.py', 'vision/mask_utils.py', 'browser/fringe.py')
 
 
 @router.get('/fringe-runtime/source.zip')

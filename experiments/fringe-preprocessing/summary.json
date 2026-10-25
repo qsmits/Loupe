@@ -1,0 +1,167 @@
+{
+  "slow-lighting-raw-0.2": {
+    "cases": 40,
+    "added_pixels": 2573,
+    "cases_gaining": 14,
+    "worst_added_error_nm": 11.652364243726154,
+    "worst_case": "holdout-10-correlated",
+    "added_defect_pixels": 0,
+    "added_outside_pixels": 0,
+    "old_phase_change_max_rad": 0.0,
+    "raw_phase_equivalence_max_rad": 3.1086244689504383e-15
+  },
+  "slow-lighting-raw-0.3": {
+    "cases": 40,
+    "added_pixels": 3802,
+    "cases_gaining": 24,
+    "worst_added_error_nm": 11.652364243726154,
+    "worst_case": "holdout-10-correlated",
+    "added_defect_pixels": 0,
+    "added_outside_pixels": 0,
+    "old_phase_change_max_rad": 0.0,
+    "raw_phase_equivalence_max_rad": 3.1086244689504383e-15
+  },
+  "slow-lighting-raw-None": {
+    "cases": 40,
+    "added_pixels": 3802,
+    "cases_gaining": 24,
+    "worst_added_error_nm": 11.652364243726154,
+    "worst_case": "holdout-10-correlated",
+    "added_defect_pixels": 0,
+    "added_outside_pixels": 0,
+    "old_phase_change_max_rad": 0.0,
+    "raw_phase_equivalence_max_rad": 3.1086244689504383e-15
+  },
+  "isolated-outliers-raw-0.2": {
+    "cases": 40,
+    "added_pixels": 2580,
+    "cases_gaining": 14,
+    "worst_added_error_nm": 11.652364243726154,
+    "worst_case": "holdout-10-correlated",
+    "added_defect_pixels": 0,
+    "added_outside_pixels": 0,
+    "old_phase_change_max_rad": 0.0,
+    "raw_phase_equivalence_max_rad": 3.1086244689504383e-15
+  },
+  "isolated-outliers-raw-0.3": {
+    "cases": 40,
+    "added_pixels": 3815,
+    "cases_gaining": 24,
+    "worst_added_error_nm": 11.652364243726154,
+    "worst_case": "holdout-10-correlated",
+    "added_defect_pixels": 0,
+    "added_outside_pixels": 0,
+    "old_phase_change_max_rad": 0.0,
+    "raw_phase_equivalence_max_rad": 3.1086244689504383e-15
+  },
+  "isolated-outliers-raw-None": {
+    "cases": 40,
+    "added_pixels": 3815,
+    "cases_gaining": 24,
+    "worst_added_error_nm": 11.652364243726154,
+    "worst_case": "holdout-10-correlated",
+    "added_defect_pixels": 0,
+    "added_outside_pixels": 0,
+    "old_phase_change_max_rad": 0.0,
+    "raw_phase_equivalence_max_rad": 3.1086244689504383e-15
+  },
+  "mild-smoothing-raw-0.2": {
+    "cases": 40,
+    "added_pixels": 0,
+    "cases_gaining": 0,
+    "worst_added_error_nm": null,
+    "worst_case": null,
+    "added_defect_pixels": 0,
+    "added_outside_pixels": 0,
+    "old_phase_change_max_rad": 0.0,
+    "raw_phase_equivalence_max_rad": 0.0
+  },
+  "mild-smoothing-raw-0.3": {
+    "cases": 40,
+    "added_pixels": 5796,
+    "cases_gaining": 11,
+    "worst_added_error_nm": 10.102760270391855,
+    "worst_case": "correlated-texture-narrow-roll-10.7",
+    "added_defect_pixels": 0,
+    "added_outside_pixels": 0,
+    "old_phase_change_max_rad": 0.0,
+    "raw_phase_equivalence_max_rad": 1.3322676295501878e-15
+  },
+  "mild-smoothing-raw-None": {
+    "cases": 40,
+    "added_pixels": 5807,
+    "cases_gaining": 11,
+    "worst_added_error_nm": 10.102760270391855,
+    "worst_case": "correlated-texture-narrow-roll-10.7",
+    "added_defect_pixels": 0,
+    "added_outside_pixels": 0,
+    "old_phase_change_max_rad": 0.0,
+    "raw_phase_equivalence_max_rad": 1.3322676295501878e-15
+  },
+  "lighting-and-smoothing-raw-0.2": {
+    "cases": 40,
+    "added_pixels": 25,
+    "cases_gaining": 9,
+    "worst_added_error_nm": 10.585342716059671,
+    "worst_case": "holdout-10-correlated",
+    "added_defect_pixels": 0,
+    "added_outside_pixels": 0,
+    "old_phase_change_max_rad": 0.0,
+    "raw_phase_equivalence_max_rad": 2.021286199229721e-15
+  },
+  "lighting-and-smoothing-raw-0.3": {
+    "cases": 40,
+    "added_pixels": 5824,
+    "cases_gaining": 20,
+    "worst_added_error_nm": 10.585342716059671,
+    "worst_case": "holdout-10-correlated",
+    "added_defect_pixels": 0,
+    "added_outside_pixels": 0,
+    "old_phase_change_max_rad": 0.0,
+    "raw_phase_equivalence_max_rad": 2.021286199229721e-15
+  },
+  "lighting-and-smoothing-raw-None": {
+    "cases": 40,
+    "added_pixels": 5835,
+    "cases_gaining": 20,
+    "worst_added_error_nm": 10.585342716059671,
+    "worst_case": "holdout-10-correlated",
+    "added_defect_pixels": 0,
+    "added_outside_pixels": 0,
+    "old_phase_change_max_rad": 0.0,
+    "raw_phase_equivalence_max_rad": 2.021286199229721e-15
+  },
+  "unchanged-copy-raw-0.2": {
+    "cases": 40,
+    "added_pixels": 2580,
+    "cases_gaining": 14,
+    "worst_added_error_nm": 11.652364243726154,
+    "worst_case": "holdout-10-correlated",
+    "added_defect_pixels": 0,
+    "added_outside_pixels": 0,
+    "old_phase_change_max_rad": 0.0,
+    "raw_phase_equivalence_max_rad": 3.1086244689504383e-15
+  },
+  "unchanged-copy-raw-0.3": {
+    "cases": 40,
+    "added_pixels": 3809,
+    "cases_gaining": 24,
+    "worst_added_error_nm": 11.652364243726154,
+    "worst_case": "holdout-10-correlated",
+    "added_defect_pixels": 0,
+    "added_outside_pixels": 0,
+    "old_phase_change_max_rad": 0.0,
+    "raw_phase_equivalence_max_rad": 3.1086244689504383e-15
+  },
+  "unchanged-copy-raw-None": {
+    "cases": 40,
+    "added_pixels": 3809,
+    "cases_gaining": 24,
+    "worst_added_error_nm": 11.652364243726154,
+    "worst_case": "holdout-10-correlated",
+    "added_defect_pixels": 0,
+    "added_outside_pixels": 0,
+    "old_phase_change_max_rad": 0.0,
+    "raw_phase_equivalence_max_rad": 3.1086244689504383e-15
+  }
+}

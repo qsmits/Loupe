@@ -68,6 +68,7 @@ export function createFringeReport(data, {jsPDF, sourceName = '', standard = nul
     if (data.browser_resolution) metadata.push(`Browser analysis dimensions (rows × columns): ${data.browser_resolution.analyzed.join(' × ')}; maximum side ${data.browser_resolution.max_dimension} pixels.`);
     if (data.browser_runtime) metadata.push(`Runtime: ${data.browser_runtime.name} ${data.browser_runtime.version}`);
   }
+  if (data.server_resolution) metadata.push(`Server full-frame dimensions (rows × columns): ${data.server_resolution.original.join(' × ')} → ${data.server_resolution.analyzed.join(' × ')} before area selection.`);
   if (standard && !form.tiltOnly) metadata.push("Flatness limit comparison withheld: the result is not a tilt-only flatness evaluation.");
   if (standard && form.tiltOnly) metadata.push(`Selected limit: ${standard.name} (${standard.limit} nm PV). Numerical comparison: ${data.pv_nm <= standard.limit ? 'within' : 'above'} limit; no uncertainty-based conformity assessment.`);
   if (data.warnings?.length) metadata.push(...data.warnings.map(w => `Warning: ${w}`));

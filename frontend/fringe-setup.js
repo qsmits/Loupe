@@ -64,12 +64,17 @@ export function initFringeSetup(onAnalyze, onCancel) {
         <div class="detect-section">
           <label for="fringe-analysis-engine">Analyze using</label>
           <select id="fringe-analysis-engine"><option value="server">Server (established)</option><option value="browser">This browser (experimental)</option></select>
-          <p id="fringe-engine-note">Browser mode keeps the image on this device and downloads scientific libraries on first use. Images are limited to 1024 pixels on the longest side. Use the server for larger analyses. Camera capture still needs the camera connection.</p>
+          <p id="fringe-engine-note">Browser mode keeps the image on this device and downloads scientific libraries on first use. Images are limited to 1024 pixels on the longest side. Server Hybrid and Composite also resize automatically to 1024 pixels; the server Current method supports larger analyses. Camera capture still needs the camera connection.</p>
         </div>
         <div class="detect-section">
           <label for="fringe-analysis-method">Analysis method</label>
-          <select id="fringe-analysis-method" aria-describedby="fringe-method-note"><option value="current">Current method (default)</option><option value="hybrid">Hybrid quadratic fit (experimental)</option></select>
-          <p id="fringe-method-note">Hybrid tries local fits where checks pass and uses the current method elsewhere. It can retain more edges, but may still misread sharp roll-off or scratches. Slower and more memory intensive; maximum image side 1024 px. Browser mode resizes automatically. For comparison, use the same engine, resolution, mask, wavelength and form removal for both runs. Export the first result before analyzing again; browser runs also appear in Session while this tab stays open.</p>
+          <select id="fringe-analysis-method" aria-describedby="fringe-method-note"><option value="current">Current method (default)</option><option value="hybrid">Hybrid quadratic fit (experimental)</option><option value="composite">Composite quality (experimental)</option></select>
+          <label style="display:block;margin-top:8px"><input id="fringe-compare-both" type="checkbox"/> Compare Current and Hybrid side by side</label>
+          <p>Comparison runs both methods with these settings and opens linked maps. It takes longer; both runs automatically use the same image size, up to 1024 pixels on the longest side.</p>
+          <p>Composite stacks conservative and broader local fits, then opens a quality map with a coverage cutoff. Categories describe image evidence, not calibrated uncertainty. This single-image experiment can still misread scratches or blurred fringes.</p>
+          <label><input id="fringe-reconstructed-preview" type="checkbox"> Prepare reconstructed surface preview (experimental)</label>
+          <p>Requires Composite quality and Plane removal. Shows inferred heights in missing areas with hatching; excluded from flatness statistics and measurement exports. Adds analysis time. Check the part outline and exclude holes or defects.</p>
+          <p id="fringe-method-note">Hybrid tries local fits where checks pass and uses the current method elsewhere. It can retain more edges, but may still misread sharp roll-off or scratches. Slower and more memory intensive; maximum image side 1024 px. Both browser and server resize automatically. For comparison, use the same engine, resolution, mask, wavelength and form removal for both runs. Export the first result before analyzing again; browser runs also appear in Session while this tab stays open.</p>
         </div>
         <div id="fringe-settings-host"></div>
         <div class="detect-section">
@@ -94,6 +99,16 @@ export function initFringeSetup(onAnalyze, onCancel) {
   $('fringe-setup-close').onclick = close;
   $('fringe-setup-cancel').onclick = close;
   dialog.addEventListener('cancel', e => { e.preventDefault(); close(); });
+  const syncComparisonChoice = () => {
+    const composite = $('fringe-analysis-method').value === 'composite';
+    $('fringe-compare-both').disabled = composite;
+    if (composite) $('fringe-compare-both').checked = false;
+    const preview = $('fringe-reconstructed-preview');
+    preview.disabled = !composite || $('fringe-setup-form').value !== 'plane';
+    if (preview.disabled) preview.checked = false;
+  };
+  $('fringe-analysis-method').onchange = syncComparisonChoice;
+  $('fringe-setup-form').onchange = syncComparisonChoice;
   $('fringe-setup-start').onclick = async () => {
     if (!ready || busy) return;
     const custom = $('fringe-custom-wl');
@@ -113,7 +128,7 @@ export function initFringeSetup(onAnalyze, onCancel) {
       dialog.hidden = false; dialog.showModal();
       busy = false;
       $('fringe-setup-start').disabled = false;
-      onAnalyze($('fringe-setup-form').value, engine, $('fringe-analysis-method').value);
+      onAnalyze($('fringe-setup-form').value, engine, $('fringe-analysis-method').value, $('fringe-compare-both').checked, $('fringe-reconstructed-preview').checked);
     } catch (error) {
       if (version !== imageVersion) return;
       dialog.hidden = false; dialog.showModal();
@@ -405,6 +420,7 @@ export function openFringeSetup(src, name) {
   refreshRegionEditor();
   $('fringe-analysis-engine').value = fr.analysisEngine || 'server';
   $('fringe-analysis-method').value = fr.analysisMethod || 'current';
+  $('fringe-analysis-method').onchange();
   const next = new Image();
   next.onload = () => {
     if (version !== imageVersion) return;

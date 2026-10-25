@@ -69,3 +69,9 @@ if (out/'index.html').exists():
     page=(out/'index.html').read_text().replace('</body>',
         '<script type="module" src="fringe-spatial-ui.js"></script></body>')
     (out/'fringe-spatial.html').write_text(page)
+# Paired-analysis workflow: use the real settings dialog and compare checkbox.
+pair_source=Path(__file__).resolve().parents[1]/'tests/browser/fringe-comparison-ui.js'
+shutil.copy2(pair_source,out/pair_source.name)
+if (out/'index.html').exists():
+    (out/'fringe-comparison.html').write_text((out/'index.html').read_text().replace('</body>',
+        '<script type="module" src="fringe-comparison-ui.js"></script></body>'))

@@ -1,0 +1,77 @@
+{
+  "summaries": [
+    {
+      "cutoff": 1,
+      "pixels": 0,
+      "coverage_pct": 0.0,
+      "pv_nm": null,
+      "rms_nm": null
+    },
+    {
+      "cutoff": 2,
+      "pixels": 0,
+      "coverage_pct": 0.0,
+      "pv_nm": null,
+      "rms_nm": null
+    },
+    {
+      "cutoff": 3,
+      "pixels": 448992,
+      "coverage_pct": 69.95573545977629,
+      "pv_nm": 118.55342390182292,
+      "rms_nm": 14.011068610995208
+    }
+  ],
+  "without_photographic_summaries": [
+    {
+      "cutoff": 1,
+      "pixels": 0,
+      "coverage_pct": 0.0,
+      "pv_nm": null,
+      "rms_nm": null
+    },
+    {
+      "cutoff": 2,
+      "pixels": 0,
+      "coverage_pct": 0.0,
+      "pv_nm": null,
+      "rms_nm": null
+    },
+    {
+      "cutoff": 3,
+      "pixels": 416055,
+      "coverage_pct": 64.82394678906802,
+      "pv_nm": 118.55342390182292,
+      "rms_nm": 12.986492069873126
+    }
+  ],
+  "photographic_pixels": 32937,
+  "diagnostics": {
+    "order": {
+      "checked_pixels": 416055,
+      "conflicted_pixels": 0
+    },
+    "withheld_rim": {
+      "complete": true,
+      "p95_rad": 0.31595051365245386,
+      "folds": 1
+    },
+    "continuation": {
+      "attempted": false,
+      "added_pixels": 0
+    },
+    "photographic": {
+      "attempted": true,
+      "raw_passed_pixels": 327267,
+      "filtered_passed_pixels": 319792,
+      "cross_window_passed_pixels": 249671,
+      "filter_sigma_px": 3.008327680739839,
+      "raw_residual_limit": 0.2,
+      "filtered_residual_limit": 0.2,
+      "phase_agreement_limit_rad": 0.025,
+      "anchored_pixels": 230838,
+      "added_pixels": 32937,
+      "order_rejected_pixels": 0
+    }
+  }
+}

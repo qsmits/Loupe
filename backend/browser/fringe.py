@@ -74,6 +74,7 @@ def execute(operation, body, progress=lambda *args: None):
             result = analyze_interferogram(image,
                 wavelength_nm=wavelength,
                 analysis_method=body.get("analysis_method", "current"),
+                reconstructed_preview=body.get("reconstructed_preview", False) is True,
                 mask_threshold=_number(body, "mask_threshold", .30, 0, 1),
                 subtract_terms=body.get("subtract_terms", [1, 2, 3]),
                 n_zernike=int(_number(body, "n_zernike", 36, 1, 66)),

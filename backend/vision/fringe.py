@@ -2869,7 +2869,9 @@ def _residue_cuts(wrapped: np.ndarray, mask: np.ndarray,
         return cuts
     p0 = pts[use]
     p1 = best_p[use]
-    nstep = np.ceil(2.0 * np.hypot(*(p1 - p0).T)).astype(np.int64) + 1
+    # repeat requires platform-sized counts: intp is 32-bit in Pyodide/wasm,
+    # even though NumPy's default integer is 64-bit there.
+    nstep = np.ceil(2.0 * np.hypot(*(p1 - p0).T)).astype(np.intp) + 1
     seg = np.repeat(np.arange(p0.shape[0]), nstep)
     start = np.repeat(np.cumsum(nstep) - nstep, nstep)
     t = (np.arange(seg.size) - start) / np.maximum(np.repeat(nstep, nstep) - 1, 1)
@@ -3033,7 +3035,10 @@ def _merge_unwrap_islands(unwrapped: np.ndarray, wrapped: np.ndarray,
         a = pa[sel]
         k = pk[sel] - order[a] + order[pb[sel]]
         k = np.clip(k, -KMAX, KMAX) + KMAX
-        votes = np.bincount(a * NB + k, minlength=n * NB).reshape(n, NB)
+        # Keep order arithmetic wide, then convert the bounded bin indices at
+        # the NumPy API boundary (bincount also requires intp on wasm).
+        bins = (a * NB + k).astype(np.intp)
+        votes = np.bincount(bins, minlength=n * NB).reshape(n, NB)
         tot = votes.sum(axis=1)
         cand_lab = np.nonzero(tot > 0)[0]
         best = np.argmax(votes[cand_lab], axis=1)
@@ -3913,7 +3918,8 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 589.3,
                           dc_cutoff_cycles: float | None = 1.5,
                           image_is_undistorted: bool = False,
                           _edge_mode: str = "bounded",
-                          analysis_method: str = "current") -> dict:
+                          analysis_method: str = "current",
+                          reconstructed_preview: bool = False) -> dict:
     """Full analysis pipeline: single image in, all results out.
 
     Parameters
@@ -3960,9 +3966,11 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 589.3,
         subtract_terms = [1, 2, 3]  # Piston + Tilt X + Tilt Y
     if _edge_mode not in ("legacy", "footprint", "conservative", "outline", "combined", "bounded"):
         raise ValueError("Unknown experimental edge mode")
-    if analysis_method not in ("current", "hybrid"):
+    if reconstructed_preview and (analysis_method != "composite" or form_model != "plane"):
+        raise ValueError("Reconstructed preview requires Composite quality and Plane removal")
+    if analysis_method not in ("current", "hybrid", "composite"):
         raise ValueError("Unknown fringe analysis method")
-    if analysis_method == "hybrid" and _edge_mode != "bounded":
+    if analysis_method in ("hybrid", "composite") and _edge_mode != "bounded":
         raise ValueError("Hybrid requires the current bounded baseline")
     separate_outline = _edge_mode in ("outline", "combined", "bounded")
 
@@ -3974,8 +3982,8 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 589.3,
     if img.ndim == 3:
         img = img.mean(axis=-1)
 
-    if analysis_method == "hybrid" and max(img.shape) > 1024:
-        raise ValueError("Experimental hybrid supports images up to 1024 pixels per side. Choose browser analysis (which resizes automatically), or resize the image before comparing both methods.")
+    if analysis_method in ("hybrid", "composite") and max(img.shape) > 1024:
+        raise ValueError("Local-fit analysis requires an image resized to at most 1024 pixels per side. The server and browser request handlers resize automatically.")
     if lens_k1 and not image_is_undistorted:
         img = undistort_frame(img, lens_k1)
 
@@ -4029,7 +4037,8 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 589.3,
     _progress("phase", 0.25, "Extracting phase...")
 
     hybrid_metadata = None
-    if analysis_method == "hybrid":
+    composite_fields = None
+    if analysis_method in ("hybrid", "composite"):
         from .fringe_hybrid import quadratic_candidate, combine_candidate
         local_phase, local_reliable, hybrid_metadata = quadratic_candidate(
             img, mask, filter_metadata, _progress)
@@ -4153,13 +4162,26 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 589.3,
         fringe_period_px=carrier_info.get("fringe_period_px"),
         correct_2pi_jumps=correct_2pi_jumps,
         edge_band_px=_edge_band_px, edge_kernel=edge_kernel)
-    if analysis_method == "hybrid":
+    if analysis_method in ("hybrid", "composite"):
         _progress("hybrid-merge", .48, "Experimental hybrid: retaining reliable fits and falling back elsewhere…")
         unwrapped, unwrap_risk, quality_map, hybrid_counts = combine_candidate(
             (unwrapped, unwrap_risk, quality_map), local_phase, local_reliable,
             mask, modulation, filter_metadata, _edge_band_px, edge_kernel, correct_2pi_jumps)
         hybrid_metadata.update(hybrid_counts, baseline_boundary_rule=boundary_rule)
-    _progress("unwrap", 0.50, "Unwrapping phase...")
+    if analysis_method == "composite":
+        from .fringe_composite import build_composite
+        domain = custom_mask.astype(bool) if custom_mask is not None else mask.copy()
+        unwrapped, composite_valid, composite_fields = build_composite(
+            img, domain, unwrapped, mask & (unwrap_risk != 2),
+            {**filter_metadata, **hybrid_metadata}, _progress)
+        # Retain original risks and label newly supported observations. Conflict
+        # pixels remain in the payload for inspection, but never enter statistics.
+        unwrap_risk[composite_valid & ~mask] = 0
+        unwrap_risk[composite_valid & (unwrap_risk == 2)] = 0
+        mask = domain | composite_valid
+        unwrap_risk[mask & ~composite_valid] = 2
+        unwrap_risk[composite_fields['conflict']] = 2
+    _progress("unwrap", 0.65 if composite_fields is not None else 0.50, "Unwrapping phase...")
 
     # Confidence metrics (computed after unwrap, before form removal)
     confidence = compute_confidence(carrier_info, modulation, unwrap_risk, mask,
@@ -4203,6 +4225,13 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 589.3,
     diagnostic_mask = work_mask.astype(bool).copy()
     quantitative_mask = diagnostic_mask & (work_risk != 2)
     if int(quantitative_mask.sum()) < max(64, n_zernike * 4):
+        if composite_fields is not None and composite_fields['diagnostics']['order']['conflicted_pixels']:
+            raise ValueError(
+                "Composite fringe-order check found conflicting unwrap paths. "
+                "Too little unambiguous area remains to report flatness. "
+                "Try another interferogram with clearer fringes or exclude a damaged region; "
+                "agreement between local fits alone cannot resolve this ambiguity."
+            )
         raise ValueError(
             "Too few reliable interior fringe pixels remain for quantitative "
             "analysis; improve aperture continuity or fringe coverage."
@@ -4420,13 +4449,29 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 589.3,
     # Trusted is always a subset of grid_mask at the grid resolution too.
     trusted_grid = trusted_grid & grid_mask
 
-    _progress("render", 1.0, "Complete")
     # Build the display height grid once and alias it from both
     # `height_grid` (legacy) and `display_height_grid_nm` (M1.3). Callers that
     # mutate one see it reflected in the other — intentional, matches the
     # stage-1 alias contract.
     height_grid_list = [round(float(v), 2) for v in grid_out.ravel()]
     raw_height_grid_list = [round(float(v), 2) for v in raw_grid_out.ravel()]
+
+    composite_payload = None
+    if composite_fields is not None:
+        from .fringe_composite import payload
+        composite_payload = payload(composite_fields, height_nm, (r0, r1, c0, c1), (grid_h, grid_w))
+        composite_payload.update(grid_rows=grid_h, grid_cols=grid_w, surface_width=c1-c0,
+            surface_height=r1-r0, form_model=form_model, wavelength_nm=wavelength_nm,
+            aperture_label="drawn area" if custom_mask is not None else "detected support")
+        if reconstructed_preview:
+            from .fringe_reconstruction import preview
+            anchors = np.zeros(img.shape, bool)
+            anchors[r0:r1, c0:c1] = work_mask
+            composite_payload['reconstruction'] = preview(
+                img, domain & ~composite_fields['conflict'], unwrapped, anchors,
+                {**filter_metadata, **hybrid_metadata}, (r0, r1, c0, c1),
+                (grid_h, grid_w), plane_coeffs, wavelength_nm, _progress)
+    _progress("render", 1.0, "Complete")
 
     # M2.3: expose the hybrid quality map as a downsampled 2-D list that shares
     # mask_grid's geometry. Used by the UI as an optional overlay alongside
@@ -4463,6 +4508,8 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 589.3,
     modulation_grid_list = [round(float(v), 3) for v in mod_resized.ravel()]
 
     analysis_warnings: list[str] = [region_warning] if region_warning else []
+    if analysis_method == "composite":
+        analysis_warnings.append("Experimental composite: quality categories describe correlated image evidence, not nanometer uncertainty. Unsupported regions remain unmeasured; baseline fringe-order errors can survive. Use Composite quality to inspect cutoff-dependent coverage and statistics.")
     if analysis_method == "hybrid":
         analysis_warnings.append("Experimental hybrid quadratic fit: image-based checks are not a guarantee of accuracy. Compare with the current method at the same resolution and settings; sharp roll-off and scratches can still be wrong.")
     if foldover_warning:
@@ -4528,8 +4575,9 @@ def analyze_interferogram(image: np.ndarray, wavelength_nm: float = 589.3,
         "reference_image_b64": reference_image_b64,
         "analysis_method": analysis_method,
         "hybrid_diagnostics": hybrid_metadata,
+        "composite": composite_payload,
         "analysis_filter": {**filter_metadata, "boundary_band_px": _edge_band_px,
-                            "boundary_rule": "hybrid-adaptive" if analysis_method == "hybrid" else boundary_rule, "edge_mode": _edge_mode,
+                            "boundary_rule": "composite-adaptive" if composite_fields is not None else "hybrid-adaptive" if analysis_method == "hybrid" else boundary_rule, "edge_mode": _edge_mode,
                             "preliminary_rim_px": 0 if separate_outline else 5},
         "edge_inspection": _edge_inspection(img, mask, unwrap_risk, custom_mask),
         "coverage": {

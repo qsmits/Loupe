@@ -337,19 +337,21 @@ def _best_gray(image: np.ndarray) -> np.ndarray:
     return image[:, :, best]
 
 
-def _cap_image_size(image: np.ndarray, request: Request, *, uploaded: bool) -> np.ndarray:
+def _cap_image_size(image: np.ndarray, request: Request, *, uploaded: bool,
+                    max_dimension: int | None = None) -> np.ndarray:
     """Downsample uploads (and, when hosted, any frame) above the analysis cap.
 
-    Local camera frames are left at native resolution.
+    Local camera frames stay native unless an explicit method/comparison cap is supplied.
     """
-    if not uploaded and not getattr(request.app.state, "hosted", False):
+    if max_dimension is None and not uploaded and not getattr(request.app.state, "hosted", False):
         return image
     h, w = image.shape[:2]
-    if max(h, w) <= _MAX_ANALYSIS_DIM:
+    limit = max_dimension or _MAX_ANALYSIS_DIM
+    if max(h, w) <= limit:
         return image
-    scale = _MAX_ANALYSIS_DIM / max(h, w)
-    new_w = int(w * scale)
-    new_h = int(h * scale)
+    scale = limit / max(h, w)
+    new_w = max(1, int(w * scale))
+    new_h = max(1, int(h * scale))
     return cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_AREA)
 
 
@@ -397,7 +399,9 @@ class ApertureRecipe(BaseModel):
 
 
 class AnalyzeBody(BaseModel):
-    analysis_method: str = Field(default="current", pattern="^(current|hybrid)$")
+    analysis_method: str = Field(default="current", pattern="^(current|hybrid|composite)$")
+    reconstructed_preview: bool = False
+    analysis_max_dimension: Literal[1024] | None = None
     wavelength_nm: float = Field(default=589.3, gt=0, le=2000)
     mask_threshold: float = Field(default=0.30, ge=0.0, le=1.0)
     subtract_terms: list[int] = Field(default=[1, 2, 3])
@@ -456,7 +460,10 @@ class ReanalyzeBody(BaseModel):
 
 
 class ReanalyzeCarrierBody(BaseModel):
-    analysis_method: str = Field(default="current", pattern="^(current|hybrid)$")
+    analysis_method: str = Field(default="current", pattern="^(current|hybrid|composite)$")
+    reconstructed_preview: bool = False
+    analysis_max_dimension: Literal[1024] | None = None
+    form_model: str = Field(default="plane", pattern="^(zernike|plane|poly2|poly3)$")
     carrier_y: float
     carrier_x: float
     image_b64: Optional[str] = Field(default=None)
@@ -534,7 +541,7 @@ def _resolve_request_wavelength(body: BaseModel) -> tuple[float, str | None]:
     return wavelength, None
 
 
-def _applied_calibration_snapshot(body: BaseModel) -> dict | None:
+def _applied_calibration_snapshot(body: BaseModel, resolution=None) -> dict | None:
     """Return provenance synchronized to the parameters actually applied."""
     calibration = getattr(body, "calibration", None)
     if calibration is None:
@@ -543,7 +550,29 @@ def _applied_calibration_snapshot(body: BaseModel) -> dict | None:
     snapshot["wavelength_nm"] = float(getattr(body, "wavelength_nm"))
     if hasattr(body, "lens_k1"):
         snapshot["lens_k1"] = float(getattr(body, "lens_k1"))
+    if resolution and snapshot.get("mm_per_pixel") and resolution['original'] != resolution['analyzed']:
+        snapshot['input_mm_per_pixel'] = snapshot['mm_per_pixel']
+        snapshot['mm_per_pixel'] *= max(resolution['original']) / max(resolution['analyzed'])
     return snapshot
+
+
+def _resize_analysis_frame(image, body, request, *, uploaded, original_shape=None):
+    """Resize once before lens correction/masks; retain full-frame scale provenance."""
+    local_fit = body.analysis_method in ('hybrid', 'composite')
+    limit = 1024 if local_fit else body.analysis_max_dimension
+    original = list(original_shape if original_shape is not None else image.shape[:2])
+    image = _cap_image_size(image, request, uploaded=uploaded, max_dimension=limit)
+    cap = limit or (_MAX_ANALYSIS_DIM if uploaded or getattr(request.app.state, 'hosted', False) else None)
+    return image, dict(original=original, analyzed=list(image.shape[:2]), max_dimension=cap)
+
+
+def _record_resolution(result, resolution):
+    result['server_resolution'] = resolution
+    if resolution['original'] != resolution['analyzed']:
+        h, w = resolution['original']; ah, aw = resolution['analyzed']
+        result.setdefault('warnings', []).append(
+            f'Server analysis resized {w}×{h} to {aw}×{ah} pixels before lens correction and area selection. '
+            'Fine surface detail may be attenuated.')
 
 
 # M3.7 — Capture export/import
@@ -640,9 +669,10 @@ def make_fringe_router(camera: BaseCamera) -> APIRouter:
             if image.ndim == 3:
                 image = _best_gray(image)
 
-        image = _cap_image_size(image, request, uploaded=bool(body.image_b64))
+        image, resolution = _resize_analysis_frame(image, body, request, uploaded=bool(body.image_b64))
 
         _fringe_cache.put(session_id, "last_image", image.copy())
+        _fringe_cache.put(session_id, "last_resolution", resolution)
         _fringe_cache.put(session_id, "last_roi", body.roi if not body.mask_polygons else None)
         image, custom_mask, cropped = _prepare_fringe_image(image, body)
 
@@ -660,6 +690,7 @@ def make_fringe_router(camera: BaseCamera) -> APIRouter:
                 image_is_undistorted=True,
                 correct_2pi_jumps=body.correct_2pi_jumps,
                 analysis_method=body.analysis_method,
+                reconstructed_preview=body.reconstructed_preview,
                 lpf_sigma_frac=body.lpf_sigma_frac,
                 dc_margin_override=body.dc_margin_override,
                 dc_cutoff_cycles=body.dc_cutoff_cycles,
@@ -669,10 +700,11 @@ def make_fringe_router(camera: BaseCamera) -> APIRouter:
         # Cache full-res mask for reanalyze/invert (mask_grid is downsampled)
         if "_mask_full" in result:
             _fringe_cache.put(session_id, "last_mask", result.pop("_mask_full"))
+        _record_resolution(result, resolution)
         wrap_wavefront_result(
             result,
             origin="capture",
-            calibration=_applied_calibration_snapshot(body),
+            calibration=_applied_calibration_snapshot(body, resolution),
             aperture_recipe=body.aperture_recipe.model_dump() if body.aperture_recipe else None,
         )
         if wavelength_warning:
@@ -730,9 +762,10 @@ def make_fringe_router(camera: BaseCamera) -> APIRouter:
             if image.ndim == 3:
                 image = _best_gray(image)
 
-        image = _cap_image_size(image, request, uploaded=bool(body.image_b64))
+        image, resolution = _resize_analysis_frame(image, body, request, uploaded=bool(body.image_b64))
 
         _fringe_cache.put(session_id, "last_image", image.copy())
+        _fringe_cache.put(session_id, "last_resolution", resolution)
         _fringe_cache.put(session_id, "last_roi", body.roi if not body.mask_polygons else None)
         image, custom_mask, cropped = _prepare_fringe_image(image, body)
         # Capture session_id for use inside the closure
@@ -757,6 +790,7 @@ def make_fringe_router(camera: BaseCamera) -> APIRouter:
             image_is_undistorted=True,
             correct_2pi_jumps=body.correct_2pi_jumps,
             analysis_method=body.analysis_method,
+            reconstructed_preview=body.reconstructed_preview,
             lpf_sigma_frac=body.lpf_sigma_frac,
             dc_margin_override=body.dc_margin_override,
             dc_cutoff_cycles=body.dc_cutoff_cycles,
@@ -768,10 +802,11 @@ def make_fringe_router(camera: BaseCamera) -> APIRouter:
                 # Cache full-res mask before sending result to client
                 if "_mask_full" in result:
                     _fringe_cache.put(sid, "last_mask", result.pop("_mask_full"))
+                _record_resolution(result, resolution)
                 wrap_wavefront_result(
                     result,
                     origin="capture",
-                    calibration=_applied_calibration_snapshot(body),
+                    calibration=_applied_calibration_snapshot(body, resolution),
                     aperture_recipe=body.aperture_recipe.model_dump() if body.aperture_recipe else None,
                 )
                 if wavelength_warning:
@@ -864,7 +899,6 @@ def make_fringe_router(camera: BaseCamera) -> APIRouter:
                 if image is None:
                     raise ValueError("Could not decode image")
                 image = _best_gray(image)
-                image = _cap_image_size(image, request, uploaded=True)
             except HTTPException:
                 raise
             except Exception as e:
@@ -876,6 +910,9 @@ def make_fringe_router(camera: BaseCamera) -> APIRouter:
             else:
                 raise HTTPException(400, detail="No cached image. Run /fringe/analyze first or provide image_b64.")
 
+        previous_resolution = None if body.image_b64 else _fringe_cache.get(session_id, "last_resolution")
+        image, resolution = _resize_analysis_frame(image, body, request, uploaded=bool(body.image_b64),
+            original_shape=previous_resolution['original'] if previous_resolution else None)
         cached_roi = None if body.image_b64 else _fringe_cache.get(session_id, "last_roi")
         image, custom_mask, cropped = _prepare_fringe_image(image, body, cached_roi)
 
@@ -889,10 +926,12 @@ def make_fringe_router(camera: BaseCamera) -> APIRouter:
                 custom_mask=custom_mask,
                 use_full_mask=cropped,
                 carrier_override=(body.carrier_y, body.carrier_x),
+                form_model=body.form_model,
                 lens_k1=body.lens_k1,
                 image_is_undistorted=True,
                 correct_2pi_jumps=body.correct_2pi_jumps,
                 analysis_method=body.analysis_method,
+                reconstructed_preview=body.reconstructed_preview,
                 lpf_sigma_frac=body.lpf_sigma_frac,
                 dc_margin_override=body.dc_margin_override,
                 dc_cutoff_cycles=body.dc_cutoff_cycles,
@@ -910,10 +949,11 @@ def make_fringe_router(camera: BaseCamera) -> APIRouter:
             last_capture_id = _fringe_cache.get(session_id, "last_capture_id")
             if last_capture_id:
                 source_ids = [last_capture_id]
+        _record_resolution(result, resolution)
         wrap_wavefront_result(
             result,
             origin="capture",
-            calibration=_applied_calibration_snapshot(body),
+            calibration=_applied_calibration_snapshot(body, resolution),
             aperture_recipe=body.aperture_recipe.model_dump() if body.aperture_recipe else None,
             source_ids=source_ids,
         )

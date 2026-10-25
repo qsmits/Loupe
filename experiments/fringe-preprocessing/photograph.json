@@ -1,0 +1,189 @@
+[
+  {
+    "case": "photograph",
+    "aperture_pixels": 641823,
+    "current_pixels": 448992,
+    "variants": [
+      {
+        "method": "slow-lighting-raw-0.2",
+        "preprocessing": "slow-lighting",
+        "raw_residual_limit": 0.2,
+        "added_pixels": 3728,
+        "coverage_pct": 70.53658095767837,
+        "old_phase_change_max_rad": 0.0,
+        "raw_phase_equivalence_max_rad": 0.0,
+        "background_sigma_px": 120.33310722959355,
+        "supported_pixels": 234531,
+        "order_rejected_pixels": 0
+      },
+      {
+        "method": "slow-lighting-raw-0.3",
+        "preprocessing": "slow-lighting",
+        "raw_residual_limit": 0.3,
+        "added_pixels": 6343,
+        "coverage_pct": 70.94401415966708,
+        "old_phase_change_max_rad": 0.0,
+        "raw_phase_equivalence_max_rad": 2.168404344971009e-19,
+        "background_sigma_px": 120.33310722959355,
+        "supported_pixels": 260307,
+        "order_rejected_pixels": 0
+      },
+      {
+        "method": "slow-lighting-raw-None",
+        "preprocessing": "slow-lighting",
+        "raw_residual_limit": null,
+        "added_pixels": 8197,
+        "coverage_pct": 71.23287884666021,
+        "old_phase_change_max_rad": 0.0,
+        "raw_phase_equivalence_max_rad": 3.2526065174565133e-19,
+        "background_sigma_px": 120.33310722959355,
+        "supported_pixels": 263617,
+        "order_rejected_pixels": 0
+      },
+      {
+        "method": "isolated-outliers-raw-0.2",
+        "preprocessing": "isolated-outliers",
+        "raw_residual_limit": 0.2,
+        "added_pixels": 3729,
+        "coverage_pct": 70.53673676387415,
+        "old_phase_change_max_rad": 0.0,
+        "raw_phase_equivalence_max_rad": 0.0,
+        "replaced_pixels": 1420,
+        "noise_mad": 0.7413,
+        "supported_pixels": 234558,
+        "order_rejected_pixels": 0
+      },
+      {
+        "method": "isolated-outliers-raw-0.3",
+        "preprocessing": "isolated-outliers",
+        "raw_residual_limit": 0.3,
+        "added_pixels": 6348,
+        "coverage_pct": 70.94479319064602,
+        "old_phase_change_max_rad": 0.0,
+        "raw_phase_equivalence_max_rad": 2.168404344971009e-19,
+        "replaced_pixels": 1420,
+        "noise_mad": 0.7413,
+        "supported_pixels": 260855,
+        "order_rejected_pixels": 0
+      },
+      {
+        "method": "isolated-outliers-raw-None",
+        "preprocessing": "isolated-outliers",
+        "raw_residual_limit": null,
+        "added_pixels": 8212,
+        "coverage_pct": 71.23521593959705,
+        "old_phase_change_max_rad": 0.0,
+        "raw_phase_equivalence_max_rad": 3.2526065174565133e-19,
+        "replaced_pixels": 1420,
+        "noise_mad": 0.7413,
+        "supported_pixels": 264206,
+        "order_rejected_pixels": 0
+      },
+      {
+        "method": "mild-smoothing-raw-0.2",
+        "preprocessing": "mild-smoothing",
+        "raw_residual_limit": 0.2,
+        "added_pixels": 0,
+        "coverage_pct": 69.95573545977629,
+        "old_phase_change_max_rad": 0.0,
+        "raw_phase_equivalence_max_rad": 0.0,
+        "sigma_px": 3.008327680739839,
+        "supported_pixels": 230838,
+        "order_rejected_pixels": 0
+      },
+      {
+        "method": "mild-smoothing-raw-0.3",
+        "preprocessing": "mild-smoothing",
+        "raw_residual_limit": 0.3,
+        "added_pixels": 3174,
+        "coverage_pct": 70.45026432521115,
+        "old_phase_change_max_rad": 0.0,
+        "raw_phase_equivalence_max_rad": 2.168404344971009e-19,
+        "sigma_px": 3.008327680739839,
+        "supported_pixels": 287984,
+        "order_rejected_pixels": 0
+      },
+      {
+        "method": "mild-smoothing-raw-None",
+        "preprocessing": "mild-smoothing",
+        "raw_residual_limit": null,
+        "added_pixels": 6018,
+        "coverage_pct": 70.89337714603559,
+        "old_phase_change_max_rad": 0.0,
+        "raw_phase_equivalence_max_rad": 3.2526065174565133e-19,
+        "sigma_px": 3.008327680739839,
+        "supported_pixels": 296820,
+        "order_rejected_pixels": 0
+      },
+      {
+        "method": "lighting-and-smoothing-raw-0.2",
+        "preprocessing": "lighting-and-smoothing",
+        "raw_residual_limit": 0.2,
+        "added_pixels": 27,
+        "coverage_pct": 69.9599422270626,
+        "old_phase_change_max_rad": 0.0,
+        "raw_phase_equivalence_max_rad": 0.0,
+        "sigma_px": 3.008327680739839,
+        "supported_pixels": 230838,
+        "order_rejected_pixels": 0
+      },
+      {
+        "method": "lighting-and-smoothing-raw-0.3",
+        "preprocessing": "lighting-and-smoothing",
+        "raw_residual_limit": 0.3,
+        "added_pixels": 3202,
+        "coverage_pct": 70.45462689869325,
+        "old_phase_change_max_rad": 0.0,
+        "raw_phase_equivalence_max_rad": 2.168404344971009e-19,
+        "sigma_px": 3.008327680739839,
+        "supported_pixels": 287987,
+        "order_rejected_pixels": 0
+      },
+      {
+        "method": "lighting-and-smoothing-raw-None",
+        "preprocessing": "lighting-and-smoothing",
+        "raw_residual_limit": null,
+        "added_pixels": 6042,
+        "coverage_pct": 70.89711649473453,
+        "old_phase_change_max_rad": 0.0,
+        "raw_phase_equivalence_max_rad": 3.2526065174565133e-19,
+        "sigma_px": 3.008327680739839,
+        "supported_pixels": 296863,
+        "order_rejected_pixels": 0
+      },
+      {
+        "method": "unchanged-copy-raw-0.2",
+        "preprocessing": "unchanged-copy",
+        "raw_residual_limit": 0.2,
+        "added_pixels": 3729,
+        "coverage_pct": 70.53673676387415,
+        "old_phase_change_max_rad": 0.0,
+        "raw_phase_equivalence_max_rad": 0.0,
+        "supported_pixels": 234586,
+        "order_rejected_pixels": 0
+      },
+      {
+        "method": "unchanged-copy-raw-0.3",
+        "preprocessing": "unchanged-copy",
+        "raw_residual_limit": 0.3,
+        "added_pixels": 6344,
+        "coverage_pct": 70.94416996586287,
+        "old_phase_change_max_rad": 0.0,
+        "raw_phase_equivalence_max_rad": 2.168404344971009e-19,
+        "supported_pixels": 260413,
+        "order_rejected_pixels": 0
+      },
+      {
+        "method": "unchanged-copy-raw-None",
+        "preprocessing": "unchanged-copy",
+        "raw_residual_limit": null,
+        "added_pixels": 8204,
+        "coverage_pct": 71.23396949003074,
+        "old_phase_change_max_rad": 0.0,
+        "raw_phase_equivalence_max_rad": 3.2526065174565133e-19,
+        "supported_pixels": 263737,
+        "order_rejected_pixels": 0
+      }
+    ]
+  }
+]

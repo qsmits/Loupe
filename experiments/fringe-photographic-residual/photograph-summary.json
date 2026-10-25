@@ -1,0 +1,49 @@
+[
+  {
+    "method": "current",
+    "coverage_pct": 64.82394678906802,
+    "included_pixels": 416055,
+    "common_change_max_rad": 0.0,
+    "added_pixels": 0
+  },
+  {
+    "method": "strict",
+    "coverage_pct": 64.82394678906802,
+    "included_pixels": 416055,
+    "common_change_max_rad": 0.0,
+    "fit_passed": 0,
+    "added_pixels": 0,
+    "rejected_order_pixels": 0,
+    "filter_sigma_px": 3.008327680739839
+  },
+  {
+    "method": "residual-20pct",
+    "coverage_pct": 73.89342544595628,
+    "included_pixels": 474265,
+    "common_change_max_rad": 0.0,
+    "fit_passed": 320755,
+    "added_pixels": 58210,
+    "rejected_order_pixels": 0,
+    "filter_sigma_px": 3.008327680739839
+  },
+  {
+    "method": "filtered-residual-4pct",
+    "coverage_pct": 64.82394678906802,
+    "included_pixels": 416055,
+    "common_change_max_rad": 0.0,
+    "fit_passed": 0,
+    "added_pixels": 0,
+    "rejected_order_pixels": 0,
+    "filter_sigma_px": 3.008327680739839
+  },
+  {
+    "method": "filtered-residual-10pct",
+    "coverage_pct": 67.95830002975899,
+    "included_pixels": 436172,
+    "common_change_max_rad": 0.0,
+    "fit_passed": 51409,
+    "added_pixels": 20117,
+    "rejected_order_pixels": 0,
+    "filter_sigma_px": 3.008327680739839
+  }
+]

@@ -54,7 +54,7 @@ export function createProgressBar(host) {
  * @param {function} onError - called with error message string on failure
  * @param {function} [onRetry] - if provided, wired to the Retry button
  */
-export async function analyzeWithProgress(body, onResult, onError, onRetry) {
+export async function analyzeWithProgress(body, onResult, onError, onRetry, batch=null) {
   cancelAnalysis(true);
   const controller = new AbortController();
   activeController = controller;
@@ -74,12 +74,13 @@ export async function analyzeWithProgress(body, onResult, onError, onRetry) {
   }
 
   const log = $("fringe-progress-log");
-  if (log) log.textContent = "";
+  if (log && !batch?.index) log.textContent = "";
   const started = Date.now();
   let lastMessage = "";
   function activity(message) {
     if (!message || message === lastMessage) return;
     lastMessage = message;
+    message = batch ? `${batch.index+1}/${batch.total} ${batch.label}: ${message}` : message;
     msg.textContent = message;
     if (log) {
       const item = document.createElement("li");
@@ -89,6 +90,7 @@ export async function analyzeWithProgress(body, onResult, onError, onRetry) {
     }
   }
   function progress(value) {
+    if (batch) value=(batch.index+value)/batch.total;
     const percent = Math.round(Math.max(0, Math.min(1, value)) * 100);
     fill.style.width = percent + "%";
     $("fringe-progress-bar")?.setAttribute("aria-valuenow", String(percent));
@@ -131,7 +133,7 @@ export async function analyzeWithProgress(body, onResult, onError, onRetry) {
       if (!current()) return;
       rememberBrowserResult(result, session);
       progress(1); fill.className = 'fringe-progress-fill done';
-      activity('Complete in this browser — opening results.');
+      activity(batch?.index===0 ? 'Current complete — preparing Hybrid…' : 'Complete in this browser — opening results.');
       onResult(result);
       return;
     }
@@ -185,7 +187,7 @@ export async function analyzeWithProgress(body, onResult, onError, onRetry) {
         if (event.stage === "done") {
           progress(1);
           fill.className = "fringe-progress-fill done";
-          activity("Complete — opening results.");
+          activity(batch?.index===0 ? "Current complete — preparing Hybrid…" : "Complete — opening results.");
           if (timeoutId) clearTimeout(timeoutId);
           onResult(event.result);
           return;
@@ -237,4 +239,21 @@ export function hideProgress() {
   cancelAnalysis();
   const container = document.querySelector(".fringe-progress");
   if (container) container.hidden = true;
+}
+
+/** Sequential paired runs keep the image, resolution, and settings identical. */
+export async function analyzePairWithProgress(body, onResult, onError, isValid=()=>true) {
+  const {makeMethodComparison}=await import('./fringe-method-comparison.js');
+  let current=null,hybrid=null;
+  if(!isValid())return;
+  await analyzeWithProgress({...body,analysis_method:'current',analysis_max_dimension:1024},r=>{current=r;},onError,null,{index:0,total:2,label:'Current'});
+  if(!current||!isValid())return;
+  await analyzeWithProgress({...body,analysis_method:'hybrid',analysis_max_dimension:1024},r=>{hybrid=r;},onError,null,{index:1,total:2,label:'Hybrid'});
+  if(!hybrid||!isValid())return;
+  try {
+    const comparison=makeMethodComparison(current,hybrid);
+    const result=body.analysis_method==='hybrid'?hybrid:current;
+    result.method_comparison=comparison;
+    onResult(result);
+  } catch(error){onError(error.message);}
 }

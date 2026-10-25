@@ -1,0 +1,8 @@
+{
+  "scripts/experiment-fringe-photographic-residual.py": "9700dbd3915c8d34dc4401e65800a2e3d36ed7a0184d1575cc55175cd11f4dfb",
+  "scripts/validate-fringe-boundaries.py": "156d1bef9421649088595fc2b776ceab32d8d0be7dd0c1aba8b29b164f27cf9d",
+  "scripts/experiment-fringe-local-fit.py": "d18d362c1340209b649985c5c15e5733a14cb01f98bc24e6b1b810c64ea92129",
+  "backend/vision/fringe.py": "18b638c9aac24ed7117e4561d6b30c5ae43d3833f1d1d32715f12c0ab5693685",
+  "backend/vision/fringe_hybrid.py": "f64bbaa741aa584f004df411d61808f4b505350c33a3102f5b95d64a952412c3",
+  "backend/vision/fringe_composite.py": "96c5292556dc1c972e4382da362b69087bf0ce3c687e2d46f5fc74950bcf9e91"
+}

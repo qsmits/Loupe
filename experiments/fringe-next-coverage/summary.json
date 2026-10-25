@@ -1,0 +1,102 @@
+{
+  "reach-two-periods": {
+    "cases": 40,
+    "cases_with_additions": 21,
+    "added_pixels": 12191,
+    "mean_gain_percentage_points": 1.2602981761370176,
+    "worst_added_error_nm": 10.838319566730348,
+    "worst_case": "fresh-texture-7",
+    "added_outside_pixels": 0,
+    "added_defect_pixels": 0
+  },
+  "no-transition-inset": {
+    "cases": 40,
+    "cases_with_additions": 26,
+    "added_pixels": 22544,
+    "mean_gain_percentage_points": 2.0070931401096237,
+    "worst_added_error_nm": 17.370791150048063,
+    "worst_case": "holdout-7-correlated",
+    "added_outside_pixels": 0,
+    "added_defect_pixels": 1
+  },
+  "residual-30pct": {
+    "cases": 40,
+    "cases_with_additions": 11,
+    "added_pixels": 5842,
+    "mean_gain_percentage_points": 0.8845140925599424,
+    "worst_added_error_nm": 10.102760270391855,
+    "worst_case": "correlated-texture-narrow-roll-10.7",
+    "added_outside_pixels": 0,
+    "added_defect_pixels": 0
+  },
+  "phase-agreement-005": {
+    "cases": 40,
+    "cases_with_additions": 25,
+    "added_pixels": 64530,
+    "mean_gain_percentage_points": 5.443640471381627,
+    "worst_added_error_nm": 19.34405897474676,
+    "worst_case": "holdout-10-correlated",
+    "added_outside_pixels": 0,
+    "added_defect_pixels": 11
+  },
+  "smaller-windows": {
+    "cases": 40,
+    "cases_with_additions": 16,
+    "added_pixels": 6007,
+    "mean_gain_percentage_points": 0.5090972000076548,
+    "worst_added_error_nm": 11.036186939171394,
+    "worst_case": "oversized-flat",
+    "added_outside_pixels": 0,
+    "added_defect_pixels": 0
+  },
+  "second-harmonic": {
+    "cases": 40,
+    "cases_with_additions": 22,
+    "added_pixels": 12667,
+    "mean_gain_percentage_points": 1.020487800196748,
+    "worst_added_error_nm": 10.972040176493167,
+    "worst_case": "holdout-10-correlated",
+    "added_outside_pixels": 0,
+    "added_defect_pixels": 0
+  },
+  "small-harmonic-consensus": {
+    "cases": 40,
+    "cases_with_additions": 9,
+    "added_pixels": 328,
+    "mean_gain_percentage_points": 0.026936052213881644,
+    "worst_added_error_nm": 4.909883233023024,
+    "worst_case": "holdout-4-correlated",
+    "added_outside_pixels": 0,
+    "added_defect_pixels": 0
+  },
+  "linear-envelope": {
+    "cases": 40,
+    "cases_with_additions": 13,
+    "added_pixels": 5508,
+    "mean_gain_percentage_points": 0.5721827265080176,
+    "worst_added_error_nm": 7.902321055644194,
+    "worst_case": "low-contrast-noisy-narrow-roll-10.7",
+    "added_outside_pixels": 0,
+    "added_defect_pixels": 0
+  },
+  "small-linear-envelope": {
+    "cases": 40,
+    "cases_with_additions": 24,
+    "added_pixels": 19394,
+    "mean_gain_percentage_points": 1.748233656198154,
+    "worst_added_error_nm": 14.555655328928964,
+    "worst_case": "holdout-7-correlated",
+    "added_outside_pixels": 0,
+    "added_defect_pixels": 0
+  },
+  "permissive-stress": {
+    "cases": 40,
+    "cases_with_additions": 26,
+    "added_pixels": 112231,
+    "mean_gain_percentage_points": 10.85787481898509,
+    "worst_added_error_nm": 21.256128708825585,
+    "worst_case": "correlated-texture-flat-6.3",
+    "added_outside_pixels": 0,
+    "added_defect_pixels": 11
+  }
+}

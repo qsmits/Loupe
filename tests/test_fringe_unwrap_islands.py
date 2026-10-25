@@ -333,3 +333,34 @@ class TestNoOp:
             u_off, r_off, _ = unwrap_phase_2d(w, mask, **kw)
         np.testing.assert_array_equal(u_on, u_off)
         np.testing.assert_array_equal(r_on, r_off)
+
+
+def test_residue_repair_uses_platform_sized_numpy_indices(monkeypatch):
+    """Exercise both APIs with wasm's 32-bit index rule on a 64-bit host."""
+    wrapped, good, mask, island, _ = _dipole_scene(bump_nm=120.)
+    bad = good + _TWO_PI * island
+    expected, expected_shifted = _merge_unwrap_islands(bad, wrapped, mask, max_cut_px=30.)
+    calls = dict(repeat=0, bincount=0)
+
+    class WasmIndexNumpy:
+        intp = np.int32
+
+        def __getattr__(self, name):
+            return getattr(np, name)
+
+        def repeat(self, values, repeats, *args, **kwargs):
+            assert np.asarray(repeats).dtype == np.dtype(np.int32)
+            calls['repeat'] += 1
+            return np.repeat(values, repeats, *args, **kwargs)
+
+        def bincount(self, bins, *args, **kwargs):
+            assert np.asarray(bins).dtype == np.dtype(np.int32)
+            calls['bincount'] += 1
+            return np.bincount(bins, *args, **kwargs)
+
+    monkeypatch.setattr(fr, 'np', WasmIndexNumpy())
+    actual, shifted = _merge_unwrap_islands(bad, wrapped, mask, max_cut_px=30.)
+    assert calls['repeat'] >= 3 and calls['bincount'] > 0
+    assert shifted.any()
+    np.testing.assert_array_equal(actual, expected)
+    np.testing.assert_array_equal(shifted, expected_shifted)

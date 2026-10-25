@@ -1,0 +1,153 @@
+[
+  {
+    "case": "photograph",
+    "aperture_pixels": 641823,
+    "current_pixels": 470468,
+    "variants": [
+      {
+        "method": "small-linear-provisional",
+        "proposed_pixels": 70914,
+        "added_pixels": 0,
+        "proposed_coverage_pct": 84.35066988873879,
+        "coverage_pct": 73.30182932054475,
+        "order_conflict_pixels": 70914,
+        "old_phase_change_max_rad": 0.0
+      },
+      {
+        "method": "small-linear-weak",
+        "proposed_pixels": 137856,
+        "added_pixels": 0,
+        "proposed_coverage_pct": 94.7806482472582,
+        "coverage_pct": 73.30182932054475,
+        "order_conflict_pixels": 137856,
+        "old_phase_change_max_rad": 0.0
+      },
+      {
+        "method": "small-linear-survey",
+        "proposed_pixels": 162247,
+        "added_pixels": 0,
+        "proposed_coverage_pct": 98.58091716875214,
+        "coverage_pct": 73.30182932054475,
+        "order_conflict_pixels": 162247,
+        "old_phase_change_max_rad": 0.0
+      },
+      {
+        "method": "small-linear-ungated-diagnostic",
+        "proposed_pixels": 171355,
+        "added_pixels": 0,
+        "proposed_coverage_pct": 100.0,
+        "coverage_pct": 73.30182932054475,
+        "order_conflict_pixels": 171355,
+        "old_phase_change_max_rad": 0.0
+      },
+      {
+        "method": "small-linear-harmonic-provisional",
+        "proposed_pixels": 79035,
+        "added_pixels": 0,
+        "proposed_coverage_pct": 85.61597200474274,
+        "coverage_pct": 73.30182932054475,
+        "order_conflict_pixels": 79035,
+        "old_phase_change_max_rad": 0.0
+      },
+      {
+        "method": "small-linear-harmonic-weak",
+        "proposed_pixels": 140435,
+        "added_pixels": 0,
+        "proposed_coverage_pct": 95.1824724261985,
+        "coverage_pct": 73.30182932054475,
+        "order_conflict_pixels": 140435,
+        "old_phase_change_max_rad": 0.0
+      },
+      {
+        "method": "small-linear-harmonic-survey",
+        "proposed_pixels": 163490,
+        "added_pixels": 0,
+        "proposed_coverage_pct": 98.77458427011808,
+        "coverage_pct": 73.30182932054475,
+        "order_conflict_pixels": 163490,
+        "old_phase_change_max_rad": 0.0
+      },
+      {
+        "method": "small-linear-harmonic-ungated-diagnostic",
+        "proposed_pixels": 171355,
+        "added_pixels": 0,
+        "proposed_coverage_pct": 100.0,
+        "coverage_pct": 73.30182932054475,
+        "order_conflict_pixels": 171355,
+        "old_phase_change_max_rad": 0.0
+      },
+      {
+        "method": "linear-provisional",
+        "proposed_pixels": 61697,
+        "added_pixels": 0,
+        "proposed_coverage_pct": 82.9146041821499,
+        "coverage_pct": 73.30182932054475,
+        "order_conflict_pixels": 61697,
+        "old_phase_change_max_rad": 0.0
+      },
+      {
+        "method": "linear-weak",
+        "proposed_pixels": 117541,
+        "added_pixels": 0,
+        "proposed_coverage_pct": 91.61544537980097,
+        "coverage_pct": 73.30182932054475,
+        "order_conflict_pixels": 117541,
+        "old_phase_change_max_rad": 0.0
+      },
+      {
+        "method": "linear-survey",
+        "proposed_pixels": 155103,
+        "added_pixels": 0,
+        "proposed_coverage_pct": 97.46783770603422,
+        "coverage_pct": 73.30182932054475,
+        "order_conflict_pixels": 155103,
+        "old_phase_change_max_rad": 0.0
+      },
+      {
+        "method": "linear-ungated-diagnostic",
+        "proposed_pixels": 171355,
+        "added_pixels": 0,
+        "proposed_coverage_pct": 100.0,
+        "coverage_pct": 73.30182932054475,
+        "order_conflict_pixels": 171355,
+        "old_phase_change_max_rad": 0.0
+      },
+      {
+        "method": "stack-provisional",
+        "proposed_pixels": 0,
+        "added_pixels": 0,
+        "proposed_coverage_pct": 73.30182932054475,
+        "coverage_pct": 73.30182932054475,
+        "order_conflict_pixels": 0,
+        "old_phase_change_max_rad": 0.0
+      },
+      {
+        "method": "stack-weak",
+        "proposed_pixels": 0,
+        "added_pixels": 0,
+        "proposed_coverage_pct": 73.30182932054475,
+        "coverage_pct": 73.30182932054475,
+        "order_conflict_pixels": 0,
+        "old_phase_change_max_rad": 0.0
+      },
+      {
+        "method": "stack-survey",
+        "proposed_pixels": 0,
+        "added_pixels": 0,
+        "proposed_coverage_pct": 73.30182932054475,
+        "coverage_pct": 73.30182932054475,
+        "order_conflict_pixels": 0,
+        "old_phase_change_max_rad": 0.0
+      },
+      {
+        "method": "stack-ungated-diagnostic",
+        "proposed_pixels": 0,
+        "added_pixels": 0,
+        "proposed_coverage_pct": 73.30182932054475,
+        "coverage_pct": 73.30182932054475,
+        "order_conflict_pixels": 0,
+        "old_phase_change_max_rad": 0.0
+      }
+    ]
+  }
+]
